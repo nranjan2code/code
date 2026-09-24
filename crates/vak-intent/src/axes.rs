@@ -97,13 +97,20 @@ impl Act {
         matches!(self, Act::Modify | Act::Operate | Act::Govern)
     }
 
-    /// Whether this act requires execution, authoring, modification, testing/verification,
-    /// or operation (e.g. running code, touching files, starting services).
+    /// Whether this act, by its nature, demands a runtime execution or
+    /// file-modification receipt (a bash call or a file write) before it can
+    /// honestly claim to be done — the same set as [`Act::is_effectful`] plus
+    /// `Verify`, which has no other way to be proven: the whole act is
+    /// running a check. `Author` is deliberately absent: producing prose,
+    /// code, or a plan is proven by the response itself, and demanding a
+    /// shell or file receipt for a poem is the bug this split exists to
+    /// avoid. A request that *names* a file deliverable still needs one —
+    /// that is `OutcomeSpec::requires_execution`, which has the request text
+    /// and this does not. `Orchestrate` is also absent: delegating to a
+    /// worker or flow is proven by a tool dispatch, not a shell command or a
+    /// file write, so it belongs under `requires_tool` instead.
     pub fn requires_execution(self) -> bool {
-        matches!(
-            self,
-            Act::Author | Act::Modify | Act::Operate | Act::Verify | Act::Govern | Act::Orchestrate
-        )
+        matches!(self, Act::Modify | Act::Operate | Act::Govern | Act::Verify)
     }
 
     /// Whether this act requires inspection, search, or enumeration tools.
@@ -111,9 +118,12 @@ impl Act {
         matches!(self, Act::Locate)
     }
 
-    /// Whether this act requires any tool invocation (execution, modification, or inspection).
+    /// Whether this act requires any tool invocation at all. `Orchestrate`
+    /// joins here rather than in `requires_execution`: it needs proof that a
+    /// worker or flow was actually dispatched, but that proof is a tool
+    /// call, not specifically a shell command or a file write.
     pub fn requires_tool(self) -> bool {
-        self.requires_execution() || self.requires_inspection()
+        self.requires_execution() || self.requires_inspection() || matches!(self, Act::Orchestrate)
     }
 }
 

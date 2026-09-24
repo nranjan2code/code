@@ -285,10 +285,20 @@ impl Accumulator {
         }
 
         if let Some(usage) = v.get("usageMetadata") {
-            self.message.usage.input_tokens = usage
-                .get("promptTokenCount")
-                .and_then(|x| x.as_u64())
-                .unwrap_or(self.message.usage.input_tokens);
+            // `promptTokenCount` is the whole prompt, cache hits included
+            // (`cachedContentTokenCount` is a subset of it, not an
+            // addition). Normalized `input_tokens` is only the non-cached
+            // remainder, matching every other adapter
+            // (docs/design/68-context-engine.md §1).
+            if let Some(prompt_tokens) = usage.get("promptTokenCount").and_then(|x| x.as_u64()) {
+                let cached_tokens = usage
+                    .get("cachedContentTokenCount")
+                    .and_then(|x| x.as_u64())
+                    .unwrap_or(0);
+                self.message.usage.input_tokens = prompt_tokens.saturating_sub(cached_tokens);
+                self.message.usage.cache_read_input_tokens =
+                    (cached_tokens > 0).then_some(cached_tokens);
+            }
             self.message.usage.output_tokens = usage
                 .get("candidatesTokenCount")
                 .and_then(|x| x.as_u64())

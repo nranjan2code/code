@@ -386,19 +386,28 @@ impl Accumulator {
             .map_err(|e| LlmError::Parse(format!("bad chunk json: {e}")))?;
 
         if let Some(usage) = v.get("usage").filter(|u| !u.is_null()) {
+            // OpenAI's `prompt_tokens` is the WHOLE prompt, cache hits
+            // included (`prompt_tokens_details.cached_tokens` is a subset
+            // of it, not an addition to it). Normalized `input_tokens` is
+            // only the non-cached remainder, matching every other adapter
+            // (docs/design/68-context-engine.md §1) — `Usage::prompt_tokens()`
+            // reconstructs the original total.
+            let prompt_tokens = usage
+                .get("prompt_tokens")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
+            let cached_tokens = usage
+                .get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(|x| x.as_u64())
+                .unwrap_or(0);
             self.message.usage = Usage {
-                input_tokens: usage
-                    .get("prompt_tokens")
-                    .and_then(|x| x.as_u64())
-                    .unwrap_or(0),
+                input_tokens: prompt_tokens.saturating_sub(cached_tokens),
                 output_tokens: usage
                     .get("completion_tokens")
                     .and_then(|x| x.as_u64())
                     .unwrap_or(0),
-                cache_read_input_tokens: usage
-                    .get("prompt_tokens_details")
-                    .and_then(|d| d.get("cached_tokens"))
-                    .and_then(|x| x.as_u64()),
+                cache_read_input_tokens: (cached_tokens > 0).then_some(cached_tokens),
                 cache_creation_input_tokens: None,
                 ..Default::default()
             };

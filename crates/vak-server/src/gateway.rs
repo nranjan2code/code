@@ -22,7 +22,7 @@ use axum::response::IntoResponse;
 use axum::{Json, Router};
 use tokio::sync::oneshot;
 
-use vak_agent::{AgentEvent, AutoDeny, SteeringQueues};
+use vak_agent::{AgentEvent, AutoDeny};
 use vak_core::Core;
 use vak_delivery::{
     AnswerDraft, ApprovalPayload, DeliveryAction, DeliveryContent, DeliveryKind, DeliveryPacket,
@@ -2843,8 +2843,12 @@ async fn resolve_session(
 // ---- Turn execution ---------------------------------------------------------
 
 /// Run a turn chain: prompt, then any steering left queued by concurrent
-/// inbound messages, until the queue is dry. Sends one synthesized
-/// `RunFinished` per turn so SSE consumers see normal terminal markers.
+/// inbound messages, until the queue is dry. Sends one `RunFinished` per
+/// leg so SSE consumers see normal terminal markers. The loop/lock
+/// mechanics (run a leg, decide whether to continue) are
+/// `crate::run_turn_chain` — the ONE executor also used by the HTTP `/run`
+/// and `/steering` endpoints (invariant 30); only the approver construction
+/// and the per-leg settle bookkeeping below are gateway-specific.
 fn start_turn_chain(
     state: &AppState,
     core: &Core,
@@ -2879,35 +2883,33 @@ async fn execute_turn_chain(
     core: Core,
     gw: Arc<GatewayState>,
     handle: Arc<SessionHandle>,
-    mut prompt: vak_llm::Message,
+    prompt: vak_llm::Message,
     mut reply: Option<oneshot::Sender<String>>,
 ) {
-    loop {
-        let taken = handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        let Some(taken) = taken else {
-            // Lost the race with another writer mid-chain; hand our full
-            // prompt (text + images) to the winner as steering instead of
-            // dropping it.
-            handle.steering.push_steering_message(prompt.clone());
-            return;
-        };
-        let session_id = taken
-            .header()
-            .map(|h| h.session_id.clone())
-            .unwrap_or_default();
+    let taken = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    let Some(taken) = taken else {
+        // Lost the race with another writer; hand our full prompt (text +
+        // images) to the winner as steering instead of dropping it.
+        handle.steering.push_steering_message(prompt);
+        return;
+    };
 
+    let approver_gw = gw.clone();
+    let approver_core = core.clone();
+    let approver_handle = handle.clone();
+    let approver_factory = move |session_id: &str| -> Arc<dyn vak_agent::Approver> {
         // Forward mode is the human-in-the-loop gate (AGENTS rule 16). Under
         // FullAccess the engine returns `Allow` for bash/read/write, so no
         // Ask is ever raised and the approver is never invoked — the gate is
         // silently hollow. Warn once; keep going so legitimate setups still
         // run, but make the bypass unmistakable.
-        if gw.forward_mode()
+        if approver_gw.forward_mode()
             && matches!(
-                core.effective_permission_mode(),
+                approver_core.effective_permission_mode(),
                 vak_config::PermissionMode::FullAccess
             )
             && FORWARD_FULLACCESS_WARNED
@@ -2931,115 +2933,96 @@ async fn execute_turn_chain(
         }
         // Unattended policy: deny by default, forward to the approver
         // surface when configured (G2).
-        let approver: Arc<dyn vak_agent::Approver> = if gw.forward_mode() {
+        if approver_gw.forward_mode() {
             Arc::new(GatewayApprover {
-                events_tx: handle.events_tx.clone(),
-                state: gw.clone(),
-                core: core.clone(),
-                session_id: session_id.clone(),
+                events_tx: approver_handle.events_tx.clone(),
+                state: approver_gw.clone(),
+                core: approver_core.clone(),
+                session_id: session_id.to_string(),
             })
         } else {
             Arc::new(AutoDeny)
-        };
-        let events = crate::mpsc_to_broadcast(handle.events_tx.clone());
-        let steering = handle.steering.clone();
-        let cancel = handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone();
-
-        let outcome = core
-            .run_turn_with_message(
-                taken,
-                prompt.clone(),
-                cancel,
-                Some(approver),
-                None,
-                Some(steering.clone()),
-                events,
-            )
-            .await;
-
-        *handle
-            .cancel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            tokio_util::sync::CancellationToken::new();
-
-        let (reply_text, is_error, ledger) = match outcome {
-            Ok((o, log)) => {
-                let err = outcome_is_error(&o);
-                let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
-                (text, err, Some(log))
-            }
-            Err(e) => {
-                vak_core::security_events::record(
-                    &core.sessions_home(),
-                    vak_core::security_events::EventKind::ExecutionError,
-                    "inbound turn failed",
-                    &format!("session_id={session_id} error={e}"),
-                    None,
-                );
-                recover_ledger(&core, handle.clone(), &session_id).await;
-                (format!("error: {e}"), true, None)
-            }
-        };
-        let _ = handle.events_tx.send(AgentEvent::RunFinished {
-            summary: short_summary(&reply_text),
-            is_error,
-        });
-
-        if let Some(tx) = reply.take() {
-            let _ = tx.send(reply_text.clone());
         }
+    };
 
-        // Background reflection seam (docs/design/29 P1): the shared
-        // best-effort pass over the just-finished turn. It runs strictly
-        // after the reply above was handed over so delivery never waits on
-        // it, and while this chain still owns the ledger — a second
-        // in-process handle cannot take the file lock. Bounded; failures
-        // collapse into the outcome envelope.
-        if let Some(log) = ledger {
-            if !is_error && core.config().memory.reflection {
-                let pass = tokio::time::timeout(
-                    REFLECTION_CALL_TIMEOUT,
-                    core.reflect_after_turn(&log, ""),
-                )
-                .await;
-                match pass {
-                    Ok(outcome) => log_gateway_reflection(outcome),
-                    Err(_) => eprintln!("[gateway] reflection skipped: timeout"),
+    let settle_core = core.clone();
+    let settle = move |session_id: &str,
+                       outcome: Result<
+        (vak_agent::TurnOutcome, vak_session::SessionLog),
+        vak_core::CoreError,
+    >| {
+        let core = settle_core.clone();
+        let reply_tx = reply.take();
+        let session_id = session_id.to_string();
+        async move {
+            match outcome {
+                Ok((o, log)) => {
+                    let err = outcome_is_error(&o);
+                    let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
+                    if let Some(tx) = reply_tx {
+                        let _ = tx.send(text.clone());
+                    }
+                    // Background reflection seam (docs/design/29 P1): the
+                    // shared best-effort pass over the just-settled leg. It
+                    // runs strictly after the reply above was handed over so
+                    // delivery never waits on it, and while this chain still
+                    // owns the ledger — a second in-process handle cannot
+                    // take the file lock. Bounded; failures collapse into
+                    // the outcome envelope.
+                    if !err && core.config().memory.reflection {
+                        let pass = tokio::time::timeout(
+                            REFLECTION_CALL_TIMEOUT,
+                            core.reflect_after_turn(&log, ""),
+                        )
+                        .await;
+                        match pass {
+                            Ok(outcome) => log_gateway_reflection(outcome),
+                            Err(_) => eprintln!("[gateway] reflection skipped: timeout"),
+                        }
+                    }
+                    (Some(log), short_summary(&text), err)
+                }
+                Err(e) => {
+                    vak_core::security_events::record(
+                        &core.sessions_home(),
+                        vak_core::security_events::EventKind::ExecutionError,
+                        "inbound turn failed",
+                        &format!("session_id={session_id} error={e}"),
+                        None,
+                    );
+                    let recovered = recover_ledger(&core, &session_id).await;
+                    let text = format!("error: {e}");
+                    if let Some(tx) = reply_tx {
+                        let _ = tx.send(text.clone());
+                    }
+                    (recovered, short_summary(&text), true)
                 }
             }
-            *handle
-                .session
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
         }
+    };
 
-        let queued = steering.drain(vak_agent::DrainMode::All);
-        match SteeringQueues::merge_prompt(queued) {
-            None => return,
-            Some(merged) => prompt = merged,
-        }
-    }
+    crate::run_turn_chain(
+        core,
+        handle,
+        taken,
+        crate::TurnStart::Message(prompt),
+        approver_factory,
+        settle,
+    )
+    .await;
 }
 
 /// A `CoreError` loses the ledger handle (the agent consumed it); reopen the
-/// JSONL so the session stays usable in this long-lived process.
-async fn recover_ledger(core: &Core, handle: Arc<SessionHandle>, session_id: &str) -> bool {
+/// JSONL so the session stays usable in this long-lived process. `None`
+/// when `session_id` is empty or the reopen itself fails — the caller (the
+/// settle closure above) treats that as "nothing to continue with" and lets
+/// `run_turn_chain` end the chain, exactly like `recover_ledger` returning
+/// `false` used to leave `handle.session` untouched.
+async fn recover_ledger(core: &Core, session_id: &str) -> Option<vak_session::SessionLog> {
     if session_id.is_empty() {
-        return false;
+        return None;
     }
-    if let Ok(log) = core.open_session(session_id).await {
-        *handle
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
-        return true;
-    }
-    false
+    core.open_session(session_id).await.ok()
 }
 
 fn outcome_text(o: &vak_agent::TurnOutcome) -> String {

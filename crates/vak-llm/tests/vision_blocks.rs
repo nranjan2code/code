@@ -73,5 +73,5 @@ fn image_in_assistant_message_rejected_for_anthropic() {
         }],
         ..ChatRequest::new("test-model")
     };
-    assert!(vak_llm::anthropic::build_body(&req).is_err());
+    assert!(vak_llm::anthropic::build_body(&req, true, false).is_err());
 }

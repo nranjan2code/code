@@ -80,7 +80,7 @@ pub fn auto_approve(
     tool == "bash" && sandboxed && !matches!(mode, Mode::FullAccess)
 }
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex as StdMutex};
 
 use futures::FutureExt;
@@ -173,6 +173,18 @@ impl Tool for ManagedFlowTool {
 #[derive(Debug, Clone, serde::Serialize)]
 pub enum AgentEvent {
     TurnStart {
+        turn: usize,
+    },
+    /// A text-only draft answer was sent back for a redo instead of being
+    /// accepted as the turn's final answer — every gate that appends a
+    /// control nudge (`[stop-guard]`, `[presentation-check]`,
+    /// `[grounding-check]`, `[freshness-check]`, `[fence-check]`,
+    /// `[duplicate-card-check]`, `[empty-step]`, `[steering-drift]`,
+    /// `[stop-hook]`) plus `guard_continue`/stop policy, the goal gate, and
+    /// the managed-work gate all emit this exactly once per discarded
+    /// draft. `turn` is the loop step index of the discarded draft, the
+    /// same numbering `TurnStart` uses.
+    DraftDiscarded {
         turn: usize,
     },
     Stream(StreamEvent),
@@ -362,12 +374,6 @@ pub struct AgentConfig {
     /// real number from configuration, never a hardcoded magic default
     /// baked into the planning math itself.
     pub declared_window: u64,
-    /// Each admitted tool's declared domains, mirroring
-    /// `TurnCapabilitiesBound.tool_domains` (docs/design/68-context-engine.md
-    /// §7 "model drift"): a tool call whose domains are disjoint from the
-    /// current reading's is drift evidence. Empty for a tool with no
-    /// declared domain (never treated as a mismatch by itself).
-    pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
     /// Built-in premature-completion gate. None disables entirely.
     pub stop_policy: Option<StopPolicy>,
     /// Pre-dispatch budget admission (docs/design/15-reliability.md). None
@@ -379,6 +385,11 @@ pub struct AgentConfig {
     /// Canonical configured provider names parallel to `ladder`. Adapter
     /// names are implementation details and must not enter routing evidence.
     pub ladder_provider_names: Vec<String>,
+    /// The primary leg's canonical configured provider name (parallel to
+    /// `ladder_provider_names`, but for `provider`/leg 0 rather than a
+    /// fallback leg). `None` falls back to `provider.name()` -- the adapter
+    /// name -- for a caller that has not wired this in yet.
+    pub provider_name: Option<String>,
     /// Workspace-delta provider (Phase H MEA): supplies a bounded summary
     /// of what changed since the run-start checkpoint, feeding goal-mode
     /// auditors environment facts instead of transcript-only claims.
@@ -482,11 +493,11 @@ impl AgentConfig {
             dispatch_ceiling: (3 + 1) * (6 + 1),
             max_output: 8_192,
             declared_window: 128_000,
-            tool_domains: std::collections::BTreeMap::new(),
             stop_policy: Some(StopPolicy::default()),
             spend_gate: None,
             ladder: Vec::new(),
             ladder_provider_names: Vec::new(),
+            provider_name: None,
             workspace_delta: None,
             handoff_reset: true,
             max_audit_blocks: 2,
@@ -582,6 +593,22 @@ fn is_transient_step_error(e: &LlmError) -> bool {
 /// released seconds later).
 fn trips_breaker(e: &LlmError) -> bool {
     matches!(e, LlmError::Network(_) | LlmError::Parse(_))
+}
+
+/// Drops every `ContentBlock::Thinking` block from `messages` (docs/design/
+/// 68-context-engine.md §7): used only when a mid-turn over-length rejection
+/// forces a smaller re-plan, since that request's earlier shape already
+/// differs from what was sent before it — replaying a thinking block
+/// produced under the old shape is exactly the case a provider that
+/// requires nothing earlier to have changed rejects outright. A closed
+/// turn's `full_record` never carries thinking to begin with; this only
+/// ever has anything to remove from the still-open turn's own verbatim tail.
+fn strip_replayed_thinking(messages: &mut [Message]) {
+    for message in messages.iter_mut() {
+        message
+            .content
+            .retain(|block| !matches!(block, ContentBlock::Thinking { .. }));
+    }
 }
 
 /// Per-leg tool inclusion (docs/design/68-context-engine.md §5): Anthropic
@@ -715,6 +742,20 @@ fn first_sentence_fallback(text: &str) -> String {
         }
     }
     trimmed.to_string()
+}
+
+/// The caller-visible narration for a `TurnCard`: verbatim when short (≤ 60
+/// words), otherwise its leading sentence via `first_sentence_fallback`
+/// (docs/design/68-context-engine.md §10). Purely deterministic — turn
+/// close must never dispatch a model call of its own and block the run
+/// finishing on it (measured live: a 3s mock provider delay showed up as a
+/// 3.02s gap between the last streamed text and `RunFinished`).
+fn resolve_narration(narration: &str) -> String {
+    if narration.split_whitespace().count() <= 60 {
+        narration.to_string()
+    } else {
+        first_sentence_fallback(narration)
+    }
 }
 
 /// Words too generic to establish that a card is *about* the same thing as
@@ -1074,7 +1115,16 @@ impl Agent {
         }
     }
 
-    fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
+    /// The admitted set before `discovered_tools` is folded in: names,
+    /// order and initial `defer` flags this agent was configured with
+    /// (plus the conditional `work` tool). Stable across a run, so a
+    /// caller that freezes ITS OWN clone of this once per turn
+    /// (`turn_tools` in `run_message_inner`, §7) and re-applies
+    /// `load_discovered` against that same clone every step gets a tools
+    /// array whose base names/order never move -- only a `defer` flag may
+    /// flip in place (a promotion, never a reorder) and a genuinely new
+    /// name is appended at the end.
+    fn base_tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
         let mut definitions = self
             .config
             .tool_definitions
@@ -1104,6 +1154,11 @@ impl Agent {
                 }),
             ));
         }
+        definitions
+    }
+
+    fn tool_definitions(&self) -> Vec<vak_llm::ToolDefinition> {
+        let mut definitions = self.base_tool_definitions();
         let discovered = self
             .config
             .discovered_tools
@@ -1159,7 +1214,7 @@ impl Agent {
         // exits) stays open and this is a no-op — there is nothing to card
         // yet, and the next call to `run_message` will pick it up once it
         // does close.
-        self.close_turn(&outcome, &cancel, &events).await;
+        self.close_turn(&outcome).await;
         outcome
     }
 
@@ -1387,6 +1442,28 @@ impl Agent {
         // and the one-shot flag for the presentation check below.
         let mut cards_emitted_this_run = false;
         let mut presentation_repair_attempted = false;
+        // Append-only requests within a turn (docs/design/68-context-
+        // engine.md §7): the working-set plan and the tools array are each
+        // resolved ONCE per turn and reused by every later step, so a
+        // message this turn already sent stays byte-identical on the next
+        // step's request instead of silently changing shape underneath a
+        // replayed thinking block. `turn_plan` is invalidated (set back to
+        // `None`) only by a handoff reset; an over-length rejection or an
+        // incremental compaction still re-plans mid-turn, but explicitly,
+        // and the result becomes the new baseline for the rest of the
+        // turn rather than being recomputed from scratch every step.
+        // `turn_tool_base` freezes `base_tool_definitions()` (names, order,
+        // and each one's INITIAL `defer` flag) at the first step;
+        // `load_discovered` is re-applied against a fresh clone of it every
+        // step, using whatever `discovered_tools` holds by then. A
+        // `find_tools`/presentation-check promotion can still flip an
+        // already-admitted tool's `defer` flag in place -- required so a
+        // deferred tool that `tools_for_leg` was stripping from a
+        // non-Anthropic leg's wire request actually starts being sent --
+        // but the base set's names and order never move, and a genuinely
+        // new name is only ever appended at the end.
+        let mut turn_plan: Option<vak_session::WorkingSetPlan> = None;
+        let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
         loop {
             if cancel.is_cancelled() {
                 return TurnOutcome::Aborted { partial: None };
@@ -1475,22 +1552,43 @@ impl Agent {
             // every turn, so it always reflects the current live provider route.
             let model = self.config.model.clone();
 
-            // Working-set planning (docs/design/68-context-engine.md
-            // §4/§10): build the TurnIndex and the plan fresh every step —
-            // not once per turn — so a just-closed turn's card, a mid-turn
-            // over-length replan (§5), or an incremental compaction below
-            // all see the freshest chain. The lock is taken only for short
-            // read/plan/apply phases and is NEVER held across the
-            // summarizer network call below.
+            // Working-set planning (docs/design/68-context-engine.md §4/§7/
+            // §10): built once per TURN, not fresh every step, so a past
+            // turn's fidelity cannot change mid-turn and break the
+            // append-only request contract. `turn_plan`/`turn_tools`
+            // (declared before the loop) hold the frozen baseline; only an
+            // over-length rejection or an incremental compaction below
+            // explicitly replans (updating the baseline for the rest of
+            // the turn too), and only a handoff reset clears it back to
+            // `None`. The lock is taken only for short read/plan/apply
+            // phases and is NEVER held across the summarizer network call
+            // below.
             let profile = self.effective_capacity_profile();
-            let tool_defs = self.tool_definitions();
+            if turn_tool_base.is_none() {
+                turn_tool_base = Some(self.base_tool_definitions());
+            }
+            let mut tool_defs = turn_tool_base.clone().unwrap_or_default();
+            let discovered = self
+                .config
+                .discovered_tools
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            load_discovered(&mut tool_defs, discovered);
             let prefix_tokens =
                 profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
             let tail_tokens = profile.estimate_tokens(turn_tail.chars().count() as u64);
 
-            let mut plan = self
-                .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
-                .await;
+            let mut plan = match &turn_plan {
+                Some(p) => p.clone(),
+                None => {
+                    let fresh = self
+                        .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
+                        .await;
+                    turn_plan = Some(fresh.clone());
+                    fresh
+                }
+            };
 
             // No usable horizon at all: the open turn alone (plus prefix,
             // tail, output reserve) already exceeds the horizon. Nothing is
@@ -1516,6 +1614,10 @@ impl Agent {
                                     })
                                     .await;
                                 drop(session);
+                                // The reset replaced everything before it:
+                                // the frozen plan baseline is stale and
+                                // must be rebuilt against the new chain.
+                                turn_plan = None;
                                 continue;
                             }
                             Err(e) => {
@@ -1636,6 +1738,10 @@ impl Agent {
                         })
                         .await;
                     plan = after_plan;
+                    // Compaction wrote a new ledger entry: the packeted
+                    // range is now covered, so the frozen baseline must
+                    // reflect it for the rest of this turn too.
+                    turn_plan = Some(plan.clone());
                 }
             }
 
@@ -1662,11 +1768,13 @@ impl Agent {
                 // (docs/design/68-context-engine.md §4/§10): retrieved-by-
                 // relevance turns ride at Full inside it, so there is no
                 // separate proactive-retrieval prepend step any more.
-                let mut messages = session.derive_with_plan(&plan);
-                // The tail is one final text block on the last user message
-                // (after any tool_result blocks), never a separate consecutive
-                // user message (docs/design/68-context-engine.md §6).
-                attach_tail(&mut messages, &turn_tail);
+                let (mut messages, directive_at) = session.derive_with_plan_and_directive(&plan);
+                // The tail is one final text block on the turn's directive
+                // (after any tool_result blocks the directive itself
+                // carries), never a separate consecutive user message and
+                // never re-homed onto a later step's tool result or nudge
+                // (docs/design/68-context-engine.md §6/§7).
+                attach_tail(&mut messages, &turn_tail, directive_at);
                 let session_key = session
                     .header()
                     .map(|header| header.session_id.clone())
@@ -1685,6 +1793,7 @@ impl Agent {
                     cache,
                     previous_response_id: None,
                     think: None,
+                    effort: None,
                 }
             };
             let mut request = base_request.clone();
@@ -1765,10 +1874,23 @@ impl Agent {
                                     new_tail_tokens,
                                 )
                                 .await;
+                            // The lowered plan is the new baseline for the
+                            // rest of this turn, not just this retry.
+                            turn_plan = Some(plan.clone());
                             request = {
                                 let session = self.session.lock().await;
-                                let mut messages = session.derive_with_plan(&plan);
-                                attach_tail(&mut messages, &turn_tail);
+                                let (mut messages, directive_at) =
+                                    session.derive_with_plan_and_directive(&plan);
+                                attach_tail(&mut messages, &turn_tail, directive_at);
+                                // This request just changed shape earlier
+                                // than the open turn's own tail (a smaller
+                                // plan): replaying a thinking block from a
+                                // step already sent under the OLD shape is
+                                // rejected outright by a provider that
+                                // requires nothing earlier to have changed
+                                // since it was produced (docs/design/68
+                                // §7), so it is dropped here instead.
+                                strip_replayed_thinking(&mut messages);
                                 let session_key = session
                                     .header()
                                     .map(|header| header.session_id.clone())
@@ -1788,6 +1910,7 @@ impl Agent {
                                     cache,
                                     previous_response_id: None,
                                     think: None,
+                                    effort: None,
                                 }
                             };
                             continue;
@@ -1858,6 +1981,15 @@ impl Agent {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
             normalize_response_tool_uses(&mut response, &self.config.tools, &mcp_index);
+            // Some small models cannot emit a structured `tool_use` block
+            // and spell one out as text instead: rewrite `response` BEFORE
+            // it reaches the ledger, so what is recorded is already a
+            // valid tool_use/tool_result pair rather than envelope text
+            // (docs/design/68-context-engine.md §5/§7).
+            let calls: Vec<PendingToolCall> = extract_tool_calls(&mut response, &self.config.tools)
+                .into_iter()
+                .map(normalize_tool_call)
+                .collect();
 
             outcome_turns += 1;
 
@@ -1909,7 +2041,7 @@ impl Agent {
                         let messages_tokens =
                             profile.estimate_tokens(messages_chars(&request.messages));
                         receipt.prefix_tokens =
-                            Some(usage.input_tokens.saturating_sub(messages_tokens));
+                            Some(usage.prompt_tokens().saturating_sub(messages_tokens));
                     }
                 }
                 let _ = session.append_receipt(receipt);
@@ -1931,11 +2063,6 @@ impl Agent {
             let response_entry_id = self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
-            let calls = extract_tool_calls(&response)
-                .into_iter()
-                .map(normalize_tool_call)
-                .collect::<Vec<_>>();
-
             // Model drift (docs/design/68-context-engine.md §7): the step
             // served a different directive than the current one. Never a
             // cut — the steering nudge is appended and the turn continues;
@@ -1947,7 +2074,7 @@ impl Agent {
                 }
                 // A request near the horizon that also drifted is evidence
                 // the horizon itself is optimistic (§1, §6).
-                self.record_capacity_instruction_failure(response.usage.input_tokens)
+                self.record_capacity_instruction_failure(response.usage.prompt_tokens())
                     .await;
                 // Never quotes the directive back: an echo after a tool result
                 // reads as the user asking again (docs/design/68 §6).
@@ -1963,6 +2090,7 @@ impl Agent {
                     if turn + 1 >= self.config.max_turns {
                         return TurnOutcome::MaxTurnsReached;
                     }
+                    let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                     turn += 1;
                     continue;
                 }
@@ -2008,6 +2136,7 @@ impl Agent {
                             prompt_owned.chars().take(600).collect::<String>()
                         ),
                     ));
+                    let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                     turn += 1;
                     continue;
                 }
@@ -2038,6 +2167,7 @@ impl Agent {
                              stale. {available} Retrieve a current reading and answer from what it \
                              returns (a card is fine). If retrieval fails, say what failed."),
                         ));
+                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
                     }
@@ -2071,6 +2201,7 @@ impl Agent {
                                  Answer from those results and name the sources you used, or, if they do not \
                                  answer the target, say so plainly instead of answering from memory."
                             )));
+                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
                     }
@@ -2096,6 +2227,7 @@ impl Agent {
                                  double-check every object/array is closed and every key is quoted. If you can't produce \
                                  valid JSON for it, drop the fence and answer in plain prose instead."
                             )));
+                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
                     }
@@ -2124,6 +2256,7 @@ impl Agent {
                                  WITHOUT the ```vak fence that repeats it — just the short narration around the \
                                  card is needed, no restated JSON."
                             )));
+                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
                     }
@@ -2166,8 +2299,10 @@ impl Agent {
                             // Required card not emitted: evidence the request
                             // may already be past this model's real
                             // instruction-following horizon (§1, §6).
-                            self.record_capacity_instruction_failure(response.usage.input_tokens)
-                                .await;
+                            self.record_capacity_instruction_failure(
+                                response.usage.prompt_tokens(),
+                            )
+                            .await;
                             let _ =
                                 self.session
                                     .lock()
@@ -2176,6 +2311,7 @@ impl Agent {
                                         vak_intent::control::ControlKind::PresentationCheck,
                                         nudge.text,
                                     ));
+                            let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                             turn += 1;
                             continue;
                         }
@@ -2227,6 +2363,7 @@ impl Agent {
                                 vak_intent::control::ControlKind::StopHook,
                                 format!("[stop-hook]: {reason}\nPlease continue."),
                             ));
+                        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
                     }
@@ -2245,7 +2382,7 @@ impl Agent {
                     // Stop-policy block: the model tried to end the turn
                     // prematurely against an explicit completion
                     // requirement (§1, §6).
-                    self.record_capacity_instruction_failure(response.usage.input_tokens)
+                    self.record_capacity_instruction_failure(response.usage.prompt_tokens())
                         .await;
                     if self.guard_continue(reason, &events, turn).await {
                         turn += 1;
@@ -2970,12 +3107,7 @@ impl Agent {
     /// already carrying a card (`TurnIndex` rebuilds `turn.card` from any
     /// existing `TurnCard` entry) is left alone, since a card is written
     /// once and never rewritten.
-    async fn close_turn(
-        &mut self,
-        outcome: &TurnOutcome,
-        cancel: &CancellationToken,
-        events: &mpsc::Sender<AgentEvent>,
-    ) {
+    async fn close_turn(&mut self, outcome: &TurnOutcome) {
         let outcome_label = match outcome {
             TurnOutcome::Completed { .. } => "completed",
             TurnOutcome::Aborted { .. } => "cancelled",
@@ -2998,7 +3130,7 @@ impl Agent {
         }) else {
             return;
         };
-        let narration = self.resolve_narration(&raw_narration, cancel, events).await;
+        let narration = resolve_narration(&raw_narration);
         // No profile wired in ⇒ a metadata-only one
         // (docs/design/68-context-engine.md §4).
         let profile = self.effective_capacity_profile();
@@ -3021,57 +3153,6 @@ impl Agent {
         // when no live profile is wired in (nothing to persist it on).
         if let Some(profile) = self.config.capacity.as_mut() {
             profile.observe_current_turn_tokens(tokens_full);
-        }
-    }
-
-    /// Resolves the caller-visible narration for a `TurnCard`: verbatim when
-    /// short (≤ 60 words), otherwise one side call on the configured model
-    /// with ONLY the narration as input — never the turn's history — asking
-    /// for a one-sentence gist (docs/design/68-context-engine.md §10). On a
-    /// dispatch error, falls back to the narration's own first sentence
-    /// rather than failing turn close over a summarizer hiccup.
-    async fn resolve_narration(
-        &self,
-        narration: &str,
-        cancel: &CancellationToken,
-        events: &mpsc::Sender<AgentEvent>,
-    ) -> String {
-        if narration.split_whitespace().count() <= 60 {
-            return narration.to_string();
-        }
-        let model = self.config.model.clone();
-        let mut request = ChatRequest::new(model.clone());
-        request.system = Some(
-            "Give a one-sentence gist of the following text. Output only that sentence, \
-             nothing else."
-                .to_string(),
-        );
-        request.messages = vec![Message::user_text(narration.to_string())];
-        request.max_tokens = 128;
-        let mut ledger = StepLedger::new(
-            WorkPurpose::Summarize,
-            self.provider.name(),
-            &model,
-            self.config.dispatch_ceiling,
-        );
-        let result = self
-            .complete_with_reliability(&request, cancel, events, false, &mut ledger)
-            .await;
-        {
-            let mut session = self.session.lock().await;
-            let _ = session.append_receipt(ledger.take_receipt());
-        }
-        match result {
-            Ok(message) => {
-                let gist = message.text_content();
-                let gist = gist.trim();
-                if gist.is_empty() {
-                    first_sentence_fallback(narration)
-                } else {
-                    gist.to_string()
-                }
-            }
-            Err(_) => first_sentence_fallback(narration),
         }
     }
 
@@ -3185,6 +3266,7 @@ impl Agent {
             cache: None,
             previous_response_id: None,
             think: None,
+            effort: None,
         };
         let mut ledger = StepLedger::new(
             WorkPurpose::Plan,
@@ -4034,6 +4116,7 @@ impl Agent {
                 vak_intent::control::ControlKind::StopGuard,
                 format!("[stop-guard]: {reason}\nPlease continue."),
             ));
+        let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
         true
     }
 
@@ -4195,60 +4278,45 @@ impl Agent {
     }
 
     /// Model drift (docs/design/68-context-engine.md §7): the step's own
-    /// evidence, not a guess. Checks, in order: (a) a called tool whose
-    /// declared domains are disjoint from the current reading's — only when
-    /// the reading actually HAS domains, so a general/undeclared reading
-    /// never flags every call; (b) for a final answer, an exact match
-    /// against a prior turn's card narration — a verbatim repeat of a past
-    /// answer instead of addressing the current one. Returns the drift
-    /// reason for the nudge, or `None`.
+    /// evidence, not a guess. The only trigger is a final answer that
+    /// exactly matches a prior turn's card narration — a verbatim repeat of
+    /// a past answer instead of addressing the current one. Returns the
+    /// drift reason for the nudge, or `None`.
+    ///
+    /// A tool's declared capability DOMAINS (e.g. `bash` → `code-exec`)
+    /// used to be compared against the current reading's open-vocabulary
+    /// SUBJECT domains (e.g. `engineering`) and flagged as drift whenever
+    /// they were disjoint — which they almost always were, since the two
+    /// vocabularies describe different things: a subject domain is never
+    /// supposed to gate control flow (docs/design/47-commitment-kernel.md).
+    /// Live: every `bash` call inside an ordinary engineering turn was
+    /// flagged ("serves none of the current directive's domains
+    /// (engineering)"), and three in a row ended the turn outright.
     async fn detect_model_drift(
         &self,
         response: &AssistantMessage,
         calls: &[PendingToolCall],
     ) -> Option<String> {
-        let (reading, past_narrations) = {
+        if !calls.is_empty() {
+            return None;
+        }
+        let past_narrations: Vec<String> = {
             let session = self.session.lock().await;
-            let reading = session.latest_reading();
-            let index = TurnIndex::from_log(&session);
-            let narrations: Vec<String> = index
+            TurnIndex::from_log(&session)
                 .turns
                 .iter()
                 .filter_map(|turn| turn.card.as_ref())
                 .map(|card| card.answered.narration.trim().to_string())
                 .filter(|narration| !narration.is_empty())
-                .collect();
-            (reading, narrations)
+                .collect()
         };
-        if let Some(reading) = &reading
-            && !reading.domains.is_empty()
-        {
-            for call in calls {
-                let Some(domains) = self.config.tool_domains.get(&call.name) else {
-                    continue;
-                };
-                if domains.is_empty() {
-                    continue;
-                }
-                if domains.iter().all(|d| !reading.domains.contains(d)) {
-                    return Some(format!(
-                        "called `{}` (domains: {}), which serves none of the current directive's domains ({})",
-                        call.name,
-                        domains.join(", "),
-                        reading.domains.join(", ")
-                    ));
-                }
-            }
-        }
-        if calls.is_empty() {
-            let text = response.text_content();
-            let trimmed = text.trim();
-            if !trimmed.is_empty() && past_narrations.iter().any(|n| n == trimmed) {
-                return Some(
-                    "repeated a previous turn's answer verbatim instead of addressing the current directive"
-                        .to_string(),
-                );
-            }
+        let text = response.text_content();
+        let trimmed = text.trim();
+        if !trimmed.is_empty() && past_narrations.iter().any(|n| n == trimmed) {
+            return Some(
+                "repeated a previous turn's answer verbatim instead of addressing the current directive"
+                    .to_string(),
+            );
         }
         None
     }
@@ -4317,7 +4385,10 @@ impl Agent {
                 continue 'legs;
             }
             let route_provider = if li == 0 {
-                provider_arc.name().to_string()
+                self.config
+                    .provider_name
+                    .clone()
+                    .unwrap_or_else(|| provider_arc.name().to_string())
             } else {
                 self.config
                     .ladder_provider_names
@@ -4422,9 +4493,17 @@ impl Agent {
 
                 let provider_for_stream = provider_arc.clone();
                 let req_for_stream = leg_req.clone();
+                // A per-attempt CHILD token: the run's own `cancel` still
+                // propagates DOWN into it (a real user abort still ends
+                // this attempt immediately), but cancelling this one never
+                // propagates back UP. A watchdog timeout below cancels only
+                // this token, so a hung provider is abandoned without
+                // aborting the whole run.
+                let attempt_cancel = cancel.child_token();
+                let stream_cancel = attempt_cancel.clone();
                 let step = async move {
                     let mut stream = provider_for_stream
-                        .stream(req_for_stream, cancel.clone())
+                        .stream(req_for_stream, stream_cancel)
                         .await?;
                     // First-token latency, wall clock from just before
                     // `.stream()` was called to the first event off the
@@ -4433,20 +4512,49 @@ impl Agent {
                     // other provider feed `prefill_tps` too
                     // (docs/design/68-context-engine.md §1 "Feedback").
                     let mut first_token_ms: Option<u64> = None;
+                    // Coalesce, never drop (clients render deltas, so a
+                    // dropped one loses text): a still-full channel means
+                    // the listener is behind, not gone, so anything that
+                    // does not fit is queued -- merging consecutive deltas
+                    // of the same kind/index via `StreamEvent::try_merge`
+                    // -- and retried ahead of the next event, oldest
+                    // first. Awaiting a send here would let a listener
+                    // that stopped reading stall a step the provider had
+                    // already finished, until the watchdog, so this never
+                    // blocks mid-stream.
+                    let mut pending: VecDeque<StreamEvent> = VecDeque::new();
                     while let Some(ev) = futures::StreamExt::next(&mut stream).await {
                         if first_token_ms.is_none() {
                             first_token_ms = Some(started.elapsed().as_millis() as u64);
                         }
-                        // A stream event is best-effort: each carries the
-                        // message so far, so dropping one when the listener
-                        // is behind loses nothing. Awaiting here let a
-                        // listener that stopped reading stall a step the
-                        // provider had already finished, until the watchdog.
-                        if forward
-                            && let Err(mpsc::error::TrySendError::Closed(_)) =
-                                events.try_send(AgentEvent::Stream(ev))
-                        {
+                        if !forward {
+                            continue;
+                        }
+                        if drain_pending_stream_events(&mut pending, events) {
                             cancel.cancel();
+                            continue;
+                        }
+                        if !pending.is_empty() {
+                            queue_stream_event(&mut pending, ev);
+                            continue;
+                        }
+                        match events.try_send(AgentEvent::Stream(ev)) {
+                            Ok(()) => {}
+                            Err(mpsc::error::TrySendError::Full(sent)) => {
+                                if let Some(event) = into_stream_event(sent) {
+                                    pending.push_back(event);
+                                }
+                            }
+                            Err(mpsc::error::TrySendError::Closed(_)) => cancel.cancel(),
+                        }
+                    }
+                    // The provider's stream ended: flush whatever backlog
+                    // is left with an awaited send, so a slow listener
+                    // never loses the tail of an otherwise-completed step
+                    // to backpressure.
+                    if forward {
+                        for event in pending {
+                            let _ = events.send(AgentEvent::Stream(event)).await;
                         }
                     }
                     stream
@@ -4465,10 +4573,15 @@ impl Agent {
                         )),
                         Err(_) => {
                             // The provider owns a spawned producer keyed by
-                            // this token. A watchdog timeout must revoke the
-                            // attempt before the retry/fallback path can
-                            // release capacity and dispatch again.
-                            cancel.cancel();
+                            // this token. A watchdog timeout must revoke
+                            // the attempt before the retry/fallback path
+                            // can release capacity and dispatch again --
+                            // but only THIS attempt: cancelling the run's
+                            // own token here used to abort the whole run
+                            // (the very next retry's backoff wait would
+                            // see it already cancelled and return Aborted
+                            // instead of actually retrying).
+                            attempt_cancel.cancel();
                             domain_override = Some(FailureDomain::Deadline);
                             Err(LlmError::Network(format!(
                                 "model step exceeded deadline of {}s",
@@ -6090,7 +6203,10 @@ async fn reconcile_repair_budget(
 async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind)]) {
     let remaining = MAX_REPAIR_TURNS.saturating_sub(agent.repair.consecutive_failed_turns - 1);
     let mut parts: Vec<String> = vec![format!(
-        "[repair directive] The run is stuck on correctable tool failures that          were not repaired across turns. Do not repeat the failing call shape;          re-issue with the exact arguments this tool requires. The run will          stop retrying after {} more failed repair turn(s).",
+        "[repair directive] The run is stuck on correctable tool failures that \
+         were not repaired across turns. Do not repeat the failing call shape; \
+         re-issue with the exact arguments this tool requires. The run will \
+         stop retrying after {} more failed repair turn(s).",
         remaining.max(1)
     )];
     let mut seen = std::collections::HashSet::new();
@@ -6125,7 +6241,8 @@ async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind
                 .map(|t| t.name().to_string())
                 .collect();
             parts.push(format!(
-                "\nTool `{}` is not in the admitted set for this turn.                  Admitted tools: {}. Re-issue using an admitted tool.",
+                "\nTool `{}` is not in the admitted set for this turn. Admitted \
+                 tools: {}. Re-issue using an admitted tool.",
                 name,
                 admitted.join(", ")
             ));
@@ -6155,24 +6272,35 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
             vak_session::ActivityStatus::Failed,
             "Tool repair exhausted".into(),
             Some(format!(
-                "correctable tool failures were not repaired within the run                  repair budget ({} repair turns); run stopped rather than                  signing a false complete",
+                "correctable tool failures were not repaired within the run repair \
+                 budget ({} repair turns); run stopped rather than signing a false \
+                 complete",
                 MAX_REPAIR_TURNS
             )),
             std::collections::BTreeMap::from([
-                ("repair_turns".into(), agent.repair.consecutive_failed_turns.to_string()),
+                (
+                    "repair_turns".into(),
+                    agent.repair.consecutive_failed_turns.to_string(),
+                ),
                 (
                     "failed_tools".into(),
-                    failed.iter().map(|(n, _)| n.as_str()).collect::<Vec<_>>().join(","),
+                    failed
+                        .iter()
+                        .map(|(n, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                        .join(","),
                 ),
             ]),
         )
         .await;
     let response = AssistantMessage {
         content: vec![ContentBlock::text(format!(
-            "I attempted the requested work, but the supporting tool calls              failed and could not be repaired within the run's recovery              budget. I will not sign off a fabricated answer. What failed:
-             {summary}
-
-To continue, either correct the inputs above and              re-run, or widen the workspace capabilities / permissions if the              failure is an admission gate."
+            "I attempted the requested work, but the supporting tool calls failed \
+             and could not be repaired within the run's recovery budget. I will \
+             not sign off a fabricated answer. What failed:\n{summary}\n\nTo \
+             continue, either correct the inputs above and re-run, or widen the \
+             workspace capabilities / permissions if the failure is an admission \
+             gate."
         ))],
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),
@@ -6405,8 +6533,31 @@ fn normalize_response_tool_uses(
     }
 }
 
-fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
-    let calls: Vec<PendingToolCall> = response
+/// If `response` carries no structured `tool_use` block but its text holds
+/// one or more explicit tool-call envelopes for a tool loaded this turn --
+/// `<tool_call>{json}</tool_call>` or a fenced block tagged exactly
+/// `tool_call`/`tool_use` -- rewrites `response` in place: each envelope's
+/// exact span is excised from the text (any surrounding prose survives),
+/// replaced by a real `ContentBlock::ToolUse` with a fresh id, and
+/// `stop_reason` becomes `ToolUse`, so the ledger records a valid
+/// tool_use/tool_result pair instead of the envelope text. Called BEFORE
+/// the response is appended to the ledger.
+///
+/// Prose CODE EXAMPLES are deliberately not recognised here any more -- a
+/// ```` ```bash ```` fence, `bash -c "..."`, `bash(command=...)` and
+/// `write(path=..., content=...)` used to be executed as if the model had
+/// asked for them, even when written only to ILLUSTRATE a command rather
+/// than invoke it (live: a prose answer's ```bash example ran and created
+/// a file the model never asked to create). The envelope path is the one
+/// fallback that remains, because unlike a shell fence it is unambiguous:
+/// nothing else in ordinary prose looks like `<tool_call>{"name":
+/// ...}</tool_call>`, and it is gated further by naming a tool actually
+/// loaded this turn.
+fn extract_tool_calls(
+    response: &mut AssistantMessage,
+    loaded: &[Arc<dyn Tool>],
+) -> Vec<PendingToolCall> {
+    let structured: Vec<PendingToolCall> = response
         .content
         .iter()
         .filter_map(|b| match b {
@@ -6418,396 +6569,118 @@ fn extract_tool_calls(response: &AssistantMessage) -> Vec<PendingToolCall> {
             _ => None,
         })
         .collect();
-
-    if !calls.is_empty() {
-        return calls;
+    if !structured.is_empty() {
+        return structured;
     }
-
     let text = response.text_content();
     if text.trim().is_empty() {
-        return calls;
+        return Vec::new();
     }
-
-    parse_text_tool_calls(&text)
-}
-
-fn parse_text_tool_calls(text: &str) -> Vec<PendingToolCall> {
-    let mut calls = Vec::new();
-
-    // 1. Structured JSON blocks: ```tool_call ... ``` or <tool_call> ... </tool_call>
-    for block in extract_tool_call_blocks(text) {
-        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&block)
-            && let Some(call) = json_to_tool_call(&val)
-        {
-            calls.push(call);
-        }
+    let envelopes = parse_tool_call_envelopes(&text, loaded);
+    if envelopes.is_empty() {
+        return Vec::new();
     }
-    if !calls.is_empty() {
-        return calls;
+    let mut remaining = text;
+    for (_, span) in envelopes.iter().rev() {
+        remaining.replace_range(span.clone(), "");
     }
-
-    // 2. Functional write calls: write(path="...", content="...")
-    let mut cursor = 0;
-    while cursor < text.len() {
-        let sub = &text[cursor..];
-        let found = sub
-            .find("write(")
-            .map(|i| (i, "write(".len()))
-            .or_else(|| sub.find("write ").map(|i| (i, "write ".len())));
-        let Some((rel_idx, offset)) = found else {
-            break;
-        };
-        let call_start = cursor + rel_idx;
-        let call_sub = &text[call_start + offset..];
-
-        let next_delim = [
-            call_sub.find("\nwrite("),
-            call_sub.find("\nwrite "),
-            call_sub.find("\nbash("),
-            call_sub.find("\nbash "),
-            call_sub.find("\n```"),
-        ]
-        .into_iter()
-        .flatten()
-        .min()
-        .unwrap_or(call_sub.len());
-        let this_call_text = &call_sub[..next_delim];
-
-        if let Some(path) = extract_named_param(this_call_text, "path=")
-            .or_else(|| extract_named_param(this_call_text, "file="))
-            && let Some(content) = extract_content_param(this_call_text)
-        {
-            calls.push(PendingToolCall {
-                id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                name: "write".into(),
-                input: serde_json::json!({"path": path, "content": content}),
-            });
-            cursor = call_start + offset + next_delim;
-        } else if let Some(call) =
-            parse_write_call_from_text(&text[call_start..call_start + offset + next_delim])
-        {
-            calls.push(call);
-            cursor = call_start + offset + next_delim;
-        } else {
-            cursor = call_start + offset;
-        }
+    let remaining = remaining.trim().to_string();
+    response
+        .content
+        .retain(|block| !matches!(block, ContentBlock::Text { .. }));
+    if !remaining.is_empty() {
+        response.content.insert(0, ContentBlock::text(remaining));
     }
-
-    // 3. Command execution: bash -c "..." or bash("...")
-    let mut cursor = 0;
-    while cursor < text.len() {
-        let sub = &text[cursor..];
-        if let Some(call) = parse_bash_call_from_text(sub) {
-            let cmd_str = call
-                .input
-                .get("command")
-                .and_then(|c| c.as_str())
-                .unwrap_or("")
-                .to_string();
-            calls.push(call);
-            if !cmd_str.is_empty()
-                && let Some(idx) = sub.find(&cmd_str)
-            {
-                cursor += idx + cmd_str.len();
-            } else {
-                cursor += 10;
-            }
-        } else {
-            break;
-        }
+    let calls: Vec<PendingToolCall> = envelopes.into_iter().map(|(call, _)| call).collect();
+    for call in &calls {
+        response.content.push(ContentBlock::ToolUse {
+            id: call.id.clone(),
+            name: call.name.clone(),
+            input: call.input.clone(),
+        });
     }
-
+    response.stop_reason = StopReason::ToolUse;
     calls
 }
 
-fn extract_tool_call_blocks(text: &str) -> Vec<String> {
+/// Every recognised envelope in `text` that names a tool loaded this turn,
+/// paired with the exact byte span (open tag through close tag) it
+/// occupies so the caller can excise just the envelope and keep any
+/// surrounding prose.
+fn parse_tool_call_envelopes(
+    text: &str,
+    loaded: &[Arc<dyn Tool>],
+) -> Vec<(PendingToolCall, std::ops::Range<usize>)> {
+    extract_tool_call_blocks(text)
+        .into_iter()
+        .filter_map(|(body, span)| {
+            let val = serde_json::from_str::<serde_json::Value>(&body).ok()?;
+            json_to_tool_call(&val, loaded).map(|call| (call, span))
+        })
+        .collect()
+}
+
+/// Scans `text` for `<tool_call>...</tool_call>` and fenced blocks tagged
+/// exactly `tool_call` or `tool_use`, returning each one's trimmed JSON
+/// body alongside the full span it occupies, in the order they appear. A
+/// block whose body has neither `"name"` nor `"tool"` is skipped before it
+/// ever reaches JSON parsing -- not every fenced block a model writes is a
+/// call.
+fn extract_tool_call_blocks(text: &str) -> Vec<(String, std::ops::Range<usize>)> {
     let mut blocks = Vec::new();
-    for tag in ["<tool_call>", "```tool_call", "```tool_use", "```json"] {
+    for tag in ["<tool_call>", "```tool_call", "```tool_use"] {
         let mut cursor = 0;
         while let Some(start_idx) = text[cursor..].find(tag) {
-            let abs_start = cursor + start_idx + tag.len();
+            let open_start = cursor + start_idx;
+            let body_start = open_start + tag.len();
             let close_tag = if tag.starts_with('<') {
                 "</tool_call>"
             } else {
                 "```"
             };
-            if let Some(end_idx) = text[abs_start..].find(close_tag) {
-                let block = text[abs_start..abs_start + end_idx].trim().to_string();
-                if block.contains("\"name\"") || block.contains("\"tool\"") {
-                    blocks.push(block);
-                }
-                cursor = abs_start + end_idx + close_tag.len();
-            } else {
+            let Some(end_idx) = text[body_start..].find(close_tag) else {
                 break;
+            };
+            let body_end = body_start + end_idx;
+            let close_end = body_end + close_tag.len();
+            let body = text[body_start..body_end].trim().to_string();
+            if body.contains("\"name\"") || body.contains("\"tool\"") {
+                blocks.push((body, open_start..close_end));
             }
+            cursor = close_end;
         }
     }
+    blocks.sort_by_key(|(_, span)| span.start);
     blocks
 }
 
-fn json_to_tool_call(val: &serde_json::Value) -> Option<PendingToolCall> {
+/// Builds a call from an envelope's parsed JSON body: `name` (or `tool`)
+/// must name a tool loaded this turn, or the envelope is ignored --
+/// otherwise this fallback could invoke anything a model happened to spell
+/// out. `arguments`/`input`/`parameters`, when present, must be a JSON
+/// object; absent defaults to `{}`, still a valid, argument-less call.
+fn json_to_tool_call(val: &serde_json::Value, loaded: &[Arc<dyn Tool>]) -> Option<PendingToolCall> {
     let name = val
         .get("name")
         .or_else(|| val.get("tool"))
         .and_then(|v| v.as_str())?;
-    let input = val
+    if !loaded.iter().any(|tool| tool.name() == name) {
+        return None;
+    }
+    let input = match val
         .get("arguments")
         .or_else(|| val.get("input"))
         .or_else(|| val.get("parameters"))
-        .cloned()
-        .unwrap_or(serde_json::json!({}));
+    {
+        Some(value) if value.is_object() => value.clone(),
+        Some(_) => return None,
+        None => serde_json::json!({}),
+    };
     Some(PendingToolCall {
         id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
         name: name.to_string(),
         input,
     })
-}
-
-fn parse_write_call_from_text(text: &str) -> Option<PendingToolCall> {
-    let (write_idx, offset) = if let Some(idx) = text.find("write(") {
-        (idx, "write(".len())
-    } else {
-        let idx = text.find("write ")?;
-        (idx, "write ".len())
-    };
-    let sub = text[write_idx + offset..].trim_start();
-
-    // 1. Try explicit named parameters
-    let path = extract_named_param(sub, "path=").or_else(|| extract_named_param(sub, "file="));
-    let content = extract_content_param(sub);
-
-    if let (Some(p), Some(c)) = (path, content) {
-        return Some(PendingToolCall {
-            id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-            name: "write".into(),
-            input: serde_json::json!({"path": p, "content": c}),
-        });
-    }
-
-    // 2. Try positional or command-style: write [path] [content]
-    for quote_str in ["\"\"\"", "'''", "\"", "'"] {
-        let (p, content_sub) = if sub.starts_with('"') || sub.starts_with('\'') {
-            let Some(q) = sub.chars().next() else {
-                continue;
-            };
-            let rest = &sub[q.len_utf8()..];
-            let Some(end_p) = rest.find(q) else {
-                continue;
-            };
-            let p = rest[..end_p].to_string();
-            let after = rest[end_p + q.len_utf8()..].trim_start();
-            let after = if let Some(stripped) = after.strip_prefix(',') {
-                stripped.trim_start()
-            } else {
-                after
-            };
-            (p, after)
-        } else {
-            let Some(q_idx) = sub.find(quote_str) else {
-                continue;
-            };
-            let prefix = sub[..q_idx].trim();
-            let Some(p) = prefix
-                .split(|c: char| c.is_whitespace() || c == '=' || c == ',' || c == '\\' || c == '(')
-                .find(|token| !token.is_empty() && (token.contains('/') || token.contains('.')))
-            else {
-                continue;
-            };
-            let p = p.trim_matches('"').trim_matches('\'').to_string();
-            (p, &sub[q_idx..])
-        };
-
-        if let Some(c) =
-            extract_content_param(content_sub).or_else(|| extract_raw_content(content_sub))
-            && !p.is_empty()
-            && !c.is_empty()
-        {
-            return Some(PendingToolCall {
-                id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                name: "write".into(),
-                input: serde_json::json!({"path": p, "content": c}),
-            });
-        }
-    }
-    None
-}
-
-fn extract_raw_content(sub: &str) -> Option<String> {
-    let sub = sub.trim_start();
-    for triple in ["\"\"\"", "'''"] {
-        if let Some(rest) = sub.strip_prefix(triple) {
-            let end = rest.find(triple)?;
-            return Some(rest[..end].trim().to_string());
-        }
-    }
-    if sub.starts_with('"') || sub.starts_with('\'') {
-        let quote = sub.chars().next()?;
-        let rest = &sub[quote.len_utf8()..];
-        let mut end_idx = None;
-        let mut escaped = false;
-        for (i, ch) in rest.char_indices() {
-            if escaped {
-                escaped = false;
-                continue;
-            }
-            if ch == '\\' {
-                escaped = true;
-                continue;
-            }
-            if ch == quote {
-                let rem = rest[i + 1..].trim_start();
-                if rem.starts_with(')') || rem.starts_with("```") || rem.is_empty() {
-                    end_idx = Some(i);
-                    break;
-                }
-            }
-        }
-        if let Some(end) = end_idx {
-            return Some(unescape_string(&rest[..end]));
-        }
-    }
-    None
-}
-
-fn extract_named_param(sub: &str, prefix: &str) -> Option<String> {
-    let idx = sub.find(prefix)?;
-    let after = &sub[idx + prefix.len()..];
-    let quote = after.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let val_start = &after[quote.len_utf8()..];
-    let end_idx = val_start.find(quote)?;
-    Some(val_start[..end_idx].to_string())
-}
-
-fn extract_content_param(sub: &str) -> Option<String> {
-    let idx = sub.find("content=")?;
-    let after = sub[idx + "content=".len()..].trim_start();
-    for triple in ["\"\"\"", "'''"] {
-        if let Some(rest) = after.strip_prefix(triple) {
-            let end = rest.find(triple)?;
-            return Some(rest[..end].to_string());
-        }
-    }
-    let quote = after.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
-    }
-    let rest = &after[quote.len_utf8()..];
-    let mut end_idx = None;
-    let mut escaped = false;
-    for (i, ch) in rest.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if ch == '\\' {
-            escaped = true;
-            continue;
-        }
-        if ch == quote {
-            let rem = rest[i + 1..].trim_start();
-            if rem.starts_with(')')
-                || rem.starts_with("-->")
-                || rem.starts_with("```")
-                || rem.starts_with("\nbash")
-                || rem.starts_with("\nwrite")
-                || rem.is_empty()
-            {
-                end_idx = Some(i);
-                break;
-            }
-        }
-    }
-    if let Some(end) = end_idx {
-        let raw = &rest[..end];
-        return Some(unescape_string(raw));
-    }
-    None
-}
-
-fn unescape_string(raw: &str) -> String {
-    if !raw.contains('\\') {
-        return raw.to_string();
-    }
-    if let Ok(val) = serde_json::from_str::<String>(&format!("\"{raw}\"")) {
-        return val;
-    }
-    raw.replace("\\n", "\n")
-        .replace("\\t", "\t")
-        .replace("\\\"", "\"")
-        .replace("\\'", "'")
-        .replace("\\\\", "\\")
-}
-
-fn parse_bash_call_from_text(text: &str) -> Option<PendingToolCall> {
-    for needle in ["bash -c \"", "bash -c '"] {
-        if let Some(idx) = text.find(needle) {
-            let Some(quote) = needle.chars().last() else {
-                continue;
-            };
-            let rest = &text[idx + needle.len()..];
-            if let Some(end) = rest.find(quote) {
-                let cmd = &rest[..end];
-                if !cmd.trim().is_empty() {
-                    return Some(PendingToolCall {
-                        id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                        name: "bash".into(),
-                        input: serde_json::json!({"command": cmd.trim()}),
-                    });
-                }
-            }
-        }
-    }
-    if let Some(idx) = text.find("bash(") {
-        let sub = &text[idx + 5..];
-        if let Some(cmd) =
-            extract_named_param(sub, "command=").or_else(|| extract_named_param(sub, "cmd="))
-            && !cmd.trim().is_empty()
-        {
-            return Some(PendingToolCall {
-                id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                name: "bash".into(),
-                input: serde_json::json!({"command": cmd.trim()}),
-            });
-        }
-    }
-    // Fenced shell code blocks: ```bash ... ``` or ```sh ... ```
-    for tag in [
-        "```bash\n",
-        "```sh\n",
-        "```shell\n",
-        "```zsh\n",
-        "```bash\r\n",
-        "```sh\r\n",
-    ] {
-        if let Some(idx) = text.find(tag) {
-            let start = idx + tag.len();
-            let rest = &text[start..];
-            let end_idx = rest
-                .find("\n```")
-                .or_else(|| rest.find("\r\n```"))
-                .or_else(|| rest.find("```"));
-            let raw_cmd = match end_idx {
-                Some(e) => &rest[..e],
-                None => rest,
-            }
-            .trim();
-            if !raw_cmd.is_empty()
-                && !raw_cmd.starts_with("write(")
-                && !raw_cmd.starts_with("write ")
-                && !raw_cmd.starts_with("write\t")
-            {
-                return Some(PendingToolCall {
-                    id: format!("call_txt_{:08x}", rand_jitter(u64::MAX)),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": raw_cmd}),
-                });
-            }
-        }
-    }
-    None
 }
 
 fn backoff_delay(attempt: u32, retry_after_secs: Option<u64>, base_ms: u64) -> std::time::Duration {
@@ -6826,6 +6699,59 @@ fn rand_jitter(ms: u64) -> u64 {
         .fetch_add(0x9E3779B97F4A7C15, Ordering::Relaxed)
         .wrapping_add(0x9E3779B97F4A7C15);
     (x >> 33) % ms.max(2)
+}
+
+/// Extracts the `StreamEvent` back out of a failed `try_send`'s returned
+/// `AgentEvent` -- every event the stream-forwarding loop sends is
+/// `AgentEvent::Stream`, but `TrySendError`'s payload is generic over the
+/// channel's whole message type. `None` is unreachable in practice (this is
+/// only ever called on a value this module itself just wrapped) but is
+/// handled as a silent no-op rather than assumed, since asserting it would
+/// mean panicking on a channel error.
+fn into_stream_event(event: AgentEvent) -> Option<StreamEvent> {
+    match event {
+        AgentEvent::Stream(ev) => Some(ev),
+        _ => None,
+    }
+}
+
+/// Drains `pending` into `events` oldest-first without blocking (§6 below).
+/// Returns `true` once the listener is confirmed gone (`Closed`); a
+/// still-full channel (`Full`) just leaves the rest queued for the next
+/// call -- backpressure is not the same as nobody listening.
+fn drain_pending_stream_events(
+    pending: &mut VecDeque<StreamEvent>,
+    events: &mpsc::Sender<AgentEvent>,
+) -> bool {
+    while let Some(event) = pending.pop_front() {
+        match events.try_send(AgentEvent::Stream(event)) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Full(sent)) => {
+                if let Some(event) = into_stream_event(sent) {
+                    pending.push_front(event);
+                }
+                return false;
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => return true,
+        }
+    }
+    false
+}
+
+/// Queues one stream event for forwarding, merging it into the last still-
+/// pending event when `StreamEvent::try_merge` allows it, so a slow
+/// listener's backlog stays one entry per in-progress block instead of
+/// growing one entry per delta (docs/design/68-context-engine.md §6:
+/// lossless streaming -- coalesce under backpressure, never drop).
+fn queue_stream_event(pending: &mut VecDeque<StreamEvent>, event: StreamEvent) {
+    match pending.back_mut() {
+        Some(last) => {
+            if let Some(event) = last.try_merge(event) {
+                pending.push_back(event);
+            }
+        }
+        None => pending.push_back(event),
+    }
 }
 
 #[cfg(test)]
@@ -7207,135 +7133,189 @@ mod auto_approve_tests {
 }
 
 #[cfg(test)]
-mod parse_text_tool_calls_tests {
-    use super::parse_text_tool_calls;
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tool_call_envelope_tests {
+    use super::{ContentBlock, PendingToolCall, extract_tool_calls};
+    use vak_llm::types::{AssistantMessage, StopReason, Usage};
+    use vak_tools::{Tool, ToolContext, ToolOutput};
 
-    #[test]
-    fn parses_write_functional_syntax() {
-        let text = r#"Surface: terminal CLI.
-```bash
-write(path=".vak/scratch/test.html", content="<!DOCTYPE html>\n<html><body>Hi</body></html>")
-```
-"#;
-        let calls = parse_text_tool_calls(text);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "write");
-        assert_eq!(calls[0].input["path"], ".vak/scratch/test.html");
+    struct FakeTool(&'static str);
+
+    #[async_trait::async_trait]
+    impl Tool for FakeTool {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn description(&self) -> &str {
+            "fake"
+        }
+        fn schema(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+            ToolOutput::ok(String::new())
+        }
+    }
+
+    fn loaded() -> Vec<std::sync::Arc<dyn Tool>> {
+        vec![
+            std::sync::Arc::new(FakeTool("write")),
+            std::sync::Arc::new(FakeTool("bash")),
+        ]
+    }
+
+    fn text_response(text: &str) -> AssistantMessage {
+        AssistantMessage {
+            content: vec![ContentBlock::text(text.to_string())],
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+            model: "test-model".into(),
+            response_id: None,
+        }
+    }
+
+    fn assert_no_calls_and_unchanged(text: &str) {
+        let mut response = text_response(text);
+        let original = response.clone();
+        let calls = extract_tool_calls(&mut response, &loaded());
+        assert!(calls.is_empty(), "{text:?} must produce no calls");
         assert_eq!(
-            calls[0].input["content"],
-            "<!DOCTYPE html>\n<html><body>Hi</body></html>"
+            response, original,
+            "a response with no recognised envelope must be left untouched"
+        );
+    }
+
+    /// A fenced shell example is prose, not an instruction: illustrating a
+    /// command must never execute it (live: a ```bash example ran and
+    /// created a file the model never asked to create).
+    #[test]
+    fn prose_with_a_bash_fence_produces_no_calls() {
+        assert_no_calls_and_unchanged(
+            "Here is an example:\n```bash\necho FENCE-EXECUTED > marker.txt\n```\n",
+        );
+    }
+
+    /// The ```json fence path is removed entirely: a model narrating JSON
+    /// that happens to include a "name" field must not be interpreted as a
+    /// tool call.
+    #[test]
+    fn json_fence_with_a_name_field_produces_no_calls() {
+        assert_no_calls_and_unchanged(
+            "For reference, the shape is:\n```json\n{\"name\": \"write\", \"arguments\": {\"path\": \"a\", \"content\": \"b\"}}\n```\n",
         );
     }
 
     #[test]
-    fn parses_bash_c_syntax() {
-        let text = r#"bash -c "ls -l .vak/scratch/test.html && head -n 10 .vak/scratch/test.html""#;
-        let calls = parse_text_tool_calls(text);
+    fn bash_dash_c_in_prose_produces_no_calls() {
+        assert_no_calls_and_unchanged(r#"You could run bash -c "echo hi" locally."#);
+    }
+
+    #[test]
+    fn functional_write_call_in_prose_produces_no_calls() {
+        assert_no_calls_and_unchanged(
+            r#"The call looks like write(path="a.txt", content="hello")."#,
+        );
+    }
+
+    /// An envelope naming a tool that was not loaded this turn is ignored:
+    /// the fallback must not invoke anything a model happened to spell out.
+    #[test]
+    fn envelope_naming_an_unknown_tool_produces_no_call() {
+        assert_no_calls_and_unchanged(
+            "<tool_call>{\"name\": \"delete_everything\", \"arguments\": {}}</tool_call>",
+        );
+    }
+
+    /// An envelope whose `arguments` is present but not a JSON object is
+    /// malformed and ignored rather than guessed at.
+    #[test]
+    fn envelope_with_non_object_arguments_produces_no_call() {
+        assert_no_calls_and_unchanged(
+            "<tool_call>{\"name\": \"bash\", \"arguments\": \"not an object\"}</tool_call>",
+        );
+    }
+
+    /// The XML-style envelope naming a loaded tool produces a ToolUse block
+    /// in the rewritten response, with a paired PendingToolCall to dispatch,
+    /// and the envelope text is excised while surrounding prose survives.
+    #[test]
+    fn xml_envelope_naming_a_loaded_tool_produces_a_tool_use_block() {
+        let mut response = text_response(
+            "Let me check that for you.\n<tool_call>{\"name\": \"bash\", \"arguments\": {\"command\": \"ls\"}}</tool_call>\nDone.",
+        );
+        let calls = extract_tool_calls(&mut response, &loaded());
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "bash");
-        assert_eq!(
-            calls[0].input["command"],
-            "ls -l .vak/scratch/test.html && head -n 10 .vak/scratch/test.html"
-        );
+        assert_eq!(calls[0].input["command"], "ls");
+        assert_eq!(response.stop_reason, StopReason::ToolUse);
+        let tool_use_ids: Vec<&str> = response
+            .content
+            .iter()
+            .filter_map(|b| match b {
+                ContentBlock::ToolUse { id, name, .. } if name == "bash" => Some(id.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_use_ids, vec![calls[0].id.as_str()]);
+        let remaining_text = response.text_content();
+        assert!(remaining_text.contains("Let me check that for you."));
+        assert!(remaining_text.contains("Done."));
+        assert!(!remaining_text.contains("tool_call"));
     }
 
+    /// The fenced `tool_call`/`tool_use` envelope, keyed by `tool` +
+    /// `input` instead of `name` + `arguments`, is recognised the same way.
     #[test]
-    fn parses_json_fenced_tool_call() {
-        let text = r##"Here is the call:
-```tool_call
-{"name": "write", "arguments": {"path": "notes.md", "content": "# Notes"}}
-```
-"##;
-        let calls = parse_text_tool_calls(text);
+    fn fenced_tool_use_envelope_with_tool_and_input_keys_is_recognised() {
+        let mut response = text_response(
+            "```tool_use\n{\"tool\": \"write\", \"input\": {\"path\": \"a.txt\", \"content\": \"hi\"}}\n```",
+        );
+        let calls = extract_tool_calls(&mut response, &loaded());
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].name, "write");
-        assert_eq!(calls[0].input["path"], "notes.md");
+        assert_eq!(calls[0].input["path"], "a.txt");
+        assert_eq!(response.stop_reason, StopReason::ToolUse);
+    }
+
+    /// Missing `arguments`/`input`/`parameters` defaults to an empty
+    /// object rather than being rejected as malformed.
+    #[test]
+    fn envelope_with_no_arguments_key_defaults_to_an_empty_object() {
+        let mut response = text_response("<tool_call>{\"name\": \"bash\"}</tool_call>");
+        let calls = extract_tool_calls(&mut response, &loaded());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].input, serde_json::json!({}));
+    }
+
+    /// A structured `tool_use` content block always wins over any text
+    /// envelope: the fallback is never consulted when the provider already
+    /// gave a real tool call.
+    #[test]
+    fn a_structured_tool_use_block_short_circuits_the_text_fallback() {
+        let mut response = AssistantMessage {
+            content: vec![ContentBlock::ToolUse {
+                id: "real-1".into(),
+                name: "bash".into(),
+                input: serde_json::json!({"command": "ls"}),
+            }],
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            model: "test-model".into(),
+            response_id: None,
+        };
+        let calls = extract_tool_calls(&mut response, &loaded());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "real-1");
     }
 
     #[test]
-    fn parses_positional_triple_quoted_write() {
-        let text = r#"Surface: terminal CLI.
-```bash
-write(".vak/scratch/bloomberg.html", """
-<!DOCTYPE html>
-<html><body>Bloomberg</body></html>
-""")
-```
-"#;
-        let calls = parse_text_tool_calls(text);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "write");
-        assert_eq!(calls[0].input["path"], ".vak/scratch/bloomberg.html");
-        assert!(
-            calls[0].input["content"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("Bloomberg")
-        );
-    }
-
-    #[test]
-    fn parses_named_write_with_nested_quoted_commas() {
-        let text = r#"```bash
-write(path="app.js", content="const data = [{ q: \"What?\", a: \"Answer\" }];")
-```"#;
-        let calls = parse_text_tool_calls(text);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "write");
-        assert_eq!(calls[0].input["path"], "app.js");
-        assert!(
-            calls[0].input["content"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("What?")
-        );
-        assert!(
-            calls[0].input["content"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("Answer")
-        );
-    }
-
-    #[test]
-    fn parses_cli_style_write_with_backslash() {
-        let text = r#"Surface: terminal CLI.
-```bash
-write content=.vak/scratch/react_app.html \
-"<!DOCTYPE html><html><body>React App</body></html>"
-```"#;
-        let calls = parse_text_tool_calls(text);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "write");
-        assert_eq!(calls[0].input["path"], ".vak/scratch/react_app.html");
-        assert!(
-            calls[0].input["content"]
-                .as_str()
-                .unwrap_or_default()
-                .contains("React App")
-        );
-    }
-
-    #[test]
-    fn parses_fenced_bash_script() {
-        let text = r#"I will run the Python script to generate the dashboard:
-
-```bash
-mkdir -p .vak/scratch
-cat <<EOF > .vak/scratch/markov_dashboard.py
-import numpy as np
-print("Markov Chain Dashboard")
-EOF
-
-python3 .vak/scratch/markov_dashboard.py
-```
-
-Execution finished."#;
-        let calls = parse_text_tool_calls(text);
-        assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].name, "bash");
-        let cmd = calls[0].input["command"].as_str().unwrap_or_default();
-        assert!(cmd.contains("mkdir -p .vak/scratch"));
-        assert!(cmd.contains("python3 .vak/scratch/markov_dashboard.py"));
+    fn a_pending_tool_call_carries_the_expected_fields() {
+        // Sanity check on the struct's shape used throughout this module.
+        let call = PendingToolCall {
+            id: "x".into(),
+            name: "bash".into(),
+            input: serde_json::json!({"command": "ls"}),
+        };
+        assert_eq!(call.name, "bash");
     }
 }

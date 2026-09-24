@@ -341,18 +341,27 @@ impl Accumulator {
                     self.message.response_id = Some(id.to_string());
                 }
                 if let Some(usage) = v.pointer("/response/usage") {
+                    // Same normalization as the chat adapter: Responses'
+                    // `input_tokens` already includes
+                    // `input_tokens_details.cached_tokens`, so the cached
+                    // share must be subtracted to get the non-cached
+                    // remainder every adapter reports as `input_tokens`
+                    // (docs/design/68-context-engine.md §1).
+                    let raw_input = usage
+                        .get("input_tokens")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
+                    let cached_tokens = usage
+                        .pointer("/input_tokens_details/cached_tokens")
+                        .and_then(|x| x.as_u64())
+                        .unwrap_or(0);
                     self.message.usage = Usage {
-                        input_tokens: usage
-                            .get("input_tokens")
-                            .and_then(|x| x.as_u64())
-                            .unwrap_or(0),
+                        input_tokens: raw_input.saturating_sub(cached_tokens),
                         output_tokens: usage
                             .get("output_tokens")
                             .and_then(|x| x.as_u64())
                             .unwrap_or(0),
-                        cache_read_input_tokens: usage
-                            .pointer("/input_tokens_details/cached_tokens")
-                            .and_then(|x| x.as_u64()),
+                        cache_read_input_tokens: (cached_tokens > 0).then_some(cached_tokens),
                         cache_creation_input_tokens: None,
                         ..Default::default()
                     };
