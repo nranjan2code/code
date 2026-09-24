@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.2 — 2026-09-24
+
+- **Presentation hydration.** Added timeline snapshot reconciliation and presentation hydration helper in `vak-client-ui` to preserve and smoothly merge presentation state in the client store.
+- **Tool input recovery and normalization.** Added schema-driven unwrapping for model tool call wrapper dialects, normalized tool calls in assistant responses, and strengthened MCP tool validation and roundtrip handling.
+- **Intent kernel and strand refinement.** Refined act extraction for delivery verbs and locate phrases, updated tier-1 lexicon digest, and improved primary strand selection in composite reading to prioritize independent clauses over dependent modifier clauses.
+- **Freshness and retrieval hints.** Added discovery-aware retrieval hints naming only admitted routes when repairing answers, and added search URL shape identification.
+
 ## 4.0.1 — 2026-09-24
 
 - **`self install` no longer says a linked CLI is missing from PATH.** It checked only whether the install's own directory was on PATH, so a `~/.local/bin/vak` symlink into the app bundle was reported as "not on PATH". It now resolves `vak` the way a shell does — the first executable match wins — and compares real paths. A different `vak` earlier on PATH is named as shadowing the install, with only the PATH-order fix offered, since a link placed after it would change nothing.

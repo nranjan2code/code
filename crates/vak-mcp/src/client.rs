@@ -506,7 +506,10 @@ mod tests {
             {"type": "text", "text": "first"},
             {"type": "text", "text": "second"}
         ]});
-        assert_eq!(text_tool_result(&result).unwrap(), "first\nsecond");
+        assert_eq!(
+            text_tool_result(&result).ok().as_deref(),
+            Some("first\nsecond")
+        );
     }
 
     #[test]
