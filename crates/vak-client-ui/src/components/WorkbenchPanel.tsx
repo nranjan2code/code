@@ -22,7 +22,7 @@ import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
 import OfficeChangeList from "./OfficeChangeList";
 import { isOfficePath } from "../officeRedline";
-import { pendingVersions } from "../candidateVersions";
+import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { trapFocus } from "../focusTrap";
@@ -143,10 +143,9 @@ export default function WorkbenchPanel() {
   const [pendingCandidates, setPendingCandidates] = createSignal<api.SandboxCandidateRecord[]>([]);
   const [candidateBusy, setCandidateBusy] = createSignal(false);
   const [promotionMessage, setPromotionMessage] = createSignal<string | null>(null);
-  const [appliedPromotion, setAppliedPromotion] = createSignal<api.SandboxPromotionRecord | null>(null);
-  const [appliedPromotionExecutionId, setAppliedPromotionExecutionId] = createSignal<string | null>(null);
-  const [appliedWorkspaceChecks, setAppliedWorkspaceChecks] = createSignal<api.WorkspaceCheckPlan[]>([]);
-  const [workspaceCheckReceipts, setWorkspaceCheckReceipts] = createSignal<api.SandboxWorkspaceCheckRecord[]>([]);
+  // The session's durable sandbox records: what an execution's acceptance
+  // can still undo is derived from these, never from what this page did.
+  const [sandboxRecords, setSandboxRecords] = createSignal<api.SandboxRecord[]>([]);
   const [workspaceCheckBusy, setWorkspaceCheckBusy] = createSignal<string | null>(null);
   const [undoBusy, setUndoBusy] = createSignal(false);
   const [reviewOpen, setReviewOpen] = createSignal(false);
@@ -169,28 +168,33 @@ export default function WorkbenchPanel() {
   const [reviewCommentMessage, setReviewCommentMessage] = createSignal<string | null>(null);
   const [previewPreparations, setPreviewPreparations] = createSignal<api.SandboxPreviewPreparationRecord[]>([]);
 
+  let recordsRequest = 0;
+  const loadSandboxRecords = async (sessionId: string) => {
+    const request = ++recordsRequest;
+    const { records } = await api.listSessionSandboxRecords(sessionId);
+    if (request === recordsRequest && activeId() === sessionId) setSandboxRecords(records);
+    return records;
+  };
+  // Shows a record the server just returned at once, then reloads so the
+  // list stays exactly what the server holds.
+  const recordAppended = (sessionId: string, record: api.SandboxRecord) => {
+    recordsRequest += 1;
+    if (activeId() === sessionId) setSandboxRecords((current) => [...current, record]);
+    void loadSandboxRecords(sessionId).catch(() => { /* The appended record stands until the next load. */ });
+  };
   createEffect(() => {
     const sessionId = activeId();
-    setAppliedPromotion(null);
-    setAppliedPromotionExecutionId(null);
-    setAppliedWorkspaceChecks([]);
-    setWorkspaceCheckReceipts([]);
-    if (!sessionId) return;
-    let disposed = false;
-    void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
-      if (disposed) return;
-      const undone = new Set(records.filter((record) => record.kind === "PromotionUndo").map((record) => record.record.candidate_id));
-      const latest = records.filter((record): record is { kind: "Promotion"; record: api.SandboxPromotionRecord } => record.kind === "Promotion" && !undone.has(record.record.candidate_id)).at(-1)?.record ?? null;
-      setAppliedPromotion(latest);
-      if (latest) {
-        const source = records.find((record): record is { kind: "Candidate"; record: api.SandboxCandidateRecord } => record.kind === "Candidate" && record.record.candidate.candidate_id === latest.candidate_id)?.record;
-        setAppliedPromotionExecutionId(source?.execution_id ?? null);
-        setAppliedWorkspaceChecks(latest.workspace_checks ?? []);
-        setWorkspaceCheckReceipts(records.filter((record): record is { kind: "WorkspaceCheck"; record: api.SandboxWorkspaceCheckRecord } => record.kind === "WorkspaceCheck" && record.record.candidate_id === latest.candidate_id).map((record) => record.record));
-      }
-    }).catch(() => { /* Undo remains hidden when durable state is unavailable. */ });
-    onCleanup(() => { disposed = true; });
+    recordsRequest += 1;
+    setSandboxRecords([]);
+    if (sessionId) void loadSandboxRecords(sessionId).catch(() => { /* Undo remains hidden when durable state is unavailable. */ });
   });
+  const acceptanceFor = (executionId: string) => undoablePromotion(sandboxRecords(), executionId);
+  const acceptanceMessage = (executionId: string) => {
+    const applied = acceptanceFor(executionId);
+    return applied ? acceptanceSummary(applied) : null;
+  };
+  const workspaceCheckReceipts = (candidateId: string) => sandboxRecords().flatMap((record) => record.kind === "WorkspaceCheck" && record.record.candidate_id === candidateId ? [record.record] : []);
+
   const [candidateComments, setCandidateComments] = createSignal<api.SandboxCandidateComment[]>([]);
   const [controlError, setControlError] = createSignal<string | null>(null);
   const [pulse, setPulse] = createSignal(0);
@@ -249,7 +253,7 @@ export default function WorkbenchPanel() {
       let disposed = false;
       const sessionId = activeId();
       if (!sessionId) return key;
-      void api.listSessionSandboxRecords(sessionId).then(({ records }) => {
+      void loadSandboxRecords(sessionId).then((records) => {
         if (disposed) return;
         if (reviewOpen() && candidate()?.execution_id !== exec.id) return;
         const pending = pendingVersions(records, exec.id);
@@ -451,8 +455,8 @@ export default function WorkbenchPanel() {
           if (!disposed && candidate()?.candidate.candidate_id === prepared.candidate.candidate_id) setCandidateComments(comments);
         })
         .catch(() => { /* Keep the last known comments during a connection failure. */ });
-      void api.listSessionSandboxRecords(sessionId)
-        .then(({ records }) => {
+      void loadSandboxRecords(sessionId)
+        .then((records) => {
           if (disposed || candidate()?.candidate.candidate_id !== prepared.candidate.candidate_id) return;
           setPreviewPreparations(records.filter((record): record is { kind: "PreviewPreparation"; record: api.SandboxPreviewPreparationRecord } => record.kind === "PreviewPreparation").map((record) => record.record));
           const versions = pendingVersions(records, prepared.execution_id);
@@ -481,7 +485,7 @@ export default function WorkbenchPanel() {
     if (!sessionId || !exec || exec.artifacts.length === 0) return;
     let saved: api.SandboxCandidateRecord[];
     try {
-      const { records } = await api.listSessionSandboxRecords(sessionId);
+      const records = await loadSandboxRecords(sessionId);
       if (activeId() !== sessionId) return;
       saved = pendingVersions(records, exec.id);
       setPendingCandidates(saved);
@@ -675,14 +679,8 @@ export default function WorkbenchPanel() {
     setCandidateBusy(true);
     try {
       const receipt = await api.promoteSandboxCandidate(value.session_id, value.candidate.candidate_id, reviewedFiles());
-      const integration = receipt.receipt.integration;
-      setPromotionMessage(integration?.workspace_state_status === "observed"
-        ? `Applied ${receipt.receipt.verification?.length ?? 0} change(s). Exact workspace state verified; target checks ${integration.target_checks_status}.`
-        : `Applied ${receipt.receipt.verification?.length ?? 0} change(s).`);
-      setAppliedPromotion(receipt);
-      setAppliedPromotionExecutionId(value.execution_id);
-      setAppliedWorkspaceChecks(receipt.workspace_checks ?? []);
-      setWorkspaceCheckReceipts([]);
+      setPromotionMessage(null);
+      recordAppended(value.session_id, { kind: "Promotion", record: receipt });
       setReviewOpen(false);
       setPendingCandidates((current) => current.filter((record) => record.execution_id !== value.execution_id));
       setCandidate(null);
@@ -693,16 +691,14 @@ export default function WorkbenchPanel() {
     }
   };
 
-  const undoPromotion = async () => {
+  const undoPromotion = async (applied: api.SandboxPromotionRecord) => {
     const id = activeId();
-    const applied = appliedPromotion();
-    if (!id || !applied || undoBusy()) return;
+    if (!id || undoBusy()) return;
     setUndoBusy(true);
     try {
       const undone = await api.undoSandboxPromotion(id, applied.candidate_id);
       setPromotionMessage(`Restored ${undone.receipt.restored.length} file(s) to their pre-acceptance state.`);
-      setAppliedPromotion(null);
-      setAppliedPromotionExecutionId(null);
+      recordAppended(id, { kind: "PromotionUndo", record: undone });
     } catch (error) {
       setPromotionMessage(`Could not undo: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
@@ -710,14 +706,13 @@ export default function WorkbenchPanel() {
     }
   };
 
-  const runWorkspaceCheck = async (check: api.WorkspaceCheckPlan) => {
+  const runWorkspaceCheck = async (applied: api.SandboxPromotionRecord, check: api.WorkspaceCheckPlan) => {
     const id = activeId();
-    const applied = appliedPromotion();
-    if (!id || !applied || workspaceCheckBusy()) return;
+    if (!id || workspaceCheckBusy()) return;
     setWorkspaceCheckBusy(check.id);
     try {
       const receipt = await api.runSandboxWorkspaceCheck(id, applied.candidate_id, check.id);
-      setWorkspaceCheckReceipts((current) => [...current, receipt]);
+      recordAppended(id, { kind: "WorkspaceCheck", record: receipt });
       setPromotionMessage(`${check.label} ${receipt.status}.`);
     } catch (error) {
       setPromotionMessage(`Could not run ${check.label}: ${error instanceof Error ? error.message : String(error)}`);
@@ -1066,28 +1061,28 @@ export default function WorkbenchPanel() {
                             </div>
                           )}
                         </Show>
-                        <Show when={promotionMessage()}>
+                        <Show when={promotionMessage() ?? acceptanceMessage(exec().id)}>
                           {(message) => <div class="artifact-meta">{message()}</div>}
                         </Show>
-                        <Show when={appliedPromotion() && appliedPromotionExecutionId() === exec().id}>
-                          <div class="promotion-verification">
-                            <Show when={appliedPromotion()?.receipt.integration}>{(integration) => <>
+                        <Show when={acceptanceFor(exec().id)}>
+                          {(applied) => <div class="promotion-verification">
+                            <Show when={applied().receipt.integration}>{(integration) => <>
                               <div class="artifact-meta"><strong>Workspace state verified</strong> · {integration().applied_state_digest.slice(0, 19)}</div>
                               <div class="artifact-meta">Target checks: {integration().target_checks_status}. {integration().target_checks_status === "unavailable" ? "No registered verifier ran in the applied workspace." : integration().evidence}</div>
                               <For each={integration().target_checks ?? []}>{(check) => <div class="artifact-meta"><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</div>}</For>
                             </>}</Show>
-                            <For each={appliedWorkspaceChecks()}>{(check) => {
-                              const latest = () => workspaceCheckReceipts().filter((receipt) => receipt.check.id === check.id).at(-1);
+                            <For each={applied().workspace_checks ?? []}>{(check) => {
+                              const latest = () => workspaceCheckReceipts(applied().candidate_id).filter((receipt) => receipt.check.id === check.id).at(-1);
                               return <div class="promotion-workspace-check">
                                 <div class="artifact-meta"><strong>{check.label}</strong> · <code>{check.command}</code>{latest() ? ` · ${latest()?.status}` : ""}</div>
                                 <Show when={latest()?.evidence}>{(evidence) => <div class="artifact-meta">{evidence()}</div>}</Show>
-                                <button class="tool-open" disabled={!!workspaceCheckBusy()} onClick={() => void runWorkspaceCheck(check)}>{workspaceCheckBusy() === check.id ? "Running…" : latest() ? "Run again" : "Run workspace check"}</button>
+                                <button class="tool-open" disabled={!!workspaceCheckBusy()} onClick={() => void runWorkspaceCheck(applied(), check)}>{workspaceCheckBusy() === check.id ? "Running…" : latest() ? "Run again" : "Run workspace check"}</button>
                               </div>;
                             }}</For>
-                            <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion()}>
+                            <button class="tool-open" disabled={undoBusy()} onClick={() => void undoPromotion(applied())}>
                               {undoBusy() ? "Restoring…" : "Undo acceptance"}
                             </button>
-                          </div>
+                          </div>}
                         </Show>
                       </div>
                     </Show>
