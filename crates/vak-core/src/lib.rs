@@ -12,7 +12,6 @@ pub mod consolidation;
 pub mod custom_commands;
 pub mod data_engine;
 pub mod digest;
-pub mod doc_reader;
 pub mod entities;
 pub mod files;
 pub mod finops;
@@ -3534,7 +3533,6 @@ impl Core {
             cwd: self.inner.cwd.clone(),
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
-        tools.push(Arc::new(doc_reader::DocReaderTool));
         for emit_tool in presentation_tools::EmitCardTool::all() {
             tools.push(Arc::new(emit_tool));
         }

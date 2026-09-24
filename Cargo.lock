@@ -7923,7 +7923,9 @@ dependencies = [
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "toml 0.8.2",
  "vak-llm",
+ "vak-ooxml",
  "vak-sandbox",
  "walkdir",
 ]

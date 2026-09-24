@@ -15,8 +15,10 @@ serde_json = { workspace = true }
 similar = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+toml = { workspace = true }
 tokio-util = { workspace = true }
 vak-llm = { workspace = true }
+vak-ooxml = { workspace = true }
 vak-sandbox = { workspace = true }
 walkdir = { workspace = true }
 

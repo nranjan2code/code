@@ -8,6 +8,7 @@ pub mod bash;
 pub mod broker;
 pub mod context;
 pub mod contract;
+pub mod doc_read;
 pub mod edit;
 pub mod find_tools;
 pub mod glob;
@@ -306,15 +307,17 @@ pub fn default_tools() -> Vec<std::sync::Arc<dyn Tool>> {
         std::sync::Arc::new(bash::BashTool),
         std::sync::Arc::new(glob::GlobTool),
         std::sync::Arc::new(grep::GrepTool),
+        std::sync::Arc::new(doc_read::DocReadTool),
     ]
 }
 
-/// Read/glob/grep subset for explore-style workers.
+/// Read/glob/grep/doc_read subset for explore-style workers.
 pub fn read_only_tools() -> Vec<std::sync::Arc<dyn Tool>> {
     vec![
         std::sync::Arc::new(read::ReadTool),
         std::sync::Arc::new(glob::GlobTool),
         std::sync::Arc::new(grep::GrepTool),
+        std::sync::Arc::new(doc_read::DocReadTool),
     ]
 }
 
