@@ -618,6 +618,22 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .candidate-review-columns > div { min-width: 0; }
 .candidate-review-columns strong { display: block; margin-bottom: 7px; font-size: 11px; color: var(--text-soft); }
 .candidate-review-columns pre { min-height: 260px; max-height: 500px; margin: 0; padding: 12px; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg); color: var(--text); font-size: 11px; line-height: 1.5; }
+.office-change-list { display: grid; gap: 10px; }
+.office-change-compared, .office-change-empty { margin: 0; color: var(--muted); font-size: 12px; }
+.office-change-flags { margin: 0; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); color: var(--text-soft); font-size: 12px; }
+.office-change-section { display: grid; gap: 6px; }
+.office-change-section h4 { margin: 4px 0 0; font-size: 12px; color: var(--text-soft); }
+.office-change { padding: 9px 11px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface-raised); }
+.office-change-head { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
+.office-change-kind { font-weight: 600; color: var(--text-soft); }
+.office-change-head code { font-size: 11px; }
+.office-change p { margin: 6px 0 0; color: var(--text); font-size: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.office-change p > span:first-child:not(:empty) { display: inline-block; min-width: 48px; margin-right: 6px; color: var(--muted); font-size: 11px; }
+.office-change-before { color: var(--text-soft); }
+.office-redline-inserted { text-decoration: underline; text-decoration-thickness: 2px; background: none; color: inherit; }
+.office-redline-deleted { text-decoration: line-through; color: var(--muted); }
+.office-redline-deleted + .office-redline-inserted, .office-redline-inserted + .office-redline-deleted { margin-left: 5px; }
+.office-redline-hidden { padding: 0 3px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); }
 .candidate-review-feedback { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin-top: 18px; }
 .candidate-review-feedback label { color: var(--text-soft); font-size: 12px; font-weight: 600; }
 .candidate-review-feedback textarea { width: 100%; min-height: 70px; padding: 10px 12px; resize: vertical; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); color: var(--text); font: inherit; font-size: 12px; }

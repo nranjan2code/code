@@ -992,6 +992,28 @@ export function readSandboxCandidateFile(sessionId: string, candidateId: string,
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files?path=${encodeURIComponent(path)}`);
 }
 
+export type OfficeChange = {
+  section: string;
+  anchor: string;
+  kind: "added" | "removed" | "changed" | "moved";
+  before?: string | null;
+  after?: string | null;
+};
+
+export type OfficeDiff = {
+  path: string;
+  compared_with: "workspace" | "nothing (new file)";
+  summary: string[];
+  changes: OfficeChange[];
+  flags: string[];
+};
+
+/** The semantic change list for an Office file in a draft, computed by the
+ *  server in its document worker (docs/design/72, P3). */
+export function readSandboxCandidateOfficeDiff(sessionId: string, candidateId: string, path: string): Promise<OfficeDiff> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/office-diff?path=${encodeURIComponent(path)}`);
+}
+
 export async function readSandboxCandidateFileRaw(sessionId: string, candidateId: string, path: string): Promise<string> {
   const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);

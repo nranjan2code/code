@@ -19,6 +19,8 @@ import {
 } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
+import OfficeChangeList from "./OfficeChangeList";
+import { isOfficePath } from "../officeRedline";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { trapFocus } from "../focusTrap";
 import { activate } from "../App";
@@ -146,6 +148,7 @@ export default function WorkbenchPanel() {
   const [undoBusy, setUndoBusy] = createSignal(false);
   const [reviewOpen, setReviewOpen] = createSignal(false);
   const [reviewedPath, setReviewedPath] = createSignal<string | null>(null);
+  const [officeDiff, setOfficeDiff] = createSignal<api.OfficeDiff | null>(null);
   const [reviewedFiles, setReviewedFiles] = createSignal<string[]>([]);
   const [inspectedFiles, setInspectedFiles] = createSignal<string[]>([]);
   const [beforeContent, setBeforeContent] = createSignal<string | null>(null);
@@ -548,7 +551,21 @@ export default function WorkbenchPanel() {
     setBeforeContent(null);
     setAfterContent(null);
     setReviewFileError(null);
+    setOfficeDiff(null);
     const reviewedFile = prepared.candidate.files.find((file) => file.path === path);
+    if (isOfficePath(path) && reviewedFile?.operation !== "Delete") {
+      void api.readSandboxCandidateOfficeDiff(prepared.session_id, prepared.candidate.candidate_id, path)
+        .then((diff) => {
+          if (disposed) return;
+          setOfficeDiff(diff);
+          setInspectedFiles((paths) => paths.includes(path) ? paths : [...paths, path]);
+        })
+        .catch(() => {
+          if (!disposed) setReviewFileError("Could not compare this Office draft. Review is unavailable until it can be read.");
+        });
+      onCleanup(() => { disposed = true; });
+      return;
+    }
     const afterRequest = reviewedFile?.operation === "Delete"
       ? Promise.resolve({ content: null })
       : api.readSandboxCandidateFile(prepared.session_id, prepared.candidate.candidate_id, path);
@@ -740,7 +757,7 @@ export default function WorkbenchPanel() {
               <div class="candidate-review-preview">
                 <h3>{reviewedPath() ?? "Choose a file"}</h3>
                 <Show when={reviewedPath()}>{(path) =>
-                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="button subtle" disabled={!!reviewFileError()} onClick={() => {
+                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete" && !isOfficePath(path())}><button type="button" class="button subtle" disabled={!!reviewFileError()} onClick={() => {
                     const version = prepared();
                     setReviewOpen(false);
                     openArtifactCanvas({
@@ -756,7 +773,10 @@ export default function WorkbenchPanel() {
                 }</Show>
                 <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
-                <Show when={reviewedPath() && !reviewFileError()}>
+                <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
+                  <Show when={officeDiff()} fallback={<p class="office-change-empty">Comparing…</p>}>{(diff) => <OfficeChangeList diff={diff()} />}</Show>
+                </Show>
+                <Show when={reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
                   <div class="candidate-review-columns">
                     <div><strong>Current workspace</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
                     <div><strong>Draft</strong><pre>{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre></div>
