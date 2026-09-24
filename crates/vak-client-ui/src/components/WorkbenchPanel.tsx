@@ -512,6 +512,10 @@ export default function WorkbenchPanel() {
     void reviewCandidate(requested.candidateId);
   });
 
+  // Only an execution that ran inside `.vak/scratch/` holds a draft to review
+  // and accept. A command that worked in the workspace already wrote its files
+  // where they belong, and the server refuses to export it as a candidate.
+  const ranInScratch = (exec: { scratchDir: string }) => /(^|[\\/])\.vak[\\/]scratch([\\/]|$)/.test(exec.scratchDir);
   const candidatePath = (root: string, path: string) => `${root.replace(/\/$/, "")}/${path}`;
   const fileState = (file: { candidate_hash: string; base_hash?: string; operation?: "Upsert" | "Delete" }) =>
     file.operation === "Delete" ? "Deleted" : !file.base_hash ? "New" : file.base_hash === file.candidate_hash ? "Unchanged" : "Changed";
@@ -961,7 +965,13 @@ export default function WorkbenchPanel() {
                       </div>
                     </Show>
 
-                    <Show when={exec().artifacts.length > 0}>
+                    <Show when={exec().artifacts.length > 0 && !ranInScratch(exec())}>
+                      <div class="exec-packages-card" title="These files are already in place; there is no draft to accept.">
+                        <span class="packages-label">Written directly to the workspace</span>
+                      </div>
+                    </Show>
+
+                    <Show when={exec().artifacts.length > 0 && ranInScratch(exec())}>
                       <div class="exec-packages-card">
                         <span class="packages-label">Workspace promotion</span>
                         <button class="tool-open" onClick={() => void reviewCandidate()} disabled={candidateBusy()}>
