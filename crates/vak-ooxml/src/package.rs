@@ -529,6 +529,28 @@ impl<R: Read + Seek> Package<R> {
             .map(|relationship| relationship.target.clone()))
     }
 
+    /// Parses the main part's root and checks it names the vocabulary the
+    /// content type claims (`document`, `workbook`, `presentation`,
+    /// `VisioDocument`).
+    pub fn check_main_root(&mut self) -> Result<(), Error> {
+        let expected = match self.format.vocabulary {
+            Vocabulary::Word => "document",
+            Vocabulary::Excel => "workbook",
+            Vocabulary::PowerPoint => "presentation",
+            Vocabulary::Visio => "VisioDocument",
+        };
+        let main = self.main_part.clone();
+        let bytes = self.read_part(&main)?;
+        let root = xml::root(&bytes, &main, &self.limits)?;
+        if root.local() != expected {
+            return Err(Error::Xml {
+                part: main,
+                message: format!("root is {}, expected {expected}", root.local()),
+            });
+        }
+        Ok(())
+    }
+
     /// Everything a reader should flag. Reads every relationship part, the
     /// custom properties and nothing else; executes nothing.
     pub fn inspect(&mut self) -> Result<Inspection, Error> {

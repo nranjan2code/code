@@ -10491,10 +10491,14 @@ async fn export_sandbox_candidate(
     }
     match vak_sandbox::freeze_candidate(&id, &source, &destination, &frozen_root) {
         Ok(mut candidate) => {
-            let verifiers = vak_sandbox::default_target_verifiers();
-            candidate.target_checks = verifiers.plan(&candidate);
+            candidate.target_checks = vak_sandbox::default_target_verifiers().plan(&candidate);
             candidate.workspace_checks = planned_workspace_checks(&candidate);
-            let draft_checks = verifiers.verify(&candidate.source_root, &candidate.target_checks);
+            let draft_checks = vak_tools::broker::verify_targets(
+                &state.core.tool_worker_exe(),
+                &candidate.source_root,
+                &candidate.target_checks,
+            )
+            .await;
             let candidate_digest = match vak_sandbox::candidate_digest(&candidate) {
                 Ok(value) => value,
                 Err(error) => {
@@ -11151,11 +11155,15 @@ async fn dispatch_candidate_revision(
                     &frozen_root,
                 ) {
                     Ok(mut candidate) => {
-                        let verifiers = vak_sandbox::default_target_verifiers();
-                        candidate.target_checks = verifiers.plan(&candidate);
+                        candidate.target_checks =
+                            vak_sandbox::default_target_verifiers().plan(&candidate);
                         candidate.workspace_checks = planned_workspace_checks(&candidate);
-                        let draft_checks =
-                            verifiers.verify(&candidate.source_root, &candidate.target_checks);
+                        let draft_checks = vak_tools::broker::verify_targets(
+                            &state.core.tool_worker_exe(),
+                            &candidate.source_root,
+                            &candidate.target_checks,
+                        )
+                        .await;
                         match vak_sandbox::candidate_digest(&candidate) {
                             Ok(candidate_digest) => {
                                 let record = vak_sandbox::CandidateRecord {
@@ -11419,22 +11427,10 @@ async fn promote_sandbox_candidate(
     }
     let promotion_root = sandbox_promotions_root(&state);
     let selected_workspace_checks = planned_workspace_checks(&candidate);
-    let receipt = match tokio::task::spawn_blocking(move || {
-        let mut receipt = vak_sandbox::promote_recoverable(&candidate, &promotion_root)?;
-        let checks = vak_sandbox::default_target_verifiers()
-            .verify(&candidate.destination_root, &candidate.target_checks);
-        if !checks.is_empty() {
-            let failed = checks.iter().any(|check| check.status == "failed");
-            receipt.integration.target_checks_status =
-                if failed { "failed" } else { "passed" }.into();
-            receipt.integration.evidence = format!(
-                "{} registered target format check(s) ran against applied state {}",
-                checks.len(),
-                receipt.integration.applied_state_digest
-            );
-            receipt.integration.target_checks = checks;
-        }
-        Ok::<_, vak_sandbox::Error>(receipt)
+    let applied_root = candidate.destination_root.clone();
+    let planned_checks = candidate.target_checks.clone();
+    let mut receipt = match tokio::task::spawn_blocking(move || {
+        vak_sandbox::promote_recoverable(&candidate, &promotion_root)
     })
     .await
     {
@@ -11454,6 +11450,22 @@ async fn promote_sandbox_candidate(
                 .into_response();
         }
     };
+    let checks = vak_tools::broker::verify_targets(
+        &state.core.tool_worker_exe(),
+        &applied_root,
+        &planned_checks,
+    )
+    .await;
+    if !checks.is_empty() {
+        let failed = checks.iter().any(|check| check.status == "failed");
+        receipt.integration.target_checks_status = if failed { "failed" } else { "passed" }.into();
+        receipt.integration.evidence = format!(
+            "{} registered target format check(s) ran against applied state {}",
+            checks.len(),
+            receipt.integration.applied_state_digest
+        );
+        receipt.integration.target_checks = checks;
+    }
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
         record_id: format!("promotion-{}", receipt.candidate_id),
         session_id,
@@ -18989,7 +19001,25 @@ mod sandbox_promotion_tests {
         .unwrap();
     }
 
+    /// Target verification runs in the broker worker, so a test that
+    /// freezes or promotes a candidate needs the real worker binary.
+    fn pin_test_tool_worker(core: &Core) {
+        let worker = std::env::current_exe()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .join("vak-tool-worker");
+        assert!(
+            worker.is_file(),
+            "build vak-tool-worker (cargo build -p vak-server --bins) to run candidate verification"
+        );
+        core.set_tool_worker_exe(worker);
+    }
+
     async fn export_candidate(state: &AppState) -> vak_sandbox::CandidateRecord {
+        pin_test_tool_worker(&state.core);
         append_session_sandbox_event(
             &state.core.sessions_home(),
             "session-1",

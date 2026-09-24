@@ -563,3 +563,14 @@ fn unit_kinds_cover_every_vocabulary() {
         assert!(kinds.contains(&kind), "{kind:?} not produced");
     }
 }
+
+#[test]
+fn a_main_part_whose_root_contradicts_its_content_type_is_refused() {
+    let lying =
+        word(r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"/>"#);
+    let error = read::read(Cursor::new(lying), Limits::default()).err();
+    assert!(
+        matches!(&error, Some(Error::Xml { part, message }) if part == "word/document.xml" && message.contains("expected document")),
+        "{error:?}"
+    );
+}

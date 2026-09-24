@@ -14,15 +14,32 @@ use crate::{Tool, ToolContext, ToolOutput};
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
 pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
-const PROTOCOL_VERSION: u8 = 1;
+const PROTOCOL_VERSION: u8 = 2;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
+/// Wall-clock bound on one verification worker. A hostile package that
+/// pins the CPU fails its checks instead of holding a candidate open.
+pub const VERIFY_DEADLINE: std::time::Duration = std::time::Duration::from_secs(120);
 
 #[derive(Serialize, Deserialize)]
 struct WorkerRequest {
     version: u8,
-    tool: String,
-    args: Value,
-    execution_id: String,
+    task: WorkerTask,
+}
+
+/// What one worker process is asked to do. Verification is not a model
+/// tool, so it is its own task rather than a reserved tool name.
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum WorkerTask {
+    Tool {
+        tool: String,
+        args: Value,
+        execution_id: String,
+    },
+    VerifyTargets {
+        root: PathBuf,
+        checks: Vec<vak_sandbox::TargetCheckPlan>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -234,13 +251,15 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
     };
     let request = WorkerRequest {
         version: PROTOCOL_VERSION,
-        tool: tool.to_string(),
-        args: request_args,
-        execution_id: ctx
-            .sandbox_sink
-            .as_ref()
-            .map(|sink| sink.execution_id().to_string())
-            .unwrap_or_else(|| "unidentified".into()),
+        task: WorkerTask::Tool {
+            tool: tool.to_string(),
+            args: request_args,
+            execution_id: ctx
+                .sandbox_sink
+                .as_ref()
+                .map(|sink| sink.execution_id().to_string())
+                .unwrap_or_else(|| "unidentified".into()),
+        },
     };
     let payload = match serde_json::to_vec(&request) {
         Ok(payload) => payload,
@@ -385,14 +404,31 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
+    let (tool_name, args, execution_id) = match request.task {
+        WorkerTask::Tool {
+            tool,
+            args,
+            execution_id,
+        } => (tool, args, execution_id),
+        WorkerTask::VerifyTargets { root, checks } => {
+            let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
+            let content = serde_json::to_string(&results).unwrap_or_default();
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error: false,
+                events: Vec::new(),
+            })
+            .await;
+        }
+    };
     let tool = crate::default_tools()
         .into_iter()
-        .find(|candidate| candidate.name() == request.tool);
+        .find(|candidate| candidate.name() == tool_name);
     let (output, events) = match tool {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let (sink, mut rx) =
-                crate::sandbox_events::SandboxEventSink::new_with_id(request.execution_id);
+            let (sink, mut rx) = crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
             let ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
             let event_forwarder = tokio::spawn(async move {
                 let mut stderr = tokio::io::stderr();
@@ -409,22 +445,26 @@ pub async fn worker_main() -> i32 {
                     let _ = stderr.flush().await;
                 }
             });
-            let output = tool.execute(&request.args, &ctx).await;
+            let output = tool.execute(&args, &ctx).await;
             drop(ctx.sandbox_sink);
             let _ = event_forwarder.await;
             (output, Vec::new())
         }
         None => (
-            ToolOutput::error(format!("worker does not expose tool '{}'", request.tool)),
+            ToolOutput::error(format!("worker does not expose tool '{tool_name}'")),
             Vec::new(),
         ),
     };
-    let response = WorkerResponse {
+    write_response(WorkerResponse {
         version: PROTOCOL_VERSION,
         content: output.content,
         is_error: output.is_error,
         events,
-    };
+    })
+    .await
+}
+
+async fn write_response(response: WorkerResponse) -> i32 {
     let payload = match serde_json::to_vec(&response) {
         Ok(payload) if payload.len() as u64 <= MAX_PROTOCOL_BYTES => payload,
         _ => return 125,
@@ -434,6 +474,167 @@ pub async fn worker_main() -> i32 {
         return 125;
     }
     0
+}
+
+/// Runs the registered target verifiers over `checks` under `root` in a
+/// worker process (docs/design/72-openxml-documents.md, F4). The worker runs
+/// under a read-only, network-denied sandbox rooted at `root` whatever the
+/// session's permission mode, and within [`VERIFY_DEADLINE`]. Anything that
+/// stops the worker from answering fails every planned check; a check never
+/// passes because verification could not run.
+pub async fn verify_targets(
+    worker_exe: &Path,
+    root: &Path,
+    checks: &[vak_sandbox::TargetCheckPlan],
+) -> Vec<vak_sandbox::TargetCheckResult> {
+    if checks.is_empty() {
+        return Vec::new();
+    }
+    let failed = |reason: String| {
+        checks
+            .iter()
+            .map(|check| vak_sandbox::TargetCheckResult {
+                verifier: check.verifier.clone(),
+                path: check.path.clone(),
+                status: "failed".into(),
+                evidence: format!("verification did not run: {reason}"),
+            })
+            .collect::<Vec<_>>()
+    };
+    if !worker_exe.is_file() {
+        return failed(format!(
+            "worker executable not found: {}",
+            worker_exe.display()
+        ));
+    }
+    let request = WorkerRequest {
+        version: PROTOCOL_VERSION,
+        task: WorkerTask::VerifyTargets {
+            root: root.to_path_buf(),
+            checks: checks.to_vec(),
+        },
+    };
+    let payload = match serde_json::to_vec(&request) {
+        Ok(payload) => payload,
+        Err(error) => return failed(format!("request encode failed: {error}")),
+    };
+    let worker_command = format!(
+        "{} {}",
+        shell_quote(&worker_exe.display().to_string()),
+        WORKER_SUBCOMMAND
+    );
+    let effective = match verification_sandbox(root, worker_exe) {
+        Some(sandbox) => sandbox.wrap(&worker_command),
+        None => worker_command,
+    };
+    let mut command = tokio::process::Command::new("sh");
+    command
+        .arg("-c")
+        .arg(effective)
+        .current_dir(root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    crate::bash::scrub_environment(&mut command);
+    command.env(WORKER_ENV, "1");
+    crate::bash::isolate_process_group(&mut command);
+    let mut child = match command.spawn() {
+        Ok(child) => child,
+        Err(error) => return failed(format!("worker spawn failed: {error}")),
+    };
+    let pid = child.id();
+    let Some(mut stdin) = child.stdin.take() else {
+        crate::bash::kill_process_group(&pid);
+        return failed("worker has no stdin".into());
+    };
+    if let Err(error) = stdin.write_all(&payload).await {
+        crate::bash::kill_process_group(&pid);
+        return failed(format!("worker request failed: {error}"));
+    }
+    drop(stdin);
+    let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+        crate::bash::kill_process_group(&pid);
+        return failed("worker has no output pipes".into());
+    };
+    let stdout_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stdout
+            .take(MAX_PROTOCOL_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .await;
+        bytes
+    });
+    let stderr_reader = tokio::spawn(async move {
+        let mut bytes = Vec::new();
+        let _ = stderr.take(64 * 1024).read_to_end(&mut bytes).await;
+        bytes
+    });
+    let status = match tokio::time::timeout(VERIFY_DEADLINE, child.wait()).await {
+        Ok(Ok(status)) => status,
+        Ok(Err(error)) => return failed(format!("worker wait failed: {error}")),
+        Err(_) => {
+            crate::bash::kill_process_group(&pid);
+            let _ = child.wait().await;
+            return failed(format!(
+                "worker exceeded the {}s verification deadline",
+                VERIFY_DEADLINE.as_secs()
+            ));
+        }
+    };
+    let stdout = stdout_reader.await.unwrap_or_default();
+    let stderr = stderr_reader.await.unwrap_or_default();
+    if !status.success() {
+        return failed(format!(
+            "worker exited with {}: {}",
+            status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&stderr).trim()
+        ));
+    }
+    if stdout.len() as u64 > MAX_PROTOCOL_BYTES {
+        return failed("worker output exceeded the protocol limit".into());
+    }
+    let response: WorkerResponse = match serde_json::from_slice(&stdout) {
+        Ok(response) => response,
+        Err(error) => return failed(format!("worker returned invalid protocol: {error}")),
+    };
+    if response.version != PROTOCOL_VERSION || response.is_error {
+        return failed(format!("worker refused the request: {}", response.content));
+    }
+    match serde_json::from_str::<Vec<vak_sandbox::TargetCheckResult>>(&response.content) {
+        Ok(results) if results.len() == checks.len() => results,
+        Ok(_) => failed("worker answered a different number of checks".into()),
+        Err(error) => failed(format!("worker returned invalid results: {error}")),
+    }
+}
+
+/// Read-only and network-denied, rooted at the tree being verified, with
+/// the worker executable readable so it can be executed. `None` where no
+/// OS backend exists; the in-code bounds of each verifier then stand alone.
+fn verification_sandbox(
+    root: &Path,
+    worker_exe: &Path,
+) -> Option<Arc<dyn crate::sandbox::Sandbox>> {
+    let worker_dir = worker_exe.parent().map(Path::to_path_buf);
+    #[cfg(target_os = "macos")]
+    {
+        let mut sandbox =
+            crate::sandbox::Seatbelt::task_copy(crate::sandbox::SandboxMode::ReadOnly, root);
+        sandbox.read_paths.extend(worker_dir);
+        Some(Arc::new(sandbox))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let mut sandbox =
+            crate::landlock::Landlock::task_copy(crate::sandbox::SandboxMode::ReadOnly, root);
+        sandbox.read_paths.extend(worker_dir);
+        Some(Arc::new(sandbox))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (root, worker_dir);
+        None
+    }
 }
 
 fn shell_quote(value: &str) -> String {

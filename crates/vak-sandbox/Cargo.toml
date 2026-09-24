@@ -10,12 +10,12 @@ serde_json = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
 walkdir = { workspace = true }
-zip = { workspace = true }
 csv = { workspace = true }
 quick-xml = { workspace = true }
 image = { workspace = true }
 lopdf = { workspace = true }
 dom_query = { workspace = true }
+vak-ooxml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -79,6 +79,7 @@ pub fn read<R: Read + Seek>(reader: R, limits: Limits) -> Result<Document, Error
 }
 
 pub fn project<R: Read + Seek>(package: &mut Package<R>) -> Result<Document, Error> {
+    package.check_main_root()?;
     let inspection = package.inspect()?;
     let title = core_title(package)?;
     let mut document = Document {

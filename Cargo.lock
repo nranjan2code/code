@@ -7801,8 +7801,8 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "thiserror 2.0.20",
+ "vak-ooxml",
  "walkdir",
- "zip",
 ]
 
 [[package]]
@@ -7844,6 +7844,7 @@ dependencies = [
  "vak-hooks",
  "vak-intent",
  "vak-llm",
+ "vak-ooxml",
  "vak-ops",
  "vak-permission",
  "vak-plugin",

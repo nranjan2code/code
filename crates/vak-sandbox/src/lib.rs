@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -348,49 +347,12 @@ impl TargetVerifier for PdfStructureVerifier {
     }
 }
 
+/// Opens a candidate of the Open XML family through `vak-ooxml`: bounded
+/// package reading, detection by main-part content type, the main-part
+/// root, and a full read projection. A package whose content type names a
+/// different format than its extension (a macro package renamed `.docx`)
+/// fails, because the name is what a person trusts before opening it.
 pub struct OpenXmlPackageVerifier;
-
-fn verify_xml_root(
-    reader: impl BufRead,
-    part: &str,
-    expected_root: &[u8],
-    counted_element: Option<&[u8]>,
-) -> Result<usize, String> {
-    let mut reader = quick_xml::Reader::from_reader(reader);
-    reader.config_mut().trim_text(true);
-    let mut buffer = Vec::new();
-    let mut saw_root = false;
-    let mut count = 0;
-    loop {
-        match reader.read_event_into(&mut buffer) {
-            Ok(quick_xml::events::Event::Start(element))
-            | Ok(quick_xml::events::Event::Empty(element)) => {
-                let name = element.local_name();
-                if !saw_root {
-                    if name.as_ref() != expected_root {
-                        return Err(format!(
-                            "Open XML part {part} has root {}, expected {}",
-                            String::from_utf8_lossy(name.as_ref()),
-                            String::from_utf8_lossy(expected_root)
-                        ));
-                    }
-                    saw_root = true;
-                }
-                if counted_element.is_some_and(|expected| name.as_ref() == expected) {
-                    count += 1;
-                }
-            }
-            Ok(quick_xml::events::Event::Eof) => {
-                return saw_root
-                    .then_some(count)
-                    .ok_or_else(|| format!("Open XML part {part} has no root element"));
-            }
-            Ok(_) => {}
-            Err(error) => return Err(format!("Open XML part {part} is invalid: {error}")),
-        }
-        buffer.clear();
-    }
-}
 
 impl TargetVerifier for OpenXmlPackageVerifier {
     fn id(&self) -> &'static str {
@@ -398,48 +360,48 @@ impl TargetVerifier for OpenXmlPackageVerifier {
     }
 
     fn supports(&self, path: &str) -> bool {
-        let path = path.to_ascii_lowercase();
-        [".docx", ".xlsx", ".pptx"]
-            .iter()
-            .any(|extension| path.ends_with(extension))
+        vak_ooxml::is_openxml_path(path)
     }
 
     fn verify(&self, path: &Path) -> Result<String, String> {
         let file = fs::File::open(path).map_err(|error| error.to_string())?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|error| format!("Open XML package could not be opened: {error}"))?;
-        let lower = path.to_string_lossy().to_ascii_lowercase();
-        let (required, required_root, unit, counted_element): (&str, &[u8], &str, &[u8]) =
-            if lower.ends_with(".docx") {
-                ("word/document.xml", b"document", "paragraph(s)", b"p")
-            } else if lower.ends_with(".xlsx") {
-                ("xl/workbook.xml", b"workbook", "worksheet(s)", b"sheet")
-            } else {
-                (
-                    "ppt/presentation.xml",
-                    b"presentation",
-                    "slide(s)",
-                    b"sldId",
-                )
-            };
-        let mut primary_count = 0;
-        for (part, root, count_element) in [
-            ("[Content_Types].xml", b"Types".as_slice(), None),
-            ("_rels/.rels", b"Relationships".as_slice(), None),
-            (required, required_root, Some(counted_element)),
-        ] {
-            let entry = archive
-                .by_name(part)
-                .map_err(|error| format!("Open XML package is missing {part}: {error}"))?;
-            let count = verify_xml_root(BufReader::new(entry), part, root, count_element)?;
-            if part == required {
-                primary_count = count;
-            }
+        let mut package = vak_ooxml::Package::open(file, vak_ooxml::Limits::default())
+            .map_err(|error| error.to_string())?;
+        let format = package.format();
+        let named = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if named != format.extension() {
+            return Err(format!(
+                "package is a {} (.{}) but is named .{named}",
+                format.vocabulary.label(),
+                format.extension()
+            ));
         }
-        Ok(format!(
-            "Open XML package opened with {} parts, parsed {required}, and found {primary_count} {unit}",
-            archive.len(),
-        ))
+        let document = vak_ooxml::read::project(&mut package).map_err(|error| error.to_string())?;
+        let stats = document
+            .stats
+            .iter()
+            .map(|(name, count)| format!("{count} {name}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut evidence = format!(
+            "Open XML {} (.{}, {:?}) opened with {} parts; main part {} parsed; {stats}",
+            format.vocabulary.label(),
+            format.extension(),
+            document.inspection.conformance,
+            document.inspection.part_count,
+            document.inspection.main_part,
+        );
+        let flags = document.inspection.flags();
+        if !flags.is_empty() {
+            evidence.push_str("; flags: ");
+            evidence.push_str(&flags.join("; "));
+        }
+        evidence.push_str("; schema conformance and rendering were not checked");
+        Ok(evidence)
     }
 }
 
@@ -1646,76 +1608,59 @@ mod tests {
     }
 
     #[test]
-    fn openxml_verifier_parses_package_roots_and_document_part() {
-        use std::io::Write;
+    fn openxml_verifier_covers_the_family_and_refuses_disguises() {
+        use vak_ooxml::fixtures;
 
         let target = tempfile::tempdir().unwrap();
-        let valid_path = target.path().join("report.docx");
-        let file = fs::File::create(&valid_path).unwrap();
-        let mut archive = zip::ZipWriter::new(file);
-        let options = zip::write::SimpleFileOptions::default();
-        for (part, xml) in [
-            ("[Content_Types].xml", "<Types/>"),
-            ("_rels/.rels", "<Relationships/>"),
-            (
-                "word/document.xml",
-                "<w:document xmlns:w=\"urn:test\"><w:body><w:p/><w:p/></w:body></w:document>",
-            ),
-        ] {
-            archive.start_file(part, options).unwrap();
-            archive.write_all(xml.as_bytes()).unwrap();
-        }
-        archive.finish().unwrap();
-
-        let wrong_root_path = target.path().join("wrong-root.docx");
-        let file = fs::File::create(&wrong_root_path).unwrap();
-        let mut archive = zip::ZipWriter::new(file);
-        for (part, xml) in [
-            ("[Content_Types].xml", "<Types/>"),
-            ("_rels/.rels", "<Relationships/>"),
-            ("word/document.xml", "<workbook/>"),
-        ] {
-            archive.start_file(part, options).unwrap();
-            archive.write_all(xml.as_bytes()).unwrap();
-        }
-        archive.finish().unwrap();
-
-        let invalid_path = target.path().join("broken.docx");
-        fs::write(&invalid_path, b"not a package").unwrap();
         let verifier = OpenXmlPackageVerifier;
-        let evidence = verifier.verify(&valid_path).unwrap();
-        assert!(evidence.contains("2 paragraph(s)"));
-        assert!(verifier.verify(&wrong_root_path).is_err());
-        assert!(verifier.verify(&invalid_path).is_err());
-
-        for (name, part, primary, expected) in [
-            (
-                "book.xlsx",
-                "xl/workbook.xml",
-                "<workbook><sheets><sheet/><sheet/></sheets></workbook>",
-                "2 worksheet(s)",
-            ),
-            (
-                "deck.pptx",
-                "ppt/presentation.xml",
-                "<p:presentation xmlns:p=\"urn:test\"><p:sldIdLst><p:sldId/><p:sldId/><p:sldId/></p:sldIdLst></p:presentation>",
-                "3 slide(s)",
-            ),
+        for (name, bytes, expected) in [
+            ("report.docx", fixtures::docx(), "Word document (.docx"),
+            ("book.xlsx", fixtures::xlsx(), "2 sheets"),
+            ("deck.pptx", fixtures::pptx(), "2 slides"),
+            ("flow.vsdx", fixtures::vsdx(), "1 pages"),
         ] {
             let path = target.path().join(name);
-            let file = fs::File::create(&path).unwrap();
-            let mut archive = zip::ZipWriter::new(file);
-            for (entry, xml) in [
-                ("[Content_Types].xml", "<Types/>"),
-                ("_rels/.rels", "<Relationships/>"),
-                (part, primary),
-            ] {
-                archive.start_file(entry, options).unwrap();
-                archive.write_all(xml.as_bytes()).unwrap();
-            }
-            archive.finish().unwrap();
-            assert!(verifier.verify(&path).unwrap().contains(expected));
+            fs::write(&path, bytes).unwrap();
+            assert!(verifier.supports(name));
+            let evidence = verifier.verify(&path).unwrap();
+            assert!(evidence.contains(expected), "{evidence}");
+            assert!(
+                evidence.contains("rendering were not checked"),
+                "{evidence}"
+            );
         }
+        let flagged = verifier.verify(&target.path().join("report.docx")).unwrap();
+        assert!(flagged.contains("1 risky fields"), "{flagged}");
+
+        let renamed = target.path().join("invoice.docx");
+        fs::write(
+            &renamed,
+            fixtures::word_with(
+                "application/vnd.ms-word.document.macroEnabled.main+xml",
+                fixtures::MINIMAL_WORD_BODY,
+                &[],
+                &[],
+                &[],
+                &[],
+            ),
+        )
+        .unwrap();
+        let error = verifier.verify(&renamed).unwrap_err();
+        assert!(error.contains("(.docm) but is named .docx"), "{error}");
+
+        let wrong_root = target.path().join("wrong-root.docx");
+        fs::write(
+            &wrong_root,
+            fixtures::word_with(fixtures::WORD_MAIN, "<workbook/>", &[], &[], &[], &[]),
+        )
+        .unwrap();
+        assert!(verifier.verify(&wrong_root).is_err());
+
+        let broken = target.path().join("broken.docx");
+        fs::write(&broken, b"not a package").unwrap();
+        assert!(verifier.verify(&broken).is_err());
+        assert!(verifier.supports("macro.xlsm") && verifier.supports("stencil.VSSX"));
+        assert!(!verifier.supports("legacy.doc") && !verifier.supports("binary.xlsb"));
     }
 
     #[test]
