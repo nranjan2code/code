@@ -7727,6 +7727,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vak-ooxml"
+version = "4.0.2"
+dependencies = [
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "vak-ops"
 version = "4.0.2"
 dependencies = [
