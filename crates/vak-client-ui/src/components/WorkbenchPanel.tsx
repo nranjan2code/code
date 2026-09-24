@@ -670,7 +670,7 @@ export default function WorkbenchPanel() {
           <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
               <div><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
-              <div class="candidate-review-header-actions"><button type="button" class="button subtle" onClick={() => { setReviewOpen(false); setDockTab(null); }}>Back to conversation</button><button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button></div>
+              <div class="candidate-review-header-actions"><button type="button" class="btn" onClick={() => { setReviewOpen(false); setDockTab(null); }}>Back to conversation</button><button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button></div>
             </header>
             <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
               <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
@@ -740,7 +740,7 @@ export default function WorkbenchPanel() {
               <div class="candidate-review-preview">
                 <h3>{reviewedPath() ?? "Choose a file"}</h3>
                 <Show when={reviewedPath()}>{(path) =>
-                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="button subtle" disabled={!!reviewFileError()} onClick={() => {
+                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
                     const version = prepared();
                     setReviewOpen(false);
                     openArtifactCanvas({
@@ -768,22 +768,22 @@ export default function WorkbenchPanel() {
                     <For each={candidateComments()}>{(comment) => <article>
                       <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                       <p>{comment.text}</p>
-                      <button type="button" class="button subtle" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button>
+                      <button type="button" class="btn" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button>
                     </article>}</For>
                   </div>
                 </Show>
                 <div class="candidate-review-feedback">
                   <label for="candidate-review-comment">Comment on this draft</label>
                   <textarea id="candidate-review-comment" value={reviewComment()} onInput={(event) => setReviewComment(event.currentTarget.value)} placeholder="Describe what you want changed…" />
-                  <button type="button" class="button subtle" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Saving…" : "Save comment"}</button>
+                  <button type="button" class="btn" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Saving…" : "Save comment"}</button>
                   <Show when={reviewCommentMessage()}>{(message) => <p role="status">{message()}</p>}</Show>
                 </div>
               </div>
             </div>
             <footer class="candidate-review-footer">
               <span>Applying {reviewedFiles().length} selected {reviewedFiles().length === 1 ? "change" : "changes"} to {destinationLabel()} · {reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed</span>
-              <button type="button" class="button subtle" onClick={() => setReviewOpen(false)}>Keep as draft</button>
-              <button type="button" class="button primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
+              <button type="button" class="btn" onClick={() => setReviewOpen(false)}>Keep as draft</button>
+              <button type="button" class="btn primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError()} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
             </footer>
           </section>
         </div>}
@@ -853,7 +853,7 @@ export default function WorkbenchPanel() {
             {runningExec()?.stdout || runningExec()?.stderr ? "Receiving live output" : "Waiting for the next event"}
           </span>
           <span class="workbench-live-tick">{pulse() % 2 === 0 ? "·" : "…"}</span>
-          <button class="btn subtle" onClick={() => void stopExecution()} disabled={stopping()}>{stopping() ? "Stopping…" : "Stop"}</button>
+          <button class="btn" onClick={() => void stopExecution()} disabled={stopping()}>{stopping() ? "Stopping…" : "Stop"}</button>
         </div>
       </Show>
 
