@@ -635,6 +635,8 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .office-redline-deleted + .office-redline-inserted, .office-redline-inserted + .office-redline-deleted { margin-left: 5px; }
 .office-redline-hidden { padding: 0 3px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); }
 .office-change-where { color: var(--text-soft); }
+.office-change-comment { margin-left: auto; padding: 1px 7px; border: 1px solid var(--border-soft); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; }
+.office-change-comment:hover { border-color: var(--border-strong); color: var(--text); }
 .office-impact { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .office-impact li { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); color: var(--text-soft); font-size: 12px; line-height: 1.45; }
 .office-impact li strong { color: var(--text); font-size: 11px; }

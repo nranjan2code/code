@@ -35,7 +35,7 @@ function Redline(props: { text: string }) {
   );
 }
 
-function ChangeItem(props: { change: OfficeChange; showSection?: boolean }) {
+function ChangeItem(props: { change: OfficeChange; showSection?: boolean; onComment?: (anchor: string) => void }) {
   const change = () => props.change;
   return (
     <article class={`office-change office-change-${change().kind}`}>
@@ -43,6 +43,9 @@ function ChangeItem(props: { change: OfficeChange; showSection?: boolean }) {
         <span class="office-change-kind">{KIND_LABEL[change().kind]}</span>
         <Show when={props.showSection && change().section}><span class="office-change-where">{change().section}</span></Show>
         <Show when={change().anchor}><code>{change().anchor}</code></Show>
+        <Show when={props.onComment && change().anchor}>
+          <button type="button" class="office-change-comment" aria-label={`Comment on ${change().anchor}`} onClick={() => props.onComment?.(change().anchor)}>Comment</button>
+        </Show>
       </div>
       <Show when={change().kind === "changed" && change().before !== null && change().before !== undefined}>
         <p class="office-change-before"><span>Before</span><Redline text={change().before ?? ""} /></p>
@@ -57,7 +60,7 @@ function ChangeItem(props: { change: OfficeChange; showSection?: boolean }) {
   );
 }
 
-function Sections(props: { changes: OfficeChange[] }) {
+function Sections(props: { changes: OfficeChange[]; onComment?: (anchor: string) => void }) {
   const sections = () => {
     const order: string[] = [];
     const grouped = new Map<string, OfficeChange[]>();
@@ -74,7 +77,7 @@ function Sections(props: { changes: OfficeChange[] }) {
     <For each={sections()}>{(group) => (
       <section class="office-change-section">
         <h4>{group.section}</h4>
-        <For each={group.changes}>{(change) => <ChangeItem change={change} />}</For>
+        <For each={group.changes}>{(change) => <ChangeItem change={change} onComment={props.onComment} />}</For>
       </section>
     )}</For>
   );
@@ -87,6 +90,7 @@ function Choices(props: {
   onMakeVersion: () => void;
   busy: boolean;
   error: string | null;
+  onComment?: (anchor: string) => void;
 }) {
   const labelOf = (id: string) => props.choices.find((choice) => choice.id === id)?.label ?? id;
   const keeping = () => kept(props.choices, props.excluded).length;
@@ -105,7 +109,7 @@ function Choices(props: {
               <p class="office-choice-requires">Builds on: {choice.requires.map(labelOf).join(", ")}</p>
             </Show>
             <Show when={choice.changes.length > 0} fallback={<p class="office-change-empty">No visible change.</p>}>
-              <For each={choice.changes}>{(change) => <ChangeItem change={change} showSection />}</For>
+              <For each={choice.changes}>{(change) => <ChangeItem change={change} showSection onComment={props.onComment} />}</For>
             </Show>
           </article>
         );
@@ -135,6 +139,8 @@ export default function OfficeChangeList(props: {
   busy?: boolean;
   error?: string | null;
   onOpenVersion?: (candidateId: string) => void;
+  /** Point the review comment at a change's anchor (F9). */
+  onComment?: (anchor: string) => void;
 }) {
   const choosable = () => (props.review.choices?.length ?? 0) >= 2 && !!props.onToggle && !!props.onMakeVersion;
   return (
@@ -167,7 +173,7 @@ export default function OfficeChangeList(props: {
         <p class="office-choice-note" role="note">This draft is accepted or rejected whole: {props.review.choices_unavailable}</p>
       </Show>
       <Show when={props.review.changes.length > 0} fallback={<p class="office-change-empty">No visible change.</p>}>
-        <Show when={choosable()} fallback={<Sections changes={props.review.changes} />}>
+        <Show when={choosable()} fallback={<Sections changes={props.review.changes} onComment={props.onComment} />}>
           <Choices
             choices={props.review.choices ?? []}
             excluded={props.excluded ?? new Set()}
@@ -175,6 +181,7 @@ export default function OfficeChangeList(props: {
             onMakeVersion={() => props.onMakeVersion?.()}
             busy={props.busy ?? false}
             error={props.error ?? null}
+            onComment={props.onComment}
           />
         </Show>
       </Show>

@@ -52,6 +52,7 @@ const narrowed: OfficeReview = { ...sheet, path: "narrowed.xlsx", changes: sheet
 const [excluded, setExcluded] = createSignal<ReadonlySet<string>>(new Set());
 let madeWith: string[] | null = null;
 let opened: string | null = null;
+let commentedOn: string | null = null;
 
 const fresh: OfficeReview = { path: "deck.pptx", compared_with: "nothing (new file)", summary: ["Deck: 1 added"], flags: [], changes: [
   { section: "Deck", anchor: "", kind: "added", before: null, after: "new file: 2 slides" },
@@ -60,7 +61,7 @@ const fresh: OfficeReview = { path: "deck.pptx", compared_with: "nothing (new fi
 render(() => (
   <div style="display:grid;gap:24px;padding:16px;max-width:720px;margin:0 auto">
     <section id="word"><h3>q3.docx</h3><OfficeChangeList review={word} /></section>
-    <section id="sheet"><h3>budget.xlsx</h3><OfficeChangeList review={sheet} /></section>
+    <section id="sheet"><h3>budget.xlsx</h3><OfficeChangeList review={sheet} onComment={(anchor) => { commentedOn = anchor; }} /></section>
     <section id="fresh"><h3>deck.pptx</h3><OfficeChangeList review={fresh} /></section>
     <section id="choosing"><h3>q3.docx, choosing</h3><OfficeChangeList
       review={choosing}
@@ -106,6 +107,12 @@ render(() => (
   const whole = document.querySelector("#whole")!;
   if (whole.querySelector("input[type=checkbox]")) throw new Error("no choices when unavailable");
   if (!whole.textContent!.includes("accepted or rejected whole")) throw new Error("says why it is whole");
+  const commentButtons = document.querySelectorAll<HTMLButtonElement>("#sheet .office-change-comment");
+  if (commentButtons.length !== 2) throw new Error(`comment buttons: ${commentButtons.length}`);
+  if (commentButtons[0].getAttribute("aria-label") !== "Comment on Budget!B2") throw new Error("comment button names its anchor");
+  commentButtons[0].click();
+  if (commentedOn !== "Budget!B2") throw new Error(`commented on ${commentedOn}`);
+  if (document.querySelector("#word .office-change-comment")) throw new Error("no comment action without a handler");
   const impacts = document.querySelectorAll("#signed .office-impact li");
   if (impacts.length !== 2) throw new Error(`impacts: ${impacts.length}`);
   if (!impacts[0].classList.contains("office-impact-warning") || impacts[1].classList.contains("office-impact-warning")) throw new Error("only the signature removal warns");

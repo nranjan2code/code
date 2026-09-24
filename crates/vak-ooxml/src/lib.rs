@@ -172,3 +172,57 @@ pub fn is_openxml_path(path: &str) -> bool {
         .map(|(_, extension)| EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
         .unwrap_or(false)
 }
+
+/// True when `anchor` has the shape of an anchor the reader returns
+/// (`p:1A2B3C4D`, `p@12`, `Budget!B4`, `'Q4 plan'!A5:B5`, `Budget!`,
+/// `slide:256`, `slide:256/shape:3`, `slide:256/placeholder:title`,
+/// `slide:256/notes`, `page:0/shape:5`). It checks shape only: whether the
+/// anchor exists is a question for a read of the file.
+pub fn is_anchor(anchor: &str) -> bool {
+    if anchor.is_empty() || anchor.len() > 300 || anchor.chars().any(char::is_control) {
+        return false;
+    }
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    if let Some(id) = anchor.strip_prefix("p:") {
+        return (1..=8).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_hexdigit());
+    }
+    if let Some(index) = anchor.strip_prefix("p@") {
+        return digits(index);
+    }
+    if let Some(rest) = anchor.strip_prefix("slide:") {
+        let (id, part) = rest.split_once('/').unwrap_or((rest, ""));
+        return digits(id)
+            && (part.is_empty()
+                || part == "notes"
+                || part.strip_prefix("shape:").is_some_and(digits)
+                || part.strip_prefix("placeholder:").is_some_and(|name| {
+                    !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                }));
+    }
+    if let Some(rest) = anchor.strip_prefix("page:") {
+        let (id, part) = rest.split_once('/').unwrap_or((rest, ""));
+        return digits(id) && (part.is_empty() || part.strip_prefix("shape:").is_some_and(digits));
+    }
+    let Some((sheet, cells)) = anchor.rsplit_once('!') else {
+        return false;
+    };
+    let sheet_ok = match sheet.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+        Some(quoted) => !quoted.is_empty() && !quoted.replace("''", "").contains('\''),
+        None => {
+            !sheet.is_empty()
+                && sheet
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '.')
+        }
+    };
+    let cell = |text: &str| {
+        let letters = text.bytes().take_while(u8::is_ascii_alphabetic).count();
+        (1..=3).contains(&letters) && digits(&text[letters..])
+    };
+    sheet_ok
+        && (cells.is_empty()
+            || match cells.split_once(':') {
+                Some((from, to)) => cell(from) && cell(to),
+                None => cell(cells),
+            })
+}

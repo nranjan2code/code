@@ -223,13 +223,28 @@ fn cells(before: &Document, after: &Document, changes: &mut Vec<Change>) {
         }
         sheets
     }
+    // Cell anchors use the sheet's anchor as the reader writes it
+    // (`'Q4 plan'!B4`), so a change can be cited and commented on exactly
+    // like a cell `doc_read` returned.
+    let prefixes: HashMap<&str, &str> = before
+        .sections
+        .iter()
+        .chain(&after.sections)
+        .map(|section| (section.title.as_str(), section.anchor.as_str()))
+        .collect();
+    let prefix = |sheet: &str| -> String {
+        prefixes
+            .get(sheet)
+            .map(|anchor| anchor.to_string())
+            .unwrap_or_else(|| format!("{sheet}!"))
+    };
     let old = grid(before);
     let new = grid(after);
     for (sheet, cells) in &new {
         let Some(previous) = old.get(sheet) else {
             changes.push(Change {
                 section: sheet.clone(),
-                anchor: format!("{sheet}!"),
+                anchor: prefix(sheet),
                 kind: ChangeKind::Added,
                 before: None,
                 after: Some(format!("sheet added with {} cell(s)", cells.len())),
@@ -249,14 +264,14 @@ fn cells(before: &Document, after: &Document, changes: &mut Vec<Change>) {
                 Some(old) if strip_stale(old) == strip_stale(value) => {}
                 Some(old) => changes.push(Change {
                     section: sheet.clone(),
-                    anchor: format!("{sheet}!{address}"),
+                    anchor: format!("{}{address}", prefix(sheet)),
                     kind: ChangeKind::Changed,
                     before: Some((*old).to_string()),
                     after: Some(value.clone()),
                 }),
                 None => changes.push(Change {
                     section: sheet.clone(),
-                    anchor: format!("{sheet}!{address}"),
+                    anchor: format!("{}{address}", prefix(sheet)),
                     kind: ChangeKind::Added,
                     before: None,
                     after: Some(value.clone()),
@@ -267,7 +282,7 @@ fn cells(before: &Document, after: &Document, changes: &mut Vec<Change>) {
             if !current.contains_key(address.as_str()) {
                 changes.push(Change {
                     section: sheet.clone(),
-                    anchor: format!("{sheet}!{address}"),
+                    anchor: format!("{}{address}", prefix(sheet)),
                     kind: ChangeKind::Removed,
                     before: Some(value.clone()),
                     after: None,
@@ -279,7 +294,7 @@ fn cells(before: &Document, after: &Document, changes: &mut Vec<Change>) {
         if !new.contains_key(sheet) {
             changes.push(Change {
                 section: sheet.clone(),
-                anchor: format!("{sheet}!"),
+                anchor: prefix(sheet),
                 kind: ChangeKind::Removed,
                 before: Some("sheet".into()),
                 after: None,

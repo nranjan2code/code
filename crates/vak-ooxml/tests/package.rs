@@ -770,3 +770,45 @@ fn rewrite_removes_parts_mapped_to_none() {
     assert!(!names.contains(&"word/comments.xml".to_string()));
     assert_eq!(names.len(), raw_entries(&bytes).len() - 1);
 }
+
+#[test]
+fn anchors_are_recognised_by_shape() {
+    for anchor in [
+        "p:1A2B3C4D",
+        "p@12",
+        "Budget!B4",
+        "Budget!A5:B5",
+        "Budget!",
+        "'Q4 plan'!A1",
+        "'It''s'!C3",
+        "slide:256",
+        "slide:256/shape:3",
+        "slide:256/placeholder:title",
+        "slide:256/notes",
+        "page:0/shape:5",
+    ] {
+        assert!(vak_ooxml::is_anchor(anchor), "{anchor}");
+    }
+    for anchor in [
+        "",
+        "p:",
+        "p:XYZ",
+        "p@",
+        "p@1a",
+        "Budget",
+        "Q4 plan!A1",
+        "'Q4 plan!A1",
+        "Budget!B",
+        "Budget!4",
+        "Budget!ABCD1",
+        "slide:x",
+        "slide:256/shape:",
+        "slide:256/placeholder:ti tle",
+        "line 4",
+        "p@1\n",
+    ] {
+        assert!(!vak_ooxml::is_anchor(anchor), "{anchor}");
+    }
+    assert!(!vak_ooxml::is_anchor(&"A".repeat(301)));
+    assert!(!vak_ooxml::is_anchor("p@1\u{7}"));
+}

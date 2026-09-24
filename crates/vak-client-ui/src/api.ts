@@ -1051,7 +1051,9 @@ export async function readSandboxCandidateFileRaw(sessionId: string, candidateId
   return URL.createObjectURL(await response.blob());
 }
 
-export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number }): Promise<{ comment_id: string; intervention: boolean }> {
+/** `anchor.anchor` points into an Office file (`Budget!B4`, `p:1A2B3C4D`,
+ *  `slide:256/shape:3`); line numbers are for text files only. */
+export function commentOnSandboxCandidate(sessionId: string, candidateId: string, text: string, anchor?: { path?: string; lineStart?: number; lineEnd?: number; anchor?: string }): Promise<{ comment_id: string; intervention: boolean }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`, {
     method: "POST",
     body: JSON.stringify({
@@ -1059,12 +1061,13 @@ export function commentOnSandboxCandidate(sessionId: string, candidateId: string
       path: anchor?.path,
       line_start: anchor?.lineStart,
       line_end: anchor?.lineEnd,
+      anchor: anchor?.anchor,
       request_id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     }),
   });
 }
 
-export type SandboxCandidateComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; created_at?: string };
+export type SandboxCandidateComment = { comment_id: string; actor_id: string; actor_name?: string; text: string; path?: string; line_start?: number; line_end?: number; anchor?: string; created_at?: string };
 
 export function listSandboxCandidateComments(sessionId: string, candidateId: string): Promise<{ comments: SandboxCandidateComment[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);

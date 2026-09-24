@@ -11057,6 +11057,11 @@ struct CandidateCommentBody {
     line_start: Option<u32>,
     #[serde(default)]
     line_end: Option<u32>,
+    /// Where in an Office file the comment points (`Budget!B4`,
+    /// `p:1A2B3C4D`, `slide:256/shape:3`), in place of line numbers, which
+    /// mean nothing in a package (docs/design/72, F9).
+    #[serde(default)]
+    anchor: Option<String>,
     #[serde(default)]
     request_id: Option<String>,
 }
@@ -11093,6 +11098,7 @@ async fn list_sandbox_candidate_comments(
                     "path": activity.data.get("path"),
                     "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
                     "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
+                    "anchor": activity.data.get("anchor"),
                     "created_at": timestamp.to_rfc3339(),
                 }));
             }
@@ -11116,6 +11122,7 @@ async fn list_sandbox_candidate_comments(
                     "path": activity.data.get("path"),
                     "line_start": activity.data.get("line_start").and_then(|value| value.parse::<u32>().ok()),
                     "line_end": activity.data.get("line_end").and_then(|value| value.parse::<u32>().ok()),
+                    "anchor": activity.data.get("anchor"),
                     "created_at": serde_json::Value::Null,
                 }));
             }
@@ -11177,6 +11184,35 @@ async fn comment_on_sandbox_candidate(
         )
             .into_response();
     }
+    let anchor = body
+        .anchor
+        .as_deref()
+        .map(str::trim)
+        .filter(|anchor| !anchor.is_empty());
+    let office = path.is_some_and(vak_ooxml::is_openxml_path);
+    if office && body.line_start.is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "line numbers mean nothing in an Office file; point at a cell, paragraph or slide with anchor",
+        )
+            .into_response();
+    }
+    if let Some(anchor) = anchor {
+        if !office {
+            return (
+                StatusCode::BAD_REQUEST,
+                "anchor requires an Office file path; use line numbers for text files",
+            )
+                .into_response();
+        }
+        if !vak_ooxml::is_anchor(anchor) {
+            return (
+                StatusCode::BAD_REQUEST,
+                "anchor is not a cell, paragraph, slide or shape anchor",
+            )
+                .into_response();
+        }
+    }
     let Some(handle) = state.get(&session_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -11218,6 +11254,9 @@ async fn comment_on_sandbox_candidate(
     }
     if let Some(line) = body.line_end {
         data.insert("line_end".into(), line.to_string());
+    }
+    if let Some(anchor) = anchor {
+        data.insert("anchor".into(), anchor.to_string());
     }
     data.insert("comment".into(), text.to_string());
     let comment = vak_session::ActivityRecord {
@@ -11740,22 +11779,30 @@ async fn request_revision_from_candidate_comment(
     let Some(body) = comment.data.get("comment") else {
         return StatusCode::CONFLICT.into_response();
     };
-    let location = match (
-        comment.data.get("path"),
-        comment.data.get("line_start"),
-        comment.data.get("line_end"),
-    ) {
-        (Some(path), Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
-        (Some(path), Some(start), None) => format!(" file {path}, line {start}"),
-        (Some(path), _, _) => format!(" file {path}"),
-        _ => String::new(),
-    };
+    let location = comment_location(&comment.data);
     dispatch_candidate_revision(
         state,
         saved.clone(),
         comment_id.clone(),
         format!("Revise candidate {candidate_id} for result {}{location}. Owner selected comment {comment_id} by {} as feedback: {body}", saved.result_id, comment.data.get("actor_name").map(String::as_str).unwrap_or("a participant")),
     ).await
+}
+
+/// Where a candidate comment points, as the revision request states it: an
+/// Office anchor (`Budget!B4`) or a line range, after the file.
+fn comment_location(data: &std::collections::BTreeMap<String, String>) -> String {
+    match (
+        data.get("path"),
+        data.get("anchor"),
+        data.get("line_start"),
+        data.get("line_end"),
+    ) {
+        (Some(path), Some(anchor), _, _) => format!(" file {path}, at {anchor}"),
+        (Some(path), None, Some(start), Some(end)) => format!(" file {path}, lines {start}-{end}"),
+        (Some(path), None, Some(start), None) => format!(" file {path}, line {start}"),
+        (Some(path), None, None, _) => format!(" file {path}"),
+        _ => String::new(),
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -19707,6 +19754,64 @@ mod sandbox_promotion_tests {
                 .contains("keeps 1 of the draft's changes")
         );
 
+        // A comment on an Office draft points at a cell, not a line.
+        let ledger = find_session_on_disk(&state.core, "session-1").unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            ledger,
+            state.core.cwd().to_path_buf(),
+            state.core.clone(),
+        );
+        let comment = |anchor: Option<&str>, line: Option<u32>| {
+            let state = state.clone();
+            let candidate_id = candidate_id.clone();
+            let anchor = anchor.map(str::to_string);
+            async move {
+                comment_on_sandbox_candidate(
+                    State(state),
+                    Path(("session-1".into(), candidate_id)),
+                    axum::Extension(AuthenticatedPrincipal::Operator),
+                    Json(CandidateCommentBody {
+                        text: "Keep the old figure here".into(),
+                        path: Some("budget.xlsx".into()),
+                        line_start: line,
+                        line_end: None,
+                        anchor,
+                        request_id: None,
+                    }),
+                )
+                .await
+                .status()
+            }
+        };
+        assert_eq!(comment(Some("Budget!B2"), None).await, StatusCode::CREATED);
+        assert_eq!(
+            comment(Some("Budget B2"), None).await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            comment(None, Some(4)).await,
+            StatusCode::BAD_REQUEST,
+            "line numbers mean nothing in a package"
+        );
+        let listed = body_json(
+            list_sandbox_candidate_comments(
+                State(state.clone()),
+                Path(("session-1".into(), candidate_id.clone())),
+            )
+            .await,
+        )
+        .await;
+        let anchored: Vec<&serde_json::Value> = listed["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|comment| comment["anchor"] == "Budget!B2")
+            .collect();
+        assert_eq!(anchored.len(), 1, "{listed}");
+        assert_eq!(anchored[0]["path"], "budget.xlsx");
+
         let response = narrow(narrowed_id.clone(), vec!["1"]).await;
         assert_eq!(response.status(), StatusCode::CONFLICT);
         let response = narrow(candidate_id.clone(), vec![]).await;
@@ -19735,6 +19840,37 @@ mod sandbox_promotion_tests {
             text.contains("B2: 100"),
             "the left-out change is not applied: {text}"
         );
+    }
+
+    #[test]
+    fn a_revision_request_names_the_cell_or_lines_a_comment_points_at() {
+        let data = |pairs: &[(&str, &str)]| {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        assert_eq!(
+            comment_location(&data(&[
+                ("path", "budget.xlsx"),
+                ("anchor", "'Q4 plan'!B4")
+            ])),
+            " file budget.xlsx, at 'Q4 plan'!B4"
+        );
+        assert_eq!(
+            comment_location(&data(&[
+                ("path", "a.txt"),
+                ("line_start", "3"),
+                ("line_end", "5")
+            ])),
+            " file a.txt, lines 3-5"
+        );
+        assert_eq!(
+            comment_location(&data(&[("path", "a.txt"), ("line_start", "3")])),
+            " file a.txt, line 3"
+        );
+        assert_eq!(comment_location(&data(&[("path", "a.txt")])), " file a.txt");
+        assert_eq!(comment_location(&data(&[])), "");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -20115,6 +20251,7 @@ mod sandbox_promotion_tests {
                 path: Some("not-reviewed.txt".into()),
                 line_start: None,
                 line_end: None,
+                anchor: None,
                 request_id: Some("invalid-comment".into()),
             }),
         )
@@ -20129,11 +20266,31 @@ mod sandbox_promotion_tests {
                 path: Some("result.txt".into()),
                 line_start: None,
                 line_end: Some(2),
+                anchor: None,
                 request_id: Some("invalid-range".into()),
             }),
         )
         .await;
         assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
+        let anchor_on_text = comment_on_sandbox_candidate(
+            State(state.clone()),
+            Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
+            axum::Extension(AuthenticatedPrincipal::Operator),
+            Json(CandidateCommentBody {
+                text: "Change this cell".into(),
+                path: Some("result.txt".into()),
+                line_start: None,
+                line_end: None,
+                anchor: Some("Budget!B2".into()),
+                request_id: Some("anchor-on-text".into()),
+            }),
+        )
+        .await;
+        assert_eq!(
+            anchor_on_text.status(),
+            StatusCode::BAD_REQUEST,
+            "a text file is commented on by line"
+        );
         let ledger_path = find_session_on_disk(&state.core, "session-1")
             .unwrap()
             .path()

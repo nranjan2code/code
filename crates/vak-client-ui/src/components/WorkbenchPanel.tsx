@@ -161,6 +161,8 @@ export default function WorkbenchPanel() {
   const [afterContent, setAfterContent] = createSignal<string | null>(null);
   const [reviewFileError, setReviewFileError] = createSignal<string | null>(null);
   const [reviewComment, setReviewComment] = createSignal("");
+  // The Office anchor the next comment points at (docs/design/72, F9).
+  const [commentAnchor, setCommentAnchor] = createSignal<string | null>(null);
   const [reviewCommentBusy, setReviewCommentBusy] = createSignal(false);
   const [reviewCommentMessage, setReviewCommentMessage] = createSignal<string | null>(null);
   const [previewPreparations, setPreviewPreparations] = createSignal<api.SandboxPreviewPreparationRecord[]>([]);
@@ -563,6 +565,7 @@ export default function WorkbenchPanel() {
     setAfterContent(null);
     setReviewFileError(null);
     setOfficeReview(null);
+    setCommentAnchor(null);
     setOfficeExcluded(new Set<string>());
     setOfficeNarrowError(null);
     const reviewedFile = prepared.candidate.files.find((file) => file.path === path);
@@ -641,8 +644,9 @@ export default function WorkbenchPanel() {
     setReviewCommentBusy(true);
     setReviewCommentMessage(null);
     try {
-      await api.commentOnSandboxCandidate(id, prepared.candidate.candidate_id, comment, { path: reviewedPath() ?? undefined });
+      await api.commentOnSandboxCandidate(id, prepared.candidate.candidate_id, comment, { path: reviewedPath() ?? undefined, anchor: commentAnchor() ?? undefined });
       setReviewComment("");
+      setCommentAnchor(null);
       setReviewCommentMessage("Comment saved on this draft. Agent revision will be available after isolated draft editing is ready.");
       void api.listSandboxCandidateComments(id, prepared.candidate.candidate_id)
         .then(({ comments }) => setCandidateComments(comments))
@@ -829,6 +833,10 @@ export default function WorkbenchPanel() {
                     busy={officeNarrowBusy()}
                     error={officeNarrowError()}
                     onOpenVersion={openCandidateVersion}
+                    onComment={(anchor) => {
+                      setCommentAnchor(anchor);
+                      document.getElementById("candidate-review-comment")?.focus();
+                    }}
                   />}</Show>
                 </Show>
                 <Show when={reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
@@ -841,14 +849,17 @@ export default function WorkbenchPanel() {
                   <div class="candidate-review-comments" aria-label="Comments on this draft">
                     <h4>Comments</h4>
                     <For each={candidateComments()}>{(comment) => <article>
-                      <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
+                      <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{comment.path}{comment.anchor ? ` · ${comment.anchor}` : ""}{comment.line_start ? ` · line ${comment.line_start}${comment.line_end && comment.line_end !== comment.line_start ? `–${comment.line_end}` : ""}` : ""}</span></div>
                       <p>{comment.text}</p>
                       <button type="button" class="button subtle" disabled={reviewCommentBusy()} onClick={() => void requestRevisionFromComment(comment.comment_id)}>Ask Agent to address this</button>
                     </article>}</For>
                   </div>
                 </Show>
                 <div class="candidate-review-feedback">
-                  <label for="candidate-review-comment">Comment on this draft</label>
+                  <label for="candidate-review-comment">{commentAnchor() ? `Comment on ${commentAnchor()}` : "Comment on this draft"}</label>
+                  <Show when={commentAnchor()}>
+                    <button type="button" class="btn sm" onClick={() => setCommentAnchor(null)}>Comment on the whole file instead</button>
+                  </Show>
                   <textarea id="candidate-review-comment" value={reviewComment()} onInput={(event) => setReviewComment(event.currentTarget.value)} placeholder="Describe what you want changed…" />
                   <button type="button" class="button subtle" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Saving…" : "Save comment"}</button>
                   <Show when={reviewCommentMessage()}>{(message) => <p role="status">{message()}</p>}</Show>

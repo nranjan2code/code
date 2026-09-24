@@ -214,3 +214,31 @@ fn accepting_states_what_happens_to_signatures_and_labels() {
         .is_empty()
     );
 }
+
+#[test]
+fn a_cell_on_a_sheet_whose_name_needs_quotes_is_anchored_as_the_reader_anchors_it() {
+    let before = edited(
+        &fixtures::xlsx(),
+        vec![OfficeOp::AddSheet {
+            name: "Q4 plan".into(),
+        }],
+    );
+    let after = edited(
+        &before,
+        vec![OfficeOp::SetCells {
+            sheet: "Q4 plan".into(),
+            cells: BTreeMap::from([("A1".to_string(), CellValue::Text("Target".into()))]),
+        }],
+    );
+    let changes = diff(Some(&project(&before)), &project(&after)).changes;
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    assert_eq!(changes[0].section, "Q4 plan");
+    assert_eq!(changes[0].anchor, "'Q4 plan'!A1");
+    assert!(
+        project(&after)
+            .lines()
+            .iter()
+            .any(|line| line.starts_with("['Q4 plan'!A1")),
+        "the reader uses the same anchor"
+    );
+}
