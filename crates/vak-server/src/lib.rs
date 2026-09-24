@@ -93,6 +93,7 @@ mod projection;
 mod rate_limit;
 mod service_control;
 mod site;
+mod stream;
 pub mod surfaces;
 mod voice;
 mod web;
@@ -828,7 +829,6 @@ fn router_with_state(state: AppState) -> Router {
             post(revoke_coworking_invitation),
         )
         .route("/sessions/{id}/side", post(side_chat))
-        .route("/sessions/{id}/side/events", get(side_events_sse))
         .route("/sessions/{id}/side/cancel", post(side_cancel_run))
         .route("/sessions/{id}/bestofn", post(start_bestofn))
         .route("/sessions/{id}/keep", post(keep_best_run))
@@ -994,7 +994,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/auth/session", get(web::session_status))
         // ---- the workspace client's own host surface --------------------
         .route("/host", get(web::host_info))
-        .route("/host/events", get(web::host_events))
+        .route("/stream", get(stream::stream))
         .route("/workspaces", get(web::list_workspaces))
         .route("/workspaces/open", post(web::open_workspace))
         .route("/workspaces/forget", post(web::forget_workspace))
@@ -4438,8 +4438,14 @@ async fn run_prompt(
             .insert(request_id.to_owned());
     }
 
-    // Give SSE consumers a moment to attach so terminal events are seen.
-    let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
+    // Give SSE consumers a moment to attach so terminal events are seen. A
+    // stream that is already attached (the client holds one per followed
+    // session for its whole life) needs no wait; waiting on it anyway cost
+    // every turn after the first the full two seconds, because the one
+    // stored permit was spent by the first.
+    if handle.events_tx.receiver_count() == 0 {
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle.subscribed.notified()).await;
+    }
 
     // Driven by a client that is holding the SSE stream open, so a gate
     // raised here reaches a person.
@@ -6200,7 +6206,6 @@ async fn events_sse(
     uri: axum::http::Uri,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use tokio_stream::StreamExt;
-    use tokio_stream::wrappers::BroadcastStream;
 
     let resume = resume_from(&headers, &uri);
     let stream: std::pin::Pin<
@@ -6210,50 +6215,14 @@ async fn events_sse(
         .ok()
         .map(|(_, h)| h)
     {
-        Some(h) => {
-            // Subscribe BEFORE reading the replay ring, so an event
-            // published between the two is received live rather than
-            // falling into the gap between them. Duplicates are filtered
-            // below by sequence number; a gap could not be recovered.
-            let rx = h.events_tx.subscribe();
-
-            // What the client missed while it was away. `None` means the
-            // ring no longer reaches back that far, and the client is told
-            // to rebuild from the durable transcript rather than being
-            // handed a stream with a hole in it that it cannot see.
-            let (replay, resync) = match resume {
-                Some(seq) => match h.events_tx.replay_after(seq) {
-                    Some(missed) => (missed, false),
-                    None => (Vec::new(), true),
-                },
-                None => (Vec::new(), false),
-            };
-            let highest_replayed = replay.last().map(|e| e.seq).unwrap_or(0);
-
-            h.subscribed.notify_one();
-            h.events_tx.send(AgentEvent::StreamOpened);
-
-            let resync_frame = resync.then(|| {
-                Ok(Event::default()
+        Some(h) => Box::pin(stream::agent_frames(&h, resume).map(|frame| {
+            Ok(match frame {
+                stream::AgentFrame::Event(framed) => seq_frame(&framed),
+                stream::AgentFrame::Resync(reason) => Event::default()
                     .event("resync")
-                    .data("{\"reason\":\"events older than the replay window\"}"))
-            });
-            let replayed = replay.into_iter().map(|framed| Ok(seq_frame(&framed)));
-            let live = BroadcastStream::new(rx).filter_map(move |ev| match ev {
-                // Anything at or below what the replay already delivered is
-                // a duplicate of it, not new work.
-                Ok(framed) if framed.seq <= highest_replayed => None,
-                Ok(framed) => Some(Ok(seq_frame(&framed))),
-                Err(_) => Some(Ok(Event::default()
-                    .event("resync")
-                    .data("{\"reason\":\"live event consumer lagged\"}"))),
-            });
-            Box::pin(
-                tokio_stream::iter(resync_frame)
-                    .chain(tokio_stream::iter(replayed))
-                    .chain(live),
-            )
-        }
+                    .data(serde_json::json!({ "reason": reason }).to_string()),
+            })
+        })),
         None => Box::pin(tokio_stream::once(Ok(
             Event::default().data("{\"error\":\"unknown session\"}")
         ))),
@@ -6630,156 +6599,28 @@ async fn presentation_feedback(
 async fn presentation_events_sse(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    headers: axum::http::HeaderMap,
-    uri: axum::http::Uri,
 ) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
     use tokio_stream::StreamExt;
-    use tokio_stream::wrappers::BroadcastStream;
 
-    // EventSource reconnects carry the last presentation sequence through
-    // the same header/query contract as the primary session stream. The
-    // presentation projection is snapshot-based here: the initial snapshot
-    // is authoritative, and its id establishes the new durable cursor. Do
-    // not manufacture delta replay from an unknown historical baseline.
-    let _resume = resume_from(&headers, &uri);
-    let stream: std::pin::Pin<
-        Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = match ensure_session_handle(&state, &id)
+    // A reconnect's `Last-Event-ID` is deliberately not read: the stream
+    // opens on an authoritative snapshot whose id is the new cursor.
+    let handle = ensure_session_handle(&state, &id)
         .await
         .ok()
-        .map(|(_, h)| h)
-    {
-        Some(handle) => {
-            let rx = handle.events_tx.subscribe();
-            let initial = {
-                let guard = handle
-                    .session
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                guard
-                    .as_ref()
-                    .map(|session| live_presentation_snapshot(&handle.core, &id, session))
-                    .unwrap_or_else(|| {
-                        handle
-                            .presentation
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .clone()
-                    })
-            };
-            let mut timeline = initial;
-            let mut last_sequence = timeline
-                .cursor
-                .as_deref()
-                .and_then(|cursor| cursor.strip_prefix("live:"))
-                .and_then(|seq| seq.parse::<u64>().ok())
-                .unwrap_or(0);
-            let initial = vak_delivery::OutputStreamFrame {
-                sequence: Some(last_sequence),
-                delta: None,
-                snapshot: timeline.clone(),
-            };
-            let initial = tokio_stream::once(Ok(Event::default()
-                .id(last_sequence.to_string())
-                .data(serde_json::to_string(&initial).unwrap_or_else(|error| {
-                    serde_json::json!({
-                        "error": "presentation serialization failed",
-                        "detail": error.to_string(),
-                    })
-                    .to_string()
-                }))));
-            handle.subscribed.notify_one();
-            let settled_presentation = handle.presentation.clone();
-            let live = BroadcastStream::new(rx).filter_map(move |event| match event {
-                Ok(framed) => {
-                    if framed.seq <= last_sequence {
-                        return None;
-                    }
-                    last_sequence = framed.seq;
-                    let frame = if matches!(&framed.event, AgentEvent::RunFinished { .. }) {
-                        // The run owner publishes the rebuilt durable projection
-                        // before broadcasting RunFinished. Rebase this long-lived
-                        // subscriber now: carrying its private live timeline into
-                        // the next run would otherwise replace settled cards with
-                        // the prior run's prose/progress snapshot.
-                        timeline = settled_presentation
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner)
-                            .clone();
-                        Some(crate::projection::settled_frame(last_sequence, &timeline))
-                    } else {
-                        crate::projection::project_frame(&mut timeline, framed)
-                    };
-                    frame.map(|frame| {
-                        Ok(Event::default().id(last_sequence.to_string()).data(
-                            serde_json::to_string(&frame).unwrap_or_else(|error| {
-                                serde_json::json!({
-                                    "error": "presentation serialization failed",
-                                    "detail": error.to_string(),
-                                })
-                                .to_string()
-                            }),
-                        ))
-                    })
-                }
-                Err(_) => {
-                    if let Some(events) = handle.events_tx.replay_after(last_sequence) {
-                        for framed in events {
-                            last_sequence = framed.seq;
-                            crate::projection::project_frame(&mut timeline, framed);
-                        }
-                    } else {
-                        let guard = handle
-                            .session
-                            .lock()
-                            .unwrap_or_else(std::sync::PoisonError::into_inner);
-                        timeline = guard
-                            .as_ref()
-                            .map(|session| crate::projection::snapshot(&id, session))
-                            .unwrap_or_else(|| {
-                                handle
-                                    .presentation
-                                    .lock()
-                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                    .clone()
-                            });
-                        last_sequence = timeline
-                            .cursor
-                            .as_deref()
-                            .and_then(|cursor| cursor.strip_prefix("live:"))
-                            .and_then(|seq| seq.parse().ok())
-                            .unwrap_or(last_sequence);
-                        timeline
-                            .diagnostics
-                            .push("Presentation stream resynchronized after a gap.".into());
-                    }
-                    let frame = vak_delivery::OutputStreamFrame {
-                        sequence: Some(last_sequence),
-                        delta: None,
-                        snapshot: timeline.clone(),
-                    };
-                    Some(Ok(Event::default()
-                        .id(last_sequence.to_string())
-                        .data(serde_json::to_string(&frame).unwrap_or_default())))
-                }
-            });
-            Box::pin(initial.chain(live))
-        }
-        None => match open_historical_session(&state, &id) {
-            Some(session) => {
-                let event = vak_delivery::OutputStreamFrame {
-                    sequence: None,
-                    delta: None,
-                    snapshot: crate::projection::snapshot(&id, &session),
-                };
-                Box::pin(tokio_stream::once(Ok(
-                    Event::default().data(serde_json::to_string(&event).unwrap_or_default())
-                )))
-            }
-            None => Box::pin(tokio_stream::once(Ok(
-                Event::default().data("{\"error\":\"unknown session\"}")
-            ))),
-        },
+        .map(|(_, h)| h);
+    let stream: std::pin::Pin<
+        Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
+    > = match stream::presentation_frames(&state, &id, handle) {
+        Some(frames) => Box::pin(frames.map(|frame| {
+            let event = Event::default().data(frame.json);
+            Ok(match frame.sequence {
+                Some(sequence) => event.id(sequence.to_string()),
+                None => event,
+            })
+        })),
+        None => Box::pin(tokio_stream::once(Ok(
+            Event::default().data("{\"error\":\"unknown session\"}")
+        ))),
     };
     Sse::new(stream).keep_alive(KeepAlive::default())
 }
@@ -15300,32 +15141,6 @@ async fn side_chat(
     });
 
     StatusCode::ACCEPTED.into_response()
-}
-
-async fn side_events_sse(
-    State(state): State<AppState>,
-    Path(id): Path<String>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    use tokio_stream::StreamExt;
-    use tokio_stream::wrappers::BroadcastStream;
-
-    let stream: std::pin::Pin<
-        Box<dyn tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>> + Send>,
-    > = match state.get(&id) {
-        Some(h) => {
-            let mut rx = h.side_events_tx.subscribe();
-            let _ = rx.try_recv();
-            h.side_events_tx.send(AgentEvent::StreamOpened);
-            Box::pin(BroadcastStream::new(rx).filter_map(|ev| match ev {
-                Ok(framed) => Some(Ok(seq_frame(&framed))),
-                Err(_) => Some(Ok(Event::default().data("{\"lagged\":true}"))),
-            }))
-        }
-        None => Box::pin(tokio_stream::once(Ok(
-            Event::default().data("{\"error\":\"unknown session\"}")
-        ))),
-    };
-    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 async fn side_cancel_run(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {

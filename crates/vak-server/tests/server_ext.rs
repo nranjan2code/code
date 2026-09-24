@@ -2003,3 +2003,180 @@ async fn hooks_roundtrip_preserves_disabled_hooks_instead_of_deleting_them() {
         "only the enabled hook should become live: {built:?}"
     );
 }
+
+/// One parsed SSE frame from `/stream`.
+#[derive(Debug)]
+struct Frame {
+    event: String,
+    id: Option<String>,
+    data: serde_json::Value,
+}
+
+/// Read frames from an SSE response until `done` accepts one, or time out.
+async fn read_frames(res: reqwest::Response, mut done: impl FnMut(&Frame) -> bool) -> Vec<Frame> {
+    use futures::StreamExt;
+    let mut body = res.bytes_stream();
+    let mut buffer = String::new();
+    let mut frames = Vec::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        let chunk = tokio::time::timeout_at(deadline, body.next())
+            .await
+            .expect("stream frames timed out")
+            .expect("stream ended")
+            .unwrap();
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(end) = buffer.find("\n\n") {
+            let block: String = buffer.drain(..end + 2).collect();
+            let mut frame = Frame {
+                event: "message".into(),
+                id: None,
+                data: serde_json::Value::Null,
+            };
+            let mut data = String::new();
+            for line in block.lines() {
+                if let Some(value) = line.strip_prefix("event:") {
+                    frame.event = value.trim().into();
+                } else if let Some(value) = line.strip_prefix("id:") {
+                    frame.id = Some(value.trim().into());
+                } else if let Some(value) = line.strip_prefix("data:") {
+                    data.push_str(value.trim());
+                }
+            }
+            if data.is_empty() {
+                continue; // keep-alive comment
+            }
+            frame.data = serde_json::from_str(&data).unwrap_or(serde_json::Value::String(data));
+            let finished = done(&frame);
+            frames.push(frame);
+            if finished {
+                return frames;
+            }
+        }
+    }
+}
+
+/// One connection carries every subscription: each session's agent and
+/// presentation frames, tagged with the session they belong to, plus host
+/// changes; the agent frame's id is a cursor vector that resumes each
+/// session from its own sequence (docs/design/48-web-client.md §4.7).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_stream_multiplexes_sessions_and_resumes_each_from_its_cursor() {
+    let (base, token, _cwd, _server) = spawn_secured(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![text("streamed answer")])),
+    }))
+    .await;
+    let client = client_with(&token);
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let id: String = client
+            .post(format!("{base}/sessions"))
+            .send()
+            .await
+            .unwrap()
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        ids.push(id);
+    }
+    let (a, b) = (ids[0].clone(), ids[1].clone());
+
+    let empty = client.get(format!("{base}/stream")).send().await.unwrap();
+    assert_eq!(
+        empty.status(),
+        400,
+        "a stream with no subscription is refused"
+    );
+
+    let url = format!("{base}/stream?session={a}&session={b}&host=1");
+    let res = client.get(&url).send().await.unwrap();
+    assert_eq!(res.status(), 200);
+    let (opened_tx, opened_rx) = tokio::sync::oneshot::channel::<()>();
+    let reader = {
+        let a = a.clone();
+        tokio::spawn(async move {
+            let mut opened_tx = Some(opened_tx);
+            read_frames(res, move |frame| {
+                if frame.event == "agent"
+                    && frame.data["session"] == a.as_str()
+                    && frame.data["event"] == "StreamOpened"
+                    && let Some(tx) = opened_tx.take()
+                {
+                    let _ = tx.send(());
+                }
+                frame.event == "agent"
+                    && frame.data["session"] == a.as_str()
+                    && frame.data["event"].get("RunFinished").is_some()
+            })
+            .await
+        })
+    };
+    tokio::time::timeout(Duration::from_secs(10), opened_rx)
+        .await
+        .expect("stream never opened")
+        .unwrap();
+    let started = client
+        .post(format!("{base}/sessions/{a}/run"))
+        .json(&serde_json::json!({"prompt": "hello"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(started.status(), 202);
+    let frames = reader.await.unwrap();
+
+    assert!(
+        frames
+            .iter()
+            .any(|f| f.event == "host" && f.data["ready"] == true)
+    );
+    for id in [&a, &b] {
+        assert!(
+            frames
+                .iter()
+                .any(|f| f.event == "presentation" && f.data["session"] == id.as_str()),
+            "each followed session gets its presentation snapshot"
+        );
+    }
+    let turn = frames
+        .iter()
+        .filter(|f| f.event == "agent" && f.data["event"] != "StreamOpened")
+        .collect::<Vec<_>>();
+    assert!(!turn.is_empty());
+    assert!(
+        turn.iter().all(|f| f.data["session"] == a.as_str()),
+        "a run's events are tagged with its own session only"
+    );
+    let finished = turn.last().unwrap();
+    let cursor = finished.id.clone().expect("agent frames carry the cursor");
+    let finished_seq: u64 = cursor
+        .split(',')
+        .find_map(|pair| pair.strip_prefix(&format!("{a}:")))
+        .expect("the cursor names the session that moved")
+        .parse()
+        .unwrap();
+
+    // A reconnect one event short of the end is replayed exactly that
+    // event for `a`, before anything live.
+    let resumed = client
+        .get(&url)
+        .header("Last-Event-ID", format!("{a}:{}", finished_seq - 1))
+        .send()
+        .await
+        .unwrap();
+    let a_for_replay = a.clone();
+    let replayed = read_frames(resumed, move |frame| {
+        frame.event == "agent" && frame.data["session"] == a_for_replay.as_str()
+    })
+    .await;
+    let first = replayed.last().unwrap();
+    assert!(first.data["event"].get("RunFinished").is_some());
+    assert!(
+        first
+            .id
+            .as_deref()
+            .is_some_and(|id| id.contains(&format!("{a}:{finished_seq}")))
+    );
+}

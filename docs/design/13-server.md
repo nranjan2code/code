@@ -18,6 +18,7 @@ consumers.
 | GET | `/sessions/:id/events` | SSE stream of `AgentEvent` JSON. Every frame carries `id: <seq>`; a reconnect with `Last-Event-ID` is replayed the gap, or gets an `event: resync` frame when the gap is wider than the 1024-frame ring (docs/design/48-web-client.md §4.4) |
 | GET | `/sessions/:id/presentation` | reconnectable schema-v2 `OutputTimeline` snapshot; deterministic projection of the ledger and live state |
 | GET | `/sessions/:id/presentation/events` | SSE stream of semantic presentation events (`Snapshot`, `ItemStarted`, `TextDelta`, `ItemReplaced`, `ItemCompleted`) |
+| GET | `/stream?session=…&host=1&config=1` | every subscription a client holds on ONE SSE connection: per followed session its `agent`, `presentation`, `side`, `coworking` and `resync` frames, plus `host` and `config` changes. Agent frames carry the cursor vector `<session>:<seq>,…` as their id, so `Last-Event-ID` resumes every session. What the browser client uses; the per-session routes above serve single-session clients such as `vak term` (docs/design/48-web-client.md §4.7) |
 | GET | `/sessions/:id/transcript` | derived messages + usage; historical (non-attached) sessions fall back to opening the ledger from disk — error bodies stay 200-wrapped for wire compatibility |
 | GET | `/sessions/:id/transcript.md` | markdown export through the shared `transcript_md` renderer (byte-parity with TUI export); same disk fallback, proper 404 when unknown |
 | GET | `/sessions` | persisted session summaries (sidebar projection) |
@@ -32,7 +33,6 @@ consumers.
 | GET/PUT | `/fs/file` | read/write a file confined to the workspace root |
 | GET | `/fs/tree?limit=` | bounded recursive listing (@-mention autocomplete) |
 | POST | `/sessions/:id/side` `{question}` | side chat: branched turn, main chain untouched |
-| GET | `/sessions/:id/side/events` | SSE for the side-chat branch |
 | POST | `/sessions/:id/side/cancel` | cancel the side run |
 | POST | `/sessions/:id/bestofn` `{prompt,n}` | fan out n worktree-isolated runs |
 | POST | `/sessions/:id/keep` / `discard` | merge or drop a best-of-N candidate branch |
@@ -120,7 +120,6 @@ console at `/admin`, from one asset-serving path (`embedded_ui.rs`).
 | POST | `/auth/logout` | clear it |
 | GET | `/auth/session` | `{authenticated}` — deliberately not a 401, so "no session" is distinguishable from "unreachable" |
 | GET | `/host` | what `backend_info` is on the desktop; carries no base URL or token, which is how the client knows it is same-origin and cookie-authenticated |
-| GET | `/host/events` | SSE, on change only |
 | GET | `/workspaces` | known workspaces, active first |
 | POST | `/workspaces/open` `{path, trust?}` | resolve through `CorePool` and make it active for NEW sessions (a session freezes its `Core` at creation, invariant 17) |
 | GET | `/fs/dirs?path=` | folder names only, rooted at `[server] workspace_roots` |

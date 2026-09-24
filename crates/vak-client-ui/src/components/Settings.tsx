@@ -27,6 +27,7 @@ import {
 } from "../store";
 import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
+import { watchConfig } from "../streamHub";
 import { relTime } from "../time";
 import { loadHealth, refreshSessions, openAgentChat } from "../App";
 import { sortByRecent } from "../agentRecents";
@@ -886,8 +887,8 @@ export default function Settings() {
   // another client) instead of only ever showing what was true at mount
   // time (docs/design/44-shared-config.md, "Liveness").
   onMount(() => {
-    const events = api.openConfigEvents(() => void load());
-    onCleanup(() => events.close());
+    const stop = watchConfig(() => void load());
+    onCleanup(stop);
   });
   const visiblePages = createMemo(() => {
     const needle = query().trim().toLowerCase();

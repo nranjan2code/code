@@ -17,7 +17,6 @@ use axum::Json;
 use axum::extract::State;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{StatusCode, header};
-use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 
@@ -197,7 +196,7 @@ pub(crate) async fn version() -> Response {
 /// `base_url` and `token` are deliberately absent. The web client is
 /// same-origin and cookie-authenticated, and an absent base URL is how it
 /// knows that — see `adoptBackend` in the client's api.ts.
-fn host_payload(state: &AppState) -> serde_json::Value {
+pub(crate) fn host_payload(state: &AppState) -> serde_json::Value {
     let core = state.active_core();
     let cfg = state.core.config();
     // A terminal reaches a real shell, so it is advertised only when the
@@ -217,24 +216,6 @@ fn host_payload(state: &AppState) -> serde_json::Value {
 
 pub(crate) async fn host_info(State(state): State<AppState>) -> Response {
     Json(host_payload(&state)).into_response()
-}
-
-/// Host-level changes, pushed. Currently one fact — which workspace is
-/// active — so this is a low-rate poll folded into a stream rather than a
-/// broadcast channel of its own: a workspace switch is a human action, and
-/// a second of latency on it is not a defect worth a new event family.
-pub(crate) async fn host_events(
-    State(state): State<AppState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
-    use tokio_stream::StreamExt;
-    let stream = tokio_stream::wrappers::IntervalStream::new(tokio::time::interval(
-        std::time::Duration::from_secs(2),
-    ))
-    .map(move |_| {
-        Ok(Event::default()
-            .data(serde_json::to_string(&host_payload(&state)).unwrap_or_else(|_| "{}".into())))
-    });
-    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 // ---- workspaces ------------------------------------------------------------

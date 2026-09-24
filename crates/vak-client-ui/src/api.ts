@@ -1,6 +1,6 @@
 import { host } from "./host";
+import { restartStream, setStreamOpener } from "./streamHub";
 import type {
-  AgentEvent,
   BackendInfo,
   DiffResponse,
   Health,
@@ -10,7 +10,6 @@ import type {
   ConfigSnapshot,
   WorkReceipt,
   OutputTimeline,
-  PresentationStreamEvent,
   VoiceProvidersResponse,
 } from "./types";
 
@@ -53,6 +52,7 @@ export async function initBackend(): Promise<BackendInfo> {
 }
 
 export function adoptBackend(info: BackendInfo): void {
+  const before = auth;
   if (info.ready && info.base_url && info.token) {
     auth = { mode: "bearer", base: info.base_url, token: info.token };
   } else if (host.kind === "web") {
@@ -63,6 +63,12 @@ export function adoptBackend(info: BackendInfo): void {
     // Desktop with no live backend: no credentials to speak with yet.
     auth = { mode: "bearer", base: "", token: "" };
   }
+  // A different backend numbers its events from scratch, so the stream
+  // reconnects to it without the old one's cursor.
+  const moved =
+    before.mode !== auth.mode ||
+    (before.mode === "bearer" && auth.mode === "bearer" && (before.base !== auth.base || before.token !== auth.token));
+  if (moved) restartStream(true);
 }
 
 export function isBackendReady(): boolean {
@@ -143,7 +149,8 @@ async function authFetch(path: string, init?: RequestInit): Promise<Response> {
 }
 
 /**
- * Open an `EventSource` with whatever this host's auth channel is.
+ * Open the stream hub's `EventSource` (streamHub.ts) with whatever this
+ * host's auth channel is. Nothing else in the client opens one.
  *
  * On the web the stream is same-origin and the cookie rides along on its
  * own; `withCredentials` is set so a future proxy deployment on a
@@ -165,6 +172,8 @@ function eventSource(path: string): EventSource {
     `${auth.base}${path}${join}token=${encodeURIComponent(auth.token)}`,
   );
 }
+
+setStreamOpener(eventSource);
 
 // ---- ops (background services) ------------------------------------------------
 
@@ -507,27 +516,6 @@ export function result(id: string, resultId: string): Promise<OutputTimeline["it
   return req(`/sessions/${encodeURIComponent(id)}/results/${encodeURIComponent(resultId)}`);
 }
 
-export function openPresentationStream(
-  id: string,
-  onEvent: (event: PresentationStreamEvent) => void,
-  onError?: () => void,
-): EventSource {
-  const es = eventSource(`/sessions/${encodeURIComponent(id)}/presentation/events`);
-  es.onmessage = (message) => {
-    try {
-      const frame = JSON.parse(message.data);
-      if (frame?.snapshot?.schema_version !== 2 || frame.snapshot.session_id !== id || !Array.isArray(frame.snapshot.items) || !Array.isArray(frame.snapshot.diagnostics)) {
-        throw new Error("Invalid presentation frame");
-      }
-      onEvent(frame as PresentationStreamEvent);
-    } catch {
-      onError?.();
-    }
-  };
-  es.onerror = () => onError?.();
-  return es;
-}
-
 /** Markdown export (shared renderer with the TUI); text, not JSON. */
 export async function transcriptMarkdown(id: string): Promise<string> {
   const res = await authFetch(`/sessions/${encodeURIComponent(id)}/transcript.md`);
@@ -728,29 +716,6 @@ export function setPermissionMode(mode: string, agent?: string): Promise<void> {
 
 export function getConfig(agent?: string): Promise<ConfigSnapshot> {
   return req(withAgent("/config", agent));
-}
-
-/**
- * Subscribe to server-side config/credential changes (docs/design/44-shared-config.md,
- * "Liveness") so a write from another surface (CLI `vak setup`, another
- * client) is reflected here without a manual refresh or app restart.
- *
- * Reuses the admin event hub's existing broadcast stream rather than a
- * dedicated endpoint — every `emit_config_changed(...)` call server-side
- * already fires a `ConfigChanged` event on it. `onChange` is called on
- * every such event; callers decide what to re-fetch.
- */
-export function openConfigEvents(onChange: () => void): EventSource {
-  const es = eventSource("/admin/api/events");
-  es.onmessage = (message) => {
-    try {
-      const event = JSON.parse(message.data);
-      if (event?.type === "ConfigChanged") onChange();
-    } catch {
-      // ignore malformed/keep-alive frames
-    }
-  };
-  return es;
 }
 
 export function listProviders(): Promise<import("./types").ProvidersResponse> {
@@ -1017,11 +982,6 @@ export function listSandboxCandidateComments(sessionId: string, candidateId: str
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`);
 }
 
-/** Content-free signal to refresh the currently open shared draft. */
-export function openCoworkingUpdates(sessionId: string): EventSource {
-  return eventSource(`/sessions/${encodeURIComponent(sessionId)}/coworking/updates`);
-}
-
 export function requestRevisionFromCandidateComment(sessionId: string, candidateId: string, commentId: string): Promise<InterventionReceipt> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/comments/${encodeURIComponent(commentId)}/request-revision`, { method: "POST" });
 }
@@ -1194,73 +1154,6 @@ export async function speak(
     throw new Error(msg);
   }
   return res.blob();
-}
-
-// ---- SSE ---------------------------------------------------------------------
-
-export function openEventStream(
-  id: string,
-  onEvent: (ev: AgentEvent, lastEventId?: string) => void,
-  onError?: () => void,
-  /** The server lost our place in the replay ring: whatever is on screen
-   *  may be missing events, and only a re-read of the durable transcript
-   *  can be trusted (docs/design/48-web-client.md §4.4). */
-  onResync?: () => void,
-  /** Fires when the stream is actually carrying events again. */
-  onOpen?: () => void,
-  /** Resume cursor for a client-created replacement EventSource. */
-  resumeFrom?: string,
-): EventSource {
-  const path = `/sessions/${encodeURIComponent(id)}/events${resumeFrom ? `?last_event_id=${encodeURIComponent(resumeFrom)}` : ""}`;
-  const es = eventSource(path);
-  es.onopen = () => onOpen?.();
-  // A named event, so it cannot be confused with an agent event that
-  // happens to carry a similar shape.
-  es.addEventListener("resync", () => onResync?.());
-  es.onmessage = (m) => {
-    // Only the parse is allowed to fail silently -- a genuine keep-alive
-    // or comment frame is not valid JSON, and that is expected. `onEvent`
-    // runs outside this catch on purpose: it previously shared the same
-    // try/catch, so a bug in the caller's own handling of a successfully
-    // parsed event -- including RunFinished, the one that clears
-    // "running" state and reveals the reply -- vanished with no trace.
-    // The backend would complete a turn and durably log it correctly
-    // while the UI stayed on "Working" forever with nothing in the
-    // console to explain why, because nothing had actually failed at
-    // the connection level: the exception was caught and discarded.
-    let parsed: AgentEvent;
-    try {
-      parsed = JSON.parse(m.data) as AgentEvent;
-    } catch {
-      return; // not JSON: a keep-alive or comment frame, not an error
-    }
-      try {
-        onEvent(parsed, m.lastEventId || undefined);
-      } catch (eventErr) {
-        // Report and move on rather than either vanish (the defect this
-        // replaces) or take the whole stream down over one bad event.
-        console.error("vak: error handling agent event", parsed, eventErr);
-      }
-  };
-  es.onerror = () => onError?.();
-  return es;
-}
-
-export function openSideStream(
-  id: string,
-  onEvent: (ev: AgentEvent) => void,
-  onError?: () => void,
-): EventSource {
-  const es = eventSource(`/sessions/${encodeURIComponent(id)}/side/events`);
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data) as AgentEvent);
-    } catch {
-      // ignore keep-alive frames
-    }
-  };
-  es.onerror = () => onError?.();
-  return es;
 }
 
 export function listTasks(): Promise<{ tasks: import("./types").TaskDef[] }> {

@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, For, Suspense } from "solid-js";
 import { host } from "./host";
+import { watchSession, watchStatus } from "./streamHub";
 import {
   activeId,
   appendSystem,
@@ -129,11 +130,9 @@ import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import OnboardingWelcome from "./components/OnboardingWelcome";
 
-const streams = new Map<string, EventSource>();
-const presentationStreams = new Map<string, EventSource>();
-const sideStreams = new Map<string, EventSource>();
-const sideReconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const lastEventIds = new Map<string, string>();
+/** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
+const streams = new Map<string, () => void>();
+const sideStreams = new Map<string, () => void>();
 
 export async function refreshSessions() {
   const source = api.backendUrl();
@@ -166,7 +165,7 @@ export async function refreshSessions() {
       // Reconcile "running" against the server's own truth. The push
       // path (openStream -> RunFinished) can miss a completion for
       // reasons that are not bugs to chase individually: the
-      // EventSource is constructed but its connection is still
+      // subscription is registered but the stream is still
       // establishing when the run finishes, the tab was backgrounded,
       // the stream dropped and hasn't reconnected yet -- in every case
       // the server-side broadcast channel does not replay history to a
@@ -202,7 +201,7 @@ export async function refreshSessions() {
           // Shared-human messages are append-only ledger writes rather than
           // Agent events. Reconcile visible settled conversations on the
           // existing session heartbeat so an owner's open transcript picks
-          // them up without adding a third persistent SSE connection.
+          // them up without another subscription on the shared stream.
           await hydrate(s.session_id);
         }
       }
@@ -265,95 +264,39 @@ async function hydrate(id: string) {
   }
 }
 
-const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const resyncingSessions = new Set<string>();
 
 /**
- * Disconnect streams for sessions that are no longer visible and not running.
+ * Stop following sessions that are no longer visible.
  *
- * Browsers and WebKit enforce an operating-system standard limit of 6 concurrent
- * HTTP/1.1 connections per host. Each session openStream creates 2 persistent
- * EventSource connections (events + presentation). Keeping streams open across
- * sessions quickly exhausts the 6-connection pool, stalling all subsequent
- * fetch() calls (transcript, attach, create) indefinitely.
+ * Every subscription rides the one shared stream (streamHub.ts), so this is
+ * no longer what keeps the browser's six-connections-per-host pool free; it
+ * keeps the server from projecting events nobody is looking at.
  */
 function pruneStreams() {
   const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
-  for (const [id, es] of streams) {
-    if (!visible.has(id)) {
-      es.close();
-      streams.delete(id);
-      const timer = reconnectTimers.get(id);
-      if (timer) {
-        clearTimeout(timer);
-        reconnectTimers.delete(id);
-      }
-    }
-  }
-  for (const [id, es] of presentationStreams) {
-    if (!visible.has(id)) {
-      es.close();
-      presentationStreams.delete(id);
-    }
-  }
-  for (const [id, es] of sideStreams) {
-    if (!visible.has(id)) {
-      es.close();
-      sideStreams.delete(id);
-      const timer = sideReconnectTimers.get(id);
-      if (timer) {
-        clearTimeout(timer);
-        sideReconnectTimers.delete(id);
-      }
+  for (const followed of [streams, sideStreams]) {
+    for (const [id, stop] of followed) {
+      if (visible.has(id)) continue;
+      stop();
+      followed.delete(id);
     }
   }
 }
 
 function openStream(id: string) {
   if (streams.has(id)) return;
-  const es = api.openEventStream(
-    id,
-    (ev, lastEventId) => {
-      if (lastEventId) lastEventIds.set(id, lastEventId);
+  streams.set(id, watchSession(id, {
+    agent: (ev) =>
       applyEvent(id, ev, {
         onFinish: (s) => onFinished(id, s),
         onApproval: (requestId, tool) => onApprovalRequested(id, requestId, tool),
-      });
-    },
-    () => {
-      // Any error means we are not currently receiving events, whether or
-      // not the browser will recover on its own — say so rather than
-      // leaving a stale "Live" on screen while nothing arrives.
-      setConnection(es.readyState === EventSource.CLOSED ? "offline" : "reconnecting");
-      // A plain browser-level connection error is not necessarily fatal:
-      // EventSource retries transient failures on its own per spec. Only
-      // intervene once it has actually given up (readyState CLOSED) --
-      // otherwise this races the browser's own reconnect and can tear
-      // down a connection that would have recovered by itself.
-      if (es.readyState !== EventSource.CLOSED) return;
-      // Without this, a permanently closed connection left `streams`
-      // holding a dead entry forever: openStream's own guard above then
-      // refused to ever reopen it for this session, so a run that
-      // finished after the drop had no path left to reach the UI --
-      // the backend would complete and durably log the reply while the
-      // task stayed on "Working" until the app was relaunched.
-      if (streams.get(id) === es) streams.delete(id);
-      if (reconnectTimers.has(id)) return;
-      reconnectTimers.set(
-        id,
-        setTimeout(() => {
-          reconnectTimers.delete(id);
-          const visible = new Set([activeId(), splitId()].filter((x): x is string => !!x));
-          if (visible.has(id)) {
-            openStream(id);
-          }
-        }, 2000),
-      );
-    },
-    () => {
-      // Resync: the gap was wider than the server's replay ring, so what
-      // is on screen may be missing events it cannot know about. Rebuild
-      // from the durable transcript, which is the only complete record.
+      }),
+    presentation: (frame) => applyPresentationEvent(id, frame),
+    resync: () => {
+      // The gap was wider than the server's replay ring, so what is on
+      // screen may be missing events it cannot know about. Rebuild from the
+      // durable transcript, which is the only complete record.
       resyncingSessions.add(id);
       setConnection("resyncing");
       // A running turn cannot be hydrated safely: its durable transcript is
@@ -367,24 +310,7 @@ function openStream(id: string) {
         });
       }
     },
-    () => {
-      if (!resyncingSessions.has(id)) setConnection("live");
-    },
-    lastEventIds.get(id),
-  );
-  streams.set(id, es);
-  if (!presentationStreams.has(id)) {
-    const presentation = api.openPresentationStream(
-      id,
-      (event) => applyPresentationEvent(id, event),
-      () => {
-        if (presentation.readyState === EventSource.CLOSED && presentationStreams.get(id) === presentation) {
-          presentationStreams.delete(id);
-        }
-      },
-    );
-    presentationStreams.set(id, presentation);
-  }
+  }));
 }
 
 const NOTIFY_DEDUPE_MS = 5 * 60 * 1000;
@@ -827,29 +753,13 @@ export function stopSide() {
 }
 
 function closeAllSideStreams() {
-  sideStreams.forEach((es) => es.close());
+  sideStreams.forEach((stop) => stop());
   sideStreams.clear();
-  sideReconnectTimers.forEach((timer) => clearTimeout(timer));
-  sideReconnectTimers.clear();
 }
 
 function ensureSideStream(id: string) {
   if (sideStreams.has(id)) return;
-  const es = api.openSideStream(id, (ev) =>
-    applyEvent(id, ev, { bucket: "side" }),
-    () => {
-      setNotice({ kind: "error", text: "Side chat lost its connection; the browser is trying to reconnect." });
-      if (es.readyState !== EventSource.CLOSED || sideStreams.get(id) !== es) return;
-      sideStreams.delete(id);
-      if (sideReconnectTimers.has(id)) return;
-      sideReconnectTimers.set(id, setTimeout(() => {
-        sideReconnectTimers.delete(id);
-        const visible = new Set([activeId(), splitId()].filter((value): value is string => !!value));
-        if (visible.has(id) || isRunning(id, "side")) ensureSideStream(id);
-      }, 2000));
-    },
-  );
-  sideStreams.set(id, es);
+  sideStreams.set(id, watchSession(id, { side: (ev) => applyEvent(id, ev, { bucket: "side" }) }));
 }
 
 /**
@@ -1031,12 +941,8 @@ export async function switchWorkspace(cwd?: string) {
 }
 
 function closeAllStreams() {
-  streams.forEach((es) => es.close());
+  streams.forEach((stop) => stop());
   streams.clear();
-  reconnectTimers.forEach((timer) => clearTimeout(timer));
-  reconnectTimers.clear();
-  presentationStreams.forEach((es) => es.close());
-  presentationStreams.clear();
 }
 
 /** Focus/follow header strip above each half of a split workspace. */
@@ -1155,6 +1061,17 @@ export default function App() {
     const stopHostWatch = host.onInfoChanged((info) => {
       if (!workspaceSwitching()) void refreshBackend(info);
     });
+    // The shared stream's own state is the transport signal. "Live" is
+    // claimed only once it is open, and never over an unfinished resync.
+    const stopStatusWatch = watchStatus((status) => {
+      if (status === "open") {
+        if (resyncingSessions.size === 0) setConnection("live");
+      } else if (status === "offline") {
+        setConnection("offline");
+      } else if (status !== "idle") {
+        setConnection("reconnecting");
+      }
+    });
     // A bookmarked or notification-clicked deep link, applied once the
     // backend is up — `activate` needs a session list to resolve against.
     void init().then(() => {
@@ -1254,6 +1171,7 @@ export default function App() {
       window.removeEventListener("offline", goOffline);
       window.removeEventListener("online", goOnline);
       stopHostWatch();
+      stopStatusWatch();
       window.clearInterval(sessionRefresh);
       window.clearInterval(healthRefresh);
       closeAllStreams();

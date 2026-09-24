@@ -8,6 +8,7 @@
 
 import type { BackendInfo, WorkspaceReview } from "../types";
 import type { Host, HostFeature, SaveOutcome, TerminalTransport } from "./port";
+import { restartStream, watchHost } from "../streamHub";
 
 /** Same-origin fetch that always carries the session cookie. */
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -70,18 +71,12 @@ export const activeHost: Host = {
 
   onInfoChanged(handler: (info: BackendInfo) => void): () => void {
     // Host-level changes (a workspace opened in another tab, a failed
-    // boot) arrive on their own stream rather than being polled.
-    const es = new EventSource("/host/events", { withCredentials: true });
-    es.onmessage = (m) => {
-      try {
-        const info = JSON.parse(m.data) as BackendInfo;
-        terminalAllowed = info.terminal === true;
-        handler(info);
-      } catch {
-        /* keep-alive frame */
-      }
-    };
-    return () => es.close();
+    // boot) ride the tab's shared stream rather than being polled.
+    return watchHost((data) => {
+      const info = data as BackendInfo;
+      terminalAllowed = info.terminal === true;
+      handler(info);
+    });
   },
 
   openWorkspace(cwd: string, trust?: boolean): Promise<BackendInfo> {
@@ -196,6 +191,8 @@ export const activeHost: Host = {
    *  back is HttpOnly — script can neither read it nor exfiltrate it. */
   async authenticate(token: string): Promise<void> {
     await call("/auth/login", { method: "POST", body: JSON.stringify({ token }) });
+    // A stream refused before sign-in is waiting out its retry backoff.
+    restartStream(false);
   },
 
   sessionStatus(): Promise<{ authenticated: boolean; expires_at?: string | null }> {
