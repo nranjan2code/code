@@ -370,28 +370,86 @@ fn suggested_link_dir() -> Option<PathBuf> {
         .find(|dir| dir.is_dir() && on_path.contains(dir))
 }
 
+/// Which `vak` a shell would run, relative to the installed CLI.
+#[derive(Debug, PartialEq, Eq)]
+enum CliOnPath {
+    ThisInstall,
+    /// An earlier PATH entry holds a different `vak`.
+    Shadowed(PathBuf),
+    Absent,
+}
+
+/// Resolve `cli`'s file name the way a shell does — the first executable
+/// match in `path_var` wins — and compare canonical paths, so a symlink
+/// into the install (`~/.local/bin/vak`) counts as this install. Checking
+/// only whether the install's own directory is on PATH reported a linked
+/// CLI as missing.
+fn cli_on_path(path_var: Option<&std::ffi::OsStr>, cli: &Path) -> CliOnPath {
+    let (Some(path_var), Some(name)) = (path_var, cli.file_name()) else {
+        return CliOnPath::Absent;
+    };
+    let target = std::fs::canonicalize(cli).unwrap_or_else(|_| cli.to_path_buf());
+    for dir in std::env::split_paths(path_var) {
+        let candidate = dir.join(name);
+        if !is_executable_file(&candidate) {
+            continue;
+        }
+        return match std::fs::canonicalize(&candidate) {
+            Ok(real) if real == target => CliOnPath::ThisInstall,
+            _ => CliOnPath::Shadowed(candidate),
+        };
+    }
+    CliOnPath::Absent
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        meta.is_file()
+    }
+}
+
 fn report_next_steps(root: &InstallRoot, stale_services: bool) {
     let cli = root.bin_dir().join("vak");
-    let on_path = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).any(|d| d == root.bin_dir()))
-        .unwrap_or(false);
-    if !on_path {
-        println!();
-        println!("the CLI is not on PATH; either add it:");
-        println!("  export PATH=\"{}:$PATH\"", root.bin_dir().display());
-        println!("or link it:");
-        match suggested_link_dir() {
-            Some(dir) => {
-                let link = dir.join("vak");
-                // No `sudo` when the directory is already writable; asking
-                // for root to write a directory the user owns teaches people
-                // to sudo things that do not need it.
-                let sudo = if is_writable_dir(&dir) { "" } else { "sudo " };
-                println!("  {sudo}ln -sf {} {}", cli.display(), link.display());
-            }
-            None => {
-                println!("  sudo ln -sf {} /usr/local/bin/vak", cli.display());
-                println!("  (then make sure /usr/local/bin is on your PATH)");
+    let resolved = cli_on_path(std::env::var_os("PATH").as_deref(), &cli);
+    match &resolved {
+        CliOnPath::ThisInstall => {}
+        // A link placed after the shadowing entry would change nothing, so
+        // only the PATH order is offered.
+        CliOnPath::Shadowed(other) => {
+            println!();
+            println!(
+                "`vak` on PATH is {}, not this install; put this one first:",
+                other.display()
+            );
+            println!("  export PATH=\"{}:$PATH\"", root.bin_dir().display());
+        }
+        CliOnPath::Absent => {
+            println!();
+            println!("the CLI is not on PATH; either add it:");
+            println!("  export PATH=\"{}:$PATH\"", root.bin_dir().display());
+            println!("or link it:");
+            match suggested_link_dir() {
+                Some(dir) => {
+                    let link = dir.join("vak");
+                    // No `sudo` when the directory is already writable; asking
+                    // for root to write a directory the user owns teaches people
+                    // to sudo things that do not need it.
+                    let sudo = if is_writable_dir(&dir) { "" } else { "sudo " };
+                    println!("  {sudo}ln -sf {} {}", cli.display(), link.display());
+                }
+                None => {
+                    println!("  sudo ln -sf {} /usr/local/bin/vak", cli.display());
+                    println!("  (then make sure /usr/local/bin is on your PATH)");
+                }
             }
         }
     }
@@ -1131,5 +1189,65 @@ mod tests {
             vec!["vak"],
             "only the CLI is required; the rest ride along when built"
         );
+    }
+
+    #[cfg(unix)]
+    fn executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::write(path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_on_path_follows_a_symlink_into_the_install() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("App/Contents/MacOS");
+        let link_dir = tmp.path().join("local-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::create_dir_all(&link_dir).unwrap();
+        let cli = bin.join("vak");
+        executable(&cli);
+        std::os::unix::fs::symlink(&cli, link_dir.join("vak")).unwrap();
+
+        let path = std::env::join_paths([&link_dir]).unwrap();
+        assert_eq!(cli_on_path(Some(&path), &cli), CliOnPath::ThisInstall);
+        let path = std::env::join_paths([&bin]).unwrap();
+        assert_eq!(cli_on_path(Some(&path), &cli), CliOnPath::ThisInstall);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_on_path_reports_an_earlier_different_vak_as_shadowing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("install");
+        let stale = tmp.path().join("cargo-bin");
+        let not_exec = tmp.path().join("plain");
+        for dir in [&bin, &stale, &not_exec] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        let cli = bin.join("vak");
+        executable(&cli);
+        executable(&stale.join("vak"));
+        std::fs::write(not_exec.join("vak"), "not a program").unwrap();
+
+        // A non-executable `vak` is skipped, as a shell would skip it.
+        let path = std::env::join_paths([&not_exec, &bin]).unwrap();
+        assert_eq!(cli_on_path(Some(&path), &cli), CliOnPath::ThisInstall);
+        let path = std::env::join_paths([&stale, &bin]).unwrap();
+        assert_eq!(
+            cli_on_path(Some(&path), &cli),
+            CliOnPath::Shadowed(stale.join("vak"))
+        );
+    }
+
+    #[test]
+    fn cli_on_path_is_absent_without_a_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = tmp.path().join("vak");
+        let empty = tempfile::tempdir().unwrap();
+        let path = std::env::join_paths([empty.path()]).unwrap();
+        assert_eq!(cli_on_path(Some(&path), &cli), CliOnPath::Absent);
+        assert_eq!(cli_on_path(None, &cli), CliOnPath::Absent);
     }
 }

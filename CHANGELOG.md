@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **`self install` no longer says a linked CLI is missing from PATH.** It checked only whether the install's own directory was on PATH, so a `~/.local/bin/vak` symlink into the app bundle was reported as "not on PATH". It now resolves `vak` the way a shell does — the first executable match wins — and compares real paths. A different `vak` earlier on PATH is named as shadowing the install, with only the PATH-order fix offered, since a link placed after it would change nothing.
+
 ## 4.0.0 — 2026-09-24
 
 The first release since 3.5.0. It consolidates every line of work into `main` — the context engine, the intent kernel's strands and control plane, the calm agent experience, and the workspace-execution fixes — and ships 3.5.1's topic-mismatch check, which was stamped but never published. The supported baseline stays 2.0.0, so a 3.x install updates in place.

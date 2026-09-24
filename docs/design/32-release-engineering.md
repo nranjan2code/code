@@ -367,9 +367,6 @@ manual step that nothing enforces and `bump-version.sh` does not mention.
 - `doctor` reports "all checks passed" while managed services crash-loop; it
   does not read per-unit exit status. `self status` shows a crash-looping
   service as `down ✓`, indistinguishable from one deliberately disabled.
-- `self install` prints "the CLI is not on PATH" even when `vak` resolves via
-  a symlink into the installed bundle. It should resolve `command -v vak` and
-  compare realpaths.
 - `bump-version.sh` should refuse to run on a dirty tree, and `release.sh`'s
   dirty-tree gate should run first rather than after the test suite.
 - `self status` should flag an installed version with no corresponding git
