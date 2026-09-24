@@ -184,10 +184,10 @@ In an Agent-owned platform, each Agent (the default `vak` or any custom user-def
    - Each Agent's session logs, memory notes (`append_note`), reflection entries, and local configuration stay completely isolated.
    - Admission locks are acquired per-agent and per-session, ensuring that turns running on one Agent never block or stall turns running on another Agent.
 
-2. **Quarantined Execution Scratch (`.vak/scratch/<agent_id>/`)**:
-   - Tool execution (`BashTool`) creates and bounds runtime quarantine directories strictly per Agent: `<cwd>/.vak/scratch/<agent_id>/<execution-id>/`.
-   - Concurrent tasks spawned by different Agents in the same workspace never collide, overwrite, or see intermediate artifacts, virtual environments, or partial scripts of another Agent.
-   - Promotion manifests (`CandidateManifest`) and diff viewers review candidates out of the agent-scoped scratch path.
+2. **Execution Scratch (`.vak/scratch/<agent_id>/`)**:
+   - `BashTool` works in the workspace; its runtime state is partitioned per Agent: temp files under `<cwd>/.vak/scratch/<agent_id>/<execution-id>/tmp`, caches under `<cwd>/.vak/scratch/<agent_id>/cache` (AGENTS.md invariant 35).
+   - Concurrent tasks spawned by different Agents in the same workspace never share temp files or caches.
+   - Promotion manifests (`CandidateManifest`) and diff viewers review candidates only from an execution that ran inside the agent-scoped scratch path.
 
 3. **Global Shared Infrastructure (`Core::shared_data_home()`)**:
    - Cross-agent services access top-level `~/vak-home/` directly via `shared_data_home()`.

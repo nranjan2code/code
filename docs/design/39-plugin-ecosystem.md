@@ -326,18 +326,19 @@ the versioned broker boundary and observable in real-time in the Workbench panel
 Any stack—Python, Node/TypeScript, Rust, Go, shell scripts—can be installed and executed
 directly.
 
-### Quarantined scratch execution
+### Execution in the workspace, runtime state in scratch
 
-Workspaces maintain strict isolation between project source code and intermediate
-execution artifacts:
+`bash` works in the workspace, the same view the file tools address, so a file
+one tool writes is the file the next one reads (AGENTS.md invariant 35). What a
+command leaves behind as runtime state stays out of the project tree:
 
-- All generated execution scripts, virtual environments (`venv`), installed
-  packages (`site-packages`, `node_modules`), compilation caches, and scratch files are
-  quarantined under `<workspace>/.vak/scratch/`.
-- The `.vak/` directory is gitignored by default; ephemeral execution artifacts
-  never pollute the user's project git status or source tree.
-- Ephemeral assets are promoted into the project source tree only when the user
-  explicitly requests an exported file or artifact.
+- Temp files (`TMPDIR`) go to `<workspace>/.vak/scratch/<agent_id>/<execution-id>/tmp`;
+  tool caches and bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, pip and
+  npm caches) to `<workspace>/.vak/scratch/<agent_id>/cache`.
+- The `.vak/` directory is gitignored by default, so runtime state never
+  pollutes the user's git status.
+- Files a command creates or changes in the workspace are the work itself and
+  are reported to the Workbench as artifacts.
 
 ### Scrubbed operational environment
 

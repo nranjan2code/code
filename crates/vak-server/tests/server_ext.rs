@@ -65,6 +65,12 @@ async fn spawn_secured(
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(dir.path().join("home"));
+    // The real brokered-tool worker: under `cargo test`, `current_exe()` is
+    // the test harness, which answers a preview launch with "0 tests" and
+    // exits (as in gateway.rs and scheduler_personal_os.rs).
+    core.set_tool_worker_exe(std::path::PathBuf::from(env!(
+        "CARGO_BIN_EXE_vak-tool-worker"
+    )));
     core.set_provider_instance(provider);
     // keep tempdir alive for the process lifetime of the test
     std::mem::forget(dir);

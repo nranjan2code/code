@@ -256,23 +256,27 @@ pub(crate) fn append_sandbox_artifacts(
                     "1970-01-01T00:00:00+00:00".into(),
                 )
             });
+        // Only an execution that ran inside `.vak/scratch/` holds a draft to
+        // review; one that worked in the workspace already put its files
+        // where they belong, and candidate export refuses it.
         let reviewable = reviewable_roots.get(&execution_id).is_some_and(|root| {
             let artifact = std::path::Path::new(&path);
             let scratch = std::path::Path::new(root);
-            artifact
-                .is_absolute()
-                .then(|| artifact.starts_with(scratch))
-                .unwrap_or_else(|| {
-                    let workspace = scratch
-                        .ancestors()
-                        .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
-                        .and_then(std::path::Path::parent)
-                        .unwrap_or(scratch);
-                    scratch
-                        .strip_prefix(workspace)
-                        .ok()
-                        .is_some_and(|relative_scratch| artifact.starts_with(relative_scratch))
-                })
+            let Some(workspace) = scratch
+                .ancestors()
+                .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
+                .and_then(std::path::Path::parent)
+            else {
+                return false;
+            };
+            if artifact.is_absolute() {
+                artifact.starts_with(scratch)
+            } else {
+                scratch
+                    .strip_prefix(workspace)
+                    .ok()
+                    .is_some_and(|relative_scratch| artifact.starts_with(relative_scratch))
+            }
         });
         // A successful write/edit is already projected from the durable tool
         // result. Its sandbox event is stronger evidence about the same file,

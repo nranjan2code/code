@@ -40,6 +40,10 @@ omitted range, its size, and the `recall` call that returns it. There is no
 spill file. A caller with no ledger (a flow node, a scheduled script) passes
 on `vak_tools::bounded`, the same window without the recall hint.
 
+`bash` works in the workspace (or a `cwd` inside it), where the file tools
+work; temp files and caches go to `.vak/scratch/<agent_id>/` (AGENTS.md
+invariant 35).
+
 ## Unsafe policy
 
 Exactly one `unsafe` block workspace-wide: process-group kill in bash.rs.

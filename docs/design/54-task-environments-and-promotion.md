@@ -296,6 +296,8 @@ Use deeper independent evaluation selectively for complex/high-impact work; do n
 
 The current invariant 35 needs a precise update alongside implementation: intermediates and runtime state are quarantined, task drafts are writable under scoped authority, and original workspace changes require direct-edit authority or candidate promotion. Preserve the existing invariants against ambient secrets, unsupported containment, stale permissions and fabricated completion.
 
+Measured 2026-09-24: running every agent `bash` command in its own empty `.vak/scratch/<agent>/<execution-id>/` cwd — a draft with no imported inputs — split the task view this section forbids. The shell wrote into scratch while `read`/`write`/`edit` addressed the workspace, so a small local model could not find the file it had just produced and repeated the command until its turn limit. Until drafts import their inputs and every file tool addresses the same draft, `bash` works in place in the workspace (the "existing-project edit with recorded direct-edit authority" row above) and keeps only runtime state — temp files and caches — in task scratch. Candidate export applies only to executions that ran inside scratch.
+
 ## 10. Delivery slices and proof of completion
 
 **Slice 1 — trustworthy draft execution.** `vak-sandbox` is the new ownership boundary. Execution IDs, live broker event frames, process-group cancellation, per-agent execution `.vak/scratch/<agent-id>/<execution-id>` roots, recursive artifact discovery, control-file denial, and partial-output retention are implemented. Candidate export and compare-before-write promotion are exposed through the authenticated server and Workbench. Remaining verification work must prove source immutability across every backend.

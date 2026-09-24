@@ -458,6 +458,24 @@ async fn bindings_survive_process_restart() {
     assert_eq!(t["count"].as_u64(), Some(4), "history continued");
 }
 
+/// Whether the session's turn is running: `GET /sessions` reports it. The
+/// transcript used to answer "run in progress" while a turn held the ledger
+/// and now answers normally, which left these tests waiting for a busy
+/// signal that never came.
+async fn session_running(client: &reqwest::Client, base: &str, sid: &str) -> bool {
+    let Ok(res) = client.get(format!("{base}/sessions")).send().await else {
+        return false;
+    };
+    let Ok(body) = res.json::<serde_json::Value>().await else {
+        return false;
+    };
+    body["sessions"].as_array().is_some_and(|sessions| {
+        sessions
+            .iter()
+            .any(|s| s["session_id"] == sid && s["running"] == true)
+    })
+}
+
 fn urlencoding_escape(s: &str) -> String {
     s.replace(':', "%3A")
 }
@@ -507,17 +525,8 @@ async fn busy_message_is_steered_not_dropped() {
             std::time::Instant::now() < deadline_busy,
             "never became busy"
         );
-        if let Ok(res) = client
-            .get(format!("{base}/sessions/{sid}/transcript"))
-            .send()
-            .await
-            && res.status() == reqwest::StatusCode::OK
-        {
-            let t: serde_json::Value = res.json().await.unwrap();
-            let raw = serde_json::to_string(&t).unwrap_or_default();
-            if raw.contains("run in progress") {
-                break;
-            }
+        if session_running(&client, &base, &sid).await {
+            break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
@@ -612,19 +621,8 @@ async fn busy_free_text_steers_and_only_an_explicit_command_cancels() {
             std::time::Instant::now() < deadline_busy,
             "never became busy"
         );
-        if let Ok(res) = client
-            .get(format!("{base}/sessions/{sid}/transcript"))
-            .send()
-            .await
-            && res.status() == reqwest::StatusCode::OK
-        {
-            let t: serde_json::Value = res.json().await.unwrap();
-            if serde_json::to_string(&t)
-                .unwrap_or_default()
-                .contains("run in progress")
-            {
-                break;
-            }
+        if session_running(&client, &base, &sid).await {
+            break;
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
     }

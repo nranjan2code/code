@@ -10183,6 +10183,18 @@ fn planned_workspace_checks(
     checks
 }
 
+/// The sandbox a dev-server preview runs in: the agent's own, plus
+/// listening on a port where the backend can grant it (outbound connections
+/// stay denied). A preview is a server the user configured; one that cannot
+/// listen dies on start.
+fn preview_sandbox(core: &vak_core::Core) -> Option<Arc<dyn vak_tools::sandbox::Sandbox>> {
+    let sandbox = core.agent_sandbox();
+    sandbox
+        .as_ref()
+        .and_then(|sandbox| sandbox.listening_variant())
+        .or(sandbox)
+}
+
 async fn export_sandbox_candidate(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
@@ -10213,6 +10225,22 @@ async fn export_sandbox_candidate(
         return (
             StatusCode::FORBIDDEN,
             "candidate source does not belong to this execution",
+        )
+            .into_response();
+    }
+    // A command works in the workspace itself, so its files are already where
+    // they belong; only an execution that ran inside `.vak/scratch/` has a
+    // draft to promote. Freezing the workspace as its own candidate would
+    // promote it onto itself.
+    let scratch_root = std::fs::canonicalize(workspace.join(".vak").join("scratch")).ok();
+    let in_scratch = std::fs::canonicalize(&execution_scratch)
+        .ok()
+        .zip(scratch_root)
+        .is_some_and(|(dir, root)| dir.starts_with(root));
+    if !in_scratch {
+        return (
+            StatusCode::CONFLICT,
+            "this execution worked in the workspace; its files are already there",
         )
             .into_response();
     }
@@ -10291,7 +10319,7 @@ async fn sandbox_candidate_file_bytes(
     candidate_id: &str,
     relative_path: &str,
 ) -> Result<Vec<u8>, StatusCode> {
-    let records = match vak_sandbox::load_records(&sandbox_records_path(&state)) {
+    let records = match vak_sandbox::load_records(&sandbox_records_path(state)) {
         Ok(records) => records,
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
@@ -10312,7 +10340,7 @@ async fn sandbox_candidate_file_bytes(
     else {
         return Err(StatusCode::NOT_FOUND);
     };
-    let expected_root = sandbox_candidates_root(&state).join(&candidate_id);
+    let expected_root = sandbox_candidates_root(state).join(candidate_id);
     if candidate.source_root != expected_root {
         return Err(StatusCode::FORBIDDEN);
     }
@@ -17234,10 +17262,7 @@ async fn read_capped_output(
     use tokio::io::AsyncReadExt;
     let mut captured = Vec::new();
     let mut buffer = [0_u8; 8192];
-    loop {
-        let Ok(read) = stream.read(&mut buffer).await else {
-            break;
-        };
+    while let Ok(read) = stream.read(&mut buffer).await {
         if read == 0 {
             break;
         }
@@ -17385,7 +17410,7 @@ async fn prepare_launch(
         command,
         &args,
         &environment,
-        state.core.agent_sandbox().as_deref(),
+        preview_sandbox(&state.core).as_deref(),
     )
     .await;
     let mut child = match child {
@@ -17579,7 +17604,7 @@ async fn start_launch(
         &cfg.cmd,
         &cfg.args,
         &[],
-        state.core.agent_sandbox().as_deref(),
+        preview_sandbox(&state.core).as_deref(),
     )
     .await
     {
@@ -18628,7 +18653,7 @@ mod configuration_control_tests {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod sandbox_promotion_tests {
     use super::*;
     use std::collections::VecDeque;

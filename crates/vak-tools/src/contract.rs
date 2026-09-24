@@ -7,11 +7,22 @@
 
 use serde_json::Value;
 
+/// Every way `input` breaks `schema`, in one message: the first problem
+/// alone let a small model fix one field per turn (measured live: three
+/// retries of a card call that was missing both `semantic_type` and
+/// `payload`, each told only of the first). A missing or unexpected parameter
+/// also names the parameters the call takes.
 pub fn validate_input(schema: &Value, input: &Value) -> Result<(), String> {
-    validate_value(schema, input, "arguments")
+    let mut problems = Vec::new();
+    check(schema, input, "arguments", &mut problems);
+    if problems.is_empty() {
+        Ok(())
+    } else {
+        Err(format!("invalid tool arguments: {}", problems.join("; ")))
+    }
 }
 
-fn validate_value(schema: &Value, value: &Value, path: &str) -> Result<(), String> {
+fn check(schema: &Value, value: &Value, path: &str, problems: &mut Vec<String>) {
     if let Some(types) = schema.get("type") {
         let matches = match types {
             Value::String(expected) => type_matches(expected, value),
@@ -22,10 +33,8 @@ fn validate_value(schema: &Value, value: &Value, path: &str) -> Result<(), Strin
             _ => false,
         };
         if !matches {
-            return Err(format!(
-                "invalid tool arguments: {path} must be {}",
-                schema_type_label(types)
-            ));
+            problems.push(format!("{path} must be {}", schema_type_label(types)));
+            return;
         }
     }
     if let Some(enum_values) = schema.get("enum")
@@ -33,9 +42,8 @@ fn validate_value(schema: &Value, value: &Value, path: &str) -> Result<(), Strin
             .as_array()
             .is_some_and(|values| !values.iter().any(|candidate| candidate == value))
     {
-        return Err(format!(
-            "invalid tool arguments: {path} is not an allowed value"
-        ));
+        problems.push(format!("{path} is not an allowed value"));
+        return;
     }
     // `oneOf`: the value must match exactly one branch. Used for conditional
     // contracts (e.g. the `mcp` broker where `server`/`tool` are required only
@@ -43,66 +51,80 @@ fn validate_value(schema: &Value, value: &Value, path: &str) -> Result<(), Strin
     // so matching a branch validates the whole per-branch contract.
     if let Some(one_of) = schema.get("oneOf").and_then(Value::as_array) {
         let mut matched = 0usize;
-        let mut last_err = String::new();
+        let mut last = Vec::new();
         for sub in one_of {
-            match validate_value(sub, value, &format!("{path} (oneOf)")) {
-                Ok(()) => matched += 1,
-                Err(e) => last_err = e,
+            let mut branch = Vec::new();
+            check(sub, value, &format!("{path} (oneOf)"), &mut branch);
+            if branch.is_empty() {
+                matched += 1;
+            } else {
+                last = branch;
             }
         }
-        return if matched == 1 {
-            Ok(())
-        } else if matched == 0 {
-            Err(last_err)
-        } else {
-            Err(format!(
-                "invalid tool arguments: {path} matched {matched} of {} oneOf branches",
+        match matched {
+            1 => {}
+            0 => problems.extend(last),
+            _ => problems.push(format!(
+                "{path} matched {matched} of {} oneOf branches",
                 one_of.len()
-            ))
-        };
+            )),
+        }
+        return;
     }
-    if let Some(required) = schema.get("required").and_then(Value::as_array)
-        && let Some(object) = value.as_object()
-    {
-        for key in required.iter().filter_map(Value::as_str) {
-            if !object.contains_key(key) {
-                return Err(format!(
-                    "invalid tool arguments: required parameter `{key}` was omitted"
-                ));
+    let Some(object) = value.as_object() else {
+        if let (Some(items), Some(array)) = (schema.get("items"), value.as_array()) {
+            for (index, child) in array.iter().enumerate() {
+                check(items, child, &format!("{path}[{index}]"), problems);
             }
         }
-    }
-    if let (Some(properties), Some(object)) = (schema.get("properties"), value.as_object())
-        && let Some(properties) = properties.as_object()
-    {
-        for (key, child_schema) in properties {
-            if let Some(child) = object.get(key) {
-                validate_value(child_schema, child, &format!("{path}.{key}"))?;
-            }
+        return;
+    };
+    let properties = schema.get("properties").and_then(Value::as_object);
+    let required_keys: Vec<&str> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|keys| keys.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    // The required parameters first, in the schema's order, then the rest.
+    let takes = || {
+        let optional = properties
+            .into_iter()
+            .flat_map(|props| props.keys())
+            .map(String::as_str)
+            .filter(|key| !required_keys.contains(key));
+        required_keys
+            .iter()
+            .copied()
+            .chain(optional)
+            .map(|key| format!("`{key}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let before = problems.len();
+    for key in &required_keys {
+        if !object.contains_key(*key) {
+            problems.push(format!("required parameter `{key}` was omitted"));
         }
     }
     if schema.get("additionalProperties").and_then(Value::as_bool) == Some(false)
-        && let Some(object) = value.as_object()
+        || problems.len() > before
     {
-        let known: std::collections::HashSet<&str> = schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .map(|props| props.keys().map(|k| k.as_str()).collect())
-            .unwrap_or_default();
         for key in object.keys() {
-            if !known.contains(key.as_str()) {
-                return Err(format!(
-                    "invalid tool arguments: unexpected parameter `{key}` for {path}"
-                ));
+            if !properties.is_some_and(|props| props.contains_key(key)) {
+                problems.push(format!("unexpected parameter `{key}` for {path}"));
             }
         }
     }
-    if let (Some(items), Some(array)) = (schema.get("items"), value.as_array()) {
-        for (index, child) in array.iter().enumerate() {
-            validate_value(items, child, &format!("{path}[{index}]"))?;
+    if problems.len() > before && properties.is_some() {
+        problems.push(format!("{path} takes {}", takes()));
+    }
+    if let Some(properties) = properties {
+        for (key, child_schema) in properties {
+            if let Some(child) = object.get(key) {
+                check(child_schema, child, &format!("{path}.{key}"), problems);
+            }
         }
     }
-    Ok(())
 }
 
 fn type_matches(expected: &str, value: &Value) -> bool {
@@ -131,6 +153,7 @@ fn schema_type_label(types: &Value) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::validate_input;
     use serde_json::json;
@@ -186,6 +209,33 @@ mod tests {
         // list branch but with an unexpected param -> list branch invalid, call
         // branch invalid (action not "call") -> exactly zero match -> error
         assert!(validate_input(&schema, &json!({"action": "list", "server": "s"})).is_err());
+    }
+
+    #[test]
+    fn every_problem_is_reported_at_once_with_the_parameters_the_call_takes() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "semantic_type": {"type": "string"},
+                "payload": {"type": "object"}
+            },
+            "required": ["semantic_type", "payload"]
+        });
+        let error = validate_input(
+            &schema,
+            &json!({"command_run": "sed -n 3p big.txt", "output": "row 3"}),
+        )
+        .unwrap_err();
+        assert!(error.starts_with("invalid tool arguments: "), "{error}");
+        for part in [
+            "required parameter `semantic_type` was omitted",
+            "required parameter `payload` was omitted",
+            "unexpected parameter `command_run`",
+            "unexpected parameter `output`",
+            "arguments takes `semantic_type`, `payload`",
+        ] {
+            assert!(error.contains(part), "missing {part:?} in {error}");
+        }
     }
 
     #[test]

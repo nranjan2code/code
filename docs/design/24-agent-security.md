@@ -94,7 +94,17 @@ Primary-source review on 2026-08-23 found recurring failure classes:
 - Server permission changes cancel main and side runs and deny pending
   approvals, preventing stale full-access execution.
 - Seatbelt/Landlock deny network in restricted modes and scope writes to the
-  workspace and explicit temp paths.
+  workspace and explicit temp paths. One exception, measured 2026-09-24: a
+  dev-server preview the user configured runs under
+  `Sandbox::listening_variant`, which on Seatbelt adds
+  `(allow network-bind (local ip "localhost:*"))` and
+  `(allow network-inbound (local ip "localhost:*"))`. Outbound connections
+  stay denied (a sandboxed connect to 1.1.1.1 fails). Seatbelt cannot restrict
+  the accepted side to loopback: a server bound to every interface answered on
+  the LAN address, and a remote-address filter refuses `listen()` altogether.
+  Agent `bash` never receives the variant. Landlock returns none, so Linux
+  previews stay closed until the rule (handle `ConnectTcp` only) is
+  implemented and verified there.
 - Every built-in model tool now crosses a versioned JSON broker protocol into
   a disposable child process group. The broker validates permissions and owns
   cancellation; the worker exposes exactly one built-in operation, receives a

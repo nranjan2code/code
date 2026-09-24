@@ -66,7 +66,7 @@ async fn call(app: &Router, method: &str, path: &str, body: Value) -> (StatusCod
 }
 
 fn profile(id: &str, name: &str) -> Value {
-    json!({"id":id,"revision":1,"name":name,"character":"orb","personality":"Use the phrase identity-marker.","behaviour":"Answer concisely.","responsibilities":"Research news", "animation":"off","voice":"default"})
+    json!({"id":id,"revision":1,"name":name,"character":"vak","personality":"Use the phrase identity-marker.","behaviour":"Answer concisely.","responsibilities":"Research news", "animation":"off","voice":"default"})
 }
 
 async fn run(app: &Router, sid: &str, prompt: &str) {

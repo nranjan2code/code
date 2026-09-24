@@ -6,11 +6,10 @@ use std::sync::Arc;
 use vak_tools::{Tool, ToolContext, bash::BashTool, sandbox_events::SandboxEventSink};
 
 #[tokio::test]
-async fn nested_data_artifacts_stay_in_execution_scratch() {
+async fn nested_data_artifacts_are_reported_from_the_workspace() {
     let workspace = tempfile::tempdir().unwrap();
     let (sink, mut events) = SandboxEventSink::new_with_id("stress-data".into());
-    let ctx = ToolContext::new(workspace.path().to_path_buf())
-        .with_sandbox_sink(sink.with_quarantine(true));
+    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
     let output = BashTool
         .execute(
             &serde_json::json!({"command": "mkdir -p nested/deeper && printf 'a,b\\n1,2\\n' > nested/deeper/data.csv && pwd"}),
@@ -18,13 +17,7 @@ async fn nested_data_artifacts_stay_in_execution_scratch() {
         )
         .await;
     assert!(!output.is_error, "{}", output.content);
-    assert!(!workspace.path().join("nested").exists());
-    assert!(
-        workspace
-            .path()
-            .join(".vak/scratch/vak/stress-data/nested/deeper/data.csv")
-            .is_file()
-    );
+    assert!(workspace.path().join("nested/deeper/data.csv").is_file());
     let mut saw_nested = false;
     while let Ok(event) = events.try_recv() {
         if let vak_tools::SandboxEvent::ArtifactGenerated {

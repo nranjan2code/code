@@ -111,7 +111,7 @@ entirely.
 | Agent private config & memory | `~/vak-home/agents/<agent_id>/` |
 | Agent private secrets | `~/vak-home/agents/<agent_id>/.env` |
 | Agent session ledgers | `~/vak-home/agents/<agent_id>/sessions/<cwd-hash>/` |
-| Quarantined execution scratch | `<workspace>/.vak/scratch/<agent_id>/` |
+| Execution temp files and caches | `<workspace>/.vak/scratch/<agent_id>/` |
 | Execution workspace overrides | `<workspace>/.vak/config.toml` |
 | Execution workspace secrets | `<workspace>/.env` |
 | Shared infrastructure (gateway, FinOps, Ops) | `~/vak-home/` |

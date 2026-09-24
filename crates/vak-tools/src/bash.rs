@@ -23,7 +23,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute any command, program, or script in the execution sandbox (workspace and quarantined `.vak/scratch/`): run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. A command that never exits is killed at its timeout."
+        "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout."
     }
 
     fn schema(&self) -> Value {
@@ -32,8 +32,7 @@ impl Tool for BashTool {
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
                 "timeout_ms": {"type": "integer", "minimum": 1000, "description": "Timeout in milliseconds (default 120000)"},
-                "cwd": {"type": "string", "description": "Working directory relative to workspace root (e.g. '.' for workspace root, '.vak/scratch' for scratch)"},
-                "quarantine": {"type": "boolean", "description": "If true, execute in quarantined `.vak/scratch/` space. If false, execute in workspace root."}
+                "cwd": {"type": "string", "description": "Folder to run in, relative to the workspace root (default: the workspace root)"}
             },
             "required": ["command"]
         })
@@ -62,48 +61,29 @@ impl Tool for BashTool {
             .unwrap_or(DEFAULT_TIMEOUT_MS)
             .max(1000);
 
-        let quarantine = args
-            .get("quarantine")
-            .and_then(|v| v.as_bool())
-            .unwrap_or_else(|| {
-                ctx.sandbox_sink
-                    .as_ref()
-                    .is_some_and(|s| s.is_quarantined())
-            });
-
+        // The command works in the workspace, where `read`/`write`/`edit`
+        // work, so what one tool writes the next can read. Running each
+        // command in its own empty scratch folder made a file written here
+        // invisible to `read`, and a small model looped rewriting it. Runtime
+        // state (temp files, tool caches) still goes to scratch (invariant 35).
         let agent_id = ctx.agent_id.as_deref().unwrap_or("vak");
         let scratch_root = ctx.cwd.join(".vak").join("scratch").join(agent_id);
-        let (mut execution_dir, scratch_dir) = if quarantine {
-            let exec_dir = ctx
-                .sandbox_sink
-                .as_ref()
-                .map(|sink| scratch_root.join(sink.execution_id()))
-                .unwrap_or_else(|| scratch_root.clone());
-            let _ = std::fs::create_dir_all(&exec_dir);
-            let dot_vak = exec_dir.join(".vak");
-            let _ = std::fs::create_dir_all(&dot_vak);
-            let dot_scratch = dot_vak.join("scratch");
-            if !dot_scratch.exists() && !dot_scratch.is_symlink() {
-                #[cfg(unix)]
-                {
-                    if std::os::unix::fs::symlink("..", &dot_scratch).is_err() {
-                        let _ = std::fs::create_dir_all(&dot_scratch);
-                    }
-                }
-                #[cfg(not(unix))]
-                {
-                    let _ = std::fs::create_dir_all(&dot_scratch);
-                }
-            }
-            (exec_dir.clone(), exec_dir)
-        } else {
-            let _ = std::fs::create_dir_all(&scratch_root);
-            (ctx.cwd.clone(), scratch_root)
-        };
+        let temp_dir = ctx
+            .sandbox_sink
+            .as_ref()
+            .map(|sink| scratch_root.join(sink.execution_id()))
+            .unwrap_or_else(|| scratch_root.join("shell"))
+            .join("tmp");
+        let cache_dir = scratch_root.join("cache");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let _ = std::fs::create_dir_all(&cache_dir);
 
-        if let Some(custom_cwd) = args.get("cwd").and_then(|v| v.as_str())
-            && custom_cwd != "."
-            && !custom_cwd.is_empty()
+        let mut execution_dir = ctx.cwd.clone();
+        if let Some(custom_cwd) = args
+            .get("cwd")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|cwd| !cwd.is_empty())
         {
             let workspace = match ctx.cwd.canonicalize() {
                 Ok(path) => path,
@@ -113,17 +93,8 @@ impl Tool for BashTool {
                 Ok(path) => path,
                 Err(_) => return ToolOutput::error("working directory does not exist"),
             };
-            let allowed_root = if quarantine {
-                scratch_dir
-                    .canonicalize()
-                    .unwrap_or_else(|_| scratch_dir.clone())
-            } else {
-                workspace.clone()
-            };
-            if !target.starts_with(&allowed_root) || !target.is_dir() {
-                return ToolOutput::error(
-                    "working directory must remain inside the active execution root",
-                );
+            if !target.starts_with(&workspace) || !target.is_dir() {
+                return ToolOutput::error("working directory must remain inside the workspace");
             }
             execution_dir = target;
         }
@@ -152,21 +123,18 @@ impl Tool for BashTool {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         scrub_environment(&mut cmd);
+        cmd.env("TMPDIR", &temp_dir)
+            .env("XDG_CACHE_HOME", &cache_dir)
+            .env("PYTHONPYCACHEPREFIX", cache_dir.join("pycache"))
+            .env("PIP_CACHE_DIR", cache_dir.join("pip"))
+            .env("npm_config_cache", cache_dir.join("npm"));
 
         // Every execution gets its own process group, including broker workers.
         // Otherwise a shell child can outlive the timed-out worker and keep the
         // captured pipes open until the original command exits.
         isolate_process_group(&mut cmd);
 
-        let before_scratch = collect_candidate_files(&scratch_dir, false);
-        // Full-access runs write directly to the workspace. Track a bounded
-        // baseline there too so a deliverable is still promoted to the
-        // Workbench even when the model did not use quarantine explicitly.
-        let before_workspace = if !quarantine {
-            collect_candidate_files(&ctx.cwd, true)
-        } else {
-            std::collections::HashMap::new()
-        };
+        let before = collect_candidate_files(&ctx.cwd);
 
         let start_instant = std::time::Instant::now();
         if let Some(ref sink) = ctx.sandbox_sink {
@@ -174,7 +142,7 @@ impl Tool for BashTool {
                 "bash",
                 command,
                 "bash",
-                &scratch_dir.display().to_string(),
+                &execution_dir.display().to_string(),
             );
         }
 
@@ -242,7 +210,7 @@ impl Tool for BashTool {
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 let mut paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
-                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &before_workspace, &ctx.cwd, !quarantine);
+                    let artifacts = scan_new_candidate_artifacts(&before, &ctx.cwd);
                     for (rel_path, mime, size) in artifacts {
                         sink.emit_artifact(&rel_path, &mime, size);
                         paths.push(rel_path);
@@ -269,7 +237,7 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
                 if let Some(ref sink) = ctx.sandbox_sink {
-                    let artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &before_workspace, &ctx.cwd, !quarantine);
+                    let artifacts = scan_new_candidate_artifacts(&before, &ctx.cwd);
                     let mut paths = Vec::new();
                     for (rel_path, mime, size) in artifacts {
                         sink.emit_artifact(&rel_path, &mime, size);
@@ -296,7 +264,7 @@ impl Tool for BashTool {
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
 
-                let new_artifacts = scan_new_candidate_artifacts(&scratch_dir, &before_scratch, &before_workspace, &ctx.cwd, !quarantine);
+                let new_artifacts = scan_new_candidate_artifacts(&before, &ctx.cwd);
                 let mut artifact_paths = Vec::new();
                 if let Some(ref sink) = ctx.sandbox_sink {
                     for (rel_path, mime, size) in &new_artifacts {
@@ -312,11 +280,8 @@ impl Tool for BashTool {
                 }
 
                 let mut text = String::new();
-                if quarantine || !new_artifacts.is_empty() {
-                    text.push_str(&format!("[working directory: {}]\n", execution_dir.display()));
-                    for (path, _, _) in &new_artifacts {
-                        text.push_str(&format!("[file: {}]\n", ctx.cwd.join(path).display()));
-                    }
+                for (path, _, _) in &new_artifacts {
+                    text.push_str(&format!("[file: {}]\n", ctx.cwd.join(path).display()));
                 }
                 if !out.is_empty() {
                     text.push_str("[stdout]\n");
@@ -565,103 +530,52 @@ fn probe_process_memory(pid: Option<u32>) -> u64 {
     0
 }
 
+/// User-visible files in the workspace and their modification times: the
+/// baseline a command's new or changed deliverables are found against.
 fn collect_candidate_files(
-    scratch_dir: &std::path::Path,
-    workspace_scan: bool,
+    workspace: &std::path::Path,
 ) -> std::collections::HashMap<std::path::PathBuf, std::time::SystemTime> {
-    let mut map = std::collections::HashMap::new();
-    fn scan(
-        dir: &std::path::Path,
-        map: &mut std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
-        workspace_scan: bool,
-    ) {
-        if !dir.exists() {
-            return;
-        }
-        let walker = walkdir::WalkDir::new(dir)
-            .follow_links(false)
-            .max_depth(if workspace_scan { 4 } else { usize::MAX })
-            .into_iter()
-            .filter_entry(|entry| !skip_workspace_dir(entry.path()))
-            .filter_map(Result::ok)
-            .take(MAX_SCAN_ENTRIES);
-        for entry in walker {
-            let path = entry.path().to_path_buf();
-            if path.is_file()
-                && (!workspace_scan || is_user_visible_artifact(&path))
-                && let Ok(meta) = path.metadata()
-            {
-                let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                map.insert(path, mtime);
-            }
-        }
-    }
-    scan(scratch_dir, &mut map, workspace_scan);
-    map
+    candidate_files(workspace)
+        .filter_map(|path| {
+            let mtime = path.metadata().ok()?.modified().ok()?;
+            Some((path, mtime))
+        })
+        .collect()
 }
 
-fn scan_new_candidate_artifacts(
-    scratch_dir: &std::path::Path,
-    before: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
-    before_workspace: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
-    cwd: &std::path::Path,
-    scan_workspace: bool,
-) -> Vec<(String, String, u64)> {
-    let mut artifacts = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-    let mut check_entry = |path: std::path::PathBuf| {
-        if path.is_file()
-            && seen.insert(path.clone())
-            && let Ok(meta) = path.metadata()
-        {
-            let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-            let baseline = if path.starts_with(cwd) && scan_workspace {
-                before_workspace.get(&path)
-            } else {
-                before.get(&path)
-            };
-            let is_new = match baseline {
-                None => true,
-                Some(&prev) => mtime > prev,
-            };
-            if is_new {
-                let rel = path
-                    .strip_prefix(cwd)
-                    .unwrap_or(&path)
-                    .display()
-                    .to_string();
-                let mime = guess_mime_type(&path);
-                if !scan_workspace || is_user_visible_artifact(&path) {
-                    artifacts.push((rel, mime, meta.len()));
-                }
-            }
-        }
-    };
+fn candidate_files(workspace: &std::path::Path) -> impl Iterator<Item = std::path::PathBuf> {
+    walkdir::WalkDir::new(workspace)
+        .follow_links(false)
+        .max_depth(4)
+        .into_iter()
+        .filter_entry(|entry| !skip_workspace_dir(entry.path()))
+        .filter_map(Result::ok)
+        .take(MAX_SCAN_ENTRIES)
+        .map(|entry| entry.into_path())
+        .filter(|path| path.is_file() && is_user_visible_artifact(path))
+}
 
-    if scratch_dir.exists() {
-        for entry in walkdir::WalkDir::new(scratch_dir)
-            .follow_links(false)
-            .into_iter()
-            .filter_entry(|entry| !skip_workspace_dir(entry.path()))
-            .filter_map(Result::ok)
-            .take(MAX_SCAN_ENTRIES)
-        {
-            check_entry(entry.path().to_path_buf());
-        }
-    }
-    if scan_workspace {
-        for entry in walkdir::WalkDir::new(cwd)
-            .follow_links(false)
-            .max_depth(4)
-            .into_iter()
-            .filter_entry(|entry| !skip_workspace_dir(entry.path()))
-            .filter_map(Result::ok)
-            .take(MAX_SCAN_ENTRIES)
-        {
-            check_entry(entry.path().to_path_buf());
-        }
-    }
-    artifacts
+/// The deliverables a command created or changed: `(relative path, mime,
+/// size)` for each user-visible file newer than its baseline.
+fn scan_new_candidate_artifacts(
+    before: &std::collections::HashMap<std::path::PathBuf, std::time::SystemTime>,
+    workspace: &std::path::Path,
+) -> Vec<(String, String, u64)> {
+    candidate_files(workspace)
+        .filter_map(|path| {
+            let meta = path.metadata().ok()?;
+            let mtime = meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            if before.get(&path).is_some_and(|&prev| mtime <= prev) {
+                return None;
+            }
+            let rel = path
+                .strip_prefix(workspace)
+                .unwrap_or(&path)
+                .display()
+                .to_string();
+            Some((rel, guess_mime_type(&path), meta.len()))
+        })
+        .collect()
 }
 
 fn skip_workspace_dir(path: &std::path::Path) -> bool {
@@ -1055,29 +969,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn explicit_quarantine_false_runs_in_workspace() {
+    async fn cwd_dot_runs_in_the_workspace_root() {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let test_file = workspace.path().join("marker.txt");
         std::fs::write(&test_file, "workspace-marker").unwrap();
 
         let (sink, _rx) = SandboxEventSink::new_with_id("test-quarantine-false".into());
-        let ctx = ToolContext::new(workspace.path().to_path_buf())
-            .with_sandbox_sink(sink.with_quarantine(true));
+        let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
 
-        // When quarantine: false is explicitly set, it should run in workspace root and find marker.txt
         let tool = super::BashTool;
         let out = tool
             .execute(
                 &serde_json::json!({
                     "command": "cat marker.txt",
-                    "quarantine": false
+                    "cwd": "."
                 }),
                 &ctx,
             )
             .await;
         assert!(!out.is_error, "{}", out.content);
         assert!(out.content.contains("workspace-marker"));
+    }
+
+    #[tokio::test]
+    async fn a_command_works_in_the_workspace_and_keeps_temp_files_in_scratch() {
+        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(workspace.path().join("unsorted.txt"), "delta\nalpha\n").unwrap();
+
+        let (sink, mut events) = SandboxEventSink::new_with_id("sort-1".into());
+        let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
+        let out = super::BashTool
+            .execute(
+                &serde_json::json!({
+                    "command": "sort unsorted.txt > sorted.txt && echo \"tmp=$TMPDIR\""
+                }),
+                &ctx,
+            )
+            .await;
+        assert!(!out.is_error, "{}", out.content);
+        assert_eq!(
+            std::fs::read_to_string(workspace.path().join("sorted.txt")).unwrap(),
+            "alpha\ndelta\n",
+            "the output is where `read` looks for it"
+        );
+        let temp = workspace.path().join(".vak/scratch/vak/sort-1/tmp");
+        assert!(
+            out.content.contains(&format!("tmp={}", temp.display())),
+            "{}",
+            out.content
+        );
+        let mut reported = false;
+        while let Ok(event) = events.try_recv() {
+            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
+                reported |= path == "sorted.txt";
+            }
+        }
+        assert!(reported, "a new deliverable is reported to the Workbench");
     }
 
     #[tokio::test]
@@ -1091,8 +1040,7 @@ mod tests {
         std::fs::write(sub.join("sub.txt"), "in-sub").unwrap();
 
         let (sink, _rx) = SandboxEventSink::new_with_id("test-custom-cwd".into());
-        let ctx = ToolContext::new(workspace.path().to_path_buf())
-            .with_sandbox_sink(sink.with_quarantine(true));
+        let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
 
         let tool = super::BashTool;
         let out = tool
@@ -1113,8 +1061,7 @@ mod tests {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let (sink, _rx) = SandboxEventSink::new_with_id("test-cwd-escape".into());
-        let ctx = ToolContext::new(workspace.path().to_path_buf())
-            .with_sandbox_sink(sink.with_quarantine(true));
+        let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
         let out = super::BashTool
             .execute(
                 &serde_json::json!({
@@ -1125,104 +1072,28 @@ mod tests {
             )
             .await;
         assert!(out.is_error);
-        assert!(out.content.contains("active execution root"));
+        assert!(out.content.contains("inside the workspace"));
     }
 
     #[tokio::test]
-    async fn quarantined_command_creates_artifact_in_scratch() {
+    async fn temp_files_are_scoped_to_the_agent() {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
-        let (sink, mut events) = SandboxEventSink::new_with_id("timeout-file".into());
-        let ctx = ToolContext::new(workspace.path().to_path_buf())
-            .with_sandbox_sink(sink.with_quarantine(true));
-
-        let tool = super::BashTool;
-        let out = tool
-            .execute(
-                &serde_json::json!({
-                    "command": "echo '<h1>hi</h1>' > result.html"
-                }),
-                &ctx,
-            )
-            .await;
-        assert!(out.content.contains("result.html"));
-        assert!(
-            workspace
-                .path()
-                .join(".vak/scratch/vak/timeout-file/result.html")
-                .is_file()
-        );
-        let mut artifact = false;
-        while let Ok(event) = events.try_recv() {
-            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
-                artifact |= path.ends_with("result.html");
-            }
-        }
-        assert!(artifact);
-    }
-
-    #[tokio::test]
-    async fn quarantined_command_can_write_to_dot_vak_scratch() {
-        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
-        let workspace = tempfile::tempdir().unwrap();
-        let (sink, mut events) = SandboxEventSink::new_with_id("test-scratch-write".into());
-        let ctx = ToolContext::new(workspace.path().to_path_buf())
-            .with_sandbox_sink(sink.with_quarantine(true));
-
-        let tool = super::BashTool;
-        let out = tool
-            .execute(
-                &serde_json::json!({
-                    "command": "cat > .vak/scratch/quick_react_dashboard.html <<'EOF'\n<h1>React Dashboard</h1>\nEOF"
-                }),
-                &ctx,
-            )
-            .await;
-        assert!(!out.is_error, "stdout/stderr: {}", out.content);
-        let created = workspace
-            .path()
-            .join(".vak/scratch/vak/test-scratch-write/quick_react_dashboard.html");
-        assert!(created.is_file(), "file should exist at {:?}", created);
-        assert!(out.content.contains(&created.display().to_string()));
-        let mut saw_artifact = false;
-        while let Ok(event) = events.try_recv() {
-            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
-                saw_artifact |= path.contains("quick_react_dashboard.html");
-            }
-        }
-        assert!(saw_artifact, "artifact event should have been emitted");
-    }
-
-    #[tokio::test]
-    async fn agent_scoped_scratch_isolates_under_agent_id() {
-        use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
-        let workspace = tempfile::tempdir().unwrap();
-        let (sink, mut events) = SandboxEventSink::new_with_id("test-agent-scratch".into());
+        let (sink, _events) = SandboxEventSink::new_with_id("test-agent-scratch".into());
         let ctx = ToolContext::new(workspace.path().to_path_buf())
             .with_agent_id("researcher-99")
-            .with_sandbox_sink(sink.with_quarantine(true));
+            .with_sandbox_sink(sink);
 
-        let tool = super::BashTool;
-        let out = tool
-            .execute(
-                &serde_json::json!({
-                    "command": "echo 'report' > report.txt"
-                }),
-                &ctx,
-            )
+        let out = super::BashTool
+            .execute(&serde_json::json!({"command": "echo \"$TMPDIR\""}), &ctx)
             .await;
         assert!(!out.is_error, "stdout/stderr: {}", out.content);
-        let created = workspace
-            .path()
-            .join(".vak/scratch/researcher-99/test-agent-scratch/report.txt");
-        assert!(created.is_file(), "file should exist at {:?}", created);
-        let mut saw_artifact = false;
-        while let Ok(event) = events.try_recv() {
-            if let crate::SandboxEvent::ArtifactGenerated { path, .. } = event {
-                saw_artifact |= path.contains("researcher-99");
-            }
-        }
-        assert!(saw_artifact, "artifact event should be scoped to agent");
+        assert!(
+            out.content
+                .contains(".vak/scratch/researcher-99/test-agent-scratch/tmp"),
+            "{}",
+            out.content
+        );
     }
 
     #[tokio::test]
@@ -1230,14 +1101,13 @@ mod tests {
         use crate::{Tool, ToolContext, sandbox_events::SandboxEventSink};
         let workspace = tempfile::tempdir().unwrap();
         let (sink, mut events) = SandboxEventSink::new_with_id("test-workspace-result".into());
-        let ctx = ToolContext::new(workspace.path().to_path_buf())
-            .with_sandbox_sink(sink.with_quarantine(true));
+        let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
 
         let out = super::BashTool
             .execute(
                 &serde_json::json!({
                     "command": "printf '<h1>India market</h1>\\n' > index.html",
-                    "quarantine": false
+                    "cwd": "."
                 }),
                 &ctx,
             )

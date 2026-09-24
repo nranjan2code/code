@@ -897,11 +897,12 @@ mod registry_tests {
 
     #[test]
     fn duplicate_agent_names_fail_closed() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().expect("Agent workspace");
         std::fs::create_dir_all(dir.path().join(".vak")).expect("profile directory");
         std::fs::write(
             dir.path().join(".vak/agents.json"),
-            r#"[{"id":"one","revision":1,"name":"Pip","personality":"","behaviour":""},{"id":"two","revision":1,"name":"Pip","personality":"","behaviour":""}]"#,
+            r#"[{"id":"one","revision":1,"name":"Pip","character":"pip","personality":"","behaviour":""},{"id":"two","revision":1,"name":"Pip","character":"pip","personality":"","behaviour":""}]"#,
         )
         .expect("profiles");
         let result = load_agent(dir.path(), "Pip");

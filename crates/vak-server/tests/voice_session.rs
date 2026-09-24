@@ -152,19 +152,11 @@ async fn next_control(socket: &mut Socket) -> serde_json::Value {
 }
 
 async fn utterance(socket: &mut Socket, id: &str, audio: &[u8]) {
-    let control = |t: &str| {
-        Message::Text(
-            serde_json::json!({ "t": t, "utterance_id": id })
-                .to_string()
-                .into(),
-        )
-    };
+    let control =
+        |t: &str| Message::Text(serde_json::json!({ "t": t, "utterance_id": id }).to_string());
     socket.send(control("speech_started")).await.unwrap();
     for frame in audio.chunks(640) {
-        socket
-            .send(Message::Binary(frame.to_vec().into()))
-            .await
-            .unwrap();
+        socket.send(Message::Binary(frame.to_vec())).await.unwrap();
     }
     socket.send(control("speech_stopped")).await.unwrap();
 }
@@ -250,8 +242,7 @@ async fn a_spoken_request_becomes_one_governed_turn_and_noise_never_reaches_a_pr
                 "t": "playback", "utterance_id": "u-speech",
                 "emitted_ms": 1_260, "interrupted": false
             })
-            .to_string()
-            .into(),
+            .to_string(),
         ))
         .await
         .unwrap();

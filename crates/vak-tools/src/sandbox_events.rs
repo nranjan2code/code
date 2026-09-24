@@ -83,7 +83,6 @@ pub struct SandboxEventSink {
     tx: mpsc::UnboundedSender<SandboxEvent>,
     execution_id: String,
     owner_session_id: Option<String>,
-    quarantine: bool,
 }
 
 impl SandboxEventSink {
@@ -98,7 +97,6 @@ impl SandboxEventSink {
                 tx,
                 execution_id,
                 owner_session_id: None,
-                quarantine: false,
             },
             rx,
         )
@@ -107,15 +105,6 @@ impl SandboxEventSink {
     pub fn with_owner_session(mut self, session_id: impl Into<String>) -> Self {
         self.owner_session_id = Some(session_id.into());
         self
-    }
-
-    pub fn with_quarantine(mut self, quarantine: bool) -> Self {
-        self.quarantine = quarantine;
-        self
-    }
-
-    pub fn is_quarantined(&self) -> bool {
-        self.quarantine
     }
 
     /// Emit an event. Best-effort: dropped if the receiver is gone.

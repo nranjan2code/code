@@ -172,7 +172,14 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     design and must never be selected automatically after a denial, tool
     failure, retry, prompt request, or model recommendation. Restricted-mode
     network denial and approval prompts are independent layers; an approval
-    never silently disables the OS sandbox.
+    never silently disables the OS sandbox. The one network allowance in a
+    restricted mode is a dev-server preview the user configured
+    (`.vak/launch.toml`): its worker may listen on a port
+    (`Sandbox::listening_variant`), and outbound connections stay denied.
+    Seatbelt cannot limit listening to loopback, so a preview server that
+    binds every interface is reachable from the LAN, as it would be run by
+    hand; agent commands never get the allowance. Landlock keeps previews
+    closed until the same rule is implemented and verified on Linux.
 14. **Model tools cross a broker boundary.** Built-in filesystem and Bash tools
     execute through the versioned `__tool_worker` protocol in a disposable
     process group; MCP servers execute as separately sandboxed workers. Raw
@@ -507,22 +514,26 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     just a credential in an access log. The web terminal is off by default
     and loopback-pinned when on, because every other effect the client can
     reach is permission-gated and a shell is not.
-35. **Workspace execution runtimes are scrubbed, quarantined to
-    `.vak/scratch/<agent_id>/`, and observable in Workbench.** Universal
-    execution via `bash` executes in quarantined operational environments
-    strictly confined to the canonical workspace boundary (`<ws>`). Execution
-    processes run with scrubbed environments (`env_clear`), passing only
-    minimal operational paths (`PATH`, `HOME`, virtual environment paths) and
-    zero parent credentials or model API keys. Intermediate execution
-    artifacts, virtual environments, site-packages, compiled bundles, and
-    generated files are strictly quarantined under
-    `.vak/scratch/<agent_id>/<execution-id>/` and must never contaminate
-    workspace project source trees or git-tracked directories unless
-    explicitly copied as an outcome artifact requested by the user. All
-    executions stream live stdout, stderr, package detection events, and
-    status directly to the Workbench panel for full operator observability.
-    Egress and permissions follow the broker security model, failing closed
-    when unapproved. Frontend client preview frames must be sandboxed
+35. **Workspace execution works in the workspace, keeps its runtime state in
+    `.vak/scratch/<agent_id>/`, and is observable in Workbench.** `bash` runs
+    in the canonical workspace (or a `cwd` inside it) — the same view
+    `read`/`write`/`edit` address, so what one tool writes the next can read.
+    A per-execution empty scratch cwd was shipped and removed: a file the
+    shell wrote was invisible to `read`, and a small model looped rewriting
+    it. Execution processes run with scrubbed environments (`env_clear`),
+    passing only minimal operational paths (`PATH`, `HOME`, virtual
+    environment paths) and zero parent credentials or model API keys. Runtime
+    state never lands in the project tree: temp files (`TMPDIR`) go to
+    `.vak/scratch/<agent_id>/<execution-id>/tmp`, and tool caches and
+    bytecode (`XDG_CACHE_HOME`, `PYTHONPYCACHEPREFIX`, the pip and npm caches)
+    to `.vak/scratch/<agent_id>/cache`. Files a command creates or changes in
+    the workspace are the work itself and are reported as Workbench
+    artifacts; a candidate is exported only from an execution that ran inside
+    `.vak/scratch/`. All executions stream live stdout, stderr, package
+    detection events, and status directly to the Workbench panel for full
+    operator observability. Egress and permissions follow the broker security
+    model, failing closed when unapproved; read-only mode still denies every
+    write. Frontend client preview frames must be sandboxed
     (`sandbox="allow-scripts"`) within safe error boundaries to protect the
     client host from untrusted script execution.
 36. **Context is measured, never assumed, and nothing model-visible is cut

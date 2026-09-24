@@ -1,5 +1,6 @@
 //! Product-shaped sandbox exercises. These deliberately use the real BashTool
-//! contract so a passing unit test cannot hide a broken workbench workflow.
+//! contract so a passing unit test cannot hide a broken workbench workflow:
+//! a command works in the workspace, and what it creates is reported.
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
@@ -11,8 +12,7 @@ async fn run(
     command: &str,
 ) -> (vak_tools::ToolOutput, Vec<vak_tools::SandboxEvent>) {
     let (sink, mut rx) = SandboxEventSink::new_with_id(id.into());
-    let ctx =
-        ToolContext::new(workspace.to_path_buf()).with_sandbox_sink(sink.with_quarantine(true));
+    let ctx = ToolContext::new(workspace.to_path_buf()).with_sandbox_sink(sink);
     let output = BashTool
         .execute(&serde_json::json!({"command": command}), &ctx)
         .await;
@@ -24,7 +24,7 @@ async fn run(
 }
 
 #[tokio::test]
-async fn full_stack_build_and_smoke_test_stays_quarantined() {
+async fn full_stack_build_and_smoke_test_runs_in_the_workspace() {
     let workspace = tempfile::tempdir().unwrap();
     let command = r#"set -eu
 mkdir -p app
@@ -57,16 +57,6 @@ PY
             .contains("full-stack build and smoke test passed")
     );
     assert!(events.iter().any(|e| matches!(e, vak_tools::SandboxEvent::ArtifactGenerated { path, .. } if path.ends_with("app/index.html"))));
-    assert!(!workspace.path().join("app").exists());
-    let candidate = vak_sandbox::candidate_manifest(
-        "stack-candidate",
-        &workspace.path().join(".vak/scratch/vak/workflow-stack"),
-        workspace.path(),
-    )
-    .unwrap();
-    let promotion_store = tempfile::tempdir().unwrap();
-    let receipt = vak_sandbox::promote_recoverable(&candidate, promotion_store.path()).unwrap();
-    assert!(receipt.verification.len() >= 2);
     assert!(workspace.path().join("app/index.html").is_file());
 }
 
@@ -105,22 +95,12 @@ PY
             .content
             .contains("research evidence and citations verified")
     );
-    assert!(!workspace.path().join("research").exists());
     assert!(events.iter().any(|e| matches!(e, vak_tools::SandboxEvent::ArtifactGenerated { path, .. } if path.ends_with("research/synthesis.md"))));
-    let candidate = vak_sandbox::candidate_manifest(
-        "research-candidate",
-        &workspace.path().join(".vak/scratch/vak/workflow-research"),
-        workspace.path(),
-    )
-    .unwrap();
-    let promotion_store = tempfile::tempdir().unwrap();
-    let receipt = vak_sandbox::promote_recoverable(&candidate, promotion_store.path()).unwrap();
-    assert!(receipt.verification.len() >= 2);
     assert!(workspace.path().join("research/synthesis.md").is_file());
 }
 
 #[tokio::test]
-async fn document_and_data_outputs_are_captured_as_promotable_artifacts() {
+async fn document_and_data_outputs_are_reported_as_artifacts() {
     let workspace = tempfile::tempdir().unwrap();
     let command = r#"set -eu
 mkdir -p deliverable
@@ -166,14 +146,5 @@ PY
             .iter()
             .any(|path| path.ends_with("deliverable/metrics.csv"))
     );
-    let candidate = vak_sandbox::candidate_manifest(
-        "docs-candidate",
-        &workspace.path().join(".vak/scratch/vak/workflow-docs"),
-        workspace.path(),
-    )
-    .unwrap();
-    let promotion_store = tempfile::tempdir().unwrap();
-    let receipt = vak_sandbox::promote_recoverable(&candidate, promotion_store.path()).unwrap();
-    assert!(receipt.verification.len() >= 2);
     assert!(workspace.path().join("deliverable/report.md").is_file());
 }

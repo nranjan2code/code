@@ -25,6 +25,14 @@ pub trait Sandbox: Send + Sync {
     fn read_only_variant(&self) -> Option<Arc<dyn Sandbox>> {
         None
     }
+
+    /// This sandbox, plus listening on a port: for a dev-server preview the
+    /// user configured, and nothing else. Outbound connections stay denied.
+    /// `None` when the backend cannot grant it, and the caller keeps the
+    /// closed sandbox.
+    fn listening_variant(&self) -> Option<Arc<dyn Sandbox>> {
+        None
+    }
 }
 
 pub fn no_sandbox() -> Option<Arc<dyn Sandbox>> {
@@ -68,6 +76,11 @@ pub struct Seatbelt {
     pub write_paths: Vec<PathBuf>,
     /// Task copies must not inherit the broad host temp write allowances.
     pub allow_host_temp: bool,
+    /// May accept connections on a port (`Sandbox::listening_variant`).
+    /// Seatbelt cannot limit this to loopback: a server that binds every
+    /// interface is reachable from the LAN, as it would be run by hand.
+    /// Outbound connections stay denied.
+    pub allow_listen: bool,
 }
 
 impl Seatbelt {
@@ -136,6 +149,7 @@ impl Seatbelt {
             read_paths,
             write_paths,
             allow_host_temp,
+            allow_listen: false,
         }
     }
 
@@ -203,6 +217,10 @@ impl Seatbelt {
                 }
             }
         }
+        if self.allow_listen {
+            p.push_str("(allow network-bind (local ip \"localhost:*\"))\n");
+            p.push_str("(allow network-inbound (local ip \"localhost:*\"))\n");
+        }
         p
     }
 
@@ -259,6 +277,14 @@ impl Sandbox for Seatbelt {
             read_paths: self.read_paths.clone(),
             write_paths: Vec::new(),
             allow_host_temp: self.allow_host_temp,
+            allow_listen: self.allow_listen,
+        }))
+    }
+
+    fn listening_variant(&self) -> Option<Arc<dyn Sandbox>> {
+        Some(Arc::new(Seatbelt {
+            allow_listen: true,
+            ..self.clone()
         }))
     }
 }
@@ -352,6 +378,50 @@ mod tests {
         );
         assert!(!outside.exists());
         assert!(!source.join("through-link.txt").exists());
+    }
+
+    /// Measured against the real `sandbox-exec`: the closed profile refuses
+    /// to listen, the listening variant accepts, and neither can connect out.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn only_the_listening_variant_listens_and_neither_connects_out() {
+        let python = |code: &str| format!("python3 -c '{code}'");
+        let dir = tempfile::tempdir().expect("workspace");
+        // From the workspace, as a preview runs: Python reads its working
+        // directory on import, and the profile only admits the workspace.
+        let run = |wrapped: String| {
+            std::process::Command::new("sh")
+                .arg("-c")
+                .arg(wrapped)
+                .current_dir(dir.path())
+                .output()
+                .expect("sh runs")
+        };
+        if !run("python3 --version".into()).status.success() {
+            eprintln!("python3 unavailable; skipping");
+            return;
+        }
+        let closed = Seatbelt::new(SandboxMode::WorkspaceWrite, dir.path());
+        let open = Sandbox::listening_variant(&closed).expect("seatbelt can listen");
+        let listen = python(
+            "import socket; s = socket.socket(); s.bind((\"127.0.0.1\", 0)); s.listen(); print(\"listening\")",
+        );
+        let connect = python(
+            "import socket; socket.create_connection((\"1.1.1.1\", 53), timeout=3); print(\"connected\")",
+        );
+
+        let refused = run(closed.wrap(&listen));
+        assert!(!String::from_utf8_lossy(&refused.stdout).contains("listening"));
+        let listened = run(open.wrap(&listen));
+        assert!(
+            String::from_utf8_lossy(&listened.stdout).contains("listening"),
+            "{}",
+            String::from_utf8_lossy(&listened.stderr)
+        );
+        for sandbox in [&closed as &dyn Sandbox, open.as_ref()] {
+            let out = run(sandbox.wrap(&connect));
+            assert!(!String::from_utf8_lossy(&out.stdout).contains("connected"));
+        }
     }
 
     #[test]

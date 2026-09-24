@@ -213,18 +213,18 @@ fn sanitize_schema(val: &Value) -> Value {
                 ) {
                     continue;
                 }
-                if k == "type" {
-                    if let Value::Array(types) = v {
-                        let variants: Vec<_> = types
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(|kind| serde_json::json!({"type": kind}))
-                            .collect();
-                        if !variants.is_empty() {
-                            cleaned.insert("anyOf".into(), Value::Array(variants));
-                        }
-                        continue;
+                if k == "type"
+                    && let Value::Array(types) = v
+                {
+                    let variants: Vec<_> = types
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(|kind| serde_json::json!({"type": kind}))
+                        .collect();
+                    if !variants.is_empty() {
+                        cleaned.insert("anyOf".into(), Value::Array(variants));
                     }
+                    continue;
                 }
                 cleaned.insert(k.clone(), sanitize_schema(v));
             }

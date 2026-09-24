@@ -933,6 +933,7 @@ pub enum SessionError {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod agent_identity_tests {
     #[test]
     fn character_is_required_identity_data() {

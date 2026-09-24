@@ -329,15 +329,10 @@ async fn stop_gate_blocks_premature_report_until_verified() {
         .count();
     assert_eq!(guard_msgs, 1, "guard continuation must be logged once");
 
-    // Agent bash runs in its per-call quarantine directory; the report must
-    // survive there rather than contaminating the workspace root.
-    let report_path = if dir.path().join(".vak/scratch/vak/t1/report.md").exists() {
-        dir.path().join(".vak/scratch/vak/t1/report.md")
-    } else {
-        dir.path().join(".vak/scratch/t1/report.md")
-    };
-    let report = std::fs::read_to_string(report_path)
-        .expect("verified report survives in the quarantined scratch directory");
+    // Agent bash works in the workspace, where the file tools read, so the
+    // verified report is where the user and the next tool call look for it.
+    let report = std::fs::read_to_string(dir.path().join("report.md"))
+        .expect("verified report is in the workspace");
     assert!(report.contains("4200"));
 }
 

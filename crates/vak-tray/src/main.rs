@@ -139,11 +139,24 @@ fn decode_and_downsample(png_bytes: &[u8], out: usize) -> Option<(Vec<u8>, u32, 
     let mut reader = decoder.read_info().ok()?;
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).ok()?;
-    if info.color_type != png::ColorType::Rgba || info.bit_depth != png::BitDepth::Eight {
+    if info.bit_depth != png::BitDepth::Eight {
         // Fail soft to the fallback rather than guess at a pixel layout
         // this function was not written to handle.
         return None;
     }
+    // An opaque RGB asset gets a full alpha channel. The shipped icon became
+    // RGB when the branding was updated, and requiring RGBA had quietly
+    // turned the tray glyph into the grey fallback dot.
+    let buf = match info.color_type {
+        png::ColorType::Rgba => buf,
+        png::ColorType::Rgb => buf[..info.buffer_size()]
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|&[r, g, b]| [r, g, b, u8::MAX])
+            .collect(),
+        _ => return None,
+    };
     let (src_w, src_h) = (info.width as usize, info.height as usize);
     if out == 0 || src_w % out != 0 || src_h % out != 0 {
         return None;
@@ -706,6 +719,28 @@ mod brand_icon_tests {
             .expect("the shipped icon.png must decode and downsample");
         assert_eq!((w, h), (32, 32));
         assert_eq!(rgba.len(), 32 * 32 * 4, "one RGBA quad per output pixel");
+    }
+
+    #[test]
+    fn an_opaque_rgb_source_decodes_with_full_alpha() {
+        let mut png_bytes = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut png_bytes, 64, 64);
+            encoder.set_color(png::ColorType::Rgb);
+            encoder.set_depth(png::BitDepth::Eight);
+            let mut writer = encoder.write_header().unwrap();
+            writer
+                .write_image_data(&[10u8, 20, 30].repeat(64 * 64))
+                .unwrap();
+        }
+        let (rgba, w, h) = decode_and_downsample(&png_bytes, 32).expect("RGB decodes");
+        assert_eq!((w, h), (32, 32));
+        assert!(
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .all(|px| *px == [10, 20, 30, 255])
+        );
     }
 
     #[test]
