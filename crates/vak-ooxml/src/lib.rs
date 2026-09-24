@@ -20,6 +20,7 @@ pub mod edit;
 pub mod fixtures;
 pub mod package;
 pub mod read;
+pub mod review;
 pub mod splice;
 pub mod xml;
 

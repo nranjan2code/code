@@ -306,6 +306,7 @@ pub(super) fn set_placeholder_text<R2: Read + Seek>(
             lines.len()
         ),
         expect: vec![expect_text(format!("slide:{id}/shape:{shape_id}"), &lines)],
+        created: None,
     })
 }
 
@@ -338,6 +339,7 @@ pub(super) fn set_notes<R2: Read + Seek>(
     Ok(Outcome {
         summary: format!("slide:{id} speaker notes set"),
         expect: vec![expect_text(format!("slide:{id}/notes"), &lines)],
+        created: None,
     })
 }
 
@@ -534,6 +536,7 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
     Ok(Outcome {
         summary: format!("slide:{new_id} added from layout {layout:?}"),
         expect,
+        created: Some(format!("slide:{new_id}")),
     })
 }
 
@@ -597,9 +600,19 @@ pub(super) fn delete_slide<R2: Read + Seek>(
     work.remove_override(&part)?;
     Ok(Outcome {
         summary: format!("slide:{id} deleted"),
-        expect: vec![Expect::Absent {
-            anchor: format!("slide:{id}"),
-        }],
+        expect: vec![
+            Expect::Absent {
+                anchor: format!("slide:{id}"),
+            },
+            Expect::SlideOrder(
+                deck.slides
+                    .iter()
+                    .filter(|(slide, _, _)| *slide != id)
+                    .map(|(slide, _, _)| format!("slide:{slide}"))
+                    .collect(),
+            ),
+        ],
+        created: None,
     })
 }
 
@@ -660,5 +673,6 @@ pub(super) fn move_slide<R2: Read + Seek>(
                 .unwrap_or_else(|| "to the start".into())
         ),
         expect: vec![Expect::SlideOrder(order)],
+        created: None,
     })
 }

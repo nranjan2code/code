@@ -157,6 +157,9 @@ pub struct OpResult {
     pub summary: String,
     /// The postcondition, checked against a re-read of the written package.
     pub check: String,
+    /// The anchor this op minted (`p:<paraId>`, `slide:<id>`), which later
+    /// ops may name. Replaying a subset remaps it (`review`).
+    pub created: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +235,7 @@ pub(crate) enum Expect {
 pub(crate) struct Outcome {
     pub summary: String,
     pub expect: Vec<Expect>,
+    pub created: Option<String>,
 }
 
 /// Applies `ops` in order to the package in `source` and returns the new
@@ -337,9 +341,25 @@ pub fn apply(
         op: None,
         message: format!("the edited package does not read back: {error}"),
     })?;
+    // Every op that changes the slide list expects the order it left, so a
+    // later one's expectation covers an earlier one's; the earlier one,
+    // checked against the final deck, would fail on the later op's change.
+    let superseded: Vec<bool> = (0..outcomes.len())
+        .map(|position| {
+            outcomes[position + 1..].iter().any(|(_, name, _)| {
+                matches!(
+                    *name,
+                    "add_slide_from_layout" | "delete_slide" | "move_slide"
+                )
+            })
+        })
+        .collect();
     let mut results = Vec::with_capacity(outcomes.len());
-    for (index, name, outcome) in outcomes {
+    for (position, (index, name, outcome)) in outcomes.into_iter().enumerate() {
         for expect in &outcome.expect {
+            if superseded[position] && matches!(expect, Expect::SlideOrder(_)) {
+                continue;
+            }
             check(&document, expect).map_err(|message| EditError {
                 op: Some((index, name)),
                 message: format!("postcondition failed after writing: {message}"),
@@ -349,6 +369,7 @@ pub fn apply(
             op: name.to_string(),
             summary: outcome.summary,
             check: "passed: re-read of the written package confirms the change".into(),
+            created: outcome.created,
         });
     }
     Ok(Applied {
@@ -472,6 +493,7 @@ fn set_title<R: std::io::Read + std::io::Seek>(
     Ok(Outcome {
         summary: format!("title set to {title:?}"),
         expect: vec![Expect::Title(title.to_string())],
+        created: None,
     })
 }
 

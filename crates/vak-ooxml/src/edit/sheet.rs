@@ -397,6 +397,7 @@ pub(super) fn set_cells<R2: Read + Seek>(
             cells.len()
         ),
         expect,
+        created: None,
     })
 }
 
@@ -581,5 +582,6 @@ pub(super) fn add_sheet<R2: Read + Seek>(
     Ok(Outcome {
         summary: format!("sheet {name:?} added"),
         expect: vec![Expect::Section(format!("{}!", quote_sheet(name)))],
+        created: None,
     })
 }

@@ -304,6 +304,7 @@ pub(super) fn replace_paragraph_text<R: Read + Seek>(
             runs.len()
         ),
         expect: vec![expect],
+        created: None,
     })
 }
 
@@ -347,9 +348,10 @@ pub(super) fn insert_paragraph_after<R: Read + Seek>(
     Ok(Outcome {
         summary: format!("{new_anchor} inserted after {anchor} as a tracked insertion"),
         expect: vec![Expect::UnitContains {
-            anchor: new_anchor,
+            anchor: new_anchor.clone(),
             needles: lines(text),
         }],
+        created: Some(new_anchor),
     })
 }
 
@@ -446,6 +448,7 @@ pub(super) fn delete_paragraph<R: Read + Seek>(
         expect: vec![Expect::UnitDeleted {
             anchor: anchor.to_string(),
         }],
+        created: None,
     })
 }
 

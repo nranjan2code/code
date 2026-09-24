@@ -766,3 +766,42 @@ fn markup_vak_does_not_model_survives_inside_edited_elements() {
         "{written}"
     );
 }
+
+#[test]
+fn several_slide_list_ops_in_one_call_are_checked_against_the_order_they_leave() {
+    let source = fixtures::pptx_template();
+    let slide = |title: &str| OfficeOp::AddSlideFromLayout {
+        layout: "Title Slide".into(),
+        after: None,
+        placeholders: BTreeMap::from([("title".to_string(), TextValue::One(title.into()))]),
+    };
+    let applied = apply(
+        &source,
+        vec![
+            slide("First"),
+            slide("Second"),
+            OfficeOp::MoveSlide {
+                anchor: "slide:258".into(),
+                after: None,
+            },
+            OfficeOp::DeleteSlide {
+                anchor: "slide:256".into(),
+            },
+        ],
+    )
+    .unwrap();
+    let order: Vec<&str> = applied
+        .document
+        .sections
+        .iter()
+        .map(|section| section.anchor.as_str())
+        .collect();
+    assert_eq!(order, ["slide:258", "slide:257"]);
+    assert!(
+        applied
+            .results
+            .iter()
+            .all(|r| r.check.starts_with("passed"))
+    );
+    assert_eq!(applied.results[0].created.as_deref(), Some("slide:257"));
+}
