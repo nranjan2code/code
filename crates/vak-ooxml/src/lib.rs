@@ -19,6 +19,7 @@ pub mod edit;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod package;
+pub mod projection;
 pub mod read;
 pub mod review;
 pub mod splice;

@@ -935,6 +935,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/discard", post(discard_best_run))
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/file/raw", get(read_file_raw))
+        .route("/fs/office", get(read_office_projection))
         .route("/fs/preview/{*path}", get(preview_file))
         .route("/sandbox/records", get(list_sandbox_records))
         .route("/fs/tree", get(fs_tree))
@@ -10384,6 +10385,54 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
 
     // Fallback: standard confined_path even if not yet on disk (needed for write_file)
     confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean))
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct OfficeProjectionQuery {
+    path: String,
+    #[serde(default)]
+    from: usize,
+    /// `structure` for the Structure view; anything else is content.
+    #[serde(default)]
+    view: Option<String>,
+}
+
+/// What the Canvas draws of a workspace Office file (docs/design/72, P4):
+/// a page of its content or its structure, parsed in the worker, never
+/// here (invariant 39). Drafts are workspace files under `.vak/scratch`.
+async fn read_office_projection(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<OfficeProjectionQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !vak_ooxml::is_openxml_path(&q.path) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "not a Word, Excel, PowerPoint or Visio file",
+        )
+            .into_response();
+    }
+    let Some(path) = resolve_confined_file(&state, &q.path) else {
+        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
+    };
+    if !path.is_file() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let view = match q.view.as_deref() {
+        Some("structure") => vak_tools::broker::OfficeView::Structure,
+        _ => vak_tools::broker::OfficeView::Content { from: q.from },
+    };
+    match vak_tools::broker::office_project(&state.core.tool_worker_exe(), &path, view).await {
+        Ok(mut body) => {
+            body["path"] = serde_json::Value::String(q.path.clone());
+            Json(body).into_response()
+        }
+        Err(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 async fn read_file(
@@ -20322,6 +20371,64 @@ mod sandbox_promotion_tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_canvas_reads_an_office_file_as_pages_and_structure_through_the_worker() {
+        crate::pin_test_data_home();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        tokio::fs::write(dir.path().join("q3.docx"), vak_ooxml::fixtures::docx())
+            .await
+            .unwrap();
+        tokio::fs::write(dir.path().join("notes.txt"), "plain")
+            .await
+            .unwrap();
+        let read = |path: &str, from: usize, view: Option<&str>| {
+            let state = state.clone();
+            let query = OfficeProjectionQuery {
+                path: path.into(),
+                from,
+                view: view.map(str::to_string),
+            };
+            async move { read_office_projection(State(state), axum::extract::Query(query)).await }
+        };
+
+        let response = read("q3.docx", 0, None).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = body_json(response).await;
+        assert_eq!(page["kind"], "Word document");
+        assert_eq!(page["path"], "q3.docx");
+        assert_eq!(page["sha256"].as_str().unwrap().len(), 64);
+        assert!(page["units"].as_array().unwrap().len() > 1);
+        assert_eq!(page["from"], 0);
+        assert!(
+            page["outline"]
+                .as_array()
+                .is_some_and(|outline| !outline.is_empty())
+        );
+
+        let response = read("q3.docx", 0, Some("structure")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let structure = body_json(response).await;
+        assert_eq!(structure["main_part"], "word/document.xml");
+        assert!(structure["parts"].as_array().unwrap().len() > 2);
+
+        assert_eq!(
+            read("notes.txt", 0, None).await.status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            read("missing.docx", 0, None).await.status(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            read("../outside.docx", 0, None).await.status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+
     #[test]
     fn a_revision_request_names_the_cell_or_lines_a_comment_points_at() {
         let data = |pairs: &[(&str, &str)]| {
@@ -21361,6 +21468,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/executions",
             "/sessions/session-1/sandbox/promote",
             "/fs/file",
+            "/fs/office",
             "/config",
         ] {
             assert!(!participant_read_route_allowed(
