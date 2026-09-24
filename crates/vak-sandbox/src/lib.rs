@@ -381,6 +381,12 @@ impl TargetVerifier for OpenXmlPackageVerifier {
             ));
         }
         let document = vak_ooxml::read::project(&mut package).map_err(|error| error.to_string())?;
+        if !document.inspection.untyped_parts.is_empty() {
+            return Err(format!(
+                "package has part(s) without a content type: {}",
+                document.inspection.untyped_parts.join(", ")
+            ));
+        }
         let stats = document
             .stats
             .iter()

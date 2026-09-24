@@ -19,6 +19,7 @@ vak-ooxml = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+vak-ooxml = { workspace = true, features = ["fixtures"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 landlock = { workspace = true }

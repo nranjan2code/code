@@ -218,6 +218,9 @@ pub struct Inspection {
     pub custom_xml_parts: usize,
     pub external_relationships: Vec<ExternalRelationship>,
     pub sensitivity_labels: Vec<String>,
+    /// Parts with neither an `Override` nor a `Default` content type. OPC
+    /// requires one for every part, and Office refuses a package without.
+    pub untyped_parts: Vec<String>,
 }
 
 impl Inspection {
@@ -280,6 +283,12 @@ impl Inspection {
                 self.sensitivity_labels.join(", ")
             ));
         }
+        if !self.untyped_parts.is_empty() {
+            flags.push(format!(
+                "{} part(s) without a content type",
+                self.untyped_parts.len()
+            ));
+        }
         flags
     }
 }
@@ -306,6 +315,12 @@ impl<R: Read + Seek> Package<R> {
         if read == magic.len() && magic == CFB_MAGIC {
             return Err(Error::CompoundFile);
         }
+        let length = reader
+            .seek(SeekFrom::End(0))
+            .map_err(|error| Error::Io(error.to_string()))?;
+        if length > limits.max_total_bytes {
+            return Err(Error::TotalTooLarge);
+        }
         reader
             .seek(SeekFrom::Start(0))
             .map_err(|error| Error::Io(error.to_string()))?;
@@ -327,6 +342,9 @@ impl<R: Read + Seek> Package<R> {
                 })?
                 .to_string();
             validate_part_name(name.trim_end_matches('/'))?;
+            if let Some(decoded) = percent_decode(name.trim_end_matches('/')) {
+                validate_part_name(&decoded)?;
+            }
             if file.encrypted() {
                 return Err(Error::EncryptedEntry(name));
             }
@@ -348,8 +366,10 @@ impl<R: Read + Seek> Package<R> {
             if declared_total > limits.max_total_bytes {
                 return Err(Error::TotalTooLarge);
             }
-            let key = name.trim_end_matches('/').to_ascii_lowercase();
-            if by_name.insert(key, entries.len()).is_some() {
+            if by_name
+                .insert(part_key(name.trim_end_matches('/')), entries.len())
+                .is_some()
+            {
                 return Err(Error::DuplicatePart(name));
             }
             drop(file);
@@ -436,7 +456,7 @@ impl<R: Read + Seek> Package<R> {
 
     fn entry(&self, name: &str) -> Option<&Entry> {
         self.by_name
-            .get(&name.trim_start_matches('/').to_ascii_lowercase())
+            .get(&part_key(name))
             .map(|index| &self.entries[*index])
             .filter(|entry| !entry.name.ends_with('/'))
     }
@@ -444,7 +464,7 @@ impl<R: Read + Seek> Package<R> {
     /// Content type of a part: its `Override`, else the `Default` for its
     /// extension.
     pub fn content_type(&self, name: &str) -> Option<String> {
-        let key = name.trim_start_matches('/').to_ascii_lowercase();
+        let key = part_key(name);
         if let Some(value) = self.content_types.overrides.get(&key) {
             return Some(value.clone());
         }
@@ -568,12 +588,14 @@ impl<R: Read + Seek> Package<R> {
             custom_xml_parts: 0,
             external_relationships: Vec::new(),
             sensitivity_labels: Vec::new(),
+            untyped_parts: Vec::new(),
         };
         for name in &names {
-            let content_type = self
-                .content_type(name)
-                .unwrap_or_default()
-                .to_ascii_lowercase();
+            let Some(content_type) = self.content_type(name) else {
+                inspection.untyped_parts.push(name.clone());
+                continue;
+            };
+            let content_type = content_type.to_ascii_lowercase();
             let lower = name.to_ascii_lowercase();
             match content_type.as_str() {
                 CT_VBA_PROJECT => inspection.vba_project = true,
@@ -638,7 +660,7 @@ impl<R: Read + Seek> Package<R> {
         for (name, bytes) in edits {
             let name = name.trim_start_matches('/');
             validate_part_name(name)?;
-            if pending.insert(name.to_ascii_lowercase(), bytes).is_some() {
+            if pending.insert(part_key(name), bytes).is_some() {
                 return Err(Error::DuplicatePart(name.to_string()));
             }
         }
@@ -648,7 +670,7 @@ impl<R: Read + Seek> Package<R> {
         let mut writer = zip::ZipWriter::new(out);
         let io = |error: zip::result::ZipError| Error::Io(error.to_string());
         for entry in self.entries.clone() {
-            match pending.remove(&entry.name.to_ascii_lowercase()) {
+            match pending.remove(&part_key(entry.name.trim_end_matches('/'))) {
                 Some(bytes) => {
                     writer
                         .start_file(entry.name.as_str(), options)
@@ -665,9 +687,7 @@ impl<R: Read + Seek> Package<R> {
         }
         let added: Vec<(String, &Vec<u8>)> = edits
             .iter()
-            .filter(|(name, _)| {
-                pending.contains_key(&name.trim_start_matches('/').to_ascii_lowercase())
-            })
+            .filter(|(name, _)| pending.contains_key(&part_key(name)))
             .map(|(name, bytes)| (name.trim_start_matches('/').to_string(), bytes))
             .collect();
         for (name, bytes) in added {
@@ -676,6 +696,7 @@ impl<R: Read + Seek> Package<R> {
                 .write_all(bytes)
                 .map_err(|error| Error::Io(error.to_string()))?;
         }
+        writer.set_raw_comment(self.archive.comment().to_vec().into_boxed_slice());
         writer.finish().map_err(io)
     }
 
@@ -703,10 +724,9 @@ impl<R: Read + Seek> Package<R> {
                         if let (Some(part), Some(content_type)) =
                             (element.attr("PartName"), element.attr("ContentType"))
                         {
-                            types.overrides.insert(
-                                part.trim_start_matches('/').to_ascii_lowercase(),
-                                content_type.to_string(),
-                            );
+                            types
+                                .overrides
+                                .insert(part_key(part), content_type.to_string());
                         }
                     }
                     _ => {}
@@ -761,6 +781,16 @@ pub fn validate_part_name(name: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// Lookup key for a part name: no leading slash, percent-decoded (a ZIP
+/// item may hold `a%20b.xml` or `a b.xml` for the same part), ASCII
+/// case-folded (OPC part names are case-insensitive).
+fn part_key(name: &str) -> String {
+    let trimmed = name.trim_start_matches('/');
+    percent_decode(trimmed)
+        .unwrap_or_else(|| trimmed.to_string())
+        .to_ascii_lowercase()
+}
+
 /// `word/document.xml` → `word/_rels/document.xml.rels`; `""` → `_rels/.rels`.
 fn rels_part_name(source: &str) -> String {
     match source.rsplit_once('/') {
@@ -813,9 +843,12 @@ fn parse_relationships(
             ) else {
                 return Ok(());
             };
+            // A target with a URI scheme is external whatever TargetMode
+            // says: it is recorded and never resolved inside the package.
             let external = element
                 .attr("TargetMode")
-                .is_some_and(|mode| mode.eq_ignore_ascii_case("External"));
+                .is_some_and(|mode| mode.eq_ignore_ascii_case("External"))
+                || has_uri_scheme(target);
             let target = if external {
                 target.to_string()
             } else {
@@ -842,15 +875,17 @@ fn parse_relationships(
     Ok(relationships)
 }
 
-/// Resolves an internal relationship target against its source part.
-/// A target that climbs above the package root is refused.
+/// Resolves an internal relationship target against its source part,
+/// keeping its percent-encoding (lookups decode through [`part_key`]). A
+/// target that climbs above the package root, directly or through an
+/// encoded `..`, is refused.
 pub fn resolve_target(source: &str, target: &str) -> Result<String, Error> {
     let target = target.split('#').next().unwrap_or("");
-    let decoded = percent_decode(target).ok_or_else(|| Error::RelationshipEscape(target.into()))?;
-    if decoded.contains('\\') || decoded.contains(':') {
-        return Err(Error::RelationshipEscape(target.to_string()));
+    let escape = || Error::RelationshipEscape(target.to_string());
+    if target.contains('\\') || has_uri_scheme(target) {
+        return Err(escape());
     }
-    let mut segments: Vec<&str> = if decoded.starts_with('/') {
+    let mut segments: Vec<&str> = if target.starts_with('/') {
         Vec::new()
     } else {
         match source.rsplit_once('/') {
@@ -858,21 +893,38 @@ pub fn resolve_target(source: &str, target: &str) -> Result<String, Error> {
             None => Vec::new(),
         }
     };
-    for segment in decoded.split('/') {
-        match segment {
+    for segment in target.split('/') {
+        let decoded = percent_decode(segment).ok_or_else(escape)?;
+        if decoded.contains('/') || decoded.contains('\\') {
+            return Err(escape());
+        }
+        match decoded.as_str() {
             "" | "." => {}
             ".." => {
                 if segments.pop().is_none() {
-                    return Err(Error::RelationshipEscape(target.to_string()));
+                    return Err(escape());
                 }
             }
-            other => segments.push(other),
+            _ => segments.push(segment),
         }
     }
     if segments.is_empty() {
-        return Err(Error::RelationshipEscape(target.to_string()));
+        return Err(escape());
     }
     Ok(segments.join("/"))
+}
+
+/// `scheme:` before any `/`, per RFC 3986 (`http:`, `mailto:`, `file:`).
+fn has_uri_scheme(target: &str) -> bool {
+    let Some((scheme, _)) = target.split_once(':') else {
+        return false;
+    };
+    !scheme.is_empty()
+        && !scheme.contains('/')
+        && scheme.starts_with(|character: char| character.is_ascii_alphabetic())
+        && scheme
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "+-.".contains(character))
 }
 
 fn percent_decode(value: &str) -> Option<String> {
@@ -961,10 +1013,15 @@ mod tests {
         );
         assert_eq!(
             resolve_target("", "word/a%20b.xml").unwrap(),
-            "word/a b.xml"
+            "word/a%20b.xml"
         );
+        assert_eq!(part_key("word/a%20b.xml"), part_key("/Word/A B.xml"));
         assert!(resolve_target("word/document.xml", "../../etc/passwd").is_err());
+        assert!(resolve_target("word/document.xml", "%2e%2e/%2E%2E/x").is_err());
         assert!(resolve_target("", "..").is_err());
+        assert!(resolve_target("", "a%2fb").is_err());
+        assert!(has_uri_scheme("mailto:a@b.c") && has_uri_scheme("https://x"));
+        assert!(!has_uri_scheme("media/a:b.png") && !has_uri_scheme("../x.xml"));
     }
 
     #[test]

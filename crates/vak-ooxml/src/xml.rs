@@ -63,6 +63,12 @@ pub enum XmlEvent {
 /// Walks `bytes` as XML, calling `visit` for each element open, close and
 /// text run. Empty elements produce an `Open` immediately followed by a
 /// `Close`. Entity and character references are resolved into the text.
+///
+/// Markup compatibility (`mc:AlternateContent`) is resolved the way a
+/// reader sees it: the first `mc:Choice` is visited, and later choices and
+/// the `mc:Fallback` are skipped (a fallback is visited only when there is
+/// no choice). Producers write the same content into both, so visiting both
+/// would read it twice. Skipped markup is still parsed and bounded.
 pub fn walk(
     bytes: &[u8],
     part: &str,
@@ -77,6 +83,10 @@ pub fn walk(
     let mut buffer = Vec::new();
     let mut depth = 0usize;
     let mut saw_root = false;
+    // One entry per open AlternateContent: whether a Choice was taken.
+    let mut alternates: Vec<bool> = Vec::new();
+    // Depth of the element whose subtree is being skipped.
+    let mut skipping: Option<usize> = None;
     loop {
         let event = reader
             .read_event_into(&mut buffer)
@@ -89,7 +99,16 @@ pub fn walk(
                 }
                 saw_root = true;
                 let element = element(&start, part, limits)?;
-                visit(XmlEvent::Open(element))?;
+                if skipping.is_none() {
+                    if skip_alternate(&element, &mut alternates) {
+                        skipping = Some(depth);
+                    } else {
+                        if element.local() == "AlternateContent" {
+                            alternates.push(false);
+                        }
+                        visit(XmlEvent::Open(element))?;
+                    }
+                }
             }
             Event::Empty(start) => {
                 if depth + 1 > limits.max_xml_depth {
@@ -97,20 +116,31 @@ pub fn walk(
                 }
                 saw_root = true;
                 let element = element(&start, part, limits)?;
-                let name = element.name.clone();
-                visit(XmlEvent::Open(element))?;
-                visit(XmlEvent::Close(name))?;
+                if skipping.is_none() && !skip_alternate(&element, &mut alternates) {
+                    let name = element.name.clone();
+                    visit(XmlEvent::Open(element))?;
+                    visit(XmlEvent::Close(name))?;
+                }
             }
             Event::End(end) => {
-                depth = depth.saturating_sub(1);
                 let name = String::from_utf8_lossy(end.name().as_ref()).into_owned();
-                visit(XmlEvent::Close(name))?;
+                match skipping {
+                    Some(level) if level == depth => skipping = None,
+                    Some(_) => {}
+                    None => {
+                        if local_name(&name) == "AlternateContent" {
+                            alternates.pop();
+                        }
+                        visit(XmlEvent::Close(name))?;
+                    }
+                }
+                depth = depth.saturating_sub(1);
             }
             Event::Text(text) => {
                 let text = text
                     .decode()
                     .map_err(|error| xml_error(part, &error.to_string()))?;
-                if !text.is_empty() {
+                if skipping.is_none() && !text.is_empty() {
                     visit(XmlEvent::Text(text.into_owned()))?;
                 }
             }
@@ -118,7 +148,9 @@ pub fn walk(
                 let text = data
                     .decode()
                     .map_err(|error| xml_error(part, &error.to_string()))?;
-                visit(XmlEvent::Text(text.into_owned()))?;
+                if skipping.is_none() {
+                    visit(XmlEvent::Text(text.into_owned()))?;
+                }
             }
             Event::GeneralRef(reference) => {
                 let resolved = match reference
@@ -135,7 +167,9 @@ pub fn walk(
                             .to_string()
                     }
                 };
-                visit(XmlEvent::Text(resolved))?;
+                if skipping.is_none() {
+                    visit(XmlEvent::Text(resolved))?;
+                }
             }
             Event::DocType(_) => return Err(Error::DocType(part.to_string())),
             Event::Eof => {
@@ -150,6 +184,24 @@ pub fn walk(
             Event::Decl(_) | Event::PI(_) | Event::Comment(_) => {}
         }
         buffer.clear();
+    }
+}
+
+/// True when `element` is a `Choice` after the first, or a `Fallback`
+/// after a taken choice, inside the innermost open `AlternateContent`.
+/// Marks the first `Choice` as taken.
+fn skip_alternate(element: &Element, alternates: &mut [bool]) -> bool {
+    let Some(taken) = alternates.last_mut() else {
+        return false;
+    };
+    match element.local() {
+        "Choice" if *taken => true,
+        "Choice" => {
+            *taken = true;
+            false
+        }
+        "Fallback" => *taken,
+        _ => false,
     }
 }
 
@@ -254,6 +306,26 @@ mod tests {
             collect(&format!("<a{attributes}/>")),
             Err(Error::TooManyAttributes("t.xml".into()))
         );
+    }
+
+    #[test]
+    fn alternate_content_is_read_once() {
+        let xml = r#"<r xmlns:mc="m"><mc:AlternateContent><mc:Choice Requires="x"><t>new</t></mc:Choice><mc:Choice Requires="y"><t>other</t></mc:Choice><mc:Fallback><t>old</t></mc:Fallback></mc:AlternateContent><mc:AlternateContent><mc:Fallback><t>only</t></mc:Fallback></mc:AlternateContent><t>after</t></r>"#;
+        let text: Vec<String> = collect(xml)
+            .unwrap()
+            .into_iter()
+            .filter_map(|event| match event {
+                XmlEvent::Text(text) => Some(text),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(text, vec!["new", "only", "after"]);
+        let deep_skip = format!(
+            "<r xmlns:mc=\"m\"><mc:AlternateContent><mc:Choice/><mc:Fallback>{}{}</mc:Fallback></mc:AlternateContent></r>",
+            "<a>".repeat(300),
+            "</a>".repeat(300)
+        );
+        assert_eq!(collect(&deep_skip), Err(Error::TooDeep("t.xml".into())));
     }
 
     #[test]

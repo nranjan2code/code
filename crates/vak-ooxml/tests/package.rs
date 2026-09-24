@@ -574,3 +574,185 @@ fn a_main_part_whose_root_contradicts_its_content_type_is_refused() {
         "{error:?}"
     );
 }
+
+// ---- review fixes ------------------------------------------------------------
+
+const W: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006""#;
+
+fn word_lines(body: &str) -> String {
+    let document = format!("<w:document {W}><w:body>{body}</w:body></w:document>");
+    project(&word(&document)).lines().join("\n")
+}
+
+#[test]
+fn percent_encoded_part_names_resolve_either_way() {
+    for stored in ["word/a%20b.xml", "word/a b.xml"] {
+        let package = fixtures::word_with(
+            fixtures::WORD_MAIN,
+            fixtures::MINIMAL_WORD_BODY,
+            &[(stored, b"<x/>")],
+            &[],
+            &[],
+            &[(
+                "rId7",
+                "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom",
+                "a%20b.xml",
+            )],
+        );
+        let mut opened = open(&package).unwrap();
+        let target = opened
+            .part_by_relationship_id("word/document.xml", "rId7")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            opened.read_part(&target).unwrap(),
+            b"<x/>",
+            "stored as {stored}"
+        );
+    }
+}
+
+#[test]
+fn a_scheme_target_without_target_mode_is_external_not_fatal() {
+    let package = fixtures::word_with(
+        fixtures::WORD_MAIN,
+        fixtures::MINIMAL_WORD_BODY,
+        &[],
+        &[],
+        &[],
+        &[(
+            "rId3",
+            "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+            "mailto:someone@example.com",
+        )],
+    );
+    let document = project(&package);
+    assert_eq!(document.inspection.external_relationships.len(), 1);
+    assert_eq!(
+        document.inspection.external_relationships[0].target,
+        "mailto:someone@example.com"
+    );
+}
+
+#[test]
+fn parts_without_a_content_type_are_listed() {
+    let package = fixtures::word_with(
+        fixtures::WORD_MAIN,
+        fixtures::MINIMAL_WORD_BODY,
+        &[("word/media/blob.bin", b"x")],
+        &[],
+        &[],
+        &[],
+    );
+    let inspection = open(&package).unwrap().inspect().unwrap();
+    assert_eq!(inspection.untyped_parts, vec!["word/media/blob.bin"]);
+    assert!(
+        inspection
+            .flags()
+            .join(" ")
+            .contains("without a content type")
+    );
+}
+
+#[test]
+fn rewrite_keeps_the_archive_comment() {
+    use std::io::Write;
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let mut source = zip::ZipArchive::new(Cursor::new(fixtures::docx())).unwrap();
+    for index in 0..source.len() {
+        writer
+            .raw_copy_file(source.by_index_raw(index).unwrap())
+            .unwrap();
+    }
+    writer.set_comment("made by a tool");
+    writer.flush().unwrap();
+    let bytes = writer.finish().unwrap().into_inner();
+    let out = open(&bytes)
+        .unwrap()
+        .rewrite(Cursor::new(Vec::new()), &BTreeMap::new())
+        .unwrap()
+        .into_inner();
+    let archive = zip::ZipArchive::new(Cursor::new(out)).unwrap();
+    assert_eq!(archive.comment(), b"made by a tool");
+}
+
+#[test]
+fn a_very_wide_sheet_builds_a_bounded_grid() {
+    let mut rows = String::new();
+    for row in 1..=2_000 {
+        rows.push_str(&format!(
+            r#"<row r="{row}"><c r="A{row}"><v>{row}</v></c><c r="XFD{row}"><v>1</v></c></row>"#
+        ));
+    }
+    let mut columns = String::from(r#"<row r="2001">"#);
+    for column in 1..=200u32 {
+        columns.push_str(&format!(
+            r#"<c r="{}2001"><v>{column}</v></c>"#,
+            read::column_name(column)
+        ));
+    }
+    columns.push_str("</row>");
+    let sheet = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}{columns}</sheetData></worksheet>"#
+    );
+    let workbook = r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Wide" sheetId="1" r:id="rId1"/></sheets></workbook>"#;
+    let types = format!(
+        r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Override PartName="/xl/workbook.xml" ContentType="{}"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>"#,
+        fixtures::EXCEL_MAIN
+    );
+    let package = fixtures::zip(&[
+        ("[Content_Types].xml", types.as_bytes()),
+        ("_rels/.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#),
+        ("xl/workbook.xml", workbook.as_bytes()),
+        ("xl/_rels/workbook.xml.rels", br#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>"#),
+        ("xl/worksheets/sheet1.xml", sheet.as_bytes()),
+    ]);
+    let document = project(&package);
+    let table = document.table(Some("Wide")).unwrap();
+    assert_eq!(table.rows[0].len(), read::MAX_TABLE_COLUMNS + 1);
+    assert_eq!(table.omitted_columns, 201 - read::MAX_TABLE_COLUMNS);
+    let lines = document.lines().join("\n");
+    assert!(
+        lines.contains("XFD1: 1"),
+        "every cell stays in the anchored lines"
+    );
+}
+
+#[test]
+fn every_risky_field_in_a_paragraph_is_flagged() {
+    let lines = word_lines(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>1</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText> DDEAUTO x y </w:instrText></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t>text</w:t></w:r></w:p>"#,
+    );
+    assert!(lines.contains("⟨DDE field (never executed)⟩"), "{lines}");
+}
+
+#[test]
+fn formatting_before_a_tracked_change_does_not_hide_text() {
+    let lines = word_lines(
+        r#"<w:p><w:r><w:rPr><w:b/><w:rPrChange w:id="1" w:author="A"><w:rPr><w:vanish/></w:rPr></w:rPrChange><w:color w:val="FFFFFF"/></w:rPr><w:t>shown</w:t></w:r></w:p>"#,
+    );
+    assert!(!lines.contains("hidden"), "{lines}");
+    assert!(
+        lines.contains("[white text: shown]"),
+        "the color after the change still applies: {lines}"
+    );
+}
+
+#[test]
+fn a_text_box_written_as_choice_and_fallback_is_read_once() {
+    let lines = word_lines(
+        r#"<w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></w:drawing></mc:Choice><mc:Fallback><w:pict><w:txbxContent><w:p><w:r><w:t>Boxed</w:t></w:r></w:p></w:txbxContent></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p>"#,
+    );
+    assert_eq!(lines.matches("Boxed").count(), 1, "{lines}");
+    assert!(lines.contains("⟨text box⟩"), "{lines}");
+}
+
+#[test]
+fn a_package_file_larger_than_the_total_bound_is_refused_before_parsing() {
+    let limits = Limits {
+        max_total_bytes: 1024,
+        ..Limits::default()
+    };
+    let error = Package::open(Cursor::new(fixtures::docx()), limits).err();
+    assert_eq!(error, Some(Error::TotalTooLarge));
+}

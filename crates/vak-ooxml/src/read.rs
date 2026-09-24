@@ -57,7 +57,14 @@ pub struct Table {
     /// First row is the header row.
     pub rows: Vec<Vec<String>>,
     pub labels: Vec<String>,
+    /// Used columns beyond [`MAX_TABLE_COLUMNS`] that the grid leaves out;
+    /// the anchored lines still carry every cell.
+    pub omitted_columns: usize,
 }
+
+/// Widest grid a table projection builds. A sheet can use 16,384 columns,
+/// and a dense rows-by-columns grid of that width is a memory bomb.
+pub const MAX_TABLE_COLUMNS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Document {
@@ -100,10 +107,20 @@ pub fn project<R: Read + Seek>(package: &mut Package<R>) -> Result<Document, Err
     Ok(document)
 }
 
+/// Longest unit text one line carries. A longer unit continues on further
+/// lines that name the same anchor and their part, so no text is dropped
+/// and no single line can outgrow a page.
+pub const MAX_LINE_CHARS: usize = 16_000;
+
 impl Document {
     /// The document as anchored lines: `[anchor] text  ⟨labels⟩`.
     pub fn lines(&self) -> Vec<String> {
-        self.units.iter().map(render_unit).collect()
+        self.units.iter().flat_map(render_unit).collect()
+    }
+
+    /// Anchored lines for a range of units.
+    pub fn lines_of(&self, units: Range<usize>) -> Vec<String> {
+        self.units[units].iter().flat_map(render_unit).collect()
     }
 
     /// A section by anchor, exact title, or title fragment, in that order.
@@ -154,19 +171,39 @@ impl Document {
     }
 }
 
-fn render_unit(unit: &Unit) -> String {
-    let mut line = format!("[{}] ", unit.anchor);
-    if unit.kind == UnitKind::Heading {
-        line.push_str(&"#".repeat(usize::from(unit.level.clamp(1, 6))));
-        line.push(' ');
-    }
-    line.push_str(&unit.text);
-    if !unit.labels.is_empty() {
-        line.push_str("  ⟨");
-        line.push_str(&unit.labels.join("; "));
-        line.push('⟩');
-    }
-    line
+fn render_unit(unit: &Unit) -> Vec<String> {
+    let characters: Vec<char> = unit.text.chars().collect();
+    let chunks: Vec<String> = if characters.len() <= MAX_LINE_CHARS {
+        vec![unit.text.clone()]
+    } else {
+        characters
+            .chunks(MAX_LINE_CHARS)
+            .map(|chunk| chunk.iter().collect())
+            .collect()
+    };
+    let parts = chunks.len();
+    chunks
+        .into_iter()
+        .enumerate()
+        .map(|(index, text)| {
+            let mut line = if parts == 1 {
+                format!("[{}] ", unit.anchor)
+            } else {
+                format!("[{} ⟨part {} of {parts}⟩] ", unit.anchor, index + 1)
+            };
+            if unit.kind == UnitKind::Heading && index == 0 {
+                line.push_str(&"#".repeat(usize::from(unit.level.clamp(1, 6))));
+                line.push(' ');
+            }
+            line.push_str(&text);
+            if !unit.labels.is_empty() {
+                line.push_str("  ⟨");
+                line.push_str(&unit.labels.join("; "));
+                line.push('⟩');
+            }
+            line
+        })
+        .collect()
 }
 
 fn core_title<R: Read + Seek>(package: &mut Package<R>) -> Result<Option<String>, Error> {
@@ -252,7 +289,11 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
     let mut revision: Vec<(bool, String)> = Vec::new();
     let mut in_text = false;
     let mut in_instruction = false;
-    let mut instructions = String::new();
+    // One entry per open complex field: its instruction text and whether
+    // it has been evaluated (at `separate`, or at `end` without one).
+    let mut fields: Vec<(String, bool)> = Vec::new();
+    // Inside `w:rPrChange` and friends: formatting that was, not that is.
+    let mut change_depth = 0usize;
     let mut table_depth = 0usize;
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
@@ -266,6 +307,21 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
     let mut text_box_depth = 0usize;
 
     xml::walk(&bytes, &main, &limits, |event| {
+        if let XmlEvent::Open(element) = &event
+            && is_property_change(element.local())
+        {
+            change_depth += 1;
+            return Ok(());
+        }
+        if let XmlEvent::Close(name) = &event
+            && is_property_change(xml::local_name(name))
+        {
+            change_depth = change_depth.saturating_sub(1);
+            return Ok(());
+        }
+        if change_depth > 0 {
+            return Ok(());
+        }
         match event {
             XmlEvent::Open(element) => match element.local() {
                 "p" => {
@@ -321,11 +377,32 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                 "t" | "delText" => in_text = true,
                 "instrText" => in_instruction = true,
                 "fldSimple" => {
-                    if let Some(instruction) = element.attr("instr") {
-                        instructions.push_str(instruction);
-                        instructions.push(' ');
+                    if let Some(field) = element.attr("instr").and_then(risky_field) {
+                        flag_field(&mut stack, field, &mut risky_fields);
                     }
                 }
+                "fldChar" => match element.attr("fldCharType") {
+                    Some("begin") => fields.push((String::new(), false)),
+                    Some("separate") => {
+                        if let Some((instruction, evaluated)) = fields.last_mut()
+                            && !*evaluated
+                        {
+                            *evaluated = true;
+                            if let Some(field) = risky_field(instruction) {
+                                flag_field(&mut stack, field, &mut risky_fields);
+                            }
+                        }
+                    }
+                    Some("end") => {
+                        if let Some((instruction, evaluated)) = fields.pop()
+                            && !evaluated
+                            && let Some(field) = risky_field(&instruction)
+                        {
+                            flag_field(&mut stack, field, &mut risky_fields);
+                        }
+                    }
+                    _ => {}
+                },
                 "tab" if in_run => push_word_text(&mut stack, &run, &revision, "\t", &mut totals),
                 "br" | "cr" if in_run => {
                     push_word_text(&mut stack, &run, &revision, " ", &mut totals)
@@ -351,15 +428,17 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
             XmlEvent::Text(text) => {
                 if in_text {
                     push_word_text(&mut stack, &run, &revision, &text, &mut totals);
-                } else if in_instruction {
-                    instructions.push_str(&text);
+                } else if in_instruction && let Some((instruction, false)) = fields.last_mut() {
+                    instruction.push_str(&text);
                 }
             }
             XmlEvent::Close(name) => match xml::local_name(&name) {
                 "t" | "delText" => in_text = false,
                 "instrText" => {
                     in_instruction = false;
-                    instructions.push(' ');
+                    if let Some((instruction, false)) = fields.last_mut() {
+                        instruction.push(' ');
+                    }
                 }
                 "rPr" => in_run_properties = false,
                 "r" => in_run = false,
@@ -368,16 +447,9 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                 }
                 "txbxContent" => text_box_depth = text_box_depth.saturating_sub(1),
                 "p" => {
-                    let Some(mut paragraph) = stack.pop() else {
+                    let Some(paragraph) = stack.pop() else {
                         return Ok(());
                     };
-                    if let Some(field) = risky_field(&instructions) {
-                        paragraph
-                            .labels
-                            .push(format!("{field} field (never executed)"));
-                        risky_fields += 1;
-                    }
-                    instructions.clear();
                     let text = paragraph.text.trim().to_string();
                     let level = heading_level(&paragraph, &styles);
                     let in_cell = paragraph.in_table && !paragraph.text_box;
@@ -426,6 +498,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                             title: format!("Table {table_ordinal}"),
                             rows: std::mem::take(&mut table_rows),
                             labels: Vec::new(),
+                            omitted_columns: 0,
                         });
                     }
                 }
@@ -478,6 +551,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
         "headers and footers",
         "footnotes and endnotes",
         "images and charts",
+        "heading levels inherited through style basedOn chains",
     ];
     Ok(())
 }
@@ -530,6 +604,22 @@ fn attach_comments(
                 labels: vec![format!("comment by {author}")],
             });
         }
+    }
+}
+
+/// Tracked formatting changes (`w:rPrChange`, `w:tblPrExChange`, ...)
+/// hold the properties before the change; they describe no visible text.
+fn is_property_change(local: &str) -> bool {
+    local.ends_with("PrChange") || local == "tblPrExChange" || local == "numberingChange"
+}
+
+fn flag_field(stack: &mut [Paragraph], field: &str, count: &mut usize) {
+    *count += 1;
+    if let Some(paragraph) = stack.last_mut() {
+        add_label(
+            &mut paragraph.labels,
+            &format!("{field} field (never executed)"),
+        );
     }
 }
 
@@ -721,22 +811,28 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
         }
         let bytes = package.read_part(&part)?;
         let rows = sheet_rows(&bytes, &part, &limits, &shared, &mut formulas)?;
-        let max_column = rows
+        let used: std::collections::BTreeSet<u32> = rows
             .iter()
             .flat_map(|row| row.cells.iter().map(|(column, _)| *column))
-            .max()
-            .unwrap_or(0);
+            .collect();
+        let omitted_columns = used.len().saturating_sub(MAX_TABLE_COLUMNS);
+        let shown: Vec<u32> = used.into_iter().take(MAX_TABLE_COLUMNS).collect();
+        let slot_of: HashMap<u32, usize> = shown
+            .iter()
+            .enumerate()
+            .map(|(slot, column)| (*column, slot))
+            .collect();
         let mut table_rows = vec![
             std::iter::once(String::new())
-                .chain((1..=max_column).map(column_name))
+                .chain(shown.iter().copied().map(column_name))
                 .collect::<Vec<_>>(),
         ];
         for row in &rows {
             total_rows += 1;
-            let mut dense = vec![String::new(); max_column as usize];
+            let mut dense = vec![String::new(); shown.len()];
             for (column, value) in &row.cells {
-                if let Some(slot) = dense.get_mut(*column as usize - 1) {
-                    *slot = value.clone();
+                if let Some(slot) = slot_of.get(column) {
+                    dense[*slot] = value.clone();
                 }
             }
             let first = row.cells.first().map(|(column, _)| *column).unwrap_or(1);
@@ -782,6 +878,7 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             title: name,
             rows: table_rows,
             labels,
+            omitted_columns,
         });
     }
     document.stats = vec![
@@ -1098,6 +1195,7 @@ fn powerpoint<R: Read + Seek>(
                     title: format!("Slide {number} · {}", shape.name),
                     rows: shape.table.clone(),
                     labels,
+                    omitted_columns: 0,
                 });
             }
         }
@@ -1141,6 +1239,7 @@ fn powerpoint<R: Read + Seek>(
         "comments",
         "chart data and SmartArt text",
         "text inherited from layouts and masters",
+        "off-slide checks for shapes inside groups",
     ];
     Ok(())
 }

@@ -54,6 +54,7 @@ vak-bus = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
+vak-ooxml = { workspace = true, features = ["fixtures"] }
 # A real WebSocket client for the /voice/session end-to-end test.
 tokio-tungstenite = { workspace = true }
 tempfile = { workspace = true }

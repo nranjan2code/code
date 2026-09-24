@@ -10,8 +10,13 @@ quick-xml = { workspace = true }
 serde = { workspace = true }
 zip = { workspace = true }
 
+[features]
+# Synthetic test packages (src/fixtures.rs); never enabled in a shipped build.
+fixtures = []
+
 [dev-dependencies]
 serde_json = { workspace = true }
+vak-ooxml = { path = ".", features = ["fixtures"] }
 
 [lints]
 workspace = true

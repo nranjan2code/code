@@ -14,7 +14,7 @@
 //! - [`read`]: L2 read projections with anchors and O6 labels for Word,
 //!   Excel, PowerPoint and Visio.
 
-#[doc(hidden)]
+#[cfg(feature = "fixtures")]
 pub mod fixtures;
 pub mod package;
 pub mod read;

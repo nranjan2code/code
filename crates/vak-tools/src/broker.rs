@@ -467,7 +467,23 @@ pub async fn worker_main() -> i32 {
 async fn write_response(response: WorkerResponse) -> i32 {
     let payload = match serde_json::to_vec(&response) {
         Ok(payload) if payload.len() as u64 <= MAX_PROTOCOL_BYTES => payload,
-        _ => return 125,
+        Ok(payload) => {
+            let refusal = WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content: format!(
+                    "the result is {} bytes, over the {} byte worker protocol limit; request a smaller range",
+                    payload.len(),
+                    MAX_PROTOCOL_BYTES
+                ),
+                is_error: true,
+                events: Vec::new(),
+            };
+            match serde_json::to_vec(&refusal) {
+                Ok(payload) => payload,
+                Err(_) => return 125,
+            }
+        }
+        Err(_) => return 125,
     };
     let mut stdout = tokio::io::stdout();
     if stdout.write_all(&payload).await.is_err() || stdout.flush().await.is_err() {
