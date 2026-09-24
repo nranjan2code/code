@@ -102,13 +102,14 @@ no plists pointing into build trees, no spot-fixing deploys.
 
 ```
 vak self install   [--prefix DIR] [--force]   place this build + manifest
-vak self reinstall [--prefix DIR] [-y]        clear the prefix, place fresh
+vak self reinstall [--prefix DIR] [--yes]     clear the prefix, place fresh
 vak self verify    [--prefix DIR]             components vs recorded digests
 vak self status    [--prefix DIR]             drift matrix (exit != 0 on drift)
 vak self services-sync [--prefix DIR] [NAME…] regenerate + reload units
                                       (using the invoking workspace)
-vak self uninstall [--prefix DIR] [-y] [--purge]  exact reverse of install
-vak self update    [--prefix DIR] [--url URL] [-y] [--dry-run]
+vak self uninstall [--prefix DIR] [--yes] [--purge]
+                                              exact reverse of install
+vak self update    [--prefix DIR] [--url URL] [--yes] [--dry-run]
 vak doctor         [--trust] [--repair]       health report; --repair acts on known fixes
 ```
 

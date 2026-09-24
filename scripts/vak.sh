@@ -10,11 +10,11 @@
 #   build        scripts/build.sh [--no-install] [--no-desktop] [--clean] ...
 #   release      scripts/release.sh [--base-url URL] [--allow-dirty] ...
 #   install      vak self install [--prefix DIR] [--force]
-#   reinstall    vak self reinstall [--prefix DIR] [-y]
+#   reinstall    vak self reinstall [--prefix DIR] [--yes]
 #   verify       vak self verify [--prefix DIR]
 #   status       vak self status [--prefix DIR]
-#   update       vak self update [--prefix DIR] [--url URL] [-y] [--dry-run]
-#   uninstall    vak self uninstall [--prefix DIR] [-y] [--purge]
+#   update       vak self update [--prefix DIR] [--url URL] [--yes] [--dry-run]
+#   uninstall    vak self uninstall [--prefix DIR] [--yes] [--purge]
 #   services-sync  vak self services-sync [--prefix DIR] [NAME...]
 #   doctor       vak doctor [--trust] [--repair]
 #
