@@ -158,3 +158,64 @@ async fn mcp_servers_get_put_roundtrip_and_persist() {
         .unwrap();
     assert_eq!(res.status(), 400);
 }
+
+/// `PUT /config/mcp` and `PATCH /config` arriving at the same moment each
+/// rewrite the project's `.vak/config.toml`. Both must succeed and both
+/// changes must land, round after round, in a file that still parses.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn put_mcp_and_patch_config_at_the_same_moment_both_land() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use tower::ServiceExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cwd = dir.path().join("workspace");
+    std::fs::create_dir_all(cwd.join(".vak")).unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new_with_trust(cwd.clone(), true).expect("core");
+    core.set_sessions_home(dir.path().join("home"));
+    let app = vak_server::router(core);
+    let send = |method: &'static str, uri: &'static str, body: serde_json::Value| {
+        let request = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap();
+        tokio::spawn(app.clone().oneshot(request))
+    };
+
+    for round in 1..=30_u32 {
+        let server = format!("server-{round}");
+        let put = send(
+            "PUT",
+            "/config/mcp",
+            serde_json::json!({ "servers": { server.clone(): { "command": "npx" } } }),
+        );
+        let patch = send(
+            "PATCH",
+            "/config",
+            serde_json::json!({ "max_turns": round }),
+        );
+        let put = put.await.unwrap().unwrap().status();
+        let patch = patch.await.unwrap().unwrap().status();
+        assert_eq!(
+            (put, patch),
+            (StatusCode::OK, StatusCode::OK),
+            "round {round}"
+        );
+
+        let text = std::fs::read_to_string(cwd.join(".vak/config.toml")).unwrap();
+        let document: toml::Table = toml::from_str(&text).expect("the file parses");
+        let servers = document["mcp"]["servers"].as_table().unwrap();
+        assert!(
+            servers.contains_key(&server),
+            "round {round}: the MCP change was lost: {text}"
+        );
+        assert_eq!(
+            document["max_turns"].as_integer(),
+            Some(i64::from(round)),
+            "round {round}: the PATCH was lost: {text}"
+        );
+    }
+}

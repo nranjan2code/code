@@ -8,7 +8,8 @@ pub mod paths;
 pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic};
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
 
@@ -1175,115 +1176,52 @@ pub fn seed_global_hooks_if_empty(hooks: &[HookConfig]) -> Result<bool, ConfigEr
         path: PathBuf::from("<shared>"),
         source: std::io::Error::other("shared workspace unavailable"),
     })?;
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("top-level config must be a TOML table"),
-    })?;
-    if table
-        .get("hooks")
-        .and_then(toml::Value::as_array)
-        .is_some_and(|existing| !existing.is_empty())
-    {
-        return Ok(false);
-    }
-    let encoded = hooks
+    update_config_file(&path, |document| {
+        if document
+            .get("hooks")
+            .and_then(toml::Value::as_array)
+            .is_some_and(|existing| !existing.is_empty())
+        {
+            return Ok(false);
+        }
+        document.insert("hooks".into(), encode_hooks(&path, hooks)?);
+        Ok(true)
+    })
+}
+
+/// Replace the `[[hooks]]` list in the configuration file at `path`,
+/// leaving every other key alone. A disabled hook is written with
+/// `enabled = false`, never dropped (invariant 21).
+pub fn persist_hooks(path: &Path, hooks: &[HookConfig]) -> Result<(), ConfigError> {
+    update_config_file(path, |document| {
+        document.insert("hooks".into(), encode_hooks(path, hooks)?);
+        Ok(())
+    })
+}
+
+fn encode_hooks(path: &Path, hooks: &[HookConfig]) -> Result<toml::Value, ConfigError> {
+    hooks
         .iter()
         .map(toml::Value::try_from)
         .collect::<Result<Vec<_>, _>>()
+        .map(toml::Value::Array)
         .map_err(|error| ConfigError::Write {
-            path: path.clone(),
+            path: path.to_path_buf(),
             source: std::io::Error::other(error.to_string()),
-        })?;
-    table.insert("hooks".into(), toml::Value::Array(encoded));
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("shared config has no parent"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })?;
-    Ok(true)
+        })
 }
 
 /// Seed the default execution plugin policy into the given config file's
 /// `[plugins] network_allow` table if unconfigured.
 pub fn seed_plugins_network_allow_if_empty(path: &Path) -> Result<bool, ConfigError> {
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("top-level config must be a TOML table"),
-    })?;
-    if let Some(plugins) = table.get("plugins").and_then(toml::Value::as_table)
-        && plugins.contains_key("network_allow")
-    {
-        return Ok(false);
-    }
-    let plugins = table
-        .entry("plugins")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let Some(plugins) = plugins.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::other("[plugins] must be a TOML table"),
-        });
-    };
-    plugins.insert("network_allow".into(), toml::Value::Array(vec![]));
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Ok(true)
+    update_config_file(path, |document| {
+        let plugins = child_table(document, "plugins", path)?;
+        if plugins.contains_key("network_allow") {
+            return Ok(false);
+        }
+        plugins.insert("network_allow".into(), toml::Value::Array(Vec::new()));
+        Ok(true)
+    })
 }
 
 /// Seed the Shared layer's `[plugins] network_allow` table once if unconfigured.
@@ -1297,57 +1235,22 @@ pub fn seed_global_plugins_network_allow_if_empty() -> Result<bool, ConfigError>
 
 /// Remove a plugin name from `[plugins] network_allow` in the config at `path`.
 /// Called during retired-plugin cleanup so the allowlist stays consistent
-/// with the on-disk plugin store. Silently succeeds if the entry was not
-/// present.
+/// with the on-disk plugin store. Silently succeeds if the entry, or the
+/// file, was not present.
 pub fn prune_plugins_network_allow(path: &Path, plugin_name: &str) -> Result<bool, ConfigError> {
-    let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let mut root: toml::Value = toml::from_str(&text).map_err(|source| ConfigError::Parse {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("top-level config must be a TOML table"),
-    })?;
-    let Some(plugins) = table.get_mut("plugins").and_then(|v| v.as_table_mut()) else {
-        return Ok(false);
-    };
-    let Some(allow) = plugins
-        .get_mut("network_allow")
-        .and_then(|v| v.as_array_mut())
-    else {
-        return Ok(false);
-    };
-    let before = allow.len();
-    allow.retain(|v| v.as_str() != Some(plugin_name));
-    if allow.len() == before {
-        return Ok(false);
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, &text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    Ok(true)
+    update_config_file(path, |document| {
+        let Some(allow) = document
+            .get_mut("plugins")
+            .and_then(toml::Value::as_table_mut)
+            .and_then(|plugins| plugins.get_mut("network_allow"))
+            .and_then(toml::Value::as_array_mut)
+        else {
+            return Ok(false);
+        };
+        let before = allow.len();
+        allow.retain(|name| name.as_str() != Some(plugin_name));
+        Ok(allow.len() != before)
+    })
 }
 
 fn default_hook_config_enabled() -> bool {
@@ -1886,6 +1789,7 @@ pub fn ensure_project_config(cwd: &Path) -> Result<PathBuf, ConfigError> {
         source,
     })?;
     let path = project_path(cwd);
+    let _guard = lock_config_files();
     match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1912,100 +1816,102 @@ pub fn ensure_project_config(cwd: &Path) -> Result<PathBuf, ConfigError> {
     Ok(path)
 }
 
-/// Atomically replace the MCP table at one explicit configuration scope.
-/// The caller selects either [`global_path`] or [`project_path`]; no values
-/// are inferred from the process directory. Other TOML keys are preserved.
+/// Atomically replace the set of MCP servers at one explicit configuration
+/// scope. The caller selects either [`global_path`] or [`project_path`]; no
+/// values are inferred from the process directory. A server missing from
+/// `servers` is removed; a server that stays keeps every key the management
+/// API does not own, and every other key in the file is preserved.
 pub fn persist_mcp_servers(
     path: &Path,
     servers: &std::collections::BTreeMap<String, McpServerConfig>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    let entries = servers
-        .iter()
-        .map(|(name, server)| {
-            let mut value = toml::map::Map::new();
-            value.insert(
-                "command".into(),
-                toml::Value::String(server.command.clone()),
-            );
-            value.insert(
-                "args".into(),
-                toml::Value::Array(
-                    server
-                        .args
-                        .iter()
-                        .cloned()
-                        .map(toml::Value::String)
-                        .collect(),
-                ),
-            );
-            if !server.env.is_empty() {
-                value.insert(
-                    "env".into(),
-                    toml::Value::Table(
-                        server
-                            .env
-                            .iter()
-                            .map(|(key, value)| (key.clone(), toml::Value::String(value.clone())))
-                            .collect(),
-                    ),
-                );
-            }
-            if server.network {
-                value.insert("network".into(), toml::Value::Boolean(true));
-            }
-            (name.clone(), toml::Value::Table(value))
-        })
-        .collect();
-    table.insert(
-        "mcp".into(),
-        toml::Value::Table(
-            std::iter::once(("servers".into(), toml::Value::Table(entries))).collect(),
-        ),
-    );
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
+    update_config_file(path, |document| {
+        let mcp = child_table(document, "mcp", path)?;
+        let mut existing = match mcp.remove("servers") {
+            Some(toml::Value::Table(existing)) => existing,
+            _ => toml::Table::new(),
+        };
+        let entries = servers
+            .iter()
+            .map(|(name, server)| {
+                let mut entry = match existing.remove(name) {
+                    Some(toml::Value::Table(entry)) => entry,
+                    _ => toml::Table::new(),
+                };
+                write_mcp_server(&mut entry, server);
+                (name.clone(), toml::Value::Table(entry))
+            })
+            .collect();
+        mcp.insert("servers".into(), toml::Value::Table(entries));
+        Ok(())
     })
+}
+
+/// Add, replace (`Some`) or remove (`None`) the one MCP server `name` at one
+/// explicit configuration scope, leaving every other server as the file has
+/// it. The read happens under the same lock as the write, so a change made
+/// to another server in the meantime is not lost to a stale copy.
+pub fn persist_mcp_server(
+    path: &Path,
+    name: &str,
+    server: Option<&McpServerConfig>,
+) -> Result<(), ConfigError> {
+    update_config_file(path, |document| {
+        match server {
+            Some(server) => {
+                let servers = child_table(child_table(document, "mcp", path)?, "servers", path)?;
+                write_mcp_server(child_table(servers, name, path)?, server);
+            }
+            None => {
+                if let Some(servers) = document
+                    .get_mut("mcp")
+                    .and_then(toml::Value::as_table_mut)
+                    .and_then(|mcp| mcp.get_mut("servers"))
+                    .and_then(toml::Value::as_table_mut)
+                {
+                    servers.remove(name);
+                }
+            }
+        }
+        Ok(())
+    })
+}
+
+/// Write the keys the management API owns onto one `[mcp.servers.<name>]`
+/// entry. Any other key there — `serves`, which no API sets, or one this
+/// version does not know — stays as the file had it; `serves` is written
+/// only when the caller declares it.
+fn write_mcp_server(entry: &mut toml::Table, server: &McpServerConfig) {
+    let strings = |values: &[String]| {
+        toml::Value::Array(values.iter().cloned().map(toml::Value::String).collect())
+    };
+    entry.insert(
+        "command".into(),
+        toml::Value::String(server.command.clone()),
+    );
+    entry.insert("args".into(), strings(&server.args));
+    if server.env.is_empty() {
+        entry.remove("env");
+    } else {
+        entry.insert(
+            "env".into(),
+            toml::Value::Table(
+                server
+                    .env
+                    .iter()
+                    .map(|(key, value)| (key.clone(), toml::Value::String(value.clone())))
+                    .collect(),
+            ),
+        );
+    }
+    if server.network {
+        entry.insert("network".into(), toml::Value::Boolean(true));
+    } else {
+        entry.remove("network");
+    }
+    if !server.serves.is_empty() {
+        entry.insert("serves".into(), strings(&server.serves));
+    }
 }
 
 /// Persist project capability inheritance switches without materializing any
@@ -2018,61 +1924,20 @@ pub fn persist_capability_inheritance(
     inherit_commands: Option<bool>,
     inherit_plugins: Option<bool>,
 ) -> Result<(), ConfigError> {
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("top-level config must be a TOML table"),
-    })?;
-    let capabilities = table
-        .entry("capabilities")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-        .as_table_mut()
-        .ok_or_else(|| ConfigError::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::other("capabilities config must be a TOML table"),
-        })?;
-    for (name, value) in [
-        ("inherit_mcp", inherit_mcp),
-        ("inherit_hooks", inherit_hooks),
-        ("inherit_skills", inherit_skills),
-        ("inherit_commands", inherit_commands),
-        ("inherit_plugins", inherit_plugins),
-    ] {
-        if let Some(value) = value {
-            capabilities.insert(name.into(), toml::Value::Boolean(value));
+    update_config_file(path, |document| {
+        let capabilities = child_table(document, "capabilities", path)?;
+        for (name, value) in [
+            ("inherit_mcp", inherit_mcp),
+            ("inherit_hooks", inherit_hooks),
+            ("inherit_skills", inherit_skills),
+            ("inherit_commands", inherit_commands),
+            ("inherit_plugins", inherit_plugins),
+        ] {
+            if let Some(value) = value {
+                capabilities.insert(name.into(), toml::Value::Boolean(value));
+            }
         }
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
+        Ok(())
     })
 }
 
@@ -2158,149 +2023,45 @@ fn persist_preferences_at(
     approval_mode: Option<ApprovalMode>,
     theme: Option<&str>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    if let Some(value) = provider {
-        table.insert("provider".into(), toml::Value::String(value.into()));
-    }
-    if let Some(value) = model {
-        table.insert("model".into(), toml::Value::String(value.into()));
-    }
-    if let Some(value) = max_turns {
-        table.insert("max_turns".into(), toml::Value::Integer(value as i64));
-    }
-    if let Some(value) = permission_mode {
-        table.insert(
-            "permission_mode".into(),
-            toml::Value::String(
-                match value {
-                    PermissionMode::ReadOnly => "read-only",
-                    PermissionMode::WorkspaceWrite => "workspace-write",
-                    PermissionMode::FullAccess => "full-access",
-                }
-                .into(),
-            ),
-        );
-    }
-    if let Some(value) = approval_mode {
-        table.insert(
-            "approval_mode".into(),
-            toml::Value::String(value.as_str().into()),
-        );
-    }
-    if let Some(value) = theme {
-        let ui = table
-            .entry("ui")
-            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-        let Some(ui) = ui.as_table_mut() else {
-            return Err(ConfigError::Write {
-                path,
-                source: std::io::Error::other("ui config must be a TOML table"),
-            });
-        };
-        ui.insert("theme".into(), toml::Value::String(value.into()));
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+    update_config_file(&path, |document| {
+        if let Some(value) = provider {
+            document.insert("provider".into(), toml::Value::String(value.into()));
+        }
+        if let Some(value) = model {
+            document.insert("model".into(), toml::Value::String(value.into()));
+        }
+        if let Some(value) = max_turns {
+            document.insert("max_turns".into(), toml::Value::Integer(value as i64));
+        }
+        if let Some(value) = permission_mode {
+            document.insert(
+                "permission_mode".into(),
+                toml::Value::String(value.as_str().into()),
+            );
+        }
+        if let Some(value) = approval_mode {
+            document.insert(
+                "approval_mode".into(),
+                toml::Value::String(value.as_str().into()),
+            );
+        }
+        if let Some(value) = theme {
+            child_table(document, "ui", &path)?
+                .insert("theme".into(), toml::Value::String(value.into()));
+        }
+        Ok(())
+    })
 }
 
 /// Persist the evidence freshness policy in exactly one configuration layer.
 pub fn persist_evidence_max_age(path: PathBuf, seconds: i64) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let text = if path.is_file() {
-        std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        String::new()
-    };
-    let mut root = if text.is_empty() {
-        toml::Value::Table(toml::map::Map::new())
-    } else {
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    let intent = table
-        .entry("intent")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let Some(intent) = intent.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("intent config must be a TOML table"),
-        });
-    };
-    intent.insert(
-        "evidence_max_age_secs".into(),
-        toml::Value::Integer(seconds.max(0)),
-    );
-    let output = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".intent-config.{}.tmp", std::process::id()));
-    std::fs::write(&temp, output).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path.clone()).map_err(|source| ConfigError::Write { path, source })
+    update_config_file(&path, |document| {
+        child_table(document, "intent", &path)?.insert(
+            "evidence_max_age_secs".into(),
+            toml::Value::Integer(seconds.max(0)),
+        );
+        Ok(())
+    })
 }
 
 /// Changes the project's `[server.bus]` settings (the NATS URL and the name
@@ -2312,75 +2073,26 @@ pub fn persist_bus_settings(
     nats_url: Option<Option<&str>>,
     workspace_secret_env: Option<Option<&str>>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let write_error = |path: &PathBuf, message: &str| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(message.to_string()),
-    };
-    let text = if path.is_file() {
-        std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        String::new()
-    };
-    let mut root = if text.is_empty() {
-        toml::Value::Table(toml::map::Map::new())
-    } else {
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    };
-    let table = root
-        .as_table_mut()
-        .ok_or_else(|| write_error(&path, "top-level config must be a TOML table"))?;
-    let server = table
-        .entry("server")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-        .as_table_mut()
-        .ok_or_else(|| write_error(&path, "server config must be a TOML table"))?;
-    let bus = server
-        .entry("bus")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-        .as_table_mut()
-        .ok_or_else(|| write_error(&path, "server.bus config must be a TOML table"))?;
-    for (key, change) in [
-        ("nats_url", nats_url),
-        ("workspace_secret_env", workspace_secret_env),
-    ] {
-        let Some(value) = change else {
-            continue;
-        };
-        match value.map(str::trim).filter(|value| !value.is_empty()) {
-            Some(value) => {
-                bus.insert(key.into(), toml::Value::String(value.to_string()));
-            }
-            None => {
-                bus.remove(key);
+    update_config_file(&path, |document| {
+        let bus = child_table(child_table(document, "server", &path)?, "bus", &path)?;
+        for (key, change) in [
+            ("nats_url", nats_url),
+            ("workspace_secret_env", workspace_secret_env),
+        ] {
+            let Some(value) = change else {
+                continue;
+            };
+            match value.map(str::trim).filter(|value| !value.is_empty()) {
+                Some(value) => {
+                    bus.insert(key.into(), toml::Value::String(value.to_string()));
+                }
+                None => {
+                    bus.remove(key);
+                }
             }
         }
-    }
-    let output =
-        toml::to_string_pretty(&root).map_err(|error| write_error(&path, &error.to_string()))?;
-    let parent = path
-        .parent()
-        .ok_or_else(|| write_error(&path, "config has no parent directory"))?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".bus-config.{}.tmp", std::process::id()));
-    std::fs::write(&temp, output).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path.clone()).map_err(|source| ConfigError::Write { path, source })
+        Ok(())
+    })
 }
 
 /// Persist `[memory]` toggles for the current project without disturbing
@@ -2430,74 +2142,28 @@ fn persist_memory_prefs_at(
     reflection: Option<bool>,
     skill_proposals: Option<bool>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    if search_enabled.is_some()
-        || write_enabled.is_some()
-        || reflection.is_some()
-        || skill_proposals.is_some()
-    {
-        let memory = table
-            .entry("memory")
-            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-        let Some(memory) = memory.as_table_mut() else {
-            return Err(ConfigError::Write {
-                path,
-                source: std::io::Error::other("memory config must be a TOML table"),
-            });
-        };
-        if let Some(value) = search_enabled {
-            memory.insert("search_enabled".into(), toml::Value::Boolean(value));
+    update_config_file(&path, |document| {
+        if search_enabled.is_some()
+            || write_enabled.is_some()
+            || reflection.is_some()
+            || skill_proposals.is_some()
+        {
+            let memory = child_table(document, "memory", &path)?;
+            if let Some(value) = search_enabled {
+                memory.insert("search_enabled".into(), toml::Value::Boolean(value));
+            }
+            if let Some(value) = write_enabled {
+                memory.insert("write_enabled".into(), toml::Value::Boolean(value));
+            }
+            if let Some(value) = reflection {
+                memory.insert("reflection".into(), toml::Value::Boolean(value));
+            }
+            if let Some(value) = skill_proposals {
+                memory.insert("skill_proposals".into(), toml::Value::Boolean(value));
+            }
         }
-        if let Some(value) = write_enabled {
-            memory.insert("write_enabled".into(), toml::Value::Boolean(value));
-        }
-        if let Some(value) = reflection {
-            memory.insert("reflection".into(), toml::Value::Boolean(value));
-        }
-        if let Some(value) = skill_proposals {
-            memory.insert("skill_proposals".into(), toml::Value::Boolean(value));
-        }
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+        Ok(())
+    })
 }
 
 /// Persist `[gateway] approvals` / `approver` without disturbing unrelated
@@ -2534,86 +2200,153 @@ fn persist_gateway_approvals_at(
     approver: Option<Option<&str>>,
     approval_timeout_secs: Option<u64>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    if approvals.is_some() || approver.is_some() || approval_timeout_secs.is_some() {
-        let gateway = table
-            .entry("gateway")
-            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-        let Some(gateway) = gateway.as_table_mut() else {
-            return Err(ConfigError::Write {
-                path,
-                source: std::io::Error::other("gateway config must be a TOML table"),
-            });
-        };
-        if let Some(value) = approvals {
-            gateway.insert("approvals".into(), toml::Value::String(value.into()));
-        }
-        match approver {
-            None => {}
-            Some(None) => {
-                gateway.remove("approver");
+    update_config_file(&path, |document| {
+        if approvals.is_some() || approver.is_some() || approval_timeout_secs.is_some() {
+            let gateway = child_table(document, "gateway", &path)?;
+            if let Some(value) = approvals {
+                gateway.insert("approvals".into(), toml::Value::String(value.into()));
             }
-            Some(Some(target)) => {
-                gateway.insert("approver".into(), toml::Value::String(target.into()));
+            match approver {
+                None => {}
+                Some(None) => {
+                    gateway.remove("approver");
+                }
+                Some(Some(target)) => {
+                    gateway.insert("approver".into(), toml::Value::String(target.into()));
+                }
+            }
+            if let Some(value) = approval_timeout_secs {
+                gateway.insert(
+                    "approval_timeout_secs".into(),
+                    toml::Value::Integer(value as i64),
+                );
             }
         }
-        if let Some(value) = approval_timeout_secs {
-            gateway.insert(
-                "approval_timeout_secs".into(),
-                toml::Value::Integer(value as i64),
-            );
-        }
-    }
-    write_config_atomically(&path, &root)
+        Ok(())
+    })
 }
 
-/// Shared tail of every preference writer: serialize, create the parent,
-/// write a pid-scoped temp file, rename over the target. Every client then
-/// sees either the whole old document or the whole new one.
-fn write_config_atomically(path: &Path, root: &toml::Value) -> Result<(), ConfigError> {
-    let text = toml::to_string_pretty(root).map_err(|error| ConfigError::Write {
+/// Held by every write to a configuration file in this process, from the
+/// read to the rename. One lock for every path rather than one per path:
+/// the same file is reachable under more than one spelling (the default
+/// workspace's project layer *is* the Shared layer), and a per-path lock
+/// would first have to agree which spellings name one file. Configuration
+/// writes are rare and small, so nothing waits on it for long.
+static CONFIG_FILE_LOCK: Mutex<()> = Mutex::new(());
+
+fn lock_config_files() -> MutexGuard<'static, ()> {
+    CONFIG_FILE_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The one way a configuration file is rewritten: under
+/// [`CONFIG_FILE_LOCK`], read the document at `path` (a missing file is an
+/// empty one), let `edit` change it, and atomically replace the file with
+/// the result.
+///
+/// Holding the lock from the read to the rename is what stops two settings
+/// saved at the same moment from each rewriting the file from a read taken
+/// before the other one landed. The document is edited as a raw TOML table,
+/// so a key this version does not know is written back as it was read
+/// (invariant 29). An edit that changes nothing writes nothing. `edit` must
+/// not call another configuration writer: the lock is not reentrant.
+fn update_config_file<T>(
+    path: &Path,
+    edit: impl FnOnce(&mut toml::Table) -> Result<T, ConfigError>,
+) -> Result<T, ConfigError> {
+    let _guard = lock_config_files();
+    let before = match std::fs::read_to_string(path) {
+        Ok(text) => toml::from_str::<toml::Table>(&text).map_err(|source| ConfigError::Parse {
+            path: path.to_path_buf(),
+            source,
+        })?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => toml::Table::new(),
+        Err(source) => {
+            return Err(ConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    let mut document = before.clone();
+    let outcome = edit(&mut document)?;
+    if document != before {
+        let text = toml::to_string_pretty(&document).map_err(|error| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(error.to_string()),
+        })?;
+        replace_file(path, &text)?;
+    }
+    Ok(outcome)
+}
+
+/// Write `contents` to a new sibling of `path` and rename it over `path`, so
+/// a reader sees the whole old document or the whole new one. The temporary
+/// name carries the process id and a per-process sequence number, and is
+/// created exclusively, so no two writes ever share one.
+fn replace_file(path: &Path, contents: &str) -> Result<(), ConfigError> {
+    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let write_error = |source| ConfigError::Write {
         path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
+        source,
+    };
+    let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+        return Err(write_error(std::io::Error::other(
+            "config path has no parent directory",
+        )));
+    };
     std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
         path: parent.to_path_buf(),
         source,
     })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
-    })
+    let mut attempts = 0;
+    let (temp, mut file) = loop {
+        let temp = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            name.to_string_lossy(),
+            std::process::id(),
+            SEQUENCE.fetch_add(1, Ordering::Relaxed)
+        ));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)
+        {
+            Ok(file) => break (temp, file),
+            // Only another process that had this pid can hold a fresh name;
+            // step past its file rather than write into it.
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists && attempts < 8 => {
+                attempts += 1;
+            }
+            Err(source) => return Err(write_error(source)),
+        }
+    };
+    let written = std::io::Write::write_all(&mut file, contents.as_bytes());
+    drop(file);
+    written
+        .and_then(|()| std::fs::rename(&temp, path))
+        .map_err(|source| {
+            let _ = std::fs::remove_file(&temp);
+            write_error(source)
+        })
+}
+
+/// The table under `key`, created empty when absent. A key that holds some
+/// other kind of value is refused rather than overwritten.
+fn child_table<'a>(
+    parent: &'a mut toml::Table,
+    key: &str,
+    path: &Path,
+) -> Result<&'a mut toml::Table, ConfigError> {
+    parent
+        .entry(key)
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| ConfigError::Write {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(format!("`{key}` config must be a TOML table")),
+        })
 }
 
 /// Persist the three permission rule lists (`allow` / `ask` / `deny`) as
@@ -2632,41 +2365,20 @@ pub fn persist_permission_rules(
     ask: Option<&[String]>,
     deny: Option<&[String]>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    for (key, list) in [("allow", allow), ("ask", ask), ("deny", deny)] {
-        let Some(list) = list else { continue };
-        table.insert(
-            key.into(),
-            toml::Value::Array(
-                list.iter()
-                    .map(|spec| toml::Value::String(spec.clone()))
-                    .collect(),
-            ),
-        );
-    }
-    write_config_atomically(&path, &root)
+    update_config_file(&path, |document| {
+        for (key, list) in [("allow", allow), ("ask", ask), ("deny", deny)] {
+            let Some(list) = list else { continue };
+            document.insert(
+                key.into(),
+                toml::Value::Array(
+                    list.iter()
+                        .map(|spec| toml::Value::String(spec.clone()))
+                        .collect(),
+                ),
+            );
+        }
+        Ok(())
+    })
 }
 
 /// Persist the top-level `workers` toggle for the current project.
@@ -2707,74 +2419,28 @@ pub fn persist_work_preferences(
             source: std::io::Error::other("work policy values cannot be empty"),
         });
     }
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    let work = table
-        .entry("work")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let Some(work) = work.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("work config must be a TOML table"),
-        });
-    };
-    if let Some(value) = enabled {
-        work.insert("enabled".into(), toml::Value::Boolean(value));
-    }
-    if let Some(value) = default_mode {
-        work.insert("default_mode".into(), toml::Value::String(value.into()));
-    }
-    if let Some(value) = max_items {
-        work.insert("max_items".into(), toml::Value::Integer(value as i64));
-    }
-    if let Some(value) = max_revisions {
-        work.insert("max_revisions".into(), toml::Value::Integer(value as i64));
-    }
-    if let Some(value) = max_parallel {
-        work.insert("max_parallel".into(), toml::Value::Integer(value as i64));
-    }
-    if let Some(value) = confirmation {
-        work.insert("confirmation".into(), toml::Value::String(value.into()));
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+    update_config_file(&path, |document| {
+        let work = child_table(document, "work", &path)?;
+        if let Some(value) = enabled {
+            work.insert("enabled".into(), toml::Value::Boolean(value));
+        }
+        if let Some(value) = default_mode {
+            work.insert("default_mode".into(), toml::Value::String(value.into()));
+        }
+        if let Some(value) = max_items {
+            work.insert("max_items".into(), toml::Value::Integer(value as i64));
+        }
+        if let Some(value) = max_revisions {
+            work.insert("max_revisions".into(), toml::Value::Integer(value as i64));
+        }
+        if let Some(value) = max_parallel {
+            work.insert("max_parallel".into(), toml::Value::Integer(value as i64));
+        }
+        if let Some(value) = confirmation {
+            work.insert("confirmation".into(), toml::Value::String(value.into()));
+        }
+        Ok(())
+    })
 }
 
 /// Persist `[plugins] network_allow` at the given layer path.
@@ -2798,119 +2464,32 @@ pub fn persist_plugins_network_allow(
             source: std::io::Error::other("plugin names cannot be empty"),
         });
     }
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-            path: path.to_path_buf(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.to_path_buf(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    let plugins = table
-        .entry("plugins")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-    let Some(plugins) = plugins.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path: path.to_path_buf(),
-            source: std::io::Error::other("plugins config must be a TOML table"),
-        });
-    };
-    match grant {
-        Some(names) if names.is_empty() => {
-            plugins.remove("network_allow");
+    update_config_file(path, |document| {
+        let plugins = child_table(document, "plugins", path)?;
+        match grant {
+            Some(names) if names.is_empty() => {
+                plugins.remove("network_allow");
+            }
+            Some(names) => {
+                plugins.insert(
+                    "network_allow".into(),
+                    toml::Value::Array(names.into_iter().map(toml::Value::String).collect()),
+                );
+            }
+            None => {}
         }
-        Some(names) => {
-            plugins.insert(
-                "network_allow".into(),
-                toml::Value::Array(names.into_iter().map(toml::Value::String).collect()),
-            );
-        }
-        None => {}
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.to_path_buf(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, path).map_err(|source| ConfigError::Write {
-        path: path.to_path_buf(),
-        source,
+        Ok(())
     })
 }
 
 fn persist_workers_at(path: PathBuf, enabled: bool) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    table.insert("workers".into(), toml::Value::Boolean(enabled));
-    // Drop the legacy alias so we don't leave two competing keys behind
-    // once this layer has been rewritten under the new name.
-    table.remove("subagents");
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+    update_config_file(&path, |document| {
+        document.insert("workers".into(), toml::Value::Boolean(enabled));
+        // Drop the legacy alias so we don't leave two competing keys behind
+        // once this layer has been rewritten under the new name.
+        document.remove("subagents");
+        Ok(())
+    })
 }
 
 /// Persist `[finops]` budget caps for the current project. `None` leaves
@@ -2953,73 +2532,37 @@ impl VoicePatch {
 /// Atomically apply `patch` to the `[voice]` table of the config file at
 /// `path`, preserving every key the patch does not name.
 pub fn persist_voice_settings_at(path: PathBuf, patch: &VoicePatch) -> Result<(), ConfigError> {
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let table = root.as_table_mut().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("top-level config must be a TOML table"),
-    })?;
-    let voice = table
-        .entry("voice")
-        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-        .as_table_mut()
-        .ok_or_else(|| ConfigError::Write {
-            path: path.clone(),
-            source: std::io::Error::other("voice must be a TOML table"),
-        })?;
-    if let Some(v) = patch.enabled {
-        voice.insert("enabled".into(), toml::Value::Boolean(v));
-    }
-    for (key, value) in [
-        ("max_session_secs", patch.max_session_secs),
-        ("max_concurrent", patch.max_concurrent.map(|v| v as u64)),
-        ("max_audio_bytes", patch.max_audio_bytes),
-    ] {
-        if let Some(v) = value {
-            voice.insert(key.into(), toml::Value::Integer(v as i64));
+    update_config_file(&path, |document| {
+        let voice = child_table(document, "voice", &path)?;
+        if let Some(v) = patch.enabled {
+            voice.insert("enabled".into(), toml::Value::Boolean(v));
         }
-    }
-    for (key, value) in [
-        ("provider", &patch.provider),
-        ("transcription_model", &patch.transcription_model),
-        ("synthesis_model", &patch.synthesis_model),
-    ] {
-        match value {
-            Some(Some(v)) => {
-                voice.insert(key.into(), toml::Value::String(v.clone()));
+        for (key, value) in [
+            ("max_session_secs", patch.max_session_secs),
+            ("max_concurrent", patch.max_concurrent.map(|v| v as u64)),
+            ("max_audio_bytes", patch.max_audio_bytes),
+        ] {
+            if let Some(v) = value {
+                voice.insert(key.into(), toml::Value::Integer(v as i64));
             }
-            Some(None) => {
-                voice.remove(key);
-            }
-            None => {}
         }
-    }
-    let text = toml::to_string_pretty(&root).map_err(|e| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(e.to_string()),
-    })?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
-    let temp = path.with_extension("toml.tmp");
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+        for (key, value) in [
+            ("provider", &patch.provider),
+            ("transcription_model", &patch.transcription_model),
+            ("synthesis_model", &patch.synthesis_model),
+        ] {
+            match value {
+                Some(Some(v)) => {
+                    voice.insert(key.into(), toml::Value::String(v.clone()));
+                }
+                Some(None) => {
+                    voice.remove(key);
+                }
+                None => {}
+            }
+        }
+        Ok(())
+    })
 }
 
 /// Persist the user-level `[finops]` defaults, inherited by project
@@ -3040,78 +2583,23 @@ fn persist_finops_caps_at(
     max_run_usd: Option<Option<f64>>,
     max_day_usd: Option<Option<f64>>,
 ) -> Result<(), ConfigError> {
-    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = WRITE_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut root = if path.is_file() {
-        let text = std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
-            path: path.clone(),
-            source,
-        })?;
-        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
-            path: path.clone(),
-            source,
-        })?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err(ConfigError::Write {
-            path,
-            source: std::io::Error::other("top-level config must be a TOML table"),
-        });
-    };
-    if max_run_usd.is_some() || max_day_usd.is_some() {
-        let finops = table
-            .entry("finops")
-            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-        let Some(finops) = finops.as_table_mut() else {
-            return Err(ConfigError::Write {
-                path,
-                source: std::io::Error::other("finops config must be a TOML table"),
-            });
-        };
-        if let Some(run) = max_run_usd {
-            match run {
-                Some(v) => {
-                    finops.insert("max_run_usd".into(), toml::Value::Float(v));
-                }
-                None => {
-                    finops.remove("max_run_usd");
+    update_config_file(&path, |document| {
+        if max_run_usd.is_some() || max_day_usd.is_some() {
+            let finops = child_table(document, "finops", &path)?;
+            for (key, cap) in [("max_run_usd", max_run_usd), ("max_day_usd", max_day_usd)] {
+                match cap {
+                    Some(Some(value)) => {
+                        finops.insert(key.into(), toml::Value::Float(value));
+                    }
+                    Some(None) => {
+                        finops.remove(key);
+                    }
+                    None => {}
                 }
             }
         }
-        if let Some(day) = max_day_usd {
-            match day {
-                Some(v) => {
-                    finops.insert("max_day_usd".into(), toml::Value::Float(v));
-                }
-                None => {
-                    finops.remove("max_day_usd");
-                }
-            }
-        }
-    }
-    let text = toml::to_string_pretty(&root).map_err(|error| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other(error.to_string()),
-    })?;
-    let parent = path.parent().ok_or_else(|| ConfigError::Write {
-        path: path.clone(),
-        source: std::io::Error::other("config has no parent directory"),
-    })?;
-    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|source| ConfigError::Write {
-        path: temp.clone(),
-        source,
-    })?;
-    std::fs::rename(&temp, &path).map_err(|source| ConfigError::Write { path, source })
+        Ok(())
+    })
 }
 
 pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
@@ -5589,6 +5077,413 @@ mod tests {
         let (fc, _warnings) = parse_file(&dir.path().join(".vak/config.toml")).unwrap();
         assert_eq!(fc.hooks.len(), 1);
         assert!(fc.hooks[0].enabled);
+    }
+
+    /// `PUT /config/mcp` and `PATCH /config` can reach the server at the
+    /// same moment, and every setting has its own writer that rewrites the
+    /// whole file from what it read. Run the writers against one file at
+    /// once, round after round: no write may fail, every round's changes
+    /// must all land, and a reader running alongside must only ever see a
+    /// whole document that still carries the keys no writer owns.
+    #[test]
+    fn concurrent_config_writers_all_land_and_the_file_always_parses() {
+        use std::collections::BTreeMap;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        type Write = fn(&Path, u32) -> Result<(), ConfigError>;
+        type Landed = fn(&toml::Table, u32) -> bool;
+
+        fn at<'a>(table: &'a toml::Table, keys: &[&str]) -> Option<&'a toml::Value> {
+            let (last, parents) = keys.split_last()?;
+            let mut table = table;
+            for key in parents {
+                table = table.get(*key)?.as_table()?;
+            }
+            table.get(*last)
+        }
+        fn text_at(table: &toml::Table, keys: &[&str]) -> Option<String> {
+            at(table, keys)
+                .and_then(toml::Value::as_str)
+                .map(str::to_string)
+        }
+        fn strings_at(table: &toml::Table, keys: &[&str]) -> Option<Vec<String>> {
+            at(table, keys)?
+                .as_array()?
+                .iter()
+                .map(|value| value.as_str().map(str::to_string))
+                .collect()
+        }
+
+        struct StopOnDrop<'a>(&'a AtomicBool);
+        impl Drop for StopOnDrop<'_> {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+
+        let writers: [(&str, Write, Landed); 14] = [
+            (
+                "mcp servers",
+                |cwd, round| {
+                    let server = McpServerConfig {
+                        command: format!("mcp-{round}"),
+                        args: Vec::new(),
+                        env: BTreeMap::new(),
+                        network: false,
+                        serves: Vec::new(),
+                    };
+                    persist_mcp_servers(
+                        &project_path(cwd),
+                        &BTreeMap::from([(format!("server-{round}"), server)]),
+                    )
+                },
+                |table, round| {
+                    text_at(
+                        table,
+                        &["mcp", "servers", &format!("server-{round}"), "command"],
+                    ) == Some(format!("mcp-{round}"))
+                },
+            ),
+            (
+                "preferences",
+                |cwd, round| {
+                    let model = format!("model-{round}");
+                    persist_project_preferences(cwd, None, Some(&model), None, None, None, None)
+                },
+                |table, round| text_at(table, &["model"]) == Some(format!("model-{round}")),
+            ),
+            (
+                "voice",
+                |cwd, round| {
+                    let patch = VoicePatch {
+                        transcription_model: Some(Some(format!("stt-{round}"))),
+                        ..VoicePatch::default()
+                    };
+                    persist_voice_settings_at(project_path(cwd), &patch)
+                },
+                |table, round| {
+                    text_at(table, &["voice", "transcription_model"])
+                        == Some(format!("stt-{round}"))
+                },
+            ),
+            (
+                "bus",
+                |cwd, round| {
+                    let url = format!("nats://bus-{round}");
+                    persist_bus_settings(project_path(cwd), Some(Some(&url)), None)
+                },
+                |table, round| {
+                    text_at(table, &["server", "bus", "nats_url"])
+                        == Some(format!("nats://bus-{round}"))
+                },
+            ),
+            (
+                "evidence policy",
+                |cwd, round| persist_evidence_max_age(project_path(cwd), i64::from(round)),
+                |table, round| {
+                    at(table, &["intent", "evidence_max_age_secs"])
+                        .and_then(toml::Value::as_integer)
+                        == Some(i64::from(round))
+                },
+            ),
+            (
+                "memory",
+                |cwd, round| {
+                    persist_project_memory_prefs(cwd, Some(round % 2 == 0), None, None, None)
+                },
+                |table, round| {
+                    at(table, &["memory", "search_enabled"]).and_then(toml::Value::as_bool)
+                        == Some(round % 2 == 0)
+                },
+            ),
+            (
+                "workers",
+                |cwd, round| persist_project_workers(cwd, round % 2 == 0),
+                |table, round| {
+                    at(table, &["workers"]).and_then(toml::Value::as_bool) == Some(round % 2 == 0)
+                },
+            ),
+            (
+                "work policy",
+                |cwd, round| {
+                    persist_work_preferences(
+                        project_path(cwd),
+                        None,
+                        None,
+                        Some(round as usize + 1),
+                        None,
+                        None,
+                        None,
+                    )
+                },
+                |table, round| {
+                    at(table, &["work", "max_items"]).and_then(toml::Value::as_integer)
+                        == Some(i64::from(round) + 1)
+                },
+            ),
+            (
+                "gateway approvals",
+                |cwd, round| {
+                    persist_gateway_approvals(
+                        project_path(cwd),
+                        None,
+                        None,
+                        Some(u64::from(round) + 1),
+                    )
+                },
+                |table, round| {
+                    at(table, &["gateway", "approval_timeout_secs"])
+                        .and_then(toml::Value::as_integer)
+                        == Some(i64::from(round) + 1)
+                },
+            ),
+            (
+                "permission rules",
+                |cwd, round| {
+                    let deny = [format!("Bash(rm-{round} *)")];
+                    persist_permission_rules(project_path(cwd), None, None, Some(&deny))
+                },
+                |table, round| {
+                    strings_at(table, &["deny"]) == Some(vec![format!("Bash(rm-{round} *)")])
+                },
+            ),
+            (
+                "plugin network grants",
+                |cwd, round| {
+                    persist_plugins_network_allow(
+                        &project_path(cwd),
+                        Some(vec![format!("plugin-{round}")]),
+                    )
+                },
+                |table, round| {
+                    strings_at(table, &["plugins", "network_allow"])
+                        == Some(vec![format!("plugin-{round}")])
+                },
+            ),
+            (
+                "finops caps",
+                |cwd, round| {
+                    persist_project_finops_caps(cwd, Some(Some(f64::from(round) + 0.5)), None)
+                },
+                |table, round| {
+                    at(table, &["finops", "max_run_usd"]).and_then(toml::Value::as_float)
+                        == Some(f64::from(round) + 0.5)
+                },
+            ),
+            (
+                "capability inheritance",
+                |cwd, round| {
+                    persist_capability_inheritance(
+                        &project_path(cwd),
+                        Some(round % 2 == 0),
+                        None,
+                        None,
+                        None,
+                        None,
+                    )
+                },
+                |table, round| {
+                    at(table, &["capabilities", "inherit_mcp"]).and_then(toml::Value::as_bool)
+                        == Some(round % 2 == 0)
+                },
+            ),
+            (
+                "hooks",
+                |cwd, round| {
+                    let hook = HookConfig {
+                        event: "stop".into(),
+                        matcher: None,
+                        command: format!("hook-{round}.sh"),
+                        timeout_ms: Some(1_000),
+                        enabled: true,
+                        failure_mode: Some("open".into()),
+                    };
+                    persist_hooks(&project_path(cwd), &[hook])
+                },
+                |table, round| {
+                    at(table, &["hooks"])
+                        .and_then(toml::Value::as_array)
+                        .and_then(|hooks| hooks.first())
+                        .and_then(|hook| hook.get("command"))
+                        .and_then(toml::Value::as_str)
+                        == Some(format!("hook-{round}.sh").as_str())
+                },
+            ),
+        ];
+
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path();
+        let path = project_path(cwd);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "future_key = \"kept\"\n\n[future_table]\nnested = 1\n",
+        )
+        .unwrap();
+
+        const ROUNDS: u32 = 100;
+        let stop = AtomicBool::new(false);
+        let mut failures = Vec::new();
+        let (reads, torn) = std::thread::scope(|scope| {
+            let stop_reader = StopOnDrop(&stop);
+            let reader = scope.spawn(|| {
+                let mut reads = 0_u32;
+                let mut torn = Vec::new();
+                while !stop.load(Ordering::Acquire) {
+                    let seen = match std::fs::read_to_string(&path) {
+                        Ok(text) => match toml::from_str::<toml::Table>(&text) {
+                            Ok(table) if text_at(&table, &["future_key"]).is_some() => None,
+                            Ok(_) => Some(format!("a key no writer owns was dropped: {text:?}")),
+                            Err(error) => Some(format!("unparseable: {error} in {text:?}")),
+                        },
+                        Err(error) => Some(format!("unreadable: {error}")),
+                    };
+                    reads += 1;
+                    torn.extend(seen);
+                }
+                (reads, torn)
+            });
+            for round in 0..ROUNDS {
+                let barrier = std::sync::Barrier::new(writers.len());
+                let results: Vec<_> = std::thread::scope(|round_scope| {
+                    let handles: Vec<_> = writers
+                        .iter()
+                        .map(|&(name, write, _)| {
+                            let barrier = &barrier;
+                            round_scope.spawn(move || {
+                                barrier.wait();
+                                (name, write(cwd, round))
+                            })
+                        })
+                        .collect();
+                    handles
+                        .into_iter()
+                        .map(|handle| handle.join().expect("writer thread"))
+                        .collect()
+                });
+                for (name, result) in results {
+                    if let Err(error) = result {
+                        failures.push(format!("round {round}: {name} failed: {error}"));
+                    }
+                }
+                let text = std::fs::read_to_string(&path).expect("config file");
+                match toml::from_str::<toml::Table>(&text) {
+                    Ok(table) => {
+                        for (name, _, landed) in &writers {
+                            if !landed(&table, round) {
+                                failures.push(format!("round {round}: {name}'s change was lost"));
+                            }
+                        }
+                        if at(&table, &["future_table", "nested"]).is_none() {
+                            failures.push(format!("round {round}: [future_table] was dropped"));
+                        }
+                    }
+                    Err(error) => failures.push(format!("round {round}: unparseable: {error}")),
+                }
+            }
+            drop(stop_reader);
+            reader.join().expect("reader thread")
+        });
+
+        assert!(reads > 0, "the reader never ran");
+        assert!(
+            torn.is_empty() && failures.is_empty(),
+            "{} of {reads} concurrent reads saw a broken document (first: {:?}); \
+             {} writes failed or were lost across {ROUNDS} rounds (first few: {:#?})",
+            torn.len(),
+            torn.first(),
+            failures.len(),
+            &failures[..failures.len().min(6)]
+        );
+        let left: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        assert_eq!(left, ["config.toml"], "no temporary file is left behind");
+    }
+
+    /// The management API owns `command`, `args`, `env` and `network`.
+    /// Rewriting the server list must keep what it does not own: `serves`,
+    /// a key a later version adds, and any other key in `[mcp]` (invariant
+    /// 29). A single-server change must leave every other server alone.
+    #[test]
+    fn mcp_writers_keep_the_keys_they_do_not_own() {
+        use std::collections::BTreeMap;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        std::fs::write(
+            &path,
+            "[mcp]\nfuture_mcp_key = true\n\n\
+             [mcp.servers.search]\ncommand = \"old\"\nnetwork = true\n\
+             serves = [\"web\"]\nfuture_server_key = 3\n\
+             [mcp.servers.search.env]\nOLD = \"1\"\n\n\
+             [mcp.servers.gone]\ncommand = \"gone\"\n",
+        )
+        .unwrap();
+        let server = |command: &str| McpServerConfig {
+            command: command.into(),
+            args: vec!["--stdio".into()],
+            env: BTreeMap::new(),
+            network: false,
+            serves: Vec::new(),
+        };
+        let read =
+            || -> toml::Table { toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap() };
+
+        persist_mcp_servers(
+            &path,
+            &BTreeMap::from([("search".to_string(), server("new"))]),
+        )
+        .unwrap();
+        let document = read();
+        let mcp = document["mcp"].as_table().unwrap();
+        assert_eq!(mcp["future_mcp_key"].as_bool(), Some(true));
+        let servers = mcp["servers"].as_table().unwrap();
+        assert!(
+            !servers.contains_key("gone"),
+            "a server left out is removed"
+        );
+        let search = servers["search"].as_table().unwrap();
+        assert_eq!(search["command"].as_str(), Some("new"));
+        assert_eq!(search["args"].as_array().unwrap().len(), 1);
+        assert!(!search.contains_key("env"), "an emptied env is cleared");
+        assert!(!search.contains_key("network"), "network off is cleared");
+        assert_eq!(search["serves"].as_array().unwrap().len(), 1);
+        assert_eq!(search["future_server_key"].as_integer(), Some(3));
+
+        persist_mcp_server(&path, "other", Some(&server("other"))).unwrap();
+        persist_mcp_server(&path, "search", Some(&server("newer"))).unwrap();
+        let document = read();
+        let servers = document["mcp"]["servers"].as_table().unwrap();
+        assert_eq!(servers["other"]["command"].as_str(), Some("other"));
+        assert_eq!(servers["search"]["command"].as_str(), Some("newer"));
+        assert_eq!(servers["search"]["future_server_key"].as_integer(), Some(3));
+
+        persist_mcp_server(&path, "other", None).unwrap();
+        let document = read();
+        let servers = document["mcp"]["servers"].as_table().unwrap();
+        assert!(!servers.contains_key("other"));
+        assert!(servers.contains_key("search"));
+        assert_eq!(document["mcp"]["future_mcp_key"].as_bool(), Some(true));
+    }
+
+    /// Saving a value the file already holds is not a change, so the file,
+    /// comments included, is left exactly as the operator wrote it.
+    #[test]
+    fn saving_an_unchanged_setting_leaves_the_file_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let text = "# chosen by hand\nmodel = \"kept\" # keep this\n";
+        write_project_config(dir.path(), text);
+        persist_project_preferences(dir.path(), None, Some("kept"), None, None, None, None)
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(project_path(dir.path())).unwrap(),
+            text
+        );
+        persist_project_preferences(dir.path(), None, Some("changed"), None, None, None, None)
+            .unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.model, "changed");
     }
 }
 
