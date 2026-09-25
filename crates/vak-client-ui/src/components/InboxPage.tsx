@@ -24,6 +24,7 @@ const KIND_CLASS: Record<string, string> = {
   digest: "k-purple",
   heartbeat: "k-blue",
   proposal_opened: "k-warm",
+  routine_failed: "k-red",
 };
 
 function kindLabel(kind: string): string {
@@ -82,6 +83,7 @@ export default function InboxPage() {
             entry.kind === "approval_pending" ||
             entry.kind === "approval_denied" ||
             entry.kind === "budget_alert" ||
+            entry.kind === "routine_failed" ||
             entry.kind === "heartbeat"
           ) {
             void import("../App").then((m) =>

@@ -790,31 +790,6 @@ pub(crate) enum AgentsAction {
         #[arg(long)]
         global: bool,
     },
-    /// List past execution runs for an agent
-    Runs {
-        /// Agent ID to inspect runs for
-        id: String,
-        /// Maximum number of runs to retrieve
-        #[arg(long, default_value = "10")]
-        limit: usize,
-        /// Target the global agents tier (~/vak-home/.vak/agents.json)
-        #[arg(long)]
-        global: bool,
-    },
-    /// Configure scheduled execution for an agent
-    Schedule {
-        /// Agent ID to schedule
-        id: String,
-        /// Schedule frequency or cron expression (e.g. 'hourly', 'daily', '0 9 * * *')
-        #[arg(long)]
-        cron: String,
-        /// Prompt/instruction to execute on each scheduled run
-        #[arg(long)]
-        prompt: String,
-        /// Target the global agents tier (~/vak-home/.vak/agents.json)
-        #[arg(long)]
-        global: bool,
-    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -1314,43 +1289,6 @@ mod tests {
                 assert_eq!(template, "researcher");
                 assert_eq!(id, "research-lead");
                 assert_eq!(name.as_deref(), Some("Dr. Lead"));
-                assert!(!global);
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-
-        match parse(&["agents", "runs", "research-lead", "--limit", "5"]) {
-            Command::Agents {
-                action: Some(AgentsAction::Runs { id, limit, global }),
-            } => {
-                assert_eq!(id, "research-lead");
-                assert_eq!(limit, 5);
-                assert!(!global);
-            }
-            other => panic!("unexpected: {other:?}"),
-        }
-
-        match parse(&[
-            "agents",
-            "schedule",
-            "research-lead",
-            "--cron",
-            "hourly",
-            "--prompt",
-            "check latest papers",
-        ]) {
-            Command::Agents {
-                action:
-                    Some(AgentsAction::Schedule {
-                        id,
-                        cron,
-                        prompt,
-                        global,
-                    }),
-            } => {
-                assert_eq!(id, "research-lead");
-                assert_eq!(cron, "hourly");
-                assert_eq!(prompt, "check latest papers");
                 assert!(!global);
             }
             other => panic!("unexpected: {other:?}"),

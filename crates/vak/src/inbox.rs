@@ -158,6 +158,7 @@ fn kind_chip(kind: Kind) -> &'static str {
         Kind::Digest => "digest",
         Kind::Heartbeat => "beat",
         Kind::ProposalOpened => "proposal",
+        Kind::RoutineFailed => "refused",
     }
 }
 

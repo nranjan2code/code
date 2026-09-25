@@ -1075,8 +1075,6 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
-        .route("/agents/{id}/schedule", post(update_agent_schedule_route))
-        .route("/agents/{id}/runs", get(list_agent_runs_route))
         .route("/canvas/preview", post(canvas_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
@@ -15036,81 +15034,6 @@ async fn instantiate_agent_template(
 }
 
 #[derive(serde::Deserialize)]
-struct UpdateScheduleRequest {
-    cron_or_interval: String,
-    prompt: String,
-    #[serde(default = "default_schedule_enabled")]
-    enabled: bool,
-    #[serde(default)]
-    scope: Option<String>,
-}
-
-fn default_schedule_enabled() -> bool {
-    true
-}
-
-async fn update_agent_schedule_route(
-    State(state): State<AppState>,
-    axum::extract::Path(agent_id): axum::extract::Path<String>,
-    Json(body): Json<UpdateScheduleRequest>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let root = match body.scope.as_deref().unwrap_or("workspace") {
-        "user" => vak_config::paths::default_workspace(),
-        _ => state.active_core().cwd().clone(),
-    };
-    let sched = agents::AgentSchedule {
-        cron_or_interval: body.cron_or_interval,
-        prompt: body.prompt,
-        enabled: body.enabled,
-        last_run_at: None,
-        last_status: None,
-    };
-    match agents::update_schedule(
-        &root,
-        &agent_id,
-        Some(sched),
-        state.active_core().project_config_trusted(),
-    ) {
-        Ok(agent) => Json(serde_json::json!({ "updated": true, "agent": agent })).into_response(),
-        Err(err) => (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": err })),
-        )
-            .into_response(),
-    }
-}
-
-#[derive(serde::Deserialize)]
-struct ListRunsQuery {
-    #[serde(default)]
-    limit: Option<usize>,
-    #[serde(default)]
-    scope: Option<String>,
-}
-
-async fn list_agent_runs_route(
-    State(state): State<AppState>,
-    axum::extract::Path(agent_id): axum::extract::Path<String>,
-    axum::extract::Query(query): axum::extract::Query<ListRunsQuery>,
-) -> axum::response::Response {
-    use axum::response::IntoResponse;
-    let root = match query.scope.as_deref().unwrap_or("workspace") {
-        "user" => vak_config::paths::default_workspace(),
-        _ => state.active_core().cwd().clone(),
-    };
-    let limit = query.limit.unwrap_or(20).min(100);
-    match agents::list_runs(&root, Some(&agent_id), limit) {
-        Ok(runs) => Json(serde_json::json!({ "runs": runs })).into_response(),
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": err })),
-        )
-            .into_response(),
-    }
-}
-
-#[derive(serde::Deserialize)]
 struct CanvasPreviewRequest {
     #[serde(default)]
     title: Option<String>,
@@ -16407,7 +16330,7 @@ async fn start_bestofn(
     let mut created: Vec<(String, vak_core::worktree::Worktree)> = Vec::new();
     for i in 0..n {
         // v7 shares its leading chars within one millisecond; disambiguate.
-        let rid = format!("{}-{i}", &uuid::Uuid::now_v7().simple().to_string()[..12]);
+        let rid = format!("{}-{i}", uuid::Uuid::now_v7().simple());
         match vak_core::worktree::create(&repo, &rid) {
             Ok(wt) => created.push((rid, wt)),
             Err(e) => {
@@ -16424,11 +16347,10 @@ async fn start_bestofn(
     }
 
     let mut runs = Vec::new();
-    for (rid, wt) in &created {
+    for (_, wt) in &created {
         match spawn_isolated_run(
             &state,
             provider.clone(),
-            rid,
             wt,
             &body.prompt,
             None,
@@ -16482,7 +16404,6 @@ async fn start_bestofn(
 async fn spawn_isolated_run(
     state: &AppState,
     provider: Arc<dyn Provider>,
-    rid: &str,
     wt: &vak_core::worktree::Worktree,
     prompt: &str,
     model_pin: Option<&str>,
@@ -16525,7 +16446,10 @@ async fn spawn_isolated_run(
         })
         .map_err(|e| format!("child core failed: {e}"))?;
     child_core.set_provider_instance(provider);
-    child_core.set_sessions_home(state.core.sessions_home());
+    // The shared root: the child resolves its own Agent's home beneath it,
+    // as every Core does. Seeding it with this Core's (already Agent-scoped)
+    // home nested one Agent's home inside another's.
+    child_core.set_sessions_home(state.core.shared_data_home());
     if let Some(pin) = model_pin.map(str::trim).filter(|p| !p.is_empty()) {
         let (pin_provider, pin_model) = split_model_pin(pin, &child_core.effective_provider());
         child_core.set_route(pin_provider, pin_model);
@@ -16538,7 +16462,9 @@ async fn spawn_isolated_run(
     let Some(child_header) = child_log.header() else {
         return Err("child session has no header".to_string());
     };
-    let child_id = format!("{}-{}", child_header.session_id, rid);
+    // The handle is the ledger's own id, so a run recorded on a task
+    // (`last_session_id`) opens from disk after a restart.
+    let child_id = child_header.session_id.clone();
     let handle = register_handle(
         state,
         child_id.clone(),
@@ -17379,8 +17305,11 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
 
 /// Fire a task immediately (also resets its schedule).
 async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    if fire_task(&state, &id).await.is_some() {
-        return StatusCode::ACCEPTED;
+    match fire_task(&state, &id).await {
+        Ok(_) => return StatusCode::ACCEPTED,
+        Err(NotFired::Gone) => return StatusCode::NOT_FOUND,
+        Err(NotFired::Refused) => return StatusCode::UNPROCESSABLE_ENTITY,
+        Err(NotFired::Busy) => {}
     }
     // A scheduler tick may hold the one-shot inflight slot for this script
     // task — the requested execution is happening at this very moment, so
@@ -17469,13 +17398,51 @@ pub(crate) fn split_model_pin(pin: &str, current_provider: &str) -> (String, Str
 /// Spawn one isolated run for `task` if its previous run is idle. Returns
 /// the child session id on success. Script tasks take the brokered-bash
 /// branch instead: no provider dispatch, no worktree, no child session.
-async fn fire_task(state: &AppState, id: &str) -> Option<String> {
-    let snapshot = state
+/// Why a due task did not start a run.
+enum NotFired {
+    /// The task no longer exists.
+    Gone,
+    /// Its previous run is still going; the slot waits for the next tick.
+    Busy,
+    /// It cannot run as it stands; the reason is in the inbox.
+    Refused,
+}
+
+/// Tells the person why a due task could not start, once per missed slot:
+/// the scheduler retries the slot every tick, and the key changes only when
+/// the task has run since.
+fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
+    let slot = task.last_run_at.unwrap_or(task.created_at).to_rfc3339();
+    let key = format!("routine-failed|{}|{slot}", task.id);
+    let _ = vak_core::inbox::record_with_result_and_key(
+        &state.core.shared_data_home(),
+        vak_core::inbox::Kind::RoutineFailed,
+        &format!("routine '{}' could not run", task.name),
+        &reason,
+        None,
+        Some(&task.id),
+        None,
+        Some(&key),
+    );
+    update_tasks(state, |map| {
+        if let Some(t) = map.get_mut(&task.id) {
+            t.last_run_status = Some("refused".into());
+            t.last_summary = Some(reason.clone());
+        }
+    });
+    NotFired::Refused
+}
+
+async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
+    let Some(snapshot) = state
         .tasks
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(id)
-        .cloned()?;
+        .cloned()
+    else {
+        return Err(NotFired::Gone);
+    };
     // Previous run still going?
     if let Some(prev) = snapshot.last_session_id.as_deref()
         && state.get(prev).is_some_and(|h| {
@@ -17485,7 +17452,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
                 .is_none()
         })
     {
-        return None;
+        return Err(NotFired::Busy);
     }
     let script = snapshot
         .script
@@ -17493,15 +17460,34 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(script) = script {
-        return fire_script_task(state, &snapshot, script).await;
+        return fire_script_task(state, &snapshot, script)
+            .await
+            .ok_or(NotFired::Busy);
     }
-    let Ok(provider) = state.core.provider() else {
-        eprintln!(
-            "[scheduler] task '{}' skipped: no provider credential",
-            snapshot.name
-        );
-        return None;
+    let provider = match state.core.provider() {
+        Ok(provider) => provider,
+        Err(error) => {
+            return Err(refuse_task(
+                state,
+                &snapshot,
+                format!(
+                    "No model is available to run it ({error}). Connect a provider in Settings; the routine runs at its next check."
+                ),
+            ));
+        }
     };
+    // A scheduled run works in its own git worktree of the space, so it
+    // cannot run in a folder that is not a repository.
+    if !vak_core::worktree::is_git_repo(&snapshot.cwd) {
+        return Err(refuse_task(
+            state,
+            &snapshot,
+            format!(
+                "{} is not a git repository, and a scheduled run works in its own copy of one. Run `git init` there and commit, or move the routine to a folder that is a repository.",
+                snapshot.cwd.display()
+            ),
+        ));
+    }
     // Drop the previous worktree (latest-only retention).
     if let Some(wt) = &snapshot.last_wt {
         let old = vak_core::worktree::Worktree {
@@ -17510,8 +17496,17 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         };
         let _ = vak_core::worktree::remove(&snapshot.cwd, &old);
     }
-    let rid = format!("task-{}", &uuid::Uuid::now_v7().simple().to_string()[..8]);
-    let wt = vak_core::worktree::create(&snapshot.cwd, &rid).ok()?;
+    let rid = format!("task-{}", uuid::Uuid::now_v7().simple());
+    let wt = match vak_core::worktree::create(&snapshot.cwd, &rid) {
+        Ok(wt) => wt,
+        Err(error) => {
+            return Err(refuse_task(
+                state,
+                &snapshot,
+                format!("Its working copy could not be made: {error}."),
+            ));
+        }
+    };
     let fired_at_utc = chrono::Utc::now();
     let scheduled_prompt = format!(
         "{}\n\n[Scheduled-run context: fired at UTC {}; local system time {}. Re-evaluate relative dates against this run time unless the request explicitly established a specific date.]",
@@ -17522,7 +17517,6 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
     let child_id = spawn_isolated_run(
         state,
         provider.clone(),
-        &rid,
         &wt,
         &scheduled_prompt,
         snapshot.model_pin.as_deref(),
@@ -17531,7 +17525,10 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         false,
     )
     .await
-    .ok()?;
+    .map_err(|error| {
+        let _ = vak_core::worktree::remove(&snapshot.cwd, &wt);
+        refuse_task(state, &snapshot, format!("It could not start: {error}."))
+    })?;
 
     update_tasks(state, |map| {
         if let Some(t) = map.get_mut(id) {
@@ -17635,7 +17632,7 @@ async fn fire_task(state: &AppState, id: &str) -> Option<String> {
         tokio::task::yield_now().await;
         begin_turn(&h, &h.core, &scheduled_prompt, false);
     }
-    Some(child_id)
+    Ok(child_id)
 }
 
 // ---- Watchdog script tasks (docs/design/29-personal-os.md P2) ---------------
@@ -17890,9 +17887,12 @@ async fn scheduler_tick(state: &AppState) {
             .map(|t| t.id.clone())
             .collect()
     };
+    // A cron slot is spent only by a run that started: a refused or busy
+    // task keeps its slot and is tried again next tick.
     for id in due {
-        let _ = fire_task(state, &id).await;
-        advance_marker(state, &id);
+        if fire_task(state, &id).await.is_ok() {
+            advance_marker(state, &id);
+        }
     }
 }
 
@@ -17940,9 +17940,9 @@ async fn catch_up_missed_tasks(state: &AppState) {
             .collect()
     };
     for id in due {
-        eprintln!("[scheduler] catch-up: firing missed slot for task '{id}'");
-        let _ = fire_task(state, &id).await;
-        advance_marker(state, &id);
+        if fire_task(state, &id).await.is_ok() {
+            advance_marker(state, &id);
+        }
     }
 }
 
@@ -22323,5 +22323,178 @@ mod sandbox_promotion_tests {
             library.deactivate(&id, vak_presentation::LibraryScope::User, "user");
         }
         assert_eq!(library.activations().len(), 0);
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod scheduler_state_tests {
+    use super::*;
+
+    struct Answers;
+
+    #[async_trait::async_trait]
+    impl Provider for Answers {
+        fn name(&self) -> &str {
+            "answers"
+        }
+
+        async fn stream(
+            &self,
+            _request: vak_llm::types::ChatRequest,
+            _cancel: CancellationToken,
+        ) -> Result<vak_llm::EventStream, vak_llm::LlmError> {
+            let done = vak_llm::types::AssistantMessage {
+                content: vec![vak_llm::ContentBlock::text("done")],
+                stop_reason: vak_llm::types::StopReason::EndTurn,
+                usage: vak_llm::types::Usage::default(),
+                model: "answers".into(),
+                response_id: None,
+            };
+            let (mut sink, rx) = vak_llm::stream::channel(8);
+            sink.push(vak_llm::stream::StreamEvent::Start {
+                partial: done.clone(),
+            });
+            sink.close_message(done).await;
+            Ok(rx)
+        }
+    }
+
+    fn git(cwd: &std::path::Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(cwd)
+            .env("GIT_AUTHOR_NAME", "t")
+            .env("GIT_AUTHOR_EMAIL", "t@t")
+            .env("GIT_COMMITTER_NAME", "t")
+            .env("GIT_COMMITTER_EMAIL", "t@t")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "git {args:?}");
+    }
+
+    fn make_repo(cwd: &std::path::Path) {
+        git(cwd, &["init", "-q"]);
+        std::fs::write(cwd.join("README.md"), "seed\n").unwrap();
+        git(cwd, &["add", "."]);
+        git(cwd, &["commit", "-q", "-m", "seed"]);
+    }
+
+    fn cron_task(id: &str, cwd: &std::path::Path, agent_id: Option<&str>) -> TaskDef {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "prompt": "summarise",
+            "enabled": true,
+            "cwd": cwd,
+            "created_at": chrono::Utc::now(),
+            "last_run_at": null,
+            "last_session_id": null,
+            "last_summary": null,
+            "schedule": "0 3 * * *",
+            "agent_id": agent_id,
+        }))
+        .unwrap()
+    }
+
+    fn state_with(
+        ws: &std::path::Path,
+        home: &std::path::Path,
+        tasks: Vec<TaskDef>,
+        agent: Option<vak_session::types::AgentIdentity>,
+    ) -> AppState {
+        crate::pin_test_data_home();
+        std::fs::create_dir_all(ws.join(".vak")).unwrap();
+        std::fs::write(
+            ws.join(".vak/config.toml"),
+            "[memory]\nreflection = false\n",
+        )
+        .unwrap();
+        let core = Core::new_with_trust(ws.to_path_buf(), true)
+            .unwrap()
+            .with_agent_identity(agent);
+        core.set_sessions_home(home.to_path_buf());
+        core.set_provider_instance(Arc::new(Answers));
+        let mut store = vak_core::tasks::TaskStore::load(home).unwrap();
+        for task in tasks {
+            store.put(task);
+        }
+        store.save().unwrap();
+        AppState::new(core)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cron_slot_not_lost_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ws, home) = (dir.path().join("ws"), dir.path().join("home"));
+        std::fs::create_dir_all(&ws).unwrap();
+        let state = state_with(&ws, &home, vec![cron_task("nightly", &ws, None)], None);
+        let slot = chrono::Local::now() - chrono::Duration::minutes(5);
+        let marker = |state: &AppState| state.next_fire.lock().unwrap().get("nightly").copied();
+        state
+            .next_fire
+            .lock()
+            .unwrap()
+            .insert("nightly".into(), slot);
+
+        scheduler_tick(&state).await;
+        assert_eq!(
+            marker(&state),
+            Some(slot),
+            "a refused run leaves its slot to be tried again"
+        );
+
+        make_repo(&ws);
+        scheduler_tick(&state).await;
+        assert!(
+            marker(&state).is_some_and(|next| next > chrono::Local::now()),
+            "the slot is spent once a run starts"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn child_core_home_is_not_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        let (ws, home) = (dir.path().join("ws"), dir.path().join("home"));
+        std::fs::create_dir_all(&ws).unwrap();
+        make_repo(&ws);
+        let writer = agents::builtin_templates()
+            .into_iter()
+            .find(|template| template.template_id == "writer")
+            .unwrap()
+            .to_agent_definition("writer", None);
+        agents::save(&ws, &[writer], true).unwrap();
+        let vak = vak_session::types::AgentIdentity {
+            id: "vak".into(),
+            revision: 1,
+            name: "Vak".into(),
+            character: String::new(),
+            personality: String::new(),
+            animation: "spark".into(),
+            voice: "calm".into(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+            instructions: String::new(),
+        };
+        let state = state_with(
+            &ws,
+            &home,
+            vec![cron_task("for-writer", &ws, Some("writer"))],
+            Some(vak),
+        );
+        load_tasks(&state);
+        let session = fire_task(&state, "for-writer")
+            .await
+            .unwrap_or_else(|_| panic!("the routine starts"));
+
+        let ledger = std::fs::read_dir(home.join("agents").join("writer").join("sessions"))
+            .unwrap()
+            .flatten()
+            .any(|project| project.path().join(format!("{session}.jsonl")).is_file());
+        assert!(ledger, "the run's ledger is under the writer's own home");
+        assert!(
+            !home.join("agents").join("vak").join("agents").exists(),
+            "no Agent home nested inside another's"
+        );
     }
 }

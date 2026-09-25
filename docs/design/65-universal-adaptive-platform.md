@@ -54,16 +54,8 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
 3. **Verification**:
    - `general_multi_agent_collaboration` eval case tests end-to-end multi-disciplinary delegation combining quantitative metrics, citations, and executive synthesis.
 
-### D. Proactive Agent Scheduling & Autonomous Execution
-1. **Schedule Contract (`AgentSchedule`)**:
-   - Persisted with `AgentDefinition` in `.vak/agents.json`.
-   - Fields: `cron_or_interval` (e.g. `"daily"`, `"hourly"`), `prompt`, `enabled`, `last_run_at`, `last_status`.
-2. **Run History Ledger (`AgentRunRecord`)**:
-   - Append-only records persisted to `.vak/agents_runs.jsonl`.
-   - Tracks `run_id`, `agent_id`, `started_at`, `completed_at`, `status`, `prompt`, `summary`, and `error`.
-3. **Surfaces**:
-   - REST API: `POST /agents/{id}/schedule`, `GET /agents/{id}/runs`.
-   - CLI: `vak agents schedule <id> --cron <expr> --prompt <p>`, `vak agents runs <id> [--limit <n>]`.
+### D. Scheduled work
+Scheduled work is a task (`vak_core::tasks::TaskDef`: a prompt or a script on an interval, a cron expression or a one-shot time, with the owning Agent in `agent_id`), fired by the server's scheduler (`fire_task`). An earlier `AgentSchedule` field on the Agent definition and its `agents_runs.jsonl` ledger were stored but never run, and were removed in the data architecture plan's M0 (`docs/plans/data-architecture-plan.md`). A run record for every trigger arrives with that plan's M4.
 
 ## 3. Invariants & Guarantees
 

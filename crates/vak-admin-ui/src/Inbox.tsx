@@ -35,6 +35,7 @@ export const INBOX_KIND_LABELS: Record<string, string> = {
   digest: "digest",
   heartbeat: "status check-in",
   proposal_opened: "new skill proposed",
+  routine_failed: "routine could not run",
 };
 
 export const INBOX_KIND_TONES: Record<string, "warning" | "danger" | "info" | "success" | "accent" | "neutral"> = {
@@ -45,6 +46,7 @@ export const INBOX_KIND_TONES: Record<string, "warning" | "danger" | "info" | "s
   digest: "neutral",
   heartbeat: "info",
   proposal_opened: "accent",
+  routine_failed: "danger",
 };
 
 export const INBOX_KIND_ACCENTS: Record<string, string> = {
@@ -57,8 +59,13 @@ export const INBOX_KIND_ACCENTS: Record<string, string> = {
   digest: "#64748b",
 };
 
+/** Scheduled work: what a routine said, a digest, or why it could not run. */
+function isTaskKind(kind: string): boolean {
+  return kind === "task_summary" || kind === "digest" || kind === "routine_failed";
+}
+
 export function isActionNeeded(kind: string): boolean {
-  return kind === "approval_pending" || kind === "budget_alert" || kind === "proposal_opened";
+  return kind === "approval_pending" || kind === "budget_alert" || kind === "proposal_opened" || kind === "routine_failed";
 }
 
 export function Inbox() {
@@ -101,7 +108,7 @@ export function Inbox() {
       if (cat === "budget" && entry.kind !== "budget_alert") return false;
       if (cat === "skills" && entry.kind !== "proposal_opened") return false;
       if (cat === "heartbeat" && entry.kind !== "heartbeat") return false;
-      if (cat === "tasks" && entry.kind !== "task_summary" && entry.kind !== "digest") return false;
+      if (cat === "tasks" && !isTaskKind(entry.kind)) return false;
 
       // Text query filter
       if (q) {
@@ -401,7 +408,7 @@ export function Inbox() {
           >
             Automations & Digests
             <span class="inbox-cat-badge">
-              {entries().filter((e) => e.kind === "task_summary" || e.kind === "digest").length}
+              {entries().filter((e) => isTaskKind(e.kind)).length}
             </span>
           </button>
         </div>

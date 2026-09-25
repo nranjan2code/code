@@ -1519,7 +1519,8 @@ export interface InboxEntry {
   id: string;
   ts: string;
   /** Server enum tag: task_summary | approval_pending | approval_denied |
-   *  budget_alert | digest | heartbeat | proposal_opened (snake_case). */
+   *  budget_alert | digest | heartbeat | proposal_opened | routine_failed
+   *  (snake_case). */
   kind: string;
   title: string;
   body: string;

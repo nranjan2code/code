@@ -39,6 +39,9 @@ pub enum Kind {
     Digest,
     Heartbeat,
     ProposalOpened,
+    /// A scheduled task was due and could not start; the body says why and
+    /// what to do about it.
+    RoutineFailed,
 }
 
 impl Kind {

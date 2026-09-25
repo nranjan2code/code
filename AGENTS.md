@@ -768,9 +768,9 @@ on 2026-09-25. No stage is built yet, and no session starts one unasked.
       specialist prompts without fragmenting core execution. Workers spawned
       via `task` receive specialist archetype instructions and capabilities
       according to assigned roles.
-    - **Autonomous operations and scheduled executions (`AgentSchedule`,
-      `AgentRunRecord`)** are owned by persistent Agent definitions, recording
-      execution receipts to append-only ledgers (`agents_runs.jsonl`).
+    - **Scheduled work** is a task (`vak_core::tasks::TaskDef`), the one
+      schedule model, owned by the Agent named in its `agent_id`. A task that
+      cannot run says why in the inbox (`RoutineFailed`), never silently.
 39. **Office documents are hostile, lossless, labelled and self-sufficient**
     (docs/design/72-openxml-documents.md, O1–O10; this invariant states the
     part the tree enforces and grows with each phase). Open XML packages are
