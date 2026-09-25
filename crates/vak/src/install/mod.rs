@@ -1090,9 +1090,8 @@ fn remove_dangling_cli_symlink(prefix: &Path) {
 fn purge_state(yes: bool) -> i32 {
     use vak_core::state::{OnPurge, Root};
 
-    let roots = [Root::Data, Root::Cache, Root::Shared];
     let mut targets: Vec<(PathBuf, &'static str)> = Vec::new();
-    for root in roots {
+    for root in Root::ALL {
         let base = vak_core::state::root_path(root);
         for entry in vak_core::state::entries_for(root) {
             if entry.on_purge != OnPurge::Remove {

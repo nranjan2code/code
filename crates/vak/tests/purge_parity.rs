@@ -100,6 +100,32 @@ fn purge_removes_declared_state_and_preserves_the_users_own_projects() {
     assert!(project_source.exists(), "a purge touched project source");
 }
 
+/// Logs are Vak's state too: a purge that left them made the next install
+/// read a previous version's service logs as its own.
+#[test]
+fn purge_includes_logs() {
+    let binary = vak_binary();
+    if !binary.exists() {
+        eprintln!("skipping: no vak binary at {}", binary.display());
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+    let log = home.path().join("logs/gateway.log");
+    write(&log, "old service output\n");
+    let output = Command::new(&binary)
+        .args(["self", "uninstall", "--yes", "--purge", "--prefix"])
+        .arg(home.path().join("prefix"))
+        .env("VAK_HOME", home.path())
+        .output()
+        .expect("run uninstall");
+    assert!(
+        output.status.success(),
+        "purge failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!log.exists(), "a purge left the logs behind");
+}
+
 /// A symlinked root is refused rather than followed.
 ///
 /// `remove_dir_all` through a symlink deletes whatever it points at, which

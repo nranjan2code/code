@@ -36,6 +36,12 @@ pub enum Root {
     Logs,
 }
 
+impl Root {
+    /// Every root, so a pass over "all of Vak's state" (a purge) cannot
+    /// leave one out by listing them by hand.
+    pub const ALL: [Root; 4] = [Root::Data, Root::Cache, Root::Shared, Root::Logs];
+}
+
 /// What kind of thing this is, which is what decides how it may be treated.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
