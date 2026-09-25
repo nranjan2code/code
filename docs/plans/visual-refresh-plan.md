@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.4 done. V3.5 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.5 done. V3.6 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -252,7 +252,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   in-app "Connect an AI service" sheet (local model if found, or an account
   key), replacing the admin-console hand-off.
   Done when: a fresh home reaches a first answer without leaving the app.
-- [ ] **V3.5 Settings.** Everyday, Agents and Advanced navigation (doc 75
+- [x] **V3.5 Settings.** Everyday, Agents and Advanced navigation (doc 75
   §6.3), outcome wording, one agent header, Technical details rows; on phones
   a list that opens each page.
 - [ ] **V3.6 Review and Canvas.** Review as a sheet with the preview first;
@@ -564,3 +564,41 @@ what was not.
   (`Core::new` returned an error under full-suite load); it passed 3 of 3
   alone and the whole library target passed twice (319). V3.4 changed no
   server code; like V3.2's, it is a server-side flake under load.
+- 2026-09-25: V3.5 done. Settings has three groups: Everyday (General,
+  Appearance, Voice and sound, Notifications, Connections, Privacy and
+  safety), Agents (one entry per active agent, opening that agent's page)
+  and Advanced (Models and routing, Reliability, Prompts, Services and
+  health, Storage and backup), shown only with technical details on.
+  `SettingsPageId` is the one id list; the old ids (`permissions`,
+  `integrations`, `learning`, `advanced`) and `pendingSettingsSection` are
+  gone, and the deep links point at `privacy` (the Full access notice),
+  `voice` (the voice control) and `services` (the budget banner). An agent
+  page names the agent once, with one notice line and Manage agents; the
+  editing, saved-to and scope callouts, the agent switcher select and the
+  folder path are gone. Turn limit, check freshness, helpers, context size,
+  maximum output, config sources and key storage sit behind a closed
+  Technical details row, values intact; the voice limits and models do the
+  same on Voice and sound. Chat bots moved to Connections; Automations and
+  Add-ons show there only with technical details on. Privacy and safety
+  holds the permission and approval choices (outcome words), a count of
+  custom rules (the patterns, isolation and the rules editor with technical
+  details on), what the agent remembers (note and conversation ids only
+  with technical details on) and a link to Archived tasks. Deviation from
+  the handoff: the Shared defaults link stays on Connections and Privacy
+  and safety as well as the Agent page and Prompts, because those pages
+  write agent configuration and removing it would drop the only way to set
+  shared connections and permissions in the app. On a phone Settings is a
+  list that opens each page, with a Settings back row. Settings page titles
+  are Newsreader 22/28. Checked live (headless Chrome over CDP, dev server
+  on `/tmp/vak-screen1-live`): every page at 1440 light and dark, the list
+  and two pages at 390 light and dark, no sideways scroll anywhere; the Full
+  access notice opens Privacy and safety; searching "remember" leaves only
+  Privacy and safety. Evidence: `after/V3.5-*`. Not checked live: the voice
+  control and budget banner deep links (id change only), saving a model or
+  a key from the new agent page (handlers unchanged), and the Shared
+  defaults view of each page.
+  Test note: `cargo test -p vak-config --test design_tokens` fails 3 of 7
+  (DESIGN.md palette, desktop and admin token drift, unused `--space-*`,
+  `--dur*`, `--fs-section` and `--shadow-float` tokens) at `cd1a45a1` as
+  well, before this change; V3.5 touches none of those tokens. Every other
+  workspace test passed.
