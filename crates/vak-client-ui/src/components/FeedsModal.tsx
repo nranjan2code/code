@@ -1,8 +1,8 @@
-import { trapFocus } from "../focusTrap";
 import { createSignal, For, Show } from "solid-js";
 import { feedsOpen, setFeedsOpen } from "../store";
 import * as api from "../api";
 import type { FeedSearchResult } from "../types";
+import Sheet from "./Sheet";
 
 export default function FeedsModal() {
   const [query, setQuery] = createSignal("");
@@ -35,10 +35,7 @@ export default function FeedsModal() {
 
   return (
     <Show when={feedsOpen()}>
-      <div class="modal-back" onClick={() => setFeedsOpen(false)}>
-        <div class="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="feeds-modal-title"
-             onClick={(e) => e.stopPropagation()} use:trapFocus>
-          <h3 id="feeds-modal-title">Search Feeds</h3>
+      <Sheet size="wide" class="search-modal" title="Search feeds" onClose={() => setFeedsOpen(false)}>
           <form class="task-add-row" onSubmit={(e) => { e.preventDefault(); void search(); }}>
             <input class="search-input" placeholder="Search feed items..."
                    ref={(el) => requestAnimationFrame(() => el.focus())}
@@ -90,12 +87,7 @@ export default function FeedsModal() {
               )}
             </For>
           </div>
-
-          <div class="bo-foot" style={{ "margin-top": "10px" }}>
-            <button type="button" class="btn primary" onClick={() => setFeedsOpen(false)}>Close</button>
-          </div>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }

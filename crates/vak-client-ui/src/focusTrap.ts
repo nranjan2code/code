@@ -22,8 +22,25 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
   );
 }
 
+/** A control's name, to find it again if it is re-rendered while the dialog
+ * is open (a result card redraws when its review closes). */
+function controlName(el: HTMLElement | null): string | null {
+  if (!el || el === document.body) return null;
+  const name = el.getAttribute("aria-label") ?? el.innerText?.trim();
+  return name ? `${el.tagName}:${name}` : null;
+}
+
+function sameControl(name: string | null): HTMLElement | null {
+  if (!name) return null;
+  const tag = name.slice(0, name.indexOf(":"));
+  return Array.from(document.querySelectorAll<HTMLElement>(tag))
+    .filter((el) => el.offsetParent !== null && controlName(el) === name)
+    .at(-1) ?? null;
+}
+
 export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void {
   const previouslyFocused = document.activeElement as HTMLElement | null;
+  const openerName = controlName(previouslyFocused);
   const hadTabIndex = el.hasAttribute("tabindex");
   if (!hadTabIndex) el.setAttribute("tabindex", "-1");
 
@@ -71,8 +88,18 @@ export function trapFocus(el: HTMLElement, _accessor?: Accessor<unknown>): void 
       if (!hadTabIndex) el.removeAttribute("tabindex");
       // Restore focus to whatever opened the dialog — a closed modal must
       // not strand focus on `document.body`.
-      if (previouslyFocused && document.contains(previouslyFocused)) {
-        previouslyFocused.focus({ preventScroll: true });
+      if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus({ preventScroll: true });
+      else {
+        // The replacement can take a few frames to draw; give up after about
+        // a second, or as soon as anything else takes focus.
+        let tries = 60;
+        const retry = () => {
+          if (document.activeElement !== document.body) return;
+          const same = sameControl(openerName);
+          if (same) same.focus({ preventScroll: true });
+          else if (--tries > 0) requestAnimationFrame(retry);
+        };
+        requestAnimationFrame(retry);
       }
       observer.disconnect();
     }

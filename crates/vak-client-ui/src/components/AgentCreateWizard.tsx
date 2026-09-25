@@ -1,12 +1,11 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { trapFocus } from "../focusTrap";
 import { agentCreateOpen, setAgentCreateOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
 import { playCharacterCue } from "../characterSound";
 import AgentMark from "./AgentMark";
-import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 type Character = AgentCharacter;
 
@@ -117,30 +116,13 @@ export default function AgentCreateWizard() {
 
   return (
     <Show when={agentCreateOpen()}>
-      <div class="modal-back" onClick={close}>
-        <div
-          class="modal"
-          style="max-width: 560px; width: 92vw;"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="agent-create-title"
-          onClick={(e) => e.stopPropagation()}
-          use:trapFocus
-        >
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <div>
-              <h3 id="agent-create-title" style="margin: 0; font-size: 16px; font-weight: 600;">
-                New Agent
-              </h3>
-              <span style="color: var(--muted); font-size: 13px;">
-                Step {step()} of 3 — {step() === 1 ? "Choose a starting point" : step() === 2 ? "Name it" : "Give it instructions"}
-              </span>
-            </div>
-            <button type="button" class="icon-button subtle" aria-label="Close" onClick={close}>
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-
+      <Sheet
+        class="agent-create"
+        title="New agent"
+        subtitle={`Step ${step()} of 3: ${step() === 1 ? "choose a starting point" : step() === 2 ? "name it" : "give it instructions"}`}
+        onClose={close}
+        busy={creating()}
+      >
           <Show when={error()}><p class="worker-error" role="alert" style="margin-bottom: 10px;">{error()}</p></Show>
 
           {/* STEP 1: TEMPLATE */}
@@ -274,8 +256,7 @@ export default function AgentCreateWizard() {
               </div>
             </div>
           </Show>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }

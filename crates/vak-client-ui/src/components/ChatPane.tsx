@@ -4,6 +4,7 @@ import { createStore, reconcile } from "solid-js/store";
 import { activeId, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 import AgentMark from "./AgentMark";
 import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
@@ -549,22 +550,22 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       </Show>
     </Show>
     <Show when={showRulePreview()}>
-      <div class="modal-back" onClick={() => setShowRulePreview(false)}>
-        <div class="modal confirm-modal ap-rule-modal" role="dialog" aria-modal="true" aria-labelledby={`rule-title-${props.item.id}`} onClick={(e) => e.stopPropagation()} use:trapFocus>
-          <h3 id={`rule-title-${props.item.id}`}>Create persistent rule?</h3>
-          <p>This rule will apply automatically to matching requests in this workspace.</p>
-          <dl class="ap-rule-preview">
-            <div><dt>Matcher</dt><dd><code>{props.item.tool}</code></dd></div>
-            <div><dt>Workspace</dt><dd>{props.sessionId || "Current workspace"}</dd></div>
-            <div><dt>Effect</dt><dd>Allow this request pattern</dd></div>
-            <div><dt>Revoke</dt><dd>Settings → Permissions → Rules</dd></div>
-          </dl>
-          <div class="confirm-modal-actions">
-            <button type="button" class="btn-subtle" onClick={() => setShowRulePreview(false)}>Cancel</button>
-            <button type="button" class="btn-action" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Create rule</button>
-          </div>
-        </div>
-      </div>
+      <Sheet
+        size="narrow"
+        title="Always allow this?"
+        subtitle="Matching requests in this workspace will go ahead without asking."
+        onClose={() => setShowRulePreview(false)}
+        footer={<>
+          <button type="button" class="btn" onClick={() => setShowRulePreview(false)}>Cancel</button>
+          <button type="button" class="btn primary" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Always allow</button>
+        </>}
+      >
+        <dl class="ap-rule-preview">
+          <div><dt>Applies to</dt><dd><code>{props.item.tool}</code></dd></div>
+          <div><dt>Where</dt><dd>This workspace</dd></div>
+          <div><dt>Undo it</dt><dd>Settings → Privacy and safety</dd></div>
+        </dl>
+      </Sheet>
     </Show>
   </div>
     </Show>

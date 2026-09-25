@@ -1,9 +1,8 @@
-import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { sessions, setTranscriptViewId, transcriptToItems, transcriptViewId, type Item } from "../store";
 import * as api from "../api";
 import { ItemView } from "./ChatPane";
-import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 /**
  * Read-only historical transcript (docs/design/29): any session by id, served
@@ -46,26 +45,15 @@ export default function TranscriptModal() {
   });
 
   return (
-    <div class="modal-back" onClick={() => setTranscriptViewId(null)}>
-      <div
-        class="modal transcript-modal"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="transcript-title"
-        onClick={(e) => e.stopPropagation()}
-        use:trapFocus
-      >
-        <div class="transcript-head">
-          <Icon name="history" size={15} />
-          <h3 id="transcript-title">{title()}</h3>
-          <Show when={!loading() && !error()}>
-            <span class="badge">{count()} events</span>
-          </Show>
-          <span class="badge">read-only</span>
-          <button
-            class="icon-button subtle"
-            style={{ "font-size": "11px", padding: "3px 7px" }}
-            onClick={async () => {
+    <Sheet
+      size="wide"
+      class="transcript-modal"
+      title={title()}
+      subtitle={loading() || error() ? "Read only" : `Read only · ${count()} events`}
+      onClose={() => setTranscriptViewId(null)}
+    >
+        <div class="transcript-actions">
+          <button type="button" class="btn sm" onClick={async () => {
               const id = transcriptViewId();
               if (!id) return;
               try {
@@ -80,15 +68,8 @@ export default function TranscriptModal() {
               } catch (err) {
                 console.error("Failed to export HTML:", err);
               }
-            }}
-            title="Export interactive HTML canvas"
-          >
-            HTML
-          </button>
-          <button
-            class="icon-button subtle"
-            style={{ "font-size": "11px", padding: "3px 7px" }}
-            onClick={async () => {
+            }}>Save as web page</button>
+          <button type="button" class="btn sm" onClick={async () => {
               const id = transcriptViewId();
               if (!id) return;
               try {
@@ -103,14 +84,7 @@ export default function TranscriptModal() {
               } catch (err) {
                 console.error("Failed to export Markdown:", err);
               }
-            }}
-            title="Export clean Markdown transcript"
-          >
-            MD
-          </button>
-          <button class="icon-button subtle" aria-label="Close transcript" onClick={() => setTranscriptViewId(null)}>
-            <Icon name="close" size={14} />
-          </button>
+            }}>Save as Markdown</button>
         </div>
         <Show when={error()}>
           <div class="gate-err">Could not load this transcript: {error()}</div>
@@ -133,7 +107,6 @@ export default function TranscriptModal() {
             </Show>
           </Show>
         </div>
-      </div>
-    </div>
+    </Sheet>
   );
 }

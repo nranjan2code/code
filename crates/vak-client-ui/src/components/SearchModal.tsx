@@ -1,10 +1,10 @@
-import { trapFocus } from "../focusTrap";
 import { createSignal, For, Show } from "solid-js";
 import { searchOpen, setSearchOpen } from "../store";
 import { activate } from "../App";
 import * as api from "../api";
 import type { SearchHit } from "../api";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 const LIMITS = [8, 25, 50];
 
@@ -40,9 +40,7 @@ export default function SearchModal() {
 
   return (
     <Show when={searchOpen()}>
-      <div class="modal-back" onClick={() => setSearchOpen(false)}>
-        <div class="modal search-modal" role="dialog" aria-modal="true" aria-labelledby="search-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
-          <h3 id="search-title">Recall search</h3>
+      <Sheet size="wide" class="search-modal" title="Search" subtitle="Your conversations and what your agents remember." onClose={() => setSearchOpen(false)}>
           <form
             class="task-add-row"
             onSubmit={(e) => {
@@ -116,10 +114,8 @@ export default function SearchModal() {
 
           <div class="bo-foot" style="margin-top:10px">
             <span class="hint">memory notes outrank transcript lines · global adds project chips</span>
-            <button type="button" class="btn primary" onClick={() => setSearchOpen(false)}>Close</button>
           </div>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }

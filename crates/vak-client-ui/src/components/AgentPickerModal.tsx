@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { trapFocus } from "../focusTrap";
 import {
   activeAgentId,
   activeId,
@@ -21,6 +20,7 @@ import { playCharacterCue } from "../characterSound";
 import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 type LifecycleFilter = "active" | "all" | "paused" | "archived";
 
@@ -191,36 +191,8 @@ export default function AgentPickerModal() {
 
   return (
     <Show when={agentPickerOpen()}>
-      <div class="modal-back" onClick={() => setAgentPickerOpen(false)}>
-        <div
-          class="modal"
-          style="max-width: 680px; width: 92vw;"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="agent-picker-title"
-          onClick={(e) => e.stopPropagation()}
-          use:trapFocus
-        >
-          {/* Header */}
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <div>
-              <h3 id="agent-picker-title" style="margin: 0; font-size: 16px; font-weight: 600;">
-                Your agents
-              </h3>
-              <span style="color: var(--muted); font-size: 13px;">
-                Choose who to work with, or which folder they use.
-              </span>
-            </div>
-            <button
-              type="button"
-              class="icon-button subtle"
-              aria-label="Close"
-              onClick={() => setAgentPickerOpen(false)}
-            >
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-
+      <>
+      <Sheet class="agent-picker" title="Your agents" subtitle="Choose who to work with, or which folder they use." onClose={() => setAgentPickerOpen(false)}>
           {/* Navigation Tabs */}
           <div style="display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
             <button
@@ -427,14 +399,9 @@ export default function AgentPickerModal() {
               />
             </div>
           </Show>
-        </div>
+      </Sheet>
         <Show when={editing()} keyed>{(agent) =>
-          <div class="modal-back" onClick={(event) => { event.stopPropagation(); setEditing(null); }}>
-            <div class="modal agent-identity-editor" role="dialog" aria-modal="true" aria-labelledby="agent-identity-title" onClick={(event) => event.stopPropagation()} use:trapFocus>
-              <div class="agent-identity-editor-head">
-                <div><h3 id="agent-identity-title">Agent identity</h3><p>Changes apply to new conversations. Existing conversations keep their recorded identity.</p></div>
-                <button type="button" class="icon-button subtle" aria-label="Close identity editor" onClick={() => setEditing(null)}><Icon name="close" size={14} /></button>
-              </div>
+          <Sheet class="agent-identity-editor" title="Agent identity" subtitle="Changes apply to new conversations. Conversations already started keep their identity." onClose={() => setEditing(null)} busy={editBusy()} footer={<><button type="button" class="btn" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="btn primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></>}>
               <label class="agent-identity-field"><span>Name</span><input value={editName()} maxlength={120} onInput={(event) => setEditName(event.currentTarget.value)} /></label>
               <fieldset class="agent-identity-characters">
                 <legend>Character</legend>
@@ -453,11 +420,9 @@ export default function AgentPickerModal() {
                 <label class="agent-identity-field"><span>Voice style</span><select value={editVoice()} onChange={(event) => setEditVoice(event.currentTarget.value)}><option value="default">Default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="quiet">Quiet</option></select></label>
               </div>
               <p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p>
-              <div class="agent-identity-actions"><button type="button" class="btn" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="btn primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></div>
-            </div>
-          </div>
+          </Sheet>
         }</Show>
-      </div>
+      </>
     </Show>
   );
 }

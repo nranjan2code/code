@@ -51,21 +51,15 @@ import {
   sidebarOpen,
   sidebarWidth,
   setNotice,
-  setBestOfOpen,
   setProviders,
-  setTasksOpen,
-  tasksOpen,
   historyOpen,
   setHistoryOpen,
    receiptsOpen,
-  setReceiptsOpen,
   setWorkOpen,
-  searchOpen,
   setSearchOpen,
   settingsOpen,
   greetingsShown,
   setSettingsOpen,
-  agentPickerOpen,
   setAgentPickerOpen,
   setAgentPickerTab,
   inboxOpen,
@@ -1131,16 +1125,10 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) {
         if (e.key === "Escape") {
+          // Every dialog is a Sheet, which closes on Escape and stops it
+          // there; what reaches here is a menu, Settings or a panel.
           if (closeOpenMenus()) return;
-          if (showShortcuts()) setShowShortcuts(false);
-          else if (agentPickerOpen()) setAgentPickerOpen(false);
-          else if (searchOpen()) setSearchOpen(false);
-          else if (settingsOpen()) setSettingsOpen(false);
-          else if (bestOfOpen()) setBestOfOpen(false);
-          else if (tasksOpen()) setTasksOpen(false);
-          else if (historyOpen()) setHistoryOpen(false);
-          else if (receiptsOpen()) setReceiptsOpen(false);
-          else if (transcriptViewId()) setTranscriptViewId(null);
+          if (settingsOpen()) setSettingsOpen(false);
           else if (inboxOpen()) setInboxOpen(false);
           else if (sideOpen()) setSideOpen(false);
           else stopRun();

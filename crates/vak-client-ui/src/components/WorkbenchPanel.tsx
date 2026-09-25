@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createResource, createSignal, For, Index, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Index, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
   workbenchLoadError,
@@ -20,13 +20,13 @@ import {
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 import OfficeChangeList from "./OfficeChangeList";
 import { isOfficePath } from "../officeFiles";
 import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { sandboxedSrcdoc } from "../safeUrl";
-import { trapFocus } from "../focusTrap";
 import { activate } from "../App";
 
 function formatBytes(bytes?: number): string {
@@ -162,25 +162,24 @@ export default function WorkbenchPanel() {
   const [beforeContent, setBeforeContent] = createSignal<string | null>(null);
   const [afterContent, setAfterContent] = createSignal<string | null>(null);
   // Review shows an HTML draft as the page it is, offline and in a sandbox,
-  // before the source and the comparison.
-  const [draftPage] = createResource(
-    () => {
-      const version = candidate();
-      const path = reviewedPath();
-      const content = afterContent();
-      return version && path && content !== null && /\.html?$/i.test(path) ? { version, path, content } : false;
-    },
-    async ({ version, path, content }) => {
-      try {
-        return await artifactPreviewHtml(path, content, "'none'", {
-          readFile: (file) => api.readSandboxCandidateFile(version.session_id, version.candidate.candidate_id, file),
-          readFileRaw: (file) => api.readSandboxCandidateFileRaw(version.session_id, version.candidate.candidate_id, file),
-        });
-      } catch {
-        return sandboxedSrcdoc(content, "'none'");
-      }
-    },
-  );
+  // before the source and the comparison. A signal, not a resource: reading
+  // a pending resource here would suspend the dock and remount the sheet.
+  const [draftPage, setDraftPage] = createSignal<string | null>(null);
+  createEffect(() => {
+    const version = candidate();
+    const path = reviewedPath();
+    const content = afterContent();
+    setDraftPage(null);
+    if (!version || !path || content === null || !/\.html?$/i.test(path)) return;
+    let current = true;
+    onCleanup(() => { current = false; });
+    void artifactPreviewHtml(path, content, "'none'", {
+      readFile: (file) => api.readSandboxCandidateFile(version.session_id, version.candidate.candidate_id, file),
+      readFileRaw: (file) => api.readSandboxCandidateFileRaw(version.session_id, version.candidate.candidate_id, file),
+    })
+      .catch(() => sandboxedSrcdoc(content, "'none'"))
+      .then((page) => { if (current) setDraftPage(page); });
+  });
   const [reviewFileError, setReviewFileError] = createSignal<string | null>(null);
   const [reviewComment, setReviewComment] = createSignal("");
   // The Office anchor the next comment points at (docs/design/72, F9).
@@ -745,13 +744,20 @@ export default function WorkbenchPanel() {
   return (
     <div class="workbench-panel">
       <Show when={reviewOpen() && candidate()}>
-        {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
-          <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review changes files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
-            <header class="candidate-review-header">
-              <div><h2>Review changes</h2><p>Nothing changes in {destinationLabel()} until you accept.</p></div>
-              <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
-            </header>
-            <div class="candidate-review-scroll">
+        {(prepared) => <Sheet
+          size="wide"
+          class="candidate-review"
+          title="Review changes"
+          subtitle={`Nothing changes in ${destinationLabel()} until you accept.`}
+          onClose={() => setReviewOpen(false)}
+          busy={candidateBusy()}
+          footer={<>
+              <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : `Applying ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "change" : "changes"} to ${destinationLabel()} · ${reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed`}</span>
+              <button type="button" class="btn" onClick={() => setReviewOpen(false)}>Keep as draft</button>
+              <button type="button" class="btn primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError() || officeExcluded().size > 0} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
+          </>}
+        >
+            <div>
               <section class="candidate-review-section" aria-label="Preview">
                 <div class="candidate-review-section-head">
                   <h3>{reviewedPath()?.split("/").pop() ?? "Choose a file"}</h3>
@@ -773,7 +779,7 @@ export default function WorkbenchPanel() {
                 </div>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={draftPage() && !reviewFileError()}>
-                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={draftPage()} />
+                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={draftPage() ?? ""} />
                 </Show>
                 <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
                   <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre>
@@ -898,13 +904,7 @@ export default function WorkbenchPanel() {
                 </Show>
               </section>
             </div>
-            <footer class="candidate-review-footer">
-              <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : `Applying ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "change" : "changes"} to ${destinationLabel()} · ${reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed`}</span>
-              <button type="button" class="btn" onClick={() => setReviewOpen(false)}>Keep as draft</button>
-              <button type="button" class="btn primary" disabled={candidateBusy() || reviewedFiles().length === 0 || reviewedFiles().some((path) => !inspectedFiles().includes(path)) || !!reviewFileError() || officeExcluded().size > 0} onClick={() => void promoteCandidate()}>{candidateBusy() ? "Accepting…" : `Accept ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "file" : "files"}`}</button>
-            </footer>
-          </section>
-        </div>}
+        </Sheet>}
       </Show>
       <Show when={controlError()}>
         <div class="inline-error" role="alert">Could not stop this execution: {controlError()}</div>

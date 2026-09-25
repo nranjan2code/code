@@ -1,4 +1,3 @@
-import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   activeId,
@@ -17,6 +16,7 @@ import {
 import { watchSession } from "../streamHub";
 import * as api from "../api";
 import { Markdown } from "./ChatPane";
+import Sheet from "./Sheet";
 
 const streams = new Map<string, () => void>();
 
@@ -125,9 +125,7 @@ export default function BestOfNDialog() {
   };
 
   return (
-    <div class="modal-back" onClick={close}>
-      <div class="modal bo-modal" role="dialog" aria-modal="true" aria-labelledby="compare-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
-        <h3 id="compare-title">Compare approaches — isolated worktrees</h3>
+    <Sheet size="wide" class="bo-modal" title="Compare approaches" subtitle="Each approach runs in its own copy of the project, so you can keep the best one." onClose={close}>
         <Show
           when={runs()}
           fallback={
@@ -158,13 +156,7 @@ export default function BestOfNDialog() {
             </div>
           )}
         </Show>
-        <div class="bo-foot">
-          <span class="hint">
-            keep merges the branch into your checkout · discard throws it away
-          </span>
-          <button class="btn primary" onClick={close}>Close</button>
-        </div>
-      </div>
-    </div>
+        <p class="bo-foot hint">Keep puts that approach's changes into your project; Discard throws it away.</p>
+    </Sheet>
   );
 }

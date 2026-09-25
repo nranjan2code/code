@@ -1,10 +1,10 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import * as api from "../api";
-import { trapFocus } from "../focusTrap";
 import { loadHealth } from "../App";
 import { activeAgentId, connectOpen, setConnectOpen, setNotice, setSetupEpoch } from "../store";
 import type { ProviderInfo } from "../types";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 /** Names people know a service by. An id without an entry shows as itself. */
 const SERVICE_NAMES: Record<string, string> = {
@@ -30,10 +30,10 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
  * `GET /onboarding` stays the only judge of "ready".
  */
 export default function ConnectSheet() {
-  return <Show when={connectOpen()}><Sheet /></Show>;
+  return <Show when={connectOpen()}><ConnectForm /></Show>;
 }
 
-function Sheet() {
+function ConnectForm() {
   const [providers, setProviders] = createSignal<ProviderInfo[]>([]);
   const [local, setLocal] = createSignal<{ provider: string; models: string[] } | null>(null);
   const [localModel, setLocalModel] = createSignal("");
@@ -111,23 +111,7 @@ function Sheet() {
   });
 
   return (
-    <div class="modal-back" onClick={close}>
-      <div
-        class="modal connect-sheet"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="connect-title"
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => { if (e.key === "Escape") close(); }}
-        use:trapFocus
-      >
-        <div class="modal-header">
-          <div>
-            <h2 id="connect-title" class="connect-title">Connect an AI service</h2>
-            <p class="connect-sub">Vakyartha needs a model to think with. You can change it later in Settings.</p>
-          </div>
-          <button type="button" class="icon-button" aria-label="Close" onClick={close}><Icon name="close" size={16} /></button>
-        </div>
+    <Sheet class="connect-sheet" title="Connect an AI service" subtitle="Vakyartha needs a model to think with. You can change it later in Settings." onClose={close}>
         <Show when={!looking()} fallback={<p class="connect-note" role="status">Looking for a model on this computer…</p>}>
           <Show when={local()}>
             {(found) => (
@@ -182,7 +166,6 @@ function Sheet() {
           </section>
           <Show when={error()}>{(text) => <p class="connect-error" role="alert">{text()}</p>}</Show>
         </Show>
-      </div>
-    </div>
+    </Sheet>
   );
 }

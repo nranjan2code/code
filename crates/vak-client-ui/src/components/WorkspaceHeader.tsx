@@ -86,9 +86,12 @@ export default function WorkspaceHeader() {
   const [exporting, setExporting] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
 
+  // Closing hides the item that has focus, so focus goes back to the menu's
+  // button; a sheet opened from the menu then returns focus there.
   const closeMoreMenu = (event: MouseEvent) => {
-    event.currentTarget instanceof HTMLElement
-      && event.currentTarget.closest("details")?.removeAttribute("open");
+    const menu = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest("details") : null;
+    menu?.removeAttribute("open");
+    menu?.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
   };
 
   // Unread badge shares the BudgetBanner's polling cadence; the inbox page
