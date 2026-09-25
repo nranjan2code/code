@@ -168,10 +168,7 @@ impl Tool for OfficeApplyTool {
                 &draft_root.display().to_string(),
             );
         }
-        let base_digest = base_digest
-            .trim()
-            .trim_end_matches('…')
-            .to_ascii_lowercase();
+        let base_digest = base_digest.to_string();
         let job = Job {
             source: source_path,
             destination,
@@ -357,21 +354,45 @@ struct Job {
     target: vak_ooxml::Format,
 }
 
+/// Applies `ops` to the file at `source`, refusing unless `base_digest`
+/// names its bytes: the one path every Office edit takes, from the
+/// `office_apply` tool and from `vak office apply`. Returns the source's
+/// bytes and what the engine wrote; nothing is written here.
+pub(crate) fn apply_checked(
+    source: &Path,
+    base_digest: &str,
+    ops: &[vak_ooxml::edit::OfficeOp],
+    context: &vak_ooxml::edit::EditContext,
+    target: vak_ooxml::Format,
+) -> Result<(Vec<u8>, vak_ooxml::edit::Applied), String> {
+    let limits = vak_ooxml::Limits::default();
+    let bytes = read_bounded(source, &limits)?;
+    let digest = sha256_hex(&bytes);
+    let base_digest = base_digest
+        .trim()
+        .trim_end_matches('…')
+        .to_ascii_lowercase();
+    if base_digest.len() < 16 || !digest.starts_with(&base_digest) {
+        return Err(format!(
+            "base_digest {base_digest:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
+            &digest[..16]
+        ));
+    }
+    let applied = vak_ooxml::edit::apply(&bytes, ops, context, limits, Some(target))
+        .map_err(|error| format!("nothing was written: {error}"))?;
+    Ok((bytes, applied))
+}
+
 impl Job {
     fn run(self) -> Result<String, String> {
         let limits = vak_ooxml::Limits::default();
-        let bytes = read_bounded(&self.source, &limits)?;
-        let digest = sha256_hex(&bytes);
-        if self.base_digest.len() < 16 || !digest.starts_with(&self.base_digest) {
-            return Err(format!(
-                "base_digest {:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Read it again with doc_read and use the anchors and sha256 from that read",
-                self.base_digest,
-                &digest[..16]
-            ));
-        }
-        let applied =
-            vak_ooxml::edit::apply(&bytes, &self.ops, &self.context, limits, Some(self.target))
-                .map_err(|error| format!("nothing was written: {error}"))?;
+        let (_, applied) = apply_checked(
+            &self.source,
+            &self.base_digest,
+            &self.ops,
+            &self.context,
+            self.target,
+        )?;
         let current = if self.destination.is_file() {
             let bytes = read_bounded(&self.destination, &limits)?;
             Some(

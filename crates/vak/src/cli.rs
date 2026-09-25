@@ -182,6 +182,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: IntentAction,
     },
+    /// Word, Excel and PowerPoint files from a script: read, apply ops,
+    /// compare and verify, as JSON (docs/design/72-openxml-documents.md)
+    Office {
+        #[command(subcommand)]
+        action: OfficeAction,
+    },
     /// Durable commitments: what this agent owes, and what closed it
     Commit {
         #[command(subcommand)]
@@ -1412,6 +1418,52 @@ mod tests {
             other => panic!("unexpected: {other:?}"),
         }
     }
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum OfficeAction {
+    /// Print a page of the file's content with anchors, its structure, or
+    /// its facts, as the reader projects it.
+    Read {
+        file: PathBuf,
+        /// The unit to start the page at.
+        #[arg(long, default_value_t = 0)]
+        from: usize,
+        /// Start the page at the unit this anchor names (`Budget!B4`,
+        /// `slide:256`, `p:1A2B3C4D`).
+        #[arg(long, conflicts_with = "from")]
+        at: Option<String>,
+        /// Parts, content types and relationships instead of content.
+        #[arg(long, conflicts_with_all = ["at", "facts"])]
+        structure: bool,
+        /// Kind, counts and flags only.
+        #[arg(long, conflicts_with = "at")]
+        facts: bool,
+    },
+    /// Apply typed ops (the `office_apply` schema) and write the result to a
+    /// new file. The source is never changed.
+    Apply {
+        file: PathBuf,
+        /// A JSON file holding the array of ops, or `-` for stdin.
+        #[arg(long)]
+        ops: String,
+        /// The sha256 (or its first 16 hex digits) of the file the ops were
+        /// written against, as `read` printed it.
+        #[arg(long)]
+        base_digest: String,
+        /// Where to write the result; must not exist.
+        #[arg(long)]
+        out: PathBuf,
+        /// The Agent id Word tracked changes are attributed to.
+        #[arg(long, default_value = "vak")]
+        agent: String,
+    },
+    /// The semantic change list from one file to another, with what the
+    /// change does to signatures and sensitivity labels.
+    Diff { before: PathBuf, after: PathBuf },
+    /// Check that a file is a well-formed package of the format its name
+    /// says. Exits 1 when it is not.
+    Verify { file: PathBuf },
 }
 
 #[derive(Subcommand, Debug)]

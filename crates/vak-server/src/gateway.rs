@@ -73,6 +73,9 @@ pub struct InboundRequest {
     pub bot_id: Option<String>,
     #[serde(default)]
     pub request_id: Option<String>,
+    /// What the bridge can show and send, when it says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<crate::delivery::RequestedCapabilities>,
 }
 
 impl InboundRequest {
@@ -108,6 +111,7 @@ impl InboundRequest {
             wait: false,
             bot_id: None,
             request_id: None,
+            capabilities: None,
         })
     }
 
@@ -135,6 +139,15 @@ impl InboundRequest {
 
     pub fn waiting(mut self) -> Self {
         self.wait = true;
+        self
+    }
+
+    /// The bridge sends files to the chat, so a turn's Office drafts come
+    /// back in the reply's `files` rather than as a note.
+    pub fn accepting_files(mut self) -> Self {
+        self.capabilities
+            .get_or_insert_with(Default::default)
+            .accepts_files = Some(true);
         self
     }
 
@@ -1744,7 +1757,11 @@ fn write_allowlist_file(path: &std::path::Path, entries: &HashMap<String, Allowl
 
 pub fn routes() -> Router<AppState> {
     Router::new()
-        .route("/gateway/inbound", axum::routing::post(gateway_inbound))
+        .route(
+            "/gateway/inbound",
+            axum::routing::post(gateway_inbound)
+                .layer(axum::extract::DefaultBodyLimit::max(INBOUND_BODY_MAX_BYTES)),
+        )
         .route("/gateway/status", axum::routing::get(gateway_status))
         .route(
             "/gateway/bindings/{key}",
@@ -1809,11 +1826,185 @@ fn default_attachment_kind() -> String {
 /// bridge so a file is never downloaded by one side and dropped by the
 /// other. The gateway's JSON body limit (2 MiB, base64 inflates by a third)
 /// bounds it.
-pub(crate) const INBOUND_DOCUMENT_MAX_BYTES: usize = 1024 * 1024;
+pub(crate) const INBOUND_DOCUMENT_MAX_BYTES: usize = 20 * 1024 * 1024;
+
+/// `/gateway/inbound`'s body limit: a document at the limit, base64-encoded,
+/// with room for the rest of the request.
+const INBOUND_BODY_MAX_BYTES: usize = INBOUND_DOCUMENT_MAX_BYTES / 3 * 4 + 1024 * 1024;
 
 /// Text documents at or under this size are inlined in the prompt; larger
 /// text, and every non-text file, is saved to the workspace inbox instead.
 const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
+
+/// What a channel turn answers: its text, and each workspace file the turn
+/// drafted with `office_apply`, for the channel to get back.
+pub(crate) struct ChatReply {
+    pub(crate) text: String,
+    pub(crate) drafts: Vec<TurnDraft>,
+}
+
+/// The latest draft this turn made of one workspace file.
+pub(crate) struct TurnDraft {
+    /// Workspace-relative, as the call named it.
+    path: String,
+    draft: std::path::PathBuf,
+}
+
+/// Each workspace file this turn's successful `office_apply` calls drafted,
+/// with the last draft of it: an `office_apply` call's draft is at
+/// `.vak/scratch/<agent>/<call id>/<path>`, the convention Review's lineage
+/// relies on too.
+fn turn_drafts(log: &vak_session::SessionLog, workspace: &std::path::Path) -> Vec<TurnDraft> {
+    let Some(directive) = log.latest_directive_entry_id() else {
+        return Vec::new();
+    };
+    let agent = log
+        .header()
+        .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()))
+        .unwrap_or_else(|| "vak".into());
+    let mut in_turn = false;
+    let mut calls: Vec<(String, String)> = Vec::new();
+    let mut succeeded = std::collections::HashSet::new();
+    for (entry_id, message) in log.message_chain() {
+        in_turn |= entry_id == directive;
+        if !in_turn {
+            continue;
+        }
+        for block in &message.content {
+            match block {
+                vak_llm::ContentBlock::ToolUse { id, name, input } if name == "office_apply" => {
+                    if let Some(path) = input.get("path").and_then(serde_json::Value::as_str) {
+                        calls.push((id.clone(), path.trim().to_string()));
+                    }
+                }
+                vak_llm::ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error: false,
+                    ..
+                } => {
+                    succeeded.insert(tool_use_id.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut drafts: Vec<TurnDraft> = Vec::new();
+    for (id, path) in calls.into_iter().filter(|(id, _)| succeeded.contains(id)) {
+        let draft = workspace
+            .join(".vak")
+            .join("scratch")
+            .join(&agent)
+            .join(&id)
+            .join(&path);
+        if !draft.is_file() {
+            continue;
+        }
+        drafts.retain(|earlier| earlier.path != path);
+        drafts.push(TurnDraft { path, draft });
+    }
+    drafts
+}
+
+/// The largest draft sent back on a channel; Telegram's bots may send up to
+/// 50 MB, and a document this large is better opened in Vak.
+const RETURN_FILE_MAX_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Each draft the turn made, for a channel that takes files: its bytes and a
+/// caption saying what changed (from the worker's semantic diff), under the
+/// name the person knows it by. A draft that carries a sensitivity label is
+/// not sent (labels only narrow where a file goes); a channel that takes no
+/// files, or a draft too large, gets a line saying where the file is.
+async fn return_drafts(
+    core: &Core,
+    mut text: String,
+    drafts: &[TurnDraft],
+    accepts_files: bool,
+) -> (String, Vec<serde_json::Value>) {
+    use base64::Engine as _;
+    let worker = core.tool_worker_exe();
+    let mut files = Vec::new();
+    let mut notes = Vec::new();
+    for draft in drafts {
+        let name = inbox::display_name(
+            std::path::Path::new(&draft.path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or(&draft.path),
+        );
+        let facts = vak_tools::broker::office_project(
+            &worker,
+            &draft.draft,
+            vak_tools::broker::OfficeView::Facts,
+        )
+        .await;
+        let labels: Vec<String> = facts
+            .as_ref()
+            .ok()
+            .and_then(|facts| facts.get("sensitivity_labels"))
+            .and_then(|labels| serde_json::from_value(labels.clone()).ok())
+            .unwrap_or_default();
+        if !labels.is_empty() {
+            notes.push(format!(
+                "{name} carries the sensitivity label {}, so it is not sent on this channel; review the draft in Vak.",
+                labels.join(", ")
+            ));
+            continue;
+        }
+        let size = std::fs::metadata(&draft.draft)
+            .map(|metadata| metadata.len())
+            .unwrap_or(u64::MAX);
+        if !accepts_files || size > RETURN_FILE_MAX_BYTES {
+            notes.push(format!(
+                "The updated {name} is ready in Vak for review; this channel does not receive it."
+            ));
+            continue;
+        }
+        let current = core.cwd().join(&draft.path);
+        let review = vak_tools::broker::office_review(
+            &worker,
+            current.is_file().then_some(current.as_path()),
+            &draft.draft,
+            None,
+        )
+        .await;
+        let summary = review
+            .as_ref()
+            .ok()
+            .and_then(|review| review.get("summary"))
+            .and_then(|summary| serde_json::from_value::<Vec<String>>(summary.clone()).ok())
+            .filter(|summary| !summary.is_empty())
+            .map(|summary| summary.join("; "))
+            .unwrap_or_else(|| "no visible change".into());
+        let Ok(bytes) = std::fs::read(&draft.draft) else {
+            notes.push(format!("The updated {name} could not be read to send it."));
+            continue;
+        };
+        files.push(serde_json::json!({
+            "name": name,
+            "mime": office_mime(&name),
+            "data": base64::engine::general_purpose::STANDARD.encode(bytes),
+            "caption": format!("Updated {name}: {summary}"),
+        }));
+    }
+    if !notes.is_empty() {
+        text = format!("{}\n\n{}", text.trim_end(), notes.join("\n"));
+    }
+    (text, files)
+}
+
+fn office_mime(name: &str) -> &'static str {
+    match name
+        .rsplit('.')
+        .next()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        _ => "application/octet-stream",
+    }
+}
 
 /// Compose the prompt message: text, vision blocks, inlined text documents,
 /// and a note for each document saved to the inbox. A document's bytes
@@ -2427,7 +2618,7 @@ async fn gateway_inbound(
             .into_response();
     }
 
-    let (reply_tx, reply_rx) = oneshot::channel::<String>();
+    let (reply_tx, reply_rx) = oneshot::channel::<ChatReply>();
     let want_reply = body.wait;
     // 0c-02: attribute the sender identity to the prompt text.
     let attributed = match body.sender.as_deref().map(str::trim) {
@@ -2497,7 +2688,14 @@ async fn gateway_inbound(
             .into_response();
     }
     match tokio::time::timeout(WAIT_TIMEOUT, reply_rx).await {
-        Ok(Ok(text)) => {
+        Ok(Ok(reply)) => {
+            let accepts_files = body
+                .capabilities
+                .as_ref()
+                .and_then(|capabilities| capabilities.accepts_files)
+                .unwrap_or(false);
+            let (text, files) =
+                return_drafts(&core, reply.text, &reply.drafts, accepts_files).await;
             // The turn's delivery posture, from its intent entry: the
             // session ledger when the run has handed it back, else the
             // handle's last known record.
@@ -2579,6 +2777,7 @@ async fn gateway_inbound(
                         "text": text,
                         "session_id": session_id,
                         "delivery": delivery,
+                        "files": files,
                     })),
                 )
                     .into_response(),
@@ -2590,6 +2789,7 @@ async fn gateway_inbound(
                         "text": text,
                         "session_id": session_id,
                         "delivery_error": error,
+                        "files": files,
                     })),
                 )
                     .into_response(),
@@ -2876,7 +3076,7 @@ fn start_turn_chain(
     core: &Core,
     handle: Arc<SessionHandle>,
     prompt: vak_llm::Message,
-    reply: Option<oneshot::Sender<String>>,
+    reply: Option<oneshot::Sender<ChatReply>>,
 ) {
     let core = core.clone();
     let gw = state.gateway.clone();
@@ -2890,7 +3090,7 @@ pub(crate) fn start_turn_chain_with_gateway(
     core: &Core,
     handle: Arc<SessionHandle>,
     prompt: vak_llm::Message,
-    reply: Option<oneshot::Sender<String>>,
+    reply: Option<oneshot::Sender<ChatReply>>,
 ) {
     tokio::spawn(execute_turn_chain(
         core.clone(),
@@ -2906,7 +3106,7 @@ async fn execute_turn_chain(
     gw: Arc<GatewayState>,
     handle: Arc<SessionHandle>,
     prompt: vak_llm::Message,
-    mut reply: Option<oneshot::Sender<String>>,
+    mut reply: Option<oneshot::Sender<ChatReply>>,
 ) {
     let taken = handle
         .session
@@ -2982,7 +3182,10 @@ async fn execute_turn_chain(
                     let err = outcome_is_error(&o);
                     let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
                     if let Some(tx) = reply_tx {
-                        let _ = tx.send(text.clone());
+                        let _ = tx.send(ChatReply {
+                            text: text.clone(),
+                            drafts: turn_drafts(&log, core.cwd()),
+                        });
                     }
                     // Background reflection seam (docs/design/29 P1): the
                     // shared best-effort pass over the just-settled leg. It
@@ -3021,7 +3224,10 @@ async fn execute_turn_chain(
                     )
                     .to_string();
                     if let Some(tx) = reply_tx {
-                        let _ = tx.send(text.clone());
+                        let _ = tx.send(ChatReply {
+                            text: text.clone(),
+                            drafts: Vec::new(),
+                        });
                     }
                     (recovered, short_summary(&text), true)
                 }

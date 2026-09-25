@@ -54,6 +54,12 @@ enum WorkerTask {
         path: PathBuf,
         view: OfficeView,
     },
+    /// `vak office apply`: every op in `lineage` applied to its source and
+    /// written to `out`, a new file.
+    OfficeApply {
+        lineage: OfficeLineage,
+        out: PathBuf,
+    },
     OfficeNarrow {
         lineage: OfficeLineage,
         draft: PathBuf,
@@ -498,6 +504,19 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::OfficeApply { lineage, out } => {
+            let (content, is_error) = match office_apply_in_worker(&lineage, &out) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::OfficeNarrow {
             lineage,
             draft,
@@ -695,6 +714,73 @@ pub async fn office_narrow(
     let content = run_task(worker_exe, out_dir, &roots, true, task).await?;
     serde_json::from_str(&content)
         .map_err(|error| format!("worker returned an invalid answer: {error}"))
+}
+
+/// Applies `lineage`'s ops to its source and writes the result to `out`, a
+/// new file (`vak office apply`, docs/design/72 P5). The same checked apply
+/// as the `office_apply` tool; the worker can write only `out`'s directory
+/// and read only the source's. The answer lists each op's result and
+/// postcondition, the engine's notices, the semantic change list against
+/// the source, and what the edit does to signatures and labels.
+pub async fn office_apply_to(
+    worker_exe: &Path,
+    lineage: &OfficeLineage,
+    out: &Path,
+) -> Result<Value, String> {
+    let Some(out_dir) = out.parent() else {
+        return Err("the output has no directory".into());
+    };
+    let mut roots = vec![out_dir];
+    roots.extend(lineage.source.parent());
+    let task = WorkerTask::OfficeApply {
+        lineage: lineage.clone(),
+        out: out.to_path_buf(),
+    };
+    let content = run_task(worker_exe, out_dir, &roots, true, task).await?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("worker returned an invalid answer: {error}"))
+}
+
+fn office_apply_in_worker(lineage: &OfficeLineage, out: &Path) -> Result<String, String> {
+    if std::fs::symlink_metadata(out).is_ok() {
+        return Err(format!(
+            "{} already exists; name a new file for the result",
+            out.display()
+        ));
+    }
+    let target = out
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(vak_ooxml::Format::from_extension)
+        .ok_or_else(|| {
+            format!(
+                "{} is not named as a Word, Excel or PowerPoint file",
+                out.display()
+            )
+        })?;
+    let context = vak_ooxml::edit::EditContext {
+        author: lineage.author.clone(),
+        date: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+    };
+    let (source, applied) = crate::office_apply::apply_checked(
+        &lineage.source,
+        &lineage.base_digest,
+        &lineage.ops,
+        &context,
+        target,
+    )?;
+    let before = vak_ooxml::read::read(std::io::Cursor::new(source), vak_ooxml::Limits::default())
+        .map_err(|error| format!("{} could not be read: {error}", lineage.source.display()))?;
+    crate::office_apply::write_atomically(out, &applied.bytes)?;
+    serde_json::to_string(&serde_json::json!({
+        "path": out,
+        "sha256": crate::office_apply::sha256_hex(&applied.bytes),
+        "results": applied.results,
+        "notices": applied.notices,
+        "changes": vak_ooxml::diff::diff(Some(&before), &applied.document),
+        "impact": vak_ooxml::diff::impact(Some(&before), &applied.document),
+    }))
+    .map_err(|error| error.to_string())
 }
 
 /// What a view draws of the Office file at `path`: a page of its content

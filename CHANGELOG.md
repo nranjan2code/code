@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Office files on channels and from scripts.** A file sent on Telegram
+  and edited by the Agent comes back to the same chat as a document, under
+  its own name, with a caption saying what changed; a file carrying a
+  sensitivity label is held for review in Vak instead. Channel documents
+  may now be up to 20 MiB, and the words sent with a file reach the Agent.
+  `vak office read|apply|diff|verify` does the same reads, edits,
+  comparisons and checks from a script, as JSON.
 - **Office files in, cited and out.** Dropping a file on the conversation
   saves it to the workspace inbox and names it to the Agent, as a channel
   attachment always was; a Word, Excel or PowerPoint file never reaches the

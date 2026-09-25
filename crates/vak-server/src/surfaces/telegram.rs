@@ -276,6 +276,17 @@ struct GatewayReply {
     text: String,
     delivery: Option<vak_delivery::DeliveryPacket>,
     session_id: Option<String>,
+    /// Office drafts the turn made, sent back as documents.
+    files: Vec<ReturnedFile>,
+}
+
+#[derive(serde::Deserialize)]
+struct ReturnedFile {
+    name: String,
+    mime: String,
+    /// Base64.
+    data: String,
+    caption: String,
 }
 
 /// A tapped button's `callback_data` ("approve:<id>" / "deny:<id>"),
@@ -386,6 +397,18 @@ impl TelegramBridge {
             self.send_message(u.chat_id, &reply)
                 .await
                 .map_err(|error| format!("send to {}: {error}", u.chat_id))?;
+            for file in &reply.files {
+                if let Err(error) = self.send_document(u.chat_id, file).await {
+                    eprintln!("[telegram] {} not sent: {error}", file.name);
+                    let notice = GatewayReply {
+                        text: format!("{} could not be sent here: {error}", file.name),
+                        delivery: None,
+                        session_id: None,
+                        files: Vec::new(),
+                    };
+                    let _ = self.send_message(u.chat_id, &notice).await;
+                }
+            }
             // Native voice delivery is best-effort: text remains the durable
             // fallback when voice is disabled, unconfigured, or unavailable.
             if attachments
@@ -479,12 +502,14 @@ impl TelegramBridge {
             Ok(req) => req
                 .with_attachments(attachments.to_vec())
                 .waiting()
+                .accepting_files()
                 .with_bot_id(self.bot_id.clone()),
             Err(e) => {
                 return GatewayReply {
                     text: format!("(bridge refused to send: {e})"),
                     delivery: None,
                     session_id: None,
+                    files: Vec::new(),
                 };
             }
         };
@@ -501,28 +526,33 @@ impl TelegramBridge {
                 text: "(queued: I'm still working on your previous message)".into(),
                 delivery: None,
                 session_id: None,
+                files: Vec::new(),
             },
             Ok(r) if r.status().is_success() => match r.json::<Value>().await {
                 Ok(v) => GatewayReply {
                     text: v["text"].as_str().unwrap_or("(empty reply)").to_string(),
                     delivery: serde_json::from_value(v["delivery"].clone()).ok(),
                     session_id: v["session_id"].as_str().map(String::from),
+                    files: serde_json::from_value(v["files"].clone()).unwrap_or_default(),
                 },
                 Err(e) => GatewayReply {
                     text: format!("(bad gateway reply: {e})"),
                     delivery: None,
                     session_id: None,
+                    files: Vec::new(),
                 },
             },
             Ok(r) => GatewayReply {
                 text: format!("(gateway error: {})", r.status()),
                 delivery: None,
                 session_id: None,
+                files: Vec::new(),
             },
             Err(e) => GatewayReply {
                 text: format!("(gateway unreachable: {e})"),
                 delivery: None,
                 session_id: None,
+                files: Vec::new(),
             },
         }
     }
@@ -586,7 +616,11 @@ impl TelegramBridge {
                 let msg = &item["message"];
                 let chat_id = msg["chat"]["id"].as_i64();
                 let sender_id = msg["from"]["id"].as_i64();
-                let text = msg["text"].as_str().map(String::from);
+                // Words sent with a photo or file arrive as its caption.
+                let text = msg["text"]
+                    .as_str()
+                    .or_else(|| msg["caption"].as_str())
+                    .map(String::from);
                 let photo_file_id = msg["photo"]
                     .as_array()
                     .and_then(|sizes| sizes.last())
@@ -705,6 +739,37 @@ impl TelegramBridge {
                 }
                 Err(e) => return Err(telegram_http_error("sendMessage", &e)),
             }
+        }
+        Ok(())
+    }
+
+    /// Sends a file the turn produced, under this bot's own token, with the
+    /// change summary as its caption (Telegram allows 1024 characters).
+    async fn send_document(&self, chat_id: i64, file: &ReturnedFile) -> Result<(), String> {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(file.data.as_bytes())
+            .map_err(|e| format!("bad file encoding: {e}"))?;
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(file.name.clone())
+            .mime_str(&file.mime)
+            .map_err(|e| format!("document mime: {e}"))?;
+        let caption: String = file.caption.chars().take(1024).collect();
+        let body = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.to_string())
+            .text("caption", caption)
+            .part("document", part);
+        let sent = http()
+            .post(format!(
+                "{}/bot{}/sendDocument",
+                self.api_base, self.bot_token
+            ))
+            .multipart(body)
+            .send()
+            .await
+            .map_err(|e| telegram_http_error("sendDocument", &e))?;
+        if !sent.status().is_success() {
+            return Err(format!("sendDocument returned {}", sent.status()));
         }
         Ok(())
     }

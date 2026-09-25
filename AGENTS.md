@@ -202,7 +202,9 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     (`VerifyTargets`, `OfficeReview`) under a read-only, network-denied
     sandbox rooted at the files being read, whatever the session's mode,
     within a deadline; `OfficeNarrow`, which writes a narrower version of a
-    draft, may write only that version's fresh staging directory. A worker that cannot answer fails every planned check;
+    draft, may write only that version's fresh staging directory, and
+    `OfficeApply` (`vak office apply`) only the directory of the new file it
+    writes. A worker that cannot answer fails every planned check;
     a check never passes because verification could not run.
 15. **Unattended surfaces fail closed.** The gateway ships disabled, cannot be
     enabled by untrusted project config, and chat-driven turns auto-deny
@@ -1264,7 +1266,9 @@ crates/vak           binary. Run: exec / plan / flow / eval /
                      export / checkpoints / memory / entities / agents /
                      tasks / inbox / intent (explain, show) /
                      commit (list, show, close, supersede, attest) /
-                     grant / revoke. Configure: config / prompts / skills /
+                     grant / revoke / office (read, apply, diff, verify:
+                     JSON over the same worker tasks as the Agent's tools,
+                     docs/design/72-openxml-documents.md). Configure: config / prompts / skills /
                      skills-review / plugins / setup / doctor / backup /
                      digest / self (state, install, reinstall, verify,
                      update, uninstall, status, services-sync), plus the

@@ -68,15 +68,18 @@ fn merged_presentation_skills(core: &Core) -> vak_delivery::SkillRegistry {
     merged_presentation_planner(core).skills
 }
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct RequestedCapabilities {
+pub struct RequestedCapabilities {
     pub markup: Option<Markup>,
     pub max_chars: Option<usize>,
     pub supports_tables: Option<bool>,
     pub supports_code_blocks: Option<bool>,
     pub supports_links: Option<bool>,
     pub supports_actions: Option<bool>,
+    /// The bridge sends files back to the chat: a turn's Office drafts are
+    /// returned as documents (docs/design/72, P5).
+    pub accepts_files: Option<bool>,
 }
 
 #[async_trait]

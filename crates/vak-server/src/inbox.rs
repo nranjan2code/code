@@ -159,7 +159,7 @@ pub(crate) fn attached(
 }
 
 /// The name a saved file had before `save_to_inbox` prefixed its digest.
-fn display_name(saved_name: &str) -> String {
+pub(crate) fn display_name(saved_name: &str) -> String {
     match saved_name.split_once('-') {
         Some((prefix, rest))
             if prefix.len() == 12 && prefix.chars().all(|c| c.is_ascii_hexdigit()) =>

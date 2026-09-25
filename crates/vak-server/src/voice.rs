@@ -875,7 +875,7 @@ async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
                                 let answered = utterance_id.clone();
                                 tokio::spawn(async move {
                                     if let Ok(reply) = reply_rx.await {
-                                        let _ = completed.send((answered, reply));
+                                        let _ = completed.send((answered, reply.text));
                                     }
                                 });
                                 ServerControl::Transcript { utterance_id, text }

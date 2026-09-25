@@ -19,6 +19,7 @@ mod inbox;
 mod install;
 mod intent;
 mod memory;
+mod office;
 mod plugins;
 mod prompts;
 mod setup;
@@ -501,6 +502,7 @@ async fn main() {
         Some(Command::Skills { action }) => run_skills(cwd, action),
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
         Some(Command::Intent { action }) => intent::run_intent(cwd, action),
+        Some(Command::Office { action }) => office::run_office(action).await,
         Some(Command::Commit { action }) => intent::run_commit(cwd, action),
         Some(Command::Grant {
             id,
