@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 done. V3.2 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 and V3.2 done. V3.3 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -242,7 +242,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 - [x] **V3.1 Sidebar and header.** Complete tile and Newsreader wordmark;
   Search as a row; agents with their own character and a one-line status;
   status shown only when something is wrong; one footer menu.
-- [ ] **V3.2 Conversation.** Answers on the page, results as the only card,
+- [x] **V3.2 Conversation.** Answers on the page, results as the only card,
   revision events (V1.12) styled, no YOU label, quiet working state.
 - [ ] **V3.3 Message box.** One field; + menu (attach, mention, skills,
   upload a recording); mic as the voice button, saffron while listening;
@@ -450,3 +450,15 @@ what was not.
   `.workspace-title h1` rule. Checked live at 1440 (light and dark) and 390
   (no sideways scroll). Evidence: `after/V3.1-*`. All three reviewed agents
   still share the bird; distinct characters by default are V3.8.
+- 2026-09-25: V3.2 done (commit `b05e3bb5`). The answer sits on the page:
+  the result surface lost its border, tint and padding, the caution became a
+  rounded note, and the evidence and action rows lost their dividers; cards
+  and file results keep their own styling, so the result is the only card.
+  "You" shows only on messages someone else wrote. Checked live at 1440
+  (light and dark) and 390. Evidence: `after/V3.2-*`. Test note: the first
+  `cargo test -p vak-server` run failed once in
+  `sandbox_promotion_tests::a_draft_changed_after_office_apply_is_offered_only_whole`
+  (`SessionLog::open` returned an error under full-suite load) and the
+  commit was pushed anyway because of a command-chaining mistake; the test
+  then passed 3 of 3 in isolation and the full suite passed (460) with
+  `--no-fail-fast`. The flake predates this work and is server-side.
