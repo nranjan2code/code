@@ -81,7 +81,7 @@ function EmptyChat(props: { hasSession: boolean }) {
         <Show when={completed().length > 0}>
           <div class="home-recent" aria-label="Recent results">
             <div class="home-ongoing-heading"><span>Recent results</span><small>Pick up where you left off</small></div>
-            <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark">✓</span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
+            <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark"><Icon name="check" size={14} /></span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
           </div>
         </Show>
         <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">

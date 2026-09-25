@@ -2,6 +2,7 @@ import { trapFocus } from "../focusTrap";
 import { For, Show, createResource, createSignal } from "solid-js";
 import * as api from "../api";
 import { activeId, setWorkOpen, workOpen } from "../store";
+import Icon from "./Icon";
 
 export default function WorkModal() {
   const [commandError, setCommandError] = createSignal<string | null>(null);
@@ -23,7 +24,7 @@ export default function WorkModal() {
   return <Show when={workOpen()}>
     <div class="modal-back" role="presentation" onClick={() => setWorkOpen(false)}>
       <section class="modal work-modal" role="dialog" aria-modal="true" aria-labelledby="work-title" onClick={(event) => event.stopPropagation()} use:trapFocus>
-        <header class="modal-header"><h3 id="work-title">Managed work</h3><button type="button" class="icon-button subtle" aria-label="Close managed work" onClick={() => setWorkOpen(false)}>×</button></header>
+        <header class="modal-header"><h3 id="work-title">Managed work</h3><button type="button" class="icon-button subtle" aria-label="Close managed work" onClick={() => setWorkOpen(false)}><Icon name="close" /></button></header>
         <Show when={commandError()}>{(message) => <div class="error-state" role="alert"><strong>Could not update managed work</strong><p>{message()}</p></div>}</Show>
         <Show when={!work.loading} fallback={<div class="empty">Loading background tasks…</div>}>
           <Show when={!work.error} fallback={<div class="error-state" role="alert"><strong>Managed work unavailable</strong><p>{String(work.error)}</p><button type="button" class="ghost small" onClick={() => void refetch()}>Retry</button></div>}>

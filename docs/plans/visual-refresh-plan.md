@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-to V2.6 and V2.8 done; V2.7 waits for approval to download icons. V3 and V4.2 to V4.5 remain unstarted.**
+complete. V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -205,7 +205,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   new key and starts off; the old `vak.density` value is not read.
   Done when: every row of doc 75 §8 is checked in both states, and a pending
   approval shows the same in both.
-- [ ] **V2.7 Icons.** Choose Lucide or Phosphor, vendor it (pinned, with its
+- [x] **V2.7 Icons.** Choose Lucide or Phosphor, vendor it (pinned, with its
   licence), replace `components/Icon.tsx`'s set and every letter glyph.
 - [x] **V2.8 Delete what is superseded.** The 21 dead `.everyday-rail`
   rules, every duplicate selector (exit criterion 3), the `!important` rules
@@ -429,3 +429,13 @@ what was not.
   Checked by computed style: 30 properties of every rendered element on 7
   screens (3,472 elements: conversation light, dark and 390px, agent picker,
   Review, Settings General and Permissions) are identical before and after.
+- 2026-09-25: V2.7 done, with the maintainer's approval to download. Lucide
+  1.48.0 (pinned tag; ISC licence shipped at
+  `public/licenses/lucide-LICENSE.txt`) replaces the hand-drawn icons: the 44
+  shapes the app uses are copied into `components/Icon.tsx` under the app's
+  own names, so no call site changed and no dependency was added. New names
+  `at` and `slash` replace the "@" and "/" glyphs in the message box menu;
+  the ✓, ✕ and × glyphs in the welcome, goal chip, reply target and
+  Background tasks became icons. Checked live: every rendered icon draws
+  (39 on the conversation, 122 on Settings). Evidence: `after/V2.7-*`. The
+  PR panel's "◌" pending mark stays (a technical view).

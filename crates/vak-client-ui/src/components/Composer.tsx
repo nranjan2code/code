@@ -541,7 +541,7 @@ export default function Composer(props: { cwd: string }) {
       <Show when={replyTarget()}>
         {(target) => <div class="composer-target" role="status">
           <span>Replying to {target().label}</span>
-          <button type="button" class="icon-button subtle" aria-label="Remove reply target" onClick={() => setReplyTarget(null)}>×</button>
+          <button type="button" class="icon-button subtle" aria-label="Remove reply target" onClick={() => setReplyTarget(null)}><Icon name="close" size={14} /></button>
         </div>}
       </Show>
       <Show when={slashMatches().length}>
@@ -670,8 +670,8 @@ export default function Composer(props: { cwd: string }) {
               <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
               <div class="composer-more-menu">
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Folder: ${props.cwd.split("/").pop() || "root"}`}</span></button>
-                <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
-                <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
+                <button type="button" onClick={beginMention}><Icon name="at" size={14} /><span>Mention a file</span></button>
+                <button type="button" onClick={beginSlash}><Icon name="slash" size={14} /><span>Use a skill or command</span></button>
                 <Show when={technicalDetails()}>
                 <select
                   class="composer-mode composer-model-select"
@@ -726,7 +726,7 @@ export default function Composer(props: { cwd: string }) {
                 title="Disarm goal"
                 onClick={() => setArmedGoal(null)}
               >
-                ✕
+                <Icon name="close" size={12} />
               </button>
             </div>
           </Show>
