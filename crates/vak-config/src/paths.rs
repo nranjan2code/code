@@ -57,20 +57,14 @@ pub fn logs_dir() -> PathBuf {
 /// fresh install (no prior units), so there is always a sane, isolated
 /// default — never the workspace a person happened to be standing in.
 pub fn default_workspace() -> PathBuf {
-    // An explicit VAK_HOME is a self-contained installation root. Keeping
-    // Shared config beside that root prevents test/portable installs from
-    // accidentally inheriting the operator's real ~/vak-home state.
-    if get_var("VAK_HOME").is_some() {
-        data_home().join("vak-home")
-    } else {
-        base_home().join("vak-home")
-    }
+    resolve(get_var("VAK_HOME").as_deref()).workspace
 }
 
 /// The gateway's persisted workspace selection. An absent or malformed
 /// selection intentionally falls back to the canonical default workspace.
 pub fn gateway_workspace() -> PathBuf {
-    gateway_workspace_at(&data_home(), &default_workspace())
+    let homes = resolve(get_var("VAK_HOME").as_deref());
+    gateway_workspace_at(&homes.data, &homes.workspace)
 }
 
 /// Per-agent data home: sessions, memory, and agent-specific config.
@@ -208,28 +202,35 @@ pub fn augmented_process_path() -> std::ffi::OsString {
     std::env::join_paths(parts).unwrap_or_default()
 }
 
-/// All three homes derived from one override decision. Pure so tests can
-/// exercise both branches without touching process-global environment.
+/// Every home derived from one override decision. Pure so tests can
+/// exercise both branches without touching process-global environment,
+/// and so a caller needing two of them reads `VAK_HOME` once rather than
+/// pairing values from before and after another thread changed it.
 struct Homes {
     data: PathBuf,
     cache: PathBuf,
     logs: PathBuf,
+    workspace: PathBuf,
 }
 
 fn resolve(override_home: Option<&str>) -> Homes {
     let base = base_home();
     match override_home.filter(|s| !s.is_empty()) {
         // An explicit override is a self-contained sandbox: everything
-        // nests under it so tests and portable installs stay one tree.
+        // nests under it so tests and portable installs stay one tree,
+        // including the Shared config's workspace, which would otherwise
+        // inherit the operator's real ~/vak-home state.
         Some(h) => {
             let data = PathBuf::from(h);
             Homes {
                 cache: data.join("cache"),
                 logs: data.join("logs"),
+                workspace: data.join("vak-home"),
                 data,
             }
         }
         None => Homes {
+            workspace: base.join("vak-home"),
             #[cfg(target_os = "macos")]
             data: base
                 .join("Library")
@@ -338,17 +339,16 @@ mod tests {
 
     #[test]
     fn default_workspace_is_a_plain_dir_under_the_account_home_not_data_home() {
-        let ws = default_workspace();
-        if get_var("VAK_HOME").is_some() {
-            assert_eq!(ws, data_home().join("vak-home"));
-        } else {
-            assert_eq!(ws, base_home().join("vak-home"));
-            assert_ne!(
-                ws,
-                resolve(None).data,
-                "the default workspace must never collide with the app's own data home"
-            );
-        }
+        let canonical = resolve(None);
+        assert_eq!(canonical.workspace, base_home().join("vak-home"));
+        assert_ne!(
+            canonical.workspace, canonical.data,
+            "the default workspace must never collide with the app's own data home"
+        );
+
+        let sandbox = tempfile::tempdir().unwrap();
+        let overridden = resolve(Some(sandbox.path().to_str().unwrap()));
+        assert_eq!(overridden.workspace, overridden.data.join("vak-home"));
     }
 
     #[test]
@@ -382,6 +382,7 @@ mod tests {
             !h.data.to_string_lossy().contains("/cache"),
             "empty string must fall through to the platform layout"
         );
+        assert_eq!(h.workspace, base_home().join("vak-home"));
     }
 
     #[test]
