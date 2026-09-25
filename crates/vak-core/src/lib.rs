@@ -5366,7 +5366,7 @@ impl Core {
     pub async fn run_turn_with_message(
         &self,
         session: SessionLog,
-        prompt: vak_llm::Message,
+        prompt: vak_session::MessageRecord,
         cancel: CancellationToken,
         approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
         permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
@@ -5394,7 +5394,10 @@ impl Core {
         self.clone()
             .run_turn_inner(
                 session,
-                vak_llm::Message::user_text(prompt),
+                vak_session::MessageRecord {
+                    message: vak_llm::Message::user_text(prompt),
+                    meta: None,
+                },
                 cancel,
                 approver,
                 permission,
@@ -5420,7 +5423,10 @@ impl Core {
         self.clone()
             .run_turn_inner(
                 session,
-                vak_llm::Message::user_text(prompt),
+                vak_session::MessageRecord {
+                    message: vak_llm::Message::user_text(prompt),
+                    meta: None,
+                },
                 cancel,
                 approver,
                 permission,
@@ -5446,7 +5452,10 @@ impl Core {
         self.clone()
             .run_turn_inner(
                 session,
-                vak_llm::Message::user_text(prompt),
+                vak_session::MessageRecord {
+                    message: vak_llm::Message::user_text(prompt),
+                    meta: None,
+                },
                 cancel,
                 approver,
                 permission,
@@ -5476,7 +5485,10 @@ impl Core {
         self.clone()
             .run_turn_inner(
                 session,
-                vak_llm::Message::user_text(prompt),
+                vak_session::MessageRecord {
+                    message: vak_llm::Message::user_text(prompt),
+                    meta: None,
+                },
                 cancel,
                 approver,
                 permission,
@@ -5890,7 +5902,7 @@ impl Core {
     async fn run_turn_inner(
         mut self,
         mut session: SessionLog,
-        prompt: vak_llm::Message,
+        prompt: vak_session::MessageRecord,
         cancel: CancellationToken,
         approver: Option<std::sync::Arc<dyn vak_agent::Approver>>,
         permission: Option<std::sync::Arc<vak_permission::PermissionEngine>>,
@@ -5899,6 +5911,10 @@ impl Core {
         goal: Option<(String, Vec<String>)>,
         work_mode: Option<WorkMode>,
     ) -> Result<(TurnOutcome, SessionLog), CoreError> {
+        let vak_session::MessageRecord {
+            message: prompt,
+            meta: prompt_meta,
+        } = prompt;
         let prompt_text = prompt.text_content();
         self.agent_identity = session.header().and_then(|header| header.agent.clone());
         // The approver that will actually serve this run is the authority on
@@ -6993,7 +7009,15 @@ impl Core {
         };
         let run_cancel = cancel.child_token();
         let outcome = {
-            let run = agent.run_message(prompt, &steering, run_cancel.clone(), events);
+            let run = agent.run_message(
+                vak_session::MessageRecord {
+                    message: prompt,
+                    meta: prompt_meta,
+                },
+                &steering,
+                run_cancel.clone(),
+                events,
+            );
             tokio::pin!(run);
             tokio::select! {
                 biased;

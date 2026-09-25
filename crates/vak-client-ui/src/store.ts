@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
-import { isOfficePath } from "./officeRedline";
+import { isOfficePath } from "./officeFiles";
+import { displayFileName } from "./attachFiles";
 import { createStore, reconcile } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
@@ -22,7 +23,7 @@ import type {
 export type Density = "outcome" | "balanced" | "audit";
 
 export type Item =
-  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string }
+  | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; files?: api.InboxFile[] }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
   | { kind: "thinking"; key: string; text: string; done: boolean }
   | {
@@ -318,6 +319,8 @@ export interface ActiveComponentPreview {
   serverUrl?: string;
   /** Durable conversation/result identity that produced this artifact. */
   sessionId?: string;
+  /** A cited place in an Office file to open the view at (`path#anchor`). */
+  anchor?: string;
   resultId?: string;
   executionId?: string;
   /** Saved draft version; Canvas reads this candidate instead of mutable scratch. */
@@ -504,7 +507,7 @@ export function extractCodeBlockForPath(text: string, path: string): string | un
 export function openArtifactPathInCanvas(
   path: string,
   html?: string,
-  context?: Pick<ActiveComponentPreview, "sessionId" | "resultId" | "executionId">,
+  context?: Pick<ActiveComponentPreview, "sessionId" | "resultId" | "executionId" | "anchor">,
 ) {
   let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
   // A result-bound artifact already carries its exact path and execution.
@@ -541,7 +544,7 @@ export function openArtifactPathInCanvas(
     }
   }
 
-  const filename = clean.split("/").pop() || "Artifact Preview";
+  const filename = displayFileName(clean) || "Artifact Preview";
   openArtifactCanvas({
     id: clean,
     title: filename,
@@ -550,6 +553,11 @@ export function openArtifactPathInCanvas(
     timestamp: Date.now(),
     ...context,
   });
+}
+
+/** Opens the view of a cited Office file at the place it names. */
+export function openOfficeCitation(citation: { path: string; anchor: string }) {
+  openArtifactPathInCanvas(citation.path, undefined, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
 }
 
 /**
@@ -1031,8 +1039,12 @@ export function transcriptToItems(
   for (const [index, m] of messages.entries()) {
     const meta = entries?.[index];
     if (m.role === "User" || m.role === "user" || (typeof m.role === "string" && m.role.toLowerCase() === "user")) {
+      // A block that names an attached file to the model is drawn as that
+      // file, not as its text (TranscriptEntryMeta.attachments).
+      const noteBlocks = new Set((meta?.attachments ?? []).map((file) => file.block));
+      const files = (meta?.attachments ?? []).map(({ path, name, bytes }) => ({ path, name, bytes }));
       const texts = m.content
-        .filter((b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text")
+        .filter((b, index): b is Extract<ContentBlock, { type: "text" }> => b.type === "text" && !noteBlocks.has(index))
         .map((b) => b.text);
       const results = m.content.filter(
         (b): b is Extract<ContentBlock, { type: "tool_result" }> => b.type === "tool_result",
@@ -1051,7 +1063,7 @@ export function transcriptToItems(
       const joined = stripControlScaffolding(texts.join("\n"));
       const authorPrefix = meta?.author_name ? `${meta.author_name}: ` : "";
       const displayText = authorPrefix && joined.startsWith(authorPrefix) ? joined.slice(authorPrefix.length) : joined;
-      if (displayText) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined });
+      if (displayText || files.length) next.push({ kind: "user", text: displayText, entryId: meta?.entry_id, authorId: meta?.author_id ?? undefined, authorName: meta?.author_name ?? undefined, files: files.length ? files : undefined });
     } else {
       const baseKey = `${id}-h${assistantSeq++}`;
       const hasText = m.content.some(
@@ -1432,8 +1444,8 @@ export function applyEvent(
 
 // ---- imperative helpers used by App ---------------------------------------
 
-export function appendUser(id: string, text: string, bucket: Bucket = "main") {
-  pushItem(bucket, id, { kind: "user", text });
+export function appendUser(id: string, text: string, files?: api.InboxFile[], bucket: Bucket = "main") {
+  pushItem(bucket, id, { kind: "user", text, files: files?.length ? files : undefined });
 }
 
 export function appendSystem(id: string, text: string, bucket: Bucket = "main") {

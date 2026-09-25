@@ -38,6 +38,8 @@ export default function OfficeView(props: {
   fileName: string;
   /** Called with the anchor a person selects, or null. */
   onSelect?: (anchor: string | null) => void;
+  /** A cited place to open at and select. */
+  focus?: string;
 }) {
   const [meta, setMeta] = createSignal<api.OfficeProjection | null>(null);
   const [units, setUnits] = createSignal<api.OfficeUnit[]>([]);
@@ -57,18 +59,23 @@ export default function OfficeView(props: {
     props.onSelect?.(anchor);
   };
 
-  const load = async (from: number, replace: boolean, scrollTo?: string) => {
+  const load = async (from: number, replace: boolean, scrollTo?: string, at?: string) => {
     const generation = ++request;
     setLoading(true);
     setError(null);
     try {
-      const page = await api.readOfficeProjection(props.source, from);
+      const page = await api.readOfficeProjection(props.source, from, at);
       if (generation !== request) return;
       setMeta(page);
       setUnits((current) => (replace ? page.units : [...current, ...page.units]));
       if (replace) setWindowStart(page.from);
       setNext(page.next);
-      if (scrollTo) queueMicrotask(() => document.getElementById(unitId(scrollTo))?.scrollIntoView({ block: "start" }));
+      if (at) {
+        if (page.focus) select(page.focus);
+        else setError(`${props.fileName} has no place ${at}; it may have changed since it was cited.`);
+      }
+      const target = scrollTo ?? page.focus;
+      if (target) queueMicrotask(() => document.getElementById(unitId(target))?.scrollIntoView({ block: "start" }));
     } catch (cause) {
       if (generation === request) setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -76,13 +83,13 @@ export default function OfficeView(props: {
     }
   };
 
-  createEffect(on(() => [props.source.path, props.source.sessionId, props.source.candidateId], () => {
+  createEffect(on(() => [props.source.path, props.source.sessionId, props.source.candidateId, props.focus], () => {
     setMeta(null);
     setUnits([]);
     setStructure(null);
     setTab("content");
     select(null);
-    void load(0, true);
+    void load(0, true, undefined, props.focus);
   }));
 
   createEffect(on(tab, (current) => {

@@ -21,6 +21,7 @@ import {
 } from "../store";
 import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
+import { ATTACH_FILES_EVENT } from "../attachFiles";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
 import VoiceControl from "./VoiceControl";
@@ -55,6 +56,24 @@ const BUILTIN_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "help", description: "View keyboard shortcuts and command manual (?)" },
 ];
 
+type InboxChip = { key: string; name: string; bytes: number; saved?: api.InboxFile; error?: string };
+
+/** The same bound a channel inlines text under; anything larger, and every
+ *  file that is not text, is saved to the inbox instead of quoted. */
+const INLINE_TEXT_MAX_BYTES = 64 * 1024;
+const TEXT_EXTENSIONS = new Set(["txt", "rs", "ts", "tsx", "js", "jsx", "json", "py", "md", "toml", "yaml", "yml", "css", "html", "sh", "csv", "tsv", "xml", "ini"]);
+
+function inlinesAsText(file: File): boolean {
+  const extension = file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "";
+  return file.size <= INLINE_TEXT_MAX_BYTES && (file.type.startsWith("text/") || TEXT_EXTENSIONS.has(extension));
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export default function Composer(props: { cwd: string }) {
   const [text, setText] = createSignal("");
   const [mention, setMention] = createSignal<Mention | null>(null);
@@ -66,6 +85,9 @@ export default function Composer(props: { cwd: string }) {
   const [slashPicked, setSlashPicked] = createSignal(0);
   // Image attachments: picked or pasted, sent as base64 vision blocks.
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
+  // Other files: saved to the workspace inbox as soon as they are added; the
+  // message names them and the model reads them with its tools.
+  const [inboxFiles, setInboxFiles] = createSignal<InboxChip[]>([]);
   const [composerError, setComposerError] = createSignal<string | null>(null);
   const [dragOver, setDragOver] = createSignal(false);
   const [historyIdx, setHistoryIdx] = createSignal(-1);
@@ -74,14 +96,14 @@ export default function Composer(props: { cwd: string }) {
   const [lookupError, setLookupError] = createSignal("");
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
-  const drafts = new Map<string, {text: string; files: { name: string; mime: string; data: string }[]}>();
+  const drafts = new Map<string, {text: string; files: { name: string; mime: string; data: string }[]; inbox: InboxChip[]}>();
   let draftOwner = "";
   createEffect(() => {
     const owner = `${props.cwd}:${activeId() ?? "vak"}`;
     untrack(() => {
-      if (draftOwner) drafts.set(draftOwner, {text: text(), files: pendingFiles()});
+      if (draftOwner) drafts.set(draftOwner, {text: text(), files: pendingFiles(), inbox: inboxFiles()});
       const draft = drafts.get(owner);
-      setText(draft?.text ?? ""); setPendingFiles(draft?.files ?? []);
+      setText(draft?.text ?? ""); setPendingFiles(draft?.files ?? []); setInboxFiles(draft?.inbox ?? []);
       setMention(null); setComposerError(null); setHistoryIdx(-1);
       draftOwner = owner;
       queueMicrotask(() => { if (ta) grow(); });
@@ -111,6 +133,12 @@ export default function Composer(props: { cwd: string }) {
     };
     window.addEventListener("vak:edit-prompt", onEditPrompt);
     onCleanup(() => window.removeEventListener("vak:edit-prompt", onEditPrompt));
+    const onAttachFiles = (ev: Event) => {
+      const files = (ev as CustomEvent<{ files: File[] }>).detail?.files;
+      if (files?.length) addFiles(files);
+    };
+    window.addEventListener(ATTACH_FILES_EVENT, onAttachFiles);
+    onCleanup(() => window.removeEventListener(ATTACH_FILES_EVENT, onAttachFiles));
   });
 
 
@@ -147,12 +175,10 @@ export default function Composer(props: { cwd: string }) {
           }
         };
         reader.readAsDataURL(file);
+      } else if (!inlinesAsText(file)) {
+        saveToInbox(file, owner);
       } else {
-        // Text / code file dropped: format and insert as code block
-        if (file.size > 2 * 1024 * 1024) {
-          setComposerError(`${file.name} is too large to attach (max 2 MB)`);
-          continue;
-        }
+        // A small text or code file is quoted into the message.
         const reader = new FileReader();
         reader.onload = () => {
           if (owner !== draftOwner) return;
@@ -174,6 +200,22 @@ export default function Composer(props: { cwd: string }) {
     }
   };
 
+
+  const saveToInbox = (file: File, owner: string) => {
+    const key = `${file.name}:${file.size}:${Date.now()}:${Math.random()}`;
+    const update = (change: Partial<InboxChip>) => {
+      const apply = (chips: InboxChip[]) => chips.map((chip) => chip.key === key ? { ...chip, ...change } : chip);
+      if (owner === draftOwner) setInboxFiles(apply);
+      else {
+        const draft = drafts.get(owner);
+        if (draft) drafts.set(owner, { ...draft, inbox: apply(draft.inbox) });
+      }
+    };
+    setInboxFiles((chips) => [...chips, { key, name: file.name, bytes: file.size }]);
+    api.uploadToInbox(file)
+      .then((saved) => update({ saved }))
+      .catch((error) => update({ error: error instanceof Error ? error.message : String(error) }));
+  };
 
   const changeMode = async (mode: string) => {
     try {
@@ -351,10 +393,23 @@ export default function Composer(props: { cwd: string }) {
     if (agentOpening()) return;
     const t = text().trim();
     const files = pendingFiles();
+    const chips = inboxFiles();
     // No active task is fine: sendPrompt creates one.
-    if (!t && files.length === 0) return;
-    if (files.length > 0 && armedGoal()) {
-      setComposerError("goal runs cannot carry images — disarm the goal or remove the attachments");
+    if (!t && files.length === 0 && chips.length === 0) return;
+    if ((files.length > 0 || chips.length > 0) && armedGoal()) {
+      setComposerError("goal runs cannot carry attachments — disarm the goal or remove them");
+      return;
+    }
+    if (chips.some((chip) => !chip.saved && !chip.error)) {
+      setComposerError("wait until the files are saved");
+      return;
+    }
+    if (chips.some((chip) => chip.error)) {
+      setComposerError("remove the files that could not be saved");
+      return;
+    }
+    if (chips.length > 0 && isRunning(activeId())) {
+      setComposerError("files can be attached once this turn finishes");
       return;
     }
     const target = replyTarget();
@@ -364,11 +419,16 @@ export default function Composer(props: { cwd: string }) {
     setText("");
     setMention(null);
     setPendingFiles([]);
+    setInboxFiles([]);
     setComposerError(null);
     queueMicrotask(grow);
     // No need to pass or clear the goal here: sendPrompt consumes
     // `armedGoal` itself (store.ts), for whichever session it resolves.
-    void sendPrompt(t, undefined, files.length ? files : undefined, target?.sessionId, target);
+    const attachments: api.Attachments = {
+      images: files.map(({ mime, data }) => ({ mime, data })),
+      files: chips.flatMap((chip) => chip.saved ? [chip.saved] : []),
+    };
+    void sendPrompt(t, undefined, files.length || chips.length ? attachments : undefined, target?.sessionId, target);
     setReplyTarget(null);
   };
 
@@ -534,9 +594,31 @@ export default function Composer(props: { cwd: string }) {
         onDrop={(e) => {
           e.preventDefault();
           setDragOver(false);
+          e.stopPropagation();
           if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
         }}
       >
+        <Show when={inboxFiles().length}>
+          <div class="composer-attachments" aria-label="Attached files">
+            <For each={inboxFiles()}>
+              {(chip) => (
+                <span class="attachment-chip" classList={{ "attachment-error": Boolean(chip.error) }} title={chip.error ?? chip.saved?.path ?? "Saving…"}>
+                  <Icon name="file" size={14} />
+                  <span class="attachment-name">{chip.name}</span>
+                  <small class="attachment-state">{chip.error ? "Not saved" : chip.saved ? formatBytes(chip.bytes) : "Saving…"}</small>
+                  <button
+                    class="attachment-remove"
+                    title={`Remove ${chip.name}`}
+                    aria-label={`Remove ${chip.name}`}
+                    onClick={() => setInboxFiles((cur) => cur.filter((other) => other.key !== chip.key))}
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
         <Show when={pendingFiles().length}>
           <div class="composer-attachments" aria-label="Attached images">
             <For each={pendingFiles()}>
@@ -612,7 +694,6 @@ export default function Composer(props: { cwd: string }) {
             <input
               ref={fileInput}
               type="file"
-              accept="image/*,.txt,.rs,.ts,.js,.json,.py,.md,.toml,.yaml,.yml,.css,.html,.sh"
               multiple
               style="display:none"
               onChange={(e) => {

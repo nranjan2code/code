@@ -7615,6 +7615,7 @@ dependencies = [
  "vak-config",
  "vak-core",
  "vak-delivery",
+ "vak-ooxml",
  "vak-ops",
  "vak-server",
  "vak-tools",

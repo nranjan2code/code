@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { isOfficePath, parseRedline } from "../src/officeRedline.ts";
+import { parseRedline } from "../src/officeRedline.ts";
+import { isOfficePath } from "../src/officeFiles.ts";
 
 assert.deepEqual(parseRedline("Revenue grew [inserted by Mira: 12%][deleted by Mira: 10%] this quarter."), [
   { kind: "text", text: "Revenue grew " },

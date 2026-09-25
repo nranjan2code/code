@@ -786,6 +786,10 @@ fn anchors_are_recognised_by_shape() {
         "slide:256/placeholder:title",
         "slide:256/notes",
         "page:0/shape:5",
+        "p@2/comment:0",
+        "p:0A1B2C3D/comment:12",
+        "tbl@1",
+        "tbl@1/r2",
     ] {
         assert!(vak_ooxml::is_anchor(anchor), "{anchor}");
     }
@@ -806,6 +810,11 @@ fn anchors_are_recognised_by_shape() {
         "slide:256/placeholder:ti tle",
         "line 4",
         "p@1\n",
+        "p@2/comment:",
+        "slide:1/comment:2",
+        "tbl@",
+        "tbl@1/2",
+        "tbl@1/rx",
     ] {
         assert!(!vak_ooxml::is_anchor(anchor), "{anchor}");
     }

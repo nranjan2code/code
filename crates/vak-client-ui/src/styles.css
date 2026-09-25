@@ -6257,3 +6257,16 @@ code.ic[data-previewable="true"]:hover {
   .office-outline button { padding-left: 8px !important; }
 }
 .office-structure .office-grid-scroll { flex: none; overflow-x: auto; overflow-y: visible; }
+
+/* File card (docs/design/72, U6) and file intake. */
+.artifact-item { flex-wrap: wrap; }
+.artifact-copy { flex-basis: 160px; }
+.artifact-copy .artifact-flags { display: inline-flex; align-items: center; gap: 4px; color: var(--yellow); }
+.artifact-copy .artifact-problem { color: var(--red); white-space: normal; }
+.msg-user-files { display: flex; flex-direction: column; margin-bottom: 6px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.attachment-state { color: var(--muted); font-size: 10.5px; }
+.attachment-chip.attachment-error { border-color: var(--red); color: var(--red); }
+.attachment-chip > .icon, .attachment-chip > svg { flex: none; margin-left: 4px; }
+.chat-shell.file-drop::after { content: "Drop to attach"; position: absolute; inset: 8px; z-index: 5; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: var(--radius); color: var(--accent-bright); font-size: 14px; background: var(--accent-wash); pointer-events: none; }
+.office-cite { cursor: pointer; font: inherit; font-family: var(--font-mono, ui-monospace, monospace); font-size: 0.9em; text-decoration: underline dotted; text-underline-offset: 2px; color: var(--accent-bright); }
+.office-cite:hover, .office-cite:focus-visible { text-decoration-style: solid; }

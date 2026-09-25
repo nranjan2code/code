@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Office files in, cited and out.** Dropping a file on the conversation
+  saves it to the workspace inbox and names it to the Agent, as a channel
+  attachment always was; a Word, Excel or PowerPoint file never reaches the
+  model as bytes (the composer used to paste any file in as text). The
+  message shows the file as a card with the reader's facts, Open, Download
+  and, in the desktop app, Open with. An answer that cites
+  `` `file.docx#anchor` `` links to that place in the file's view. The
+  desktop and web host save a file through one `saveFile`; `saveText` is
+  gone.
 - **Steadier long turns.** The per-turn working-set plan, tool list, and
   request tail are now each resolved once per turn and reused byte-identical
   across every step, instead of being rebuilt (and silently reshaped) on

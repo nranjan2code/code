@@ -1211,15 +1211,24 @@ impl Agent {
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
-        self.run_message(Message::user_text(prompt), steering, cancel, events)
-            .await
+        self.run_message(
+            MessageRecord {
+                message: Message::user_text(prompt),
+                meta: None,
+            },
+            steering,
+            cancel,
+            events,
+        )
+        .await
     }
 
-    /// Run with a prebuilt prompt `Message` — the seam for multimodal
-    /// (image) input; the ledger stores exactly what the model sees.
+    /// Run with a prebuilt prompt — the seam for multimodal (image) input
+    /// and attached files; the ledger stores exactly what the model sees,
+    /// with the prompt's metadata (`MessageMeta::attachments`).
     pub async fn run_message(
         &mut self,
-        prompt: Message,
+        prompt: MessageRecord,
         steering: &SteeringQueues,
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
@@ -1255,11 +1264,15 @@ impl Agent {
 
     async fn run_message_inner(
         &mut self,
-        prompt: Message,
+        prompt: MessageRecord,
         steering: &SteeringQueues,
         cancel: CancellationToken,
         events: mpsc::Sender<AgentEvent>,
     ) -> TurnOutcome {
+        let MessageRecord {
+            message: prompt,
+            meta: prompt_meta,
+        } = prompt;
         let prompt = match self.normalize_input(prompt) {
             Ok(prompt) => prompt,
             Err(error) => {
@@ -1303,7 +1316,7 @@ impl Agent {
         }
         let prompt_entry = self.session.lock().await.append_message(MessageRecord {
             message: prompt,
-            meta: None,
+            meta: prompt_meta,
         });
         let prompt_entry = match prompt_entry {
             Ok(entry) => entry,

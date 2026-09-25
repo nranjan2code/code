@@ -7,7 +7,9 @@ import Icon from "./Icon";
 import AgentMark from "./AgentMark";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
-import PresentationTimelineView, { StructuredView } from "./PresentationRenderer";
+import PresentationTimelineView, { Artifact, StructuredView } from "./PresentationRenderer";
+import { attachFiles } from "../attachFiles";
+import type { OutputItem } from "../types";
 import { hasSettledProjection, serverTurnFor } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
@@ -579,18 +581,42 @@ export const Markdown = MarkdownView;
 export const ItemView = (props: { item: Item; sessionId?: string | null }): JSX.Element =>
   <Show when={props.item} keyed>{(item) => itemBody(item, props.sessionId)}</Show>;
 
+/** An attached file as the same file card a deliverable gets (U6). */
+function attachedFileItem(file: api.InboxFile, sessionId?: string | null): OutputItem {
+  const size = file.bytes < 1024 * 1024 ? `${Math.max(1, Math.round(file.bytes / 1024))} KB` : `${(file.bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return {
+    id: `attached:${file.path}`,
+    turn_id: "",
+    timestamp: "",
+    role: "user",
+    kind: "artifact",
+    status: "succeeded",
+    content: { type: "artifact", artifact: { name: file.name, path: file.path, description: `Attached · ${size}` } },
+    provenance: sessionId ? { session_id: sessionId } : undefined,
+    actions: [],
+    fallback_text: file.path,
+  } as OutputItem;
+}
+
 function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   if (item.kind === "user") {
     const text = stripControlScaffolding(item.text);
-    if (!text) return null;
+    if (!text && !item.files?.length) return null;
     return (
       <div class="msg user">
         <div class="msg-bubble-wrap">
           <div class="user-turn-head">
             <span class="turn-author-chip">{item.authorName || "You"}</span>
           </div>
-          <div class="msg-user-content"><Markdown text={text} /></div>
-          <MessageActions text={text} role="user" />
+          <Show when={item.files?.length}>
+            <div class="msg-user-files" aria-label="Attached files">
+              <For each={item.files}>{(file) => <Artifact item={attachedFileItem(file, sessionId)} />}</For>
+            </div>
+          </Show>
+          <Show when={text}>
+            <div class="msg-user-content"><Markdown text={text} /></div>
+            <MessageActions text={text} role="user" />
+          </Show>
         </div>
       </div>
     );
@@ -980,8 +1006,27 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     if (index === turns().length - 1 && isRunning(sid())) return null;
     return { ...timeline, items };
   };
+  const [fileOver, setFileOver] = createSignal(false);
+  const carriesFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
   return (
-    <div class="chat-shell">
+    <div
+      class="chat-shell"
+      classList={{ "file-drop": fileOver() }}
+      onDragOver={(event) => {
+        if (!carriesFiles(event)) return;
+        event.preventDefault();
+        setFileOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFileOver(false);
+      }}
+      onDrop={(event) => {
+        setFileOver(false);
+        if (!carriesFiles(event) || !event.dataTransfer?.files.length) return;
+        event.preventDefault();
+        attachFiles(Array.from(event.dataTransfer.files));
+      }}
+    >
       <Show when={sid()}>{(id) => <RunControls sessionId={id()} />}</Show>
       <Show when={navigableTurnCount() > 1}>
         <nav class="turn-rail" aria-label="Conversation turns">

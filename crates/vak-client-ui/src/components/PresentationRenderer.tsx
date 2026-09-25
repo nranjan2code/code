@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, ErrorBoundary, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type {
   DocumentBlock,
@@ -17,6 +17,7 @@ import {
   openArtifactPathInCanvas,
   openArtifactCanvas,
   openCandidateReview,
+  openOfficeCitation,
   setReplyTarget,
   isRunning,
 } from "../store";
@@ -26,6 +27,9 @@ import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath } from "../safeUrl";
 import * as api from "../api";
+import { host } from "../host";
+import { isOfficePath, parseOfficeCitation } from "../officeFiles";
+import { officeFactsLine, officeFlagsLabel } from "../officeFacts";
 import { highlight, languageForFence } from "../highlight";
 import DiffInspector from "./presentation/DiffInspector";
 import { downloadCsv } from "./presentation/data";
@@ -131,8 +135,11 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
             return <em><InlineSequence nodes={node.content} /></em>;
           case "strikethrough":
             return <s><InlineSequence nodes={node.content} /></s>;
-          case "code":
-            return <code class="ic">{node.code}</code>;
+          case "code": {
+            const citation = parseOfficeCitation(node.code);
+            if (!citation) return <code class="ic">{node.code}</code>;
+            return <button type="button" class="ic office-cite" title={`Open ${citation.path} at ${citation.anchor}`} onClick={() => openOfficeCitation(citation)}>{node.code}</button>;
+          }
           case "link": {
             if (node.safe && safeUrl(node.url)) {
               return (
@@ -604,15 +611,48 @@ function RenderAudit(props: { document: PresentationDocument }) {
   </Show>;
 }
 
-function Artifact(props: { item: OutputItem; showActions?: boolean }) {
+/**
+ * The file card (docs/design/72, U6): a deliverable or an attached file, with
+ * what the reader says about an Office file (its kind, counts and flags) and
+ * Open, Review, Download and, where the host has it, Open with.
+ */
+export function Artifact(props: { item: OutputItem; showActions?: boolean }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
   const path = () => artifact.path ?? null;
   const reviewAction = () => props.item.actions.find((action) => action.verb === "review_draft");
+  const [facts] = createResource(
+    () => { const value = path(); return value && isOfficePath(value) ? value : null; },
+    (value) => api.readOfficeFacts({ path: value }),
+  );
+  const [problem, setProblem] = createSignal<string | null>(null);
+  const download = async (value: string) => {
+    setProblem(null);
+    try {
+      const { bytes, mime } = await api.readFileBytes(value);
+      await host.saveFile(artifact.name || value.split("/").pop() || "file", bytes, mime);
+    } catch (error) {
+      setProblem(`Could not download: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const openWith = async (value: string) => {
+    setProblem(null);
+    try {
+      await host.openWith?.(value);
+    } catch (error) {
+      setProblem(error instanceof Error ? error.message : String(error));
+    }
+  };
+  const flags = () => { const value = facts(); return value ? officeFlagsLabel(value) : null; };
   return (
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
-      <span class="artifact-copy"><strong>{artifact.name}</strong><small>{artifact.description ?? artifact.media_type ?? "Artifact"}</small></span>
+      <span class="artifact-copy">
+        <strong>{artifact.name}</strong>
+        <small>{facts() ? officeFactsLine(facts()!) : artifact.description ?? artifact.media_type ?? "Artifact"}</small>
+        <Show when={flags()}>{(label) => <small class="artifact-flags" title={facts()!.flags.join("\n")}><Icon name="warning" size={11} />{label()}</small>}</Show>
+        <Show when={problem()}><small class="artifact-problem" role="alert">{problem()}</small></Show>
+      </span>
       <Show when={props.showActions !== false && path()}>
         {(value) => (
           <button
@@ -647,6 +687,12 @@ function Artifact(props: { item: OutputItem; showActions?: boolean }) {
             {action().label}
           </button>
         )}
+      </Show>
+      <Show when={props.showActions !== false && path()}>
+        {(value) => <button type="button" class="artifact-open" onClick={() => void download(value())}>Download</button>}
+      </Show>
+      <Show when={props.showActions !== false && host.can("open-with") && facts() && !facts()!.macro_enabled && path()}>
+        {(value) => <button type="button" class="artifact-open" onClick={() => void openWith(value())}>Open with…</button>}
       </Show>
     </article>
   );

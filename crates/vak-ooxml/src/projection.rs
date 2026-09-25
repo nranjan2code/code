@@ -102,6 +102,62 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
     }
 }
 
+/// The index of the unit a citation names: the unit with exactly that
+/// anchor; for a cell or range (`Budget!B4`, `Budget!B4:D9`), the row that
+/// holds its first cell; otherwise the first unit inside the section or
+/// slide it names. `None` when the file has no such place.
+pub fn locate(document: &Document, anchor: &str) -> Option<usize> {
+    let anchor = anchor.trim();
+    if let Some(index) = document.units.iter().position(|unit| unit.anchor == anchor) {
+        return Some(index);
+    }
+    if let Some((sheet, cells)) = anchor.rsplit_once('!') {
+        let first = cells
+            .split(':')
+            .next()
+            .unwrap_or_default()
+            .to_ascii_uppercase();
+        let prefix = format!("{sheet}!");
+        if let Some(index) = document.units.iter().position(|unit| {
+            unit.anchor.starts_with(&prefix)
+                && unit
+                    .cells
+                    .iter()
+                    .any(|(address, _)| address.eq_ignore_ascii_case(&first))
+        }) {
+            return Some(index);
+        }
+        let row: String = first
+            .chars()
+            .skip_while(char::is_ascii_alphabetic)
+            .collect();
+        if !row.is_empty() {
+            let row_suffix = |unit: &Unit| {
+                unit.anchor
+                    .rsplit_once(':')
+                    .map(|(_, last)| {
+                        last.trim_start_matches(|c: char| c.is_ascii_alphabetic()) == row
+                    })
+                    .unwrap_or(false)
+            };
+            if let Some(index) = document
+                .units
+                .iter()
+                .position(|unit| unit.anchor.starts_with(&prefix) && row_suffix(unit))
+            {
+                return Some(index);
+            }
+        }
+    }
+    document.units.iter().position(|unit| {
+        unit.anchor.starts_with(anchor)
+            && matches!(
+                unit.anchor.as_bytes().get(anchor.len()),
+                Some(b'/' | b'!' | b':')
+            )
+    })
+}
+
 /// Roughly what a unit costs once serialised.
 fn weight(unit: &Unit) -> usize {
     64 + unit.anchor.len()

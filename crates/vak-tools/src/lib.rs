@@ -211,6 +211,11 @@ impl ToolOutput {
     }
 }
 
+/// Workspace-relative directory where files a person sends (on a channel or
+/// dropped in a client) are saved, so every file tool reaches them under
+/// invariant 10 (docs/design/72, "File in").
+pub const INBOX_DIR: &str = "inbox";
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;

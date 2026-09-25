@@ -744,16 +744,88 @@ fn set_boot_error(state: &BackendState, error: Option<String>) {
     }
 }
 
-/// Persist an exported document (e.g. a session transcript) to a path the
-/// user explicitly chose in a native save dialog. The webview has no fs
-/// plugin, so this is the one sanctioned write-out path; content arrives
-/// from the embedded router, not from ambient state.
+/// Persist a file the person saves (a transcript, a document) to the path
+/// they explicitly chose in a native save dialog. The webview has no fs
+/// plugin, so this is the one sanctioned write-out path. The bytes arrive as
+/// the raw request body; the chosen path, percent-encoded, in the
+/// `vak-save-path` header.
 #[tauri::command]
-async fn export_text_file(path: String, contents: String) -> Result<usize, String> {
-    tokio::fs::write(&path, contents.as_bytes())
+async fn export_file(request: tauri::ipc::Request<'_>) -> Result<usize, String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected the file's bytes".into());
+    };
+    let path = request
+        .headers()
+        .get("vak-save-path")
+        .and_then(|value| value.to_str().ok())
+        .and_then(percent_decode)
+        .ok_or("expected the chosen path")?;
+    tokio::fs::write(&path, bytes)
         .await
-        .map(|_| contents.len())
+        .map(|_| bytes.len())
         .map_err(|e| format!("could not write {path}: {e}"))
+}
+
+fn percent_decode(encoded: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(encoded.len());
+    let mut input = encoded.bytes();
+    while let Some(byte) = input.next() {
+        if byte == b'%' {
+            let high = (input.next()? as char).to_digit(16)?;
+            let low = (input.next()? as char).to_digit(16)?;
+            bytes.push(u8::try_from(high * 16 + low).ok()?);
+        } else {
+            bytes.push(byte);
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// "Open with…" (docs/design/72, P4): hands a workspace document to the
+/// application the operating system associates with it. Scoped to a regular
+/// Word, Excel, PowerPoint or Visio file inside the open workspace, named
+/// relative to it; a macro-enabled file is refused, so Vak never hands over
+/// a file whose macros could run. Vak does not read or run the file here.
+#[tauri::command]
+fn open_workspace_file(state: State<'_, BackendState>, path: String) -> Result<(), String> {
+    let cwd = state
+        .running
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .and_then(|running| running.info.cwd.clone())
+        .ok_or("no workspace is open")?;
+    let workspace = std::path::Path::new(&cwd)
+        .canonicalize()
+        .map_err(|e| format!("workspace unavailable: {e}"))?;
+    let target = workspace
+        .join(&path)
+        .canonicalize()
+        .map_err(|_| format!("{path} was not found"))?;
+    if !target.starts_with(&workspace) || !target.is_file() {
+        return Err(format!("{path} is not a file in this workspace"));
+    }
+    let format = target
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(vak_ooxml::Format::from_extension)
+        .ok_or_else(|| format!("{path} is not a Word, Excel, PowerPoint or Visio file"))?;
+    if format.macro_enabled {
+        return Err(format!(
+            "{path} can contain macros, so Vak does not open it; open it yourself if you trust it"
+        ));
+    }
+    #[cfg(target_os = "macos")]
+    let mut command = std::process::Command::new("open");
+    #[cfg(target_os = "windows")]
+    let mut command = std::process::Command::new("explorer");
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let mut command = std::process::Command::new("xdg-open");
+    command
+        .arg(&target)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("could not open {path}: {e}"))
 }
 
 /// What a folder would ask for, before anything opens it.
@@ -1017,7 +1089,8 @@ fn main() {
             open_admin,
             review_workspace,
             start_backend,
-            export_text_file,
+            export_file,
+            open_workspace_file,
             pty::spawn_pty,
             pty::pty_write,
             pty::pty_resize,

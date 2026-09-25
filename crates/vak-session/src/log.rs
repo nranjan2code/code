@@ -1540,6 +1540,11 @@ impl SessionLog {
                         .meta
                         .as_ref()
                         .and_then(|meta| meta.author_name.clone()),
+                    attachments: record
+                        .meta
+                        .as_ref()
+                        .map(|meta| meta.attachments.clone())
+                        .unwrap_or_default(),
                 }),
                 EntryPayload::Compaction(c) => Some(TranscriptMessage {
                     entry_id: entry.id.clone(),
@@ -1551,6 +1556,7 @@ impl SessionLog {
                     context: true,
                     author_id: None,
                     author_name: None,
+                    attachments: Vec::new(),
                 }),
                 _ => None,
             })

@@ -114,7 +114,8 @@ entire native surface is:
 | `review_workspace` | trust gate | `POST /onboarding/workspace-review` (exists) |
 | `open_admin` | header, settings | same-origin link to `/admin` |
 | `append_profile_note` | **nobody** — dead code (§11.7) | already `POST /memory` |
-| `export_text_file` | transcript export | `Blob` + `<a download>` |
+| `export_file` | transcript export, document download | `Blob` + `<a download>` |
+| `open_workspace_file` | "Open with…" on an Office document (docs/design/72) | none: a browser cannot launch an application on the machine that holds the file |
 | `spawn_pty` / `pty_write` / `pty_resize` | terminal | `WS /sessions/:id/pty` (new, gated) |
 | `plugin-dialog` `open` | pick a project folder | `GET /fs/dirs` browser (new) |
 | `plugin-dialog` `save` | transcript export | browser download |
@@ -185,7 +186,11 @@ export interface Host {
   pickWorkspace(): Promise<string | null>;
 
   /** Getting bytes to the operator. Native save dialog vs. download. */
-  saveText(suggestedName: string, contents: string): Promise<"saved" | "downloaded" | "cancelled">;
+  saveFile(suggestedName: string, bytes: Uint8Array, mime: string): Promise<SaveOutcome>;
+
+  /** Only where can("open-with"): a workspace Office document, not
+   *  macro-enabled, opened in its associated application. */
+  openWith?(path: string): Promise<void>;
 
   notify(title: string, body: string): Promise<void>;
   openAdmin(route: string): void;
@@ -199,7 +204,9 @@ export type HostFeature =
   | "terminal"           // a real PTY
   | "multi-workspace"    // can open arbitrary folders
   | "system-notifications"
-  | "tray";
+  | "tray"
+  | "microphone"
+  | "open-with";         // hand a workspace document to its application
 ```
 
 `can()` is not decoration. The UI must render *differently*, not

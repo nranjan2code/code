@@ -547,11 +547,40 @@ export interface RunAdmission {
   state: "started" | "queued" | "duplicate";
 }
 
+/** A file saved in the workspace inbox (docs/design/72, "File in"). */
+export interface InboxFile {
+  /** Workspace-relative, under `inbox/`. */
+  path: string;
+  name: string;
+  bytes: number;
+}
+
+/** What a message carries besides its text: images the model sees, and
+ *  files it is told about by path (their bytes never reach it). */
+export interface Attachments {
+  images: { mime: string; data: string }[];
+  files: InboxFile[];
+}
+
+/** Saves a dropped or picked file to the workspace inbox. */
+export async function uploadToInbox(file: File): Promise<InboxFile> {
+  const response = await authFetch(`/fs/inbox?name=${encodeURIComponent(file.name)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/octet-stream" },
+    body: file,
+  });
+  if (!response.ok) {
+    const detail = await response.json().catch(() => null) as { error?: string } | null;
+    throw new Error(detail?.error ?? `${response.status} ${response.statusText}`);
+  }
+  return response.json() as Promise<InboxFile>;
+}
+
 export function runPrompt(
   id: string,
   prompt: string,
   goal?: { objective: string; criteria: string[] },
-  attachments?: { mime: string; data: string }[],
+  attachments?: Attachments,
   requestId?: string,
   routing?: RoutingEnvelope,
 ): Promise<RunAdmission> {
@@ -565,7 +594,8 @@ export function runPrompt(
       routing,
       goal: goal?.objective,
       criteria: goal?.criteria,
-      attachments: attachments ?? [],
+      attachments: attachments?.images ?? [],
+      files: attachments?.files.map((file) => file.path) ?? [],
     }),
   });
 }
@@ -940,6 +970,16 @@ export async function readFileRaw(path: string): Promise<string> {
   return URL.createObjectURL(await response.blob());
 }
 
+/** A workspace file's bytes and type, for saving a copy. */
+export async function readFileBytes(path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
+  const response = await authFetch(`/fs/file/raw?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return {
+    bytes: new Uint8Array(await response.arrayBuffer()),
+    mime: response.headers.get("Content-Type") ?? "application/octet-stream",
+  };
+}
+
 export function writeFile(path: string, content: string): Promise<unknown> {
   return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
 }
@@ -1051,6 +1091,8 @@ export type OfficeProjection = {
   next: number | null;
   units: OfficeUnit[];
   not_read: string[];
+  /** The unit a cited anchor named, when the page was asked for `at` one. */
+  focus?: string;
 };
 
 export type OfficeStructure = {
@@ -1072,13 +1114,32 @@ function officeUrl(source: OfficeSource, query: string): string {
     : `/fs/office?${path}`;
 }
 
-export function readOfficeProjection(source: OfficeSource, from = 0): Promise<OfficeProjection> {
-  return req(officeUrl(source, `from=${from}`));
+/** A page of an Office file: from unit `from`, or, given `at`, from the unit
+ *  that cited anchor names (`focus` is then that unit's anchor). */
+export function readOfficeProjection(source: OfficeSource, from = 0, at?: string): Promise<OfficeProjection> {
+  return req(officeUrl(source, at ? `at=${encodeURIComponent(at)}` : `from=${from}`));
 }
 
 export function readOfficeStructure(source: OfficeSource): Promise<OfficeStructure> {
   return req(officeUrl(source, "view=structure"));
 }
+
+/** What a file card says about an Office file: its kind, counts and flags,
+ *  with no content (`units` is empty). A card is drawn again on every
+ *  timeline update, so one answer per path serves every card for a short
+ *  while instead of one worker read per render. `null` when it cannot be
+ *  read. */
+export function readOfficeFacts(source: OfficeSource): Promise<OfficeProjection | null> {
+  const key = `${source.sessionId ?? ""}:${source.candidateId ?? ""}:${source.path}`;
+  const cached = officeFactsCache.get(key);
+  if (cached && Date.now() - cached.at < OFFICE_FACTS_TTL_MS) return cached.facts;
+  const facts = req<OfficeProjection>(officeUrl(source, "view=facts")).catch(() => null);
+  officeFactsCache.set(key, { at: Date.now(), facts });
+  return facts;
+}
+
+const OFFICE_FACTS_TTL_MS = 30_000;
+const officeFactsCache = new Map<string, { at: number; facts: Promise<OfficeProjection | null> }>();
 
 export async function readSandboxCandidateFileRaw(sessionId: string, candidateId: string, path: string): Promise<string> {
   const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);

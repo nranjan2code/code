@@ -11,6 +11,7 @@
 // add it to crates/vak-delivery/src/presentation.rs too (and vice versa).
 
 import { safeUrl, isLocalArtifactPath, cleanArtifactPath } from "./safeUrl";
+import { parseOfficeCitation } from "./officeFiles";
 
 function esc(s: string): string {
   return s
@@ -25,6 +26,11 @@ function inline(s: string): string {
   // inline code; path-looking spans become clickable editor links
   out = out.replace(/`([^`\n]+)`/g, (_m, rawCode: string) => {
     const code = rawCode.trim();
+    // A cited place in an Office file opens the file's view there.
+    const citation = parseOfficeCitation(code);
+    if (citation) {
+      return `<code class="ic office-cite" role="button" tabindex="0" data-office-path="${citation.path}" data-anchor="${citation.anchor}" title="Open ${citation.path} at ${citation.anchor}">${code}</code>`;
+    }
     const cleanPath = code.replace(/[.,;:!?)]'"`]+$/, "").trim();
     const isDir =
       cleanPath.endsWith("/") ||

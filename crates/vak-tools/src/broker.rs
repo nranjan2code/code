@@ -63,13 +63,18 @@ enum WorkerTask {
 }
 
 /// Which projection of an Office file a view asks for (docs/design/72, P4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OfficeView {
     /// One page of units starting at `from`, with the outline.
     Content { from: usize },
+    /// The page that starts at the unit a citation names; the reply's
+    /// `focus` is that unit's anchor, absent when the file has no such place.
+    At { anchor: String },
     /// Parts, content types and relationships (U4).
     Structure,
+    /// What the file is, its counts and flags, and no content: a file card.
+    Facts,
 }
 
 /// How an Office draft was made: the file it started from, the digest that
@@ -718,14 +723,27 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
     let bytes = crate::office_apply::read_bounded(path, &limits)?;
     let sha256 = crate::office_apply::sha256_hex(&bytes);
     let mut body = match view {
-        OfficeView::Content { from } => {
+        OfficeView::Content { .. } | OfficeView::At { .. } | OfficeView::Facts => {
             let document = vak_ooxml::read::read(std::io::Cursor::new(bytes), limits)
                 .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
-            serde_json::to_value(vak_ooxml::projection::project(
+            let focus = match &view {
+                OfficeView::At { anchor } => vak_ooxml::projection::locate(&document, anchor),
+                _ => None,
+            };
+            let from = match &view {
+                OfficeView::Content { from } => *from,
+                OfficeView::At { .. } => focus.unwrap_or(0),
+                _ => document.units.len(),
+            };
+            let mut page = serde_json::to_value(vak_ooxml::projection::project(
                 &document,
                 from,
                 vak_ooxml::projection::PAGE_BYTES,
-            ))
+            ));
+            if let (Ok(page), Some(index)) = (&mut page, focus) {
+                page["focus"] = Value::String(document.units[index].anchor.clone());
+            }
+            page
         }
         OfficeView::Structure => {
             let structure =

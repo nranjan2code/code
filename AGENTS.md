@@ -663,8 +663,11 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
     one does as a Vak automation under review. No external office application (Microsoft
     Office, LibreOffice, .NET) is ever a runtime dependency; such tools may
     serve only as CI test oracles, and their results are never shown to users
-    as checks. A non-text channel attachment never enters a prompt as bytes:
-    it is saved to `inbox/` in the Agent workspace and named. Every change to
+    as checks. A non-text attachment, from a channel or dropped in a client,
+    never enters a prompt as bytes: it is saved to `inbox/` in the Agent
+    workspace by the one `save_to_inbox` path and named, and the message
+    records it as a typed attachment (`MessageMeta::attachments`) so a client
+    draws the file, never the note. Every change to
     a document goes through the one `vak_ooxml::edit` engine and its typed
     ops, and `office_apply` is its only tool: an op names an anchor from a
     read of the exact file (`base_digest`), splices only the elements it

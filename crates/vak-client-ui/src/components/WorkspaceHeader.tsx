@@ -114,7 +114,7 @@ export default function WorkspaceHeader() {
       // The host decides how bytes reach the operator: a native save
       // dialog on the desktop, a download in a browser (where the
       // filesystem on the other end of a dialog would be the wrong one).
-      const outcome = await host.saveText(name, md, "text/markdown");
+      const outcome = await host.saveFile(name, new TextEncoder().encode(md), "text/markdown");
       if (outcome.kind === "saved") {
         setNotice({ kind: "info", text: `Transcript saved to ${outcome.path}` });
       } else if (outcome.kind === "downloaded") {

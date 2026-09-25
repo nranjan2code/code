@@ -24,6 +24,7 @@ tauri-plugin-single-instance = { workspace = true }
 notify-rust = { workspace = true }
 vak-core = { workspace = true }
 vak-delivery = { workspace = true }
+vak-ooxml = { workspace = true }
 vak-config = { workspace = true }
 vak-ops = { workspace = true }
 vak-server = { workspace = true }

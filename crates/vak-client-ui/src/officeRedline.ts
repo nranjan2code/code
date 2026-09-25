@@ -27,13 +27,3 @@ export function parseRedline(value: string): RedlineSegment[] {
   return segments;
 }
 
-const OFFICE_EXTENSIONS = new Set([
-  "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlam",
-  "pptx", "pptm", "potx", "potm", "ppsx", "ppsm", "ppam",
-  "vsdx", "vsdm", "vstx", "vstm", "vssx", "vssm",
-]);
-
-export function isOfficePath(path: string): boolean {
-  const extension = path.split(".").pop()?.toLowerCase() ?? "";
-  return OFFICE_EXTENSIONS.has(extension);
-}

@@ -550,7 +550,7 @@ export function swapPanes() {
 export async function sendPrompt(
   text: string,
   goal?: { objective: string; criteria: string[] },
-  attachments?: { mime: string; data: string }[],
+  attachments?: api.Attachments,
   // Send to a specific session instead of the focused one — e.g. a diff
   // pane bound to a best-of-N child via `diffTarget`, which is not
   // necessarily `activeId()`. Without this, DiffPane's "review" always
@@ -561,7 +561,7 @@ export async function sendPrompt(
   relation?: api.RoutingEnvelope["relation"],
   propagateError = false,
 ) {
-  if (!text.trim() && !(attachments && attachments.length)) return;
+  if (!text.trim() && !attachments?.images.length && !attachments?.files.length) return;
   let id = targetId ?? activeId();
   if (!id) {
     id = await openAgentChat("vak");
@@ -619,13 +619,16 @@ export async function sendPrompt(
 
   const thisGoal = goalAppliesTo(id);
   setArmedGoal(null);
-  appendUser(id, text);
+  appendUser(id, text, attachments?.files);
   try {
     const requestId = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     if (isRunning(id)) {
-      const receipt = await api.steer(id, text, attachments, requestId, {
+      if (attachments?.files.length) {
+        throw new Error("files can be attached once this turn finishes");
+      }
+      const receipt = await api.steer(id, text, attachments?.images, requestId, {
         message_id: requestId,
         conversation_id: id,
         target_work_id: replyTarget?.sessionId,
@@ -751,7 +754,7 @@ export async function loadHealth() {
 export async function sendSideQuestion(question: string) {
   const id = activeId();
   if (!id || !question.trim()) return;
-  appendUser(id, question, "side");
+  appendUser(id, question, undefined, "side");
   markRunning(id, true, "side");
   ensureSideStream(id);
   try {

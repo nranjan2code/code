@@ -219,7 +219,10 @@ async fn an_unsupported_modality_fails_typed_instead_of_dropping_the_image() {
     let result = core
         .run_turn_with_message(
             session,
-            prompt,
+            vak_session::MessageRecord {
+                message: prompt,
+                meta: None,
+            },
             CancellationToken::new(),
             None,
             None,
@@ -251,7 +254,10 @@ async fn an_unsupported_modality_fails_typed_instead_of_dropping_the_image() {
     let (outcome, _) = core
         .run_turn_with_message(
             session,
-            prompt,
+            vak_session::MessageRecord {
+                message: prompt,
+                meta: None,
+            },
             CancellationToken::new(),
             None,
             None,

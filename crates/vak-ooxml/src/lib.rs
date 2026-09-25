@@ -175,15 +175,26 @@ pub fn is_openxml_path(path: &str) -> bool {
 }
 
 /// True when `anchor` has the shape of an anchor the reader returns
-/// (`p:1A2B3C4D`, `p@12`, `Budget!B4`, `'Q4 plan'!A5:B5`, `Budget!`,
-/// `slide:256`, `slide:256/shape:3`, `slide:256/placeholder:title`,
-/// `slide:256/notes`, `page:0/shape:5`). It checks shape only: whether the
-/// anchor exists is a question for a read of the file.
+/// (`p:1A2B3C4D`, `p@12`, `p@12/comment:3`, `tbl@1`, `tbl@1/r2`,
+/// `Budget!B4`, `'Q4 plan'!A5:B5`, `Budget!`, `slide:256`,
+/// `slide:256/shape:3`, `slide:256/placeholder:title`, `slide:256/notes`,
+/// `page:0/shape:5`). It checks shape only: whether the anchor exists is a
+/// question for a read of the file. A defined name's anchor is the bare name
+/// and has no shape to check.
 pub fn is_anchor(anchor: &str) -> bool {
     if anchor.is_empty() || anchor.len() > 300 || anchor.chars().any(char::is_control) {
         return false;
     }
     let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    if let Some((paragraph, id)) = anchor.split_once("/comment:") {
+        return (paragraph.starts_with("p:") || paragraph.starts_with("p@"))
+            && is_anchor(paragraph)
+            && digits(id);
+    }
+    if let Some(rest) = anchor.strip_prefix("tbl@") {
+        let (table, row) = rest.split_once('/').unwrap_or((rest, ""));
+        return digits(table) && (row.is_empty() || row.strip_prefix('r').is_some_and(digits));
+    }
     if let Some(id) = anchor.strip_prefix("p:") {
         return (1..=8).contains(&id.len()) && id.bytes().all(|byte| byte.is_ascii_hexdigit());
     }

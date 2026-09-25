@@ -28,7 +28,11 @@ export type HostFeature =
   /** A menu-bar/tray presence and a background service lifecycle. */
   | "tray"
   /** A user microphone can be captured by the host. */
-  | "microphone";
+  | "microphone"
+  /** Hand a workspace document to the application the operating system
+   *  associates with it ("Open with…"). Desktop only: a browser cannot
+   *  launch an application on the machine that holds the file. */
+  | "open-with";
 
 /** Where a saved document ended up, so callers can word their own notice. */
 export type SaveOutcome =
@@ -72,7 +76,12 @@ export interface Host {
   forgetWorkspace?(cwd: string): Promise<void>;
 
   /** Get bytes to the operator: a native save dialog, or a download. */
-  saveText(suggestedName: string, contents: string, mime?: string): Promise<SaveOutcome>;
+  saveFile(suggestedName: string, bytes: Uint8Array<ArrayBuffer>, mime: string): Promise<SaveOutcome>;
+
+  /** Open a workspace document in its associated application. Present only
+   *  where `can("open-with")`; the host refuses anything outside the
+   *  workspace, anything not an Office document, and macro-enabled files. */
+  openWith?(path: string): Promise<void>;
 
   /** `route` is where a click should land, as a hash route. Hosts that
    *  cannot make a notification clickable simply ignore it. */

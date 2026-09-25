@@ -16,6 +16,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use crate::inbox::{self, save_to_inbox};
+
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
@@ -1813,10 +1815,6 @@ pub(crate) const INBOUND_DOCUMENT_MAX_BYTES: usize = 1024 * 1024;
 /// text, and every non-text file, is saved to the workspace inbox instead.
 const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
 
-/// Workspace-relative directory for files received on a channel, so every
-/// file tool reaches them under invariant 10.
-const INBOX_DIR: &str = "inbox";
-
 /// Compose the prompt message: text, vision blocks, inlined text documents,
 /// and a note for each document saved to the inbox. A document's bytes
 /// never enter the prompt unless they are text (docs/design/72, F1). The
@@ -1875,113 +1873,12 @@ fn document_block(attachment: &InboundAttachment, workspace: &std::path::Path) -
     {
         return format!("Attached file `{filename}`:\n```\n{content}\n```");
     }
-    let saved = match save_to_inbox(workspace, filename, &bytes) {
-        Ok(saved) => saved,
+    match save_to_inbox(workspace, filename, &bytes) {
+        Ok(saved) => inbox::note(filename, &saved, &bytes),
         Err(error) => {
-            return format!(
-                "[attached file '{filename}' could not be saved ({error}); not included]"
-            );
+            format!("[attached file '{filename}' could not be saved ({error}); not included]")
         }
-    };
-    let size = format!("{} KiB", bytes.len().div_ceil(1024));
-    if vak_ooxml::is_openxml_path(&saved) {
-        format!(
-            "[attached file '{filename}' ({size}) saved to {saved}; read it with doc_read. Its contents are not in this message.]"
-        )
-    } else if text.is_some() {
-        format!(
-            "[attached text file '{filename}' ({size}) saved to {saved}; read it with read or doc_read. Its contents are not in this message.]"
-        )
-    } else {
-        format!(
-            "[attached file '{filename}' ({size}) saved to {saved}. It is not a text or Open XML file, so no reader here understands it yet; its bytes are not in this message.]"
-        )
     }
-}
-
-/// Saves received bytes under `<workspace>/inbox/` with a digest-prefixed,
-/// sanitised name. Returns the workspace-relative path. Never overwrites,
-/// never follows a planted symlink out of the workspace, and saving the
-/// same bytes under the same name twice yields the same file.
-fn save_to_inbox(
-    workspace: &std::path::Path,
-    filename: &str,
-    bytes: &[u8],
-) -> Result<String, String> {
-    use sha2::Digest as _;
-    use std::io::Write as _;
-    let workspace = workspace
-        .canonicalize()
-        .map_err(|error| format!("workspace unavailable: {error}"))?;
-    let inbox = workspace.join(INBOX_DIR);
-    std::fs::create_dir_all(&inbox).map_err(|error| format!("inbox: {error}"))?;
-    let inbox = inbox
-        .canonicalize()
-        .map_err(|error| format!("inbox: {error}"))?;
-    if !inbox.starts_with(&workspace) {
-        return Err("inbox resolves outside the workspace".into());
-    }
-    let digest = sha2::Sha256::digest(bytes);
-    let prefix: String = digest
-        .iter()
-        .take(6)
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    let name = format!("{prefix}-{}", sanitize_filename(filename));
-    let path = inbox.join(&name);
-    let relative = format!("{INBOX_DIR}/{name}");
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut file) => {
-            file.write_all(bytes)
-                .and_then(|()| file.sync_all())
-                .map_err(|error| format!("write failed: {error}"))?;
-            Ok(relative)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let existing =
-                std::fs::symlink_metadata(&path).map_err(|error| format!("inbox: {error}"))?;
-            if existing.file_type().is_file() && std::fs::read(&path).ok().as_deref() == Some(bytes)
-            {
-                Ok(relative)
-            } else {
-                Err("a different file already has that name".into())
-            }
-        }
-        Err(error) => Err(format!("create failed: {error}")),
-    }
-}
-
-/// The last path component, with anything outside a conservative
-/// character set replaced, no leading dots, and a bounded length.
-fn sanitize_filename(filename: &str) -> String {
-    let last = filename.rsplit(['/', '\\']).next().unwrap_or_default();
-    let cleaned: String = last
-        .chars()
-        .map(|character| {
-            if character.is_alphanumeric() || matches!(character, '.' | '-' | '_' | ' ') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    let cleaned = cleaned.trim().trim_start_matches('.').trim();
-    let mut name: String = cleaned
-        .chars()
-        .rev()
-        .take(120)
-        .collect::<Vec<_>>()
-        .into_iter()
-        .rev()
-        .collect();
-    if name.is_empty() {
-        name = "file".into();
-    }
-    name
 }
 
 pub(crate) fn compose_voice_prompt(text: &str) -> vak_llm::Message {
@@ -3136,7 +3033,7 @@ async fn execute_turn_chain(
         core,
         handle,
         taken,
-        crate::TurnStart::Message(prompt),
+        crate::TurnStart::message(prompt),
         approver_factory,
         settle,
     )
@@ -3425,6 +3322,15 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::inbox::{INBOX_DIR, sanitize_filename};
+
+    /// The path a note names, quoted after "at path".
+    fn saved_path(note: &str) -> Option<&str> {
+        note.split_once("at path \"")?
+            .1
+            .split_once('"')
+            .map(|(path, _)| path)
+    }
 
     #[test]
     fn a_channel_reply_for_a_failed_run_is_human_text_never_the_raw_error() {
@@ -3691,11 +3597,7 @@ mod tests {
             !text.contains("xxxx"),
             "the raw content must not be inlined"
         );
-        let saved = text
-            .split_whitespace()
-            .find(|word| word.starts_with("inbox/"))
-            .unwrap()
-            .trim_end_matches(';');
+        let saved = saved_path(text).unwrap();
         assert!(saved.ends_with("-notes.py"), "{text}");
         assert_eq!(
             std::fs::read_to_string(workspace.path().join(saved)).unwrap(),
@@ -3713,7 +3615,7 @@ mod tests {
             workspace.path(),
         );
         let text = note(&msg);
-        assert!(text.contains("read it with doc_read"), "{text}");
+        assert!(text.contains("Read it with doc_read"), "{text}");
         assert!(text.contains("-Q3 report.docx"), "{text}");
         assert!(
             !text.contains("PK"),
@@ -3763,11 +3665,7 @@ mod tests {
         ] {
             let msg = compose_prompt("x", &[document(name, b"\x00binary")], workspace.path());
             let text = note(&msg);
-            let saved = text
-                .split_whitespace()
-                .find(|word| word.starts_with("inbox/"))
-                .unwrap_or_else(|| panic!("{name}: {text}"))
-                .trim_end_matches('.');
+            let saved = saved_path(text).unwrap_or_else(|| panic!("{name}: {text}"));
             assert!(
                 !saved[6..].contains('/') && !saved.contains(".."),
                 "{name} -> {saved}"

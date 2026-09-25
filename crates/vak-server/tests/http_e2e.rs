@@ -1094,3 +1094,119 @@ async fn rejected_request_writes_no_durable_admission() {
     let retry_body: serde_json::Value = retry.json().await.unwrap();
     assert_eq!(retry_body["state"], "started");
 }
+
+/// A provider that answers once and keeps every request it was sent.
+struct Recording {
+    requests: Arc<Mutex<Vec<ChatRequest>>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for Recording {
+    fn name(&self) -> &str {
+        "scripted"
+    }
+
+    async fn stream(
+        &self,
+        request: ChatRequest,
+        _cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        self.requests.lock().unwrap().push(request);
+        let (mut sink, rx) = stream::channel(64);
+        let m = text("It is a three-slide deck.");
+        sink.push(stream::StreamEvent::Start { partial: m.clone() });
+        sink.close_message(m).await;
+        Ok(rx)
+    }
+}
+
+/// A file dropped on the conversation (docs/design/72, "File in") is saved
+/// to the workspace inbox, reaches the model as a note naming where it is
+/// and never as its bytes, and reaches the client as a typed attachment of
+/// that message, so the chat draws a file rather than the note.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dropped_file_reaches_the_model_as_a_note_and_the_chat_as_a_file() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let provider = Arc::new(Recording {
+        requests: requests.clone(),
+    });
+    let (base, _server) = spawn_server(provider, vak_config::PermissionMode::WorkspaceWrite).await;
+    let client = reqwest::Client::new();
+    let bytes = b"PK\x03\x04\x14\x00 deck bytes \x00\x01\x02".to_vec();
+    let uploaded: serde_json::Value = client
+        .post(format!("{base}/fs/inbox?name=Q3%20deck.pptx"))
+        .body(bytes.clone())
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let path = uploaded["path"].as_str().unwrap().to_string();
+    assert!(
+        path.starts_with("inbox/") && path.ends_with("-Q3 deck.pptx"),
+        "{uploaded}"
+    );
+    assert_eq!(uploaded["name"], "Q3 deck.pptx");
+    assert_eq!(uploaded["bytes"], bytes.len());
+
+    let session_id: String = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for outside in [
+        "../secret.pptx",
+        "deck.pptx",
+        "inbox/../deck.pptx",
+        "inbox/missing.pptx",
+    ] {
+        let refused = client
+            .post(format!("{base}/sessions/{session_id}/run"))
+            .json(&serde_json::json!({"prompt": "read it", "files": [outside]}))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(refused.status(), 400, "{outside} must be refused");
+    }
+    let res = client
+        .post(format!("{base}/sessions/{session_id}/run"))
+        .json(&serde_json::json!({"prompt": "what is in it?", "files": [path]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 202);
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let raw = poll_transcript_contains(&client, &base, &session_id, "three-slide", deadline).await;
+    let transcript: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    let attachment = &transcript["entries"][0]["attachments"][0];
+    assert_eq!(attachment["path"], path.as_str(), "{transcript}");
+    assert_eq!(attachment["name"], "Q3 deck.pptx");
+    assert_eq!(attachment["block"], 1);
+    let note = transcript["messages"][0]["content"][1]["text"]
+        .as_str()
+        .unwrap();
+    assert!(
+        note.contains(&format!("at path \"{path}\"")) && note.contains("doc_read"),
+        "{note}"
+    );
+    assert_eq!(
+        transcript["messages"][0]["content"][0]["text"],
+        "what is in it?"
+    );
+
+    let requests = requests.lock().unwrap();
+    let sent = serde_json::to_string(&requests.last().unwrap().messages).unwrap();
+    assert!(sent.contains(&format!("at path \\\"{path}\\\"")), "{sent}");
+    assert!(
+        !sent.contains("deck bytes"),
+        "the file's bytes reached the model"
+    );
+}

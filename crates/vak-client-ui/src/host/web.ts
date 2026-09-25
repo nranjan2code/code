@@ -100,8 +100,8 @@ export const activeHost: Host = {
     return null;
   },
 
-  async saveText(suggestedName: string, contents: string, mime = "text/plain"): Promise<SaveOutcome> {
-    const url = URL.createObjectURL(new Blob([contents], { type: mime }));
+  async saveFile(suggestedName: string, bytes: Uint8Array<ArrayBuffer>, mime: string): Promise<SaveOutcome> {
+    const url = URL.createObjectURL(new Blob([bytes], { type: mime }));
     const a = document.createElement("a");
     a.href = url;
     a.download = suggestedName;

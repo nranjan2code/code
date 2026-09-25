@@ -8,6 +8,7 @@ import {
   openArtifactCanvas,
   openWorkbenchFolder,
   isScratchDirectory,
+  openOfficeCitation,
 } from "../store";
 import { openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
@@ -101,6 +102,11 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
           target.textContent = "copy failed";
           setTimeout(() => (target.textContent = "copy"), 1400);
         });
+      return;
+    }
+    const cite = target.closest("code.office-cite[data-office-path]");
+    if (cite) {
+      openOfficeCitation({ path: cite.getAttribute("data-office-path") ?? "", anchor: cite.getAttribute("data-anchor") ?? "" });
       return;
     }
     const link = target.closest("a.artifact-lnk[data-path]");

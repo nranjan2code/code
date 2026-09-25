@@ -146,3 +146,47 @@ fn structure_lists_parts_types_and_relationships() {
     );
     assert!(structure.untyped_parts.is_empty());
 }
+
+#[test]
+fn a_citation_finds_the_unit_it_names() {
+    let workbook = read_bytes(&fixtures::xlsx());
+    let rows: Vec<(usize, &read::Unit)> = workbook
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| unit.kind == read::UnitKind::SheetRow)
+        .collect();
+    let (index, row) = rows[1];
+    let (cell, _) = &row.cells[1];
+    let sheet = row.anchor.split_once('!').unwrap().0;
+    assert_eq!(
+        projection::locate(&workbook, &row.anchor),
+        Some(index),
+        "the row by its own anchor"
+    );
+    assert_eq!(
+        projection::locate(&workbook, &format!("{sheet}!{cell}")),
+        Some(index),
+        "a cell finds its row"
+    );
+    assert_eq!(
+        projection::locate(&workbook, &format!("{sheet}!{}:Z99", cell.to_lowercase())),
+        Some(index),
+        "a range finds the row of its first cell"
+    );
+    assert_eq!(
+        projection::locate(&workbook, &format!("{sheet}!ZZ9999")),
+        None
+    );
+
+    let deck = read_bytes(&fixtures::pptx());
+    let slide = deck
+        .units
+        .iter()
+        .position(|unit| unit.kind == read::UnitKind::Shape)
+        .unwrap();
+    let slide_anchor = deck.units[slide].anchor.split('/').next().unwrap();
+    let located = projection::locate(&deck, slide_anchor).unwrap();
+    assert!(deck.units[located].anchor.starts_with(slide_anchor));
+    assert!(located <= slide);
+}

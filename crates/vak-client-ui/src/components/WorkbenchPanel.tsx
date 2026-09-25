@@ -21,7 +21,7 @@ import * as api from "../api";
 import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
 import OfficeChangeList from "./OfficeChangeList";
-import { isOfficePath } from "../officeRedline";
+import { isOfficePath } from "../officeFiles";
 import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";

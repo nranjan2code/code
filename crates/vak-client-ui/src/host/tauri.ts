@@ -27,6 +27,7 @@ export const activeHost: Host = {
       "system-notifications",
       "tray",
       "microphone",
+      "open-with",
     ];
     return supported.includes(feature);
   },
@@ -70,7 +71,7 @@ export const activeHost: Host = {
     }
   },
 
-  async saveText(suggestedName: string, contents: string): Promise<SaveOutcome> {
+  async saveFile(suggestedName: string, bytes: Uint8Array<ArrayBuffer>): Promise<SaveOutcome> {
     const extension = suggestedName.split(".").pop() ?? "txt";
     const path = await saveDialog({
       title: "Save",
@@ -78,8 +79,13 @@ export const activeHost: Host = {
       filters: [{ name: extension.toUpperCase(), extensions: [extension] }],
     });
     if (!path) return { kind: "cancelled" };
-    await invoke("export_text_file", { path, contents });
+    // Raw body: a document's bytes never travel as a JSON number array.
+    await invoke("export_file", bytes, { headers: { "vak-save-path": encodeURIComponent(path) } });
     return { kind: "saved", path };
+  },
+
+  async openWith(path: string): Promise<void> {
+    await invoke("open_workspace_file", { path });
   },
 
   async notify(title: string, body: string, _route?: string): Promise<void> {

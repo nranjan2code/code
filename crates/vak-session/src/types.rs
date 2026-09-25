@@ -264,6 +264,8 @@ pub struct TranscriptMessage {
     pub context: bool,
     pub author_id: Option<String>,
     pub author_name: Option<String>,
+    /// Files attached to this message (`MessageMeta::attachments`).
+    pub attachments: Vec<AttachedFile>,
 }
 
 impl MessageRecord {
@@ -307,6 +309,24 @@ pub struct MessageMeta {
     /// Client idempotency key, scoped to `author_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Files the person attached, saved in the workspace inbox. Each names
+    /// the text block that tells the model where the file is, so a client
+    /// draws the file there instead of that line.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<AttachedFile>,
+}
+
+/// A file attached to a user message (docs/design/72, "File in"). Its bytes
+/// never enter the message; `block` is the index of the text block that
+/// names `path` to the model.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttachedFile {
+    pub block: usize,
+    /// Workspace-relative, under `inbox/`.
+    pub path: String,
+    /// The name the file had when it was attached.
+    pub name: String,
+    pub bytes: u64,
 }
 
 /// A compaction packet (docs/design/68-context-engine.md §4): the summary

@@ -165,6 +165,9 @@ export interface TranscriptEntryMeta {
   entry_id: string;
   author_id?: string | null;
   author_name?: string | null;
+  /** Files attached to this message; `block` is the content block that
+   *  names each to the model, which the chat draws as the file instead. */
+  attachments?: { block: number; path: string; name: string; bytes: number }[];
 }
 
 export interface OutputItem {

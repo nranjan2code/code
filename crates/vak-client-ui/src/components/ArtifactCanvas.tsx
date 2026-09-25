@@ -19,7 +19,7 @@ import { artifactPreviewHtml } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate, sendPrompt } from "../App";
 import OfficeView from "./OfficeView";
-import { isOfficePath } from "../officeRedline";
+import { isOfficePath } from "../officeFiles";
 
 export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office";
 
@@ -780,6 +780,7 @@ export default function ArtifactCanvas() {
                 <OfficeView
                   source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId }}
                   fileName={title()}
+                  focus={artifact().anchor}
                 />
               }</Show>
               {/* Image Preview */}

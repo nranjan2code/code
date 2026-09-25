@@ -89,6 +89,7 @@ mod events;
 mod feeds;
 pub mod gateway;
 mod heartbeat;
+mod inbox;
 mod operations;
 mod projection;
 mod rate_limit;
@@ -941,6 +942,12 @@ fn router_with_state(state: AppState) -> Router {
         .route("/fs/file", get(read_file).put(write_file))
         .route("/fs/file/raw", get(read_file_raw))
         .route("/fs/office", get(read_office_projection))
+        .route(
+            "/fs/inbox",
+            post(upload_to_inbox).layer(axum::extract::DefaultBodyLimit::max(
+                inbox::UPLOAD_MAX_BYTES,
+            )),
+        )
         .route("/fs/preview/{*path}", get(preview_file))
         .route("/sandbox/records", get(list_sandbox_records))
         .route("/fs/tree", get(fs_tree))
@@ -4320,6 +4327,11 @@ struct RunBody {
     /// (docs/design/22-gateway.md media passthrough).
     #[serde(default)]
     attachments: Vec<RunAttachment>,
+    /// Files already saved in the workspace inbox (`POST /fs/inbox`), named
+    /// by the paths that route returned. Each reaches the model as a note
+    /// saying where it is, never as its bytes (docs/design/72, F1).
+    #[serde(default)]
+    files: Vec<String>,
     /// Goal mode (docs/design/42-managed-work-contracts.md): durable objective; completion
     /// is audited against `criteria`, never self-reported.
     #[serde(default)]
@@ -4467,7 +4479,8 @@ mod provider_unavailable_tests {
 /// goal/managed/auto request — that is `/run`'s own admission, which a
 /// queued steering message never claims to be.
 enum TurnStart {
-    Message(vak_llm::Message),
+    /// The person's message as recorded, with its metadata (attached files).
+    Message(vak_session::MessageRecord),
     Managed(String),
     Auto(String),
     Goal {
@@ -4478,13 +4491,20 @@ enum TurnStart {
 }
 
 impl TurnStart {
+    fn message(message: vak_llm::Message) -> Self {
+        TurnStart::Message(vak_session::MessageRecord {
+            message,
+            meta: None,
+        })
+    }
+
     /// The message this leg would present — used both to seed the preview
     /// intent before a run starts and, on the busy path, as the queued
     /// steering entry (attachments and all; invariant 1, model-visible
     /// input is never degraded to bare text).
     fn preview_message(&self) -> vak_llm::Message {
         match self {
-            TurnStart::Message(m) => m.clone(),
+            TurnStart::Message(m) => m.message.clone(),
             TurnStart::Managed(p) | TurnStart::Auto(p) => vak_llm::Message::user_text(p),
             TurnStart::Goal { prompt, .. } => vak_llm::Message::user_text(prompt),
         }
@@ -4699,7 +4719,7 @@ async fn run_turn_chain<F, Fut>(
             None => return,
             Some((ledger, merged)) => {
                 taken = ledger;
-                start = TurnStart::Message(merged);
+                start = TurnStart::message(merged);
             }
         }
     }
@@ -4908,7 +4928,7 @@ async fn run_prompt(
     // ---- Validate the request shape before any side effect (finding 4):
     // no durable admission activity, no admissions-set insertion, and no
     // synthesized `RunFinished` for input that never starts a run. ----
-    if body.goal.is_some() && !body.attachments.is_empty() {
+    if body.goal.is_some() && !(body.attachments.is_empty() && body.files.is_empty()) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "goal runs do not support attachments"})),
@@ -4926,12 +4946,25 @@ async fn run_prompt(
     }
     let managed = matches!(body.work_mode.as_deref(), Some("managed"));
     let automatic = matches!(body.work_mode.as_deref(), Some("auto"));
-    if (managed || automatic) && !body.attachments.is_empty() {
+    if (managed || automatic) && !(body.attachments.is_empty() && body.files.is_empty()) {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({"error": "managed work currently requires text-only input"})),
         )
             .into_response();
+    }
+    let mut attached = Vec::new();
+    for file in &body.files {
+        match inbox::attached(handle.core.cwd(), file) {
+            Ok(file) => attached.push(file),
+            Err(error) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": error })),
+                )
+                    .into_response();
+            }
+        }
     }
     if let Err(e) = handle.core.provider() {
         return provider_unavailable(e);
@@ -4948,8 +4981,8 @@ async fn run_prompt(
         TurnStart::Managed(expanded_prompt.clone())
     } else if automatic {
         TurnStart::Auto(expanded_prompt.clone())
-    } else if body.attachments.is_empty() {
-        TurnStart::Message(vak_llm::Message::user_text(expanded_prompt.clone()))
+    } else if body.attachments.is_empty() && attached.is_empty() {
+        TurnStart::message(vak_llm::Message::user_text(expanded_prompt.clone()))
     } else {
         let mut blocks = vec![vak_llm::ContentBlock::text(expanded_prompt.clone())];
         for a in &body.attachments {
@@ -4961,9 +4994,21 @@ async fn run_prompt(
                 a.data.trim().to_string(),
             ));
         }
-        TurnStart::Message(vak_llm::Message {
-            role: vak_llm::Role::User,
-            content: blocks,
+        let mut attachments = Vec::with_capacity(attached.len());
+        for (note, mut file) in attached {
+            file.block = blocks.len();
+            blocks.push(vak_llm::ContentBlock::text(note));
+            attachments.push(file);
+        }
+        TurnStart::Message(vak_session::MessageRecord {
+            message: vak_llm::Message {
+                role: vak_llm::Role::User,
+                content: blocks,
+            },
+            meta: (!attachments.is_empty()).then(|| vak_session::MessageMeta {
+                attachments,
+                ..Default::default()
+            }),
         })
     };
     let restricted = matches!(
@@ -5500,7 +5545,7 @@ async fn send_steering(
                 handle,
                 core,
                 taken,
-                TurnStart::Message(message),
+                TurnStart::message(message),
                 None,
             );
             (
@@ -7206,6 +7251,7 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
                 "entry_id": item.entry_id,
                 "author_id": item.author_id,
                 "author_name": item.author_name,
+                "attachments": item.attachments,
             })
         })
         .collect();
@@ -10281,9 +10327,73 @@ struct OfficeProjectionQuery {
     path: String,
     #[serde(default)]
     from: usize,
-    /// `structure` for the Structure view; anything else is content.
+    /// `structure` for the Structure view, `facts` for a file card; anything
+    /// else is content.
     #[serde(default)]
     view: Option<String>,
+    /// A cited anchor: content from the unit it names (docs/design/72,
+    /// "Read and cite").
+    #[serde(default)]
+    at: Option<String>,
+}
+
+impl OfficeProjectionQuery {
+    fn view(&self) -> vak_tools::broker::OfficeView {
+        use vak_tools::broker::OfficeView;
+        match (self.view.as_deref(), &self.at) {
+            (Some("structure"), _) => OfficeView::Structure,
+            (Some("facts"), _) => OfficeView::Facts,
+            (_, Some(anchor)) if vak_ooxml::is_anchor(anchor) => OfficeView::At {
+                anchor: anchor.clone(),
+            },
+            _ => OfficeView::Content { from: self.from },
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct InboxUploadQuery {
+    name: String,
+}
+
+/// A file a person drops on the conversation (docs/design/72, "File in"):
+/// saved to the workspace inbox exactly as a channel attachment is, whatever
+/// the permission mode, since it is the person's own file arriving. The
+/// reply names the saved path, which a run request then attaches.
+async fn upload_to_inbox(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<InboxUploadQuery>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if body.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "the file is empty" })),
+        )
+            .into_response();
+    }
+    let workspace = state.active_core().cwd().to_path_buf();
+    let name = q.name.clone();
+    let saved = tokio::task::spawn_blocking(move || {
+        inbox::save_to_inbox(&workspace, &name, &body)
+            .and_then(|saved| inbox::attached(&workspace, &saved))
+    })
+    .await;
+    match saved {
+        Ok(Ok((_, file))) => Json(serde_json::json!({
+            "path": file.path,
+            "name": file.name,
+            "bytes": file.bytes,
+        }))
+        .into_response(),
+        Ok(Err(error)) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 /// What the Canvas draws of a workspace Office file (docs/design/72, P4):
@@ -10307,10 +10417,7 @@ async fn read_office_projection(
     if !path.is_file() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let view = match q.view.as_deref() {
-        Some("structure") => vak_tools::broker::OfficeView::Structure,
-        _ => vak_tools::broker::OfficeView::Content { from: q.from },
-    };
+    let view = q.view();
     match vak_tools::broker::office_project(&state.core.tool_worker_exe(), &path, view).await {
         Ok(mut body) => {
             body["path"] = serde_json::Value::String(q.path.clone());
@@ -10510,6 +10617,10 @@ fn raw_mime_for(path: &std::path::Path) -> &'static str {
         "ogg" => "audio/ogg",
         "mp4" => "video/mp4",
         "webm" => "video/webm",
+        "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        "vsdx" => "application/vnd.ms-visio.drawing",
         _ => "application/octet-stream",
     }
 }
@@ -11289,10 +11400,7 @@ async fn read_sandbox_candidate_office_projection(
     let Some(draft) = confined_path(&saved.candidate.source_root, &q.path) else {
         return StatusCode::FORBIDDEN.into_response();
     };
-    let view = match q.view.as_deref() {
-        Some("structure") => vak_tools::broker::OfficeView::Structure,
-        _ => vak_tools::broker::OfficeView::Content { from: q.from },
-    };
+    let view = q.view();
     match vak_tools::broker::office_project(&state.core.tool_worker_exe(), &draft, view).await {
         Ok(mut body) => {
             body["path"] = serde_json::Value::String(q.path.clone());
@@ -20255,6 +20363,7 @@ mod sandbox_promotion_tests {
                 path: "budget.xlsx".into(),
                 from: 0,
                 view: None,
+                at: None,
             }),
         )
         .await;
@@ -20321,6 +20430,7 @@ mod sandbox_promotion_tests {
                 path: path.into(),
                 from,
                 view: view.map(str::to_string),
+                at: None,
             };
             async move { read_office_projection(State(state), axum::extract::Query(query)).await }
         };
@@ -20344,6 +20454,34 @@ mod sandbox_promotion_tests {
         let structure = body_json(response).await;
         assert_eq!(structure["main_part"], "word/document.xml");
         assert!(structure["parts"].as_array().unwrap().len() > 2);
+
+        let cited = page["units"][2]["anchor"].as_str().unwrap().to_string();
+        let response = read_office_projection(
+            State(state.clone()),
+            axum::extract::Query(OfficeProjectionQuery {
+                path: "q3.docx".into(),
+                from: 0,
+                view: None,
+                at: Some(cited.clone()),
+            }),
+        )
+        .await;
+        let at = body_json(response).await;
+        assert_eq!(at["from"], 2, "{at}");
+        assert_eq!(at["focus"], cited.as_str());
+        assert_eq!(at["units"][0]["anchor"], cited.as_str());
+
+        let response = read("q3.docx", 0, Some("facts")).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let facts = body_json(response).await;
+        assert_eq!(facts["kind"], "Word document");
+        assert!(facts["units"].as_array().unwrap().is_empty(), "{facts}");
+        assert_eq!(facts["total_units"], page["total_units"]);
+        assert!(
+            facts["stats"]
+                .as_array()
+                .is_some_and(|stats| !stats.is_empty())
+        );
 
         assert_eq!(
             read("notes.txt", 0, None).await.status(),
