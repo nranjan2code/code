@@ -202,7 +202,7 @@ export default function WorkspaceHeader() {
           </button>
         </Show>
 
-        <details class="workspace-more">
+        <details class="workspace-more" data-menu>
           <summary class="icon-button has-tooltip" data-tooltip="More options" aria-label="More options"><Icon name="more" size={16} /></summary>
           <div class="workspace-more-menu" role="menu">
             <Show when={activeId()}>

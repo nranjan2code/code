@@ -32,8 +32,8 @@ impl Tool for OfficeApplyTool {
         &["documents"]
     }
 
-    fn delivers_file(&self) -> bool {
-        true
+    fn delivered_file(&self, args: &Value) -> Option<String> {
+        args.get("path").and_then(Value::as_str).map(str::to_string)
     }
 
     fn description(&self) -> &str {

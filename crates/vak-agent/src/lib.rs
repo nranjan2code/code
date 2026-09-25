@@ -518,6 +518,39 @@ impl AgentConfig {
 /// this run (cards are Vak's own display channel; a repeat is not an error).
 const CARD_REPEAT_ACK: &str = "Card already displayed to the user. Do not call it again: finish now (any text is shown only if it begins with `Note:`).";
 
+/// The result for a call identical to one that already delivered a file this
+/// run (`Tool::delivered_file`): the first draft stands and no second one is
+/// written. The first call's result follows it.
+const DRAFT_REPEAT_ACK: &str = "Already drafted: this exact call ran earlier in this turn and its draft stands, so no second draft was written. Do not call it again; answer with one sentence saying what you changed. The earlier result:";
+
+/// The start of the result for a card that previews a file this run already
+/// delivered: the card is not shown, because the draft is in front of the
+/// person with its change list and an imitation of it is not.
+const WITHHELD_CARD_ACK: &str = "Not shown:";
+
+fn is_no_op_ack(text: &str) -> bool {
+    text.starts_with(CARD_REPEAT_ACK)
+        || text.starts_with(DRAFT_REPEAT_ACK)
+        || text.starts_with(WITHHELD_CARD_ACK)
+}
+
+/// What calls delivered this run (`Tool::delivered_file`), reset per run.
+#[derive(Default)]
+struct RunDeliveries {
+    /// `name + input` of each delivering call → its result.
+    results: HashMap<String, String>,
+    /// Workspace paths delivered, as the calls named them.
+    paths: std::collections::HashSet<String>,
+    /// Card calls withheld because they preview a delivered path; their
+    /// presentation is never recorded.
+    withheld_cards: std::collections::HashSet<String>,
+}
+
+fn same_workspace_path(a: &str, b: &str) -> bool {
+    let trim = |path: &str| path.trim().trim_start_matches("./").to_string();
+    trim(a) == trim(b)
+}
+
 /// Consecutive all-repeat card batches after which the turn closes on the
 /// card as its answer. Three: one repeat is a slip the ack corrects, two is
 /// a model that did not read it, three is one that will not.
@@ -1023,6 +1056,7 @@ pub struct Agent {
     run_call_counts: std::sync::Mutex<HashMap<String, u32>>,
     /// `name + input` of every card call that displayed successfully this run.
     presented_cards: std::sync::Mutex<std::collections::HashSet<String>>,
+    deliveries: std::sync::Mutex<RunDeliveries>,
     /// What each call in flight produced beyond its result text, drained
     /// when the batch's results are recorded (`CallYield`).
     call_yields: CallYields,
@@ -1058,6 +1092,7 @@ impl Agent {
             config,
             run_call_counts: std::sync::Mutex::new(HashMap::new()),
             presented_cards: std::sync::Mutex::new(std::collections::HashSet::new()),
+            deliveries: std::sync::Mutex::new(RunDeliveries::default()),
             call_yields: CallYields::default(),
             active_goal: None,
             obligations: Vec::new(),
@@ -1250,6 +1285,10 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        *self
+            .deliveries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = RunDeliveries::default();
         if self.active_goal.is_some() {
             // Goal lifecycle opens the run (audit-only entry).
             let mut session = self.session.lock().await;
@@ -1386,6 +1425,10 @@ impl Agent {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        *self
+            .deliveries
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = RunDeliveries::default();
         let mut stop_blocks_left = self
             .config
             .stop_policy
@@ -2679,9 +2722,9 @@ impl Agent {
             // CARD_REPEAT_EXHAUSTION_THRESHOLD consecutive all-repeat batches
             // the turn closes on that answer.
             let all_repeats = !results.is_empty()
-                && results.iter().all(|(_, output)| {
-                    matches!(output, ToolRunOutput::Ok(text) if text.starts_with(CARD_REPEAT_ACK))
-                });
+                && results.iter().all(
+                    |(_, output)| matches!(output, ToolRunOutput::Ok(text) if is_no_op_ack(text)),
+                );
             card_repeat_streak = if all_repeats {
                 card_repeat_streak + 1
             } else {
@@ -2779,7 +2822,8 @@ impl Agent {
                 matches!(out, ToolRunOutput::Ok(_))
                     && call_names
                         .get(id)
-                        .is_some_and(|name| self.tool_delivers_file(name))
+                        .zip(call_inputs.get(id))
+                        .is_some_and(|(name, input)| self.delivered_file(name, input).is_some())
             });
             if !emitted_card_types.is_empty() {
                 // A card emitted alongside the retrieval is the grounded
@@ -2829,6 +2873,15 @@ impl Agent {
                         }
                         if !self.tool_presents_cards(name) {
                             in_batch_evidence.push(id.clone());
+                            continue;
+                        }
+                        if self
+                            .deliveries
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .withheld_cards
+                            .contains(id)
+                        {
                             continue;
                         }
                         let Some(input) = call_inputs.get(id) else {
@@ -4145,13 +4198,15 @@ impl Agent {
         }
     }
 
-    /// Whether `name` is one of this agent's tools and a successful call
-    /// delivers a reviewable file (`Tool::delivers_file`).
-    fn tool_delivers_file(&self, name: &str) -> bool {
+    /// The path a successful call of `name` with `input` delivers for
+    /// review, when `name` is one of this agent's tools
+    /// (`Tool::delivered_file`).
+    fn delivered_file(&self, name: &str, input: &Value) -> Option<String> {
         self.config
             .tools
             .iter()
-            .any(|tool| tool.name() == name && tool.delivers_file())
+            .find(|tool| tool.name() == name)
+            .and_then(|tool| tool.delivered_file(input))
     }
 
     /// Whether `name` is one of this agent's tools and it declares that a
@@ -4714,6 +4769,9 @@ impl Agent {
     /// one (a small model repeats it until a breaker fires) is answered with a
     /// plain ack instead of being run — never an error, which the stop guard
     /// would count as an unresolved failure and answer with another model turn.
+    /// Likewise a call identical to one that already delivered a file gets
+    /// that call's result without writing a second draft or asking for
+    /// approval again, and a card previewing a delivered file is not shown.
     async fn execute_batch(
         &self,
         calls: Vec<PendingToolCall>,
@@ -4811,9 +4869,47 @@ impl Agent {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone();
         let mut repeats: Vec<String> = Vec::new();
+        let mut answered: Vec<(String, ToolRunOutput)> = Vec::new();
         let mut live_cards: HashMap<String, String> = HashMap::new();
+        let mut live_deliveries: HashMap<String, (String, String)> = HashMap::new();
         let mut live = Vec::with_capacity(calls.len());
         for call in calls {
+            let mut deliveries = self
+                .deliveries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(path) = self.delivered_file(&call.name, &call.input) {
+                let delivery_key = key(&call);
+                if let Some(first) = deliveries.results.get(&delivery_key) {
+                    answered.push((
+                        call.id.clone(),
+                        ToolRunOutput::Ok(format!("{DRAFT_REPEAT_ACK}\n{first}")),
+                    ));
+                    continue;
+                }
+                live_deliveries.insert(call.id.clone(), (delivery_key, path));
+            }
+            if self.tool_presents_cards(&call.name)
+                && let Some(path) = call
+                    .input
+                    .pointer("/payload/artifact_path")
+                    .and_then(Value::as_str)
+                && let Some(delivered) = deliveries
+                    .paths
+                    .iter()
+                    .find(|delivered| same_workspace_path(delivered, path))
+                    .cloned()
+            {
+                deliveries.withheld_cards.insert(call.id.clone());
+                answered.push((
+                    call.id.clone(),
+                    ToolRunOutput::Ok(format!(
+                        "{WITHHELD_CARD_ACK} {delivered} is already in front of the person as a draft they review with its change list, and a card cannot show it better. Do not present it again; answer with one sentence saying what you changed."
+                    )),
+                ));
+                continue;
+            }
+            drop(deliveries);
             if self.tool_presents_cards(&call.name) {
                 let card_key = key(&call);
                 if !shown.insert(card_key.clone()) {
@@ -4836,6 +4932,23 @@ impl Agent {
                 }
             }
         }
+        {
+            let mut deliveries = self
+                .deliveries
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (id, output) in &results {
+                if let (Some((delivery_key, path)), ToolRunOutput::Ok(text)) =
+                    (live_deliveries.get(id), output)
+                {
+                    deliveries
+                        .results
+                        .insert(delivery_key.clone(), text.clone());
+                    deliveries.paths.insert(path.clone());
+                }
+            }
+        }
+        results.extend(answered);
         results.extend(
             repeats
                 .into_iter()

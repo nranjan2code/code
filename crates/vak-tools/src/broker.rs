@@ -256,8 +256,8 @@ impl Tool for BrokeredTool {
         self.inner.refusal(args)
     }
 
-    fn delivers_file(&self) -> bool {
-        self.inner.delivers_file()
+    fn delivered_file(&self, args: &Value) -> Option<String> {
+        self.inner.delivered_file(args)
     }
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {

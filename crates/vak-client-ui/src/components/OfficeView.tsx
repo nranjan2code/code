@@ -237,6 +237,9 @@ function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Of
   );
 }
 
+/** The reader's break between the paragraphs of one shape (vak_ooxml::read::PARAGRAPH_BREAK). */
+const PARAGRAPH_BREAK = " ¶ ";
+
 function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps }) {
   const slides = createMemo(() => {
     const groups: { anchor: string; units: api.OfficeUnit[] }[] = [];
@@ -246,7 +249,15 @@ function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Office
       if (last && last.anchor === slide) last.units.push(unit);
       else groups.push({ anchor: slide, units: [unit] });
     }
-    return groups;
+    // The slide's heading already reads "Slide N: <title>", so the title
+    // placeholder's own text is not repeated beneath it.
+    return groups.map((group) => {
+      const heading = group.units.find((unit) => unit.kind === "slide")?.text ?? "";
+      const title = heading.replace(/^Slide \d+: /, "");
+      const repeatsTitle = (unit: api.OfficeUnit) => unit.kind === "shape" && unit.labels.length === 0 && unit.text === title;
+      const first = group.units.findIndex(repeatsTitle);
+      return { ...group, units: group.units.filter((_, index) => index !== first) };
+    });
   });
   return (
     <div class="office-view-body">
@@ -257,7 +268,9 @@ function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Office
             <For each={slide.units}>{(unit) => (
               <div role="listitem" class={`office-unit office-unit-${unit.kind}`} {...props.unitProps(unit.anchor)}>
                 <Show when={unit.kind === "notes"}><span class="office-unit-kind">Speaker notes</span></Show>
-                <p classList={{ "office-unit-heading": unit.kind === "slide" }}><Redline text={unit.text} /></p>
+                <For each={unit.text.split(PARAGRAPH_BREAK)}>{(paragraph) => (
+                  <p classList={{ "office-unit-heading": unit.kind === "slide" }}><Redline text={paragraph} /></p>
+                )}</For>
                 <span class="office-unit-anchor">{unit.anchor}</span>
                 <Labels labels={unit.labels} />
               </div>

@@ -130,6 +130,7 @@ import InboxPage from "./components/InboxPage";
 import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import OnboardingWelcome from "./components/OnboardingWelcome";
+import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
 const streams = new Map<string, () => void>();
@@ -1115,6 +1116,7 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) {
         if (e.key === "Escape") {
+          if (closeOpenMenus()) return;
           if (showShortcuts()) setShowShortcuts(false);
           else if (agentPickerOpen()) setAgentPickerOpen(false);
           else if (searchOpen()) setSearchOpen(false);
@@ -1183,8 +1185,10 @@ export default function App() {
       }
     };
     window.addEventListener("keydown", keys);
+    const stopMenuDismissal = dismissMenusOnPressOutside();
     onCleanup(() => {
       window.removeEventListener("keydown", keys);
+      stopMenuDismissal();
       window.removeEventListener("hashchange", onHashChange);
       window.removeEventListener("offline", goOffline);
       window.removeEventListener("online", goOnline);

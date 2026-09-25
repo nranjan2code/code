@@ -6,9 +6,12 @@
 //! And when correctable failures persist, the loop's repair directive is
 //! runtime-authored control traffic, never a message from the person.
 //! And an answer after a tool delivered a reviewable file (an Office
-//! draft) is not sent back to be re-presented as a card.
+//! draft) is not sent back to be re-presented as a card; a repeat of the
+//! delivering call writes no second draft, and a card previewing the
+//! delivered file is not shown.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -270,8 +273,10 @@ async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() 
     );
 }
 
+#[derive(Default)]
 struct Deliverer {
     delivers: bool,
+    runs: AtomicUsize,
 }
 
 #[async_trait]
@@ -285,15 +290,45 @@ impl vak_tools::Tool for Deliverer {
     fn schema(&self) -> serde_json::Value {
         serde_json::json!({"type": "object"})
     }
-    fn delivers_file(&self) -> bool {
-        self.delivers
+    fn delivered_file(&self, _args: &serde_json::Value) -> Option<String> {
+        self.delivers.then(|| "deck.pptx".to_string())
     }
     async fn execute(
         &self,
         _args: &serde_json::Value,
         _ctx: &vak_tools::context::ToolContext,
     ) -> vak_tools::ToolOutput {
+        self.runs.fetch_add(1, Ordering::SeqCst);
         vak_tools::ToolOutput::ok("Draft for deck.pptx written; the person reviews it.")
+    }
+}
+
+#[derive(Default)]
+struct PreviewCard {
+    runs: AtomicUsize,
+}
+
+#[async_trait]
+impl vak_tools::Tool for PreviewCard {
+    fn name(&self) -> &str {
+        "emit_ui_preview_card"
+    }
+    fn description(&self) -> &str {
+        "test stand-in"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    async fn execute(
+        &self,
+        _args: &serde_json::Value,
+        _ctx: &vak_tools::context::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        vak_tools::ToolOutput::ok(r#"{"ok":true}"#)
     }
 }
 
@@ -335,7 +370,10 @@ async fn requests_after_a_draft(delivers: bool) -> usize {
     cfg.mode = Mode::WorkspaceWrite;
     cfg.retry_base_backoff_ms = 1;
     cfg.run_retry_base_backoff_ms = 1;
-    cfg.tools = vec![Arc::new(Deliverer { delivers })];
+    cfg.tools = vec![Arc::new(Deliverer {
+        delivers,
+        ..Default::default()
+    })];
     cfg.presentation_check = Some(Arc::new(|_text: &str, _offered: &[String]| {
         Some(vak_agent::PresentationNudge {
             tool: "make_draft".into(),
@@ -392,5 +430,129 @@ async fn an_answer_after_a_delivered_draft_is_not_sent_back_to_become_a_card() {
         requests_after_a_draft(false).await,
         3,
         "without a delivered file, the check still asks once for a card"
+    );
+}
+
+fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
+    msg(
+        vec![ContentBlock::ToolUse {
+            id: id.into(),
+            name: name.into(),
+            input,
+        }],
+        StopReason::ToolUse,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let header = SessionHeader {
+        agent: None,
+        session_id: "repeat".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "workspace-write".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let log = SessionLog::create(
+        SessionPath::new_session_file(&home, dir.path(), "repeat"),
+        header,
+    )
+    .unwrap();
+    let drafts = Arc::new(Deliverer {
+        delivers: true,
+        ..Default::default()
+    });
+    let cards = Arc::new(PreviewCard::default());
+    let mut cfg = AgentConfig::new("sys");
+    cfg.model = "test-model".into();
+    cfg.mode = Mode::WorkspaceWrite;
+    cfg.retry_base_backoff_ms = 1;
+    cfg.run_retry_base_backoff_ms = 1;
+    cfg.tools = vec![drafts.clone(), cards.clone()];
+    let slide = serde_json::json!({"path": "deck.pptx", "ops": [{"op": "add_slide_from_layout"}]});
+    let script = VecDeque::from([
+        tool_call("c1", "make_draft", slide.clone()),
+        tool_call(
+            "c2",
+            "emit_ui_preview_card",
+            serde_json::json!({"payload": {"artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"}}),
+        ),
+        tool_call("c3", "make_draft", slide),
+        msg(
+            vec![ContentBlock::text("Added the Next steps slide.")],
+            StopReason::EndTurn,
+        ),
+    ]);
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let mut agent = Agent::new(
+        Arc::new(Scripted(Mutex::new(script), requests.clone())),
+        log,
+        cfg,
+    );
+    let (tx, mut rx) = mpsc::channel(256);
+    tokio::spawn(async move { while rx.recv().await.is_some() {} });
+    let outcome = agent
+        .run(
+            "add a slide",
+            &Default::default(),
+            CancellationToken::new(),
+            tx,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(drafts.runs.load(Ordering::SeqCst), 1, "one draft written");
+    assert_eq!(
+        cards.runs.load(Ordering::SeqCst),
+        0,
+        "the preview never ran"
+    );
+    let requests = requests.lock().unwrap();
+    let results: Vec<(String, String)> = requests
+        .last()
+        .unwrap()
+        .messages
+        .iter()
+        .flat_map(|message| message.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                ..
+            } => Some((tool_use_id.clone(), format!("{content:?}"))),
+            _ => None,
+        })
+        .collect();
+    let result = |id: &str| {
+        results
+            .iter()
+            .find(|(call, _)| call == id)
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default()
+    };
+    assert!(result("c2").contains("Not shown: deck.pptx"), "{results:?}");
+    assert!(
+        result("c3").contains("Already drafted") && result("c3").contains("Draft for deck.pptx"),
+        "{results:?}"
     );
 }

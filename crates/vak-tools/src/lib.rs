@@ -249,12 +249,14 @@ pub trait Tool: Send + Sync {
         false
     }
 
-    /// A successful call delivers a file the person reviews through its own
-    /// card (an Office draft with Review), so the answer need not present it
-    /// again and the presentation check stands down for the run. Unlike
+    /// The workspace path a successful call with these arguments delivers
+    /// for the person to review through its own card (an Office draft with
+    /// Review). The answer need not present it again: the presentation check
+    /// stands down for the run, an identical call is answered with the first
+    /// one's result, and a card previewing that path is withheld. Unlike
     /// `presents_cards`, this has no bearing on permission.
-    fn delivers_file(&self) -> bool {
-        false
+    fn delivered_file(&self, _args: &Value) -> Option<String> {
+        None
     }
 
     /// A reason this call cannot succeed, decided from its arguments alone

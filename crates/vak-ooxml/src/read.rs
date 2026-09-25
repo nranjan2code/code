@@ -175,6 +175,10 @@ impl Document {
     }
 }
 
+/// Separates the paragraphs of one shape's text in a slide unit, so a
+/// bullet boundary is never confused with a slash in the text itself.
+pub const PARAGRAPH_BREAK: &str = " ¶ ";
+
 fn render_unit(unit: &Unit) -> Vec<String> {
     let characters: Vec<char> = unit.text.chars().collect();
     let chunks: Vec<String> = if characters.len() <= MAX_LINE_CHARS {
@@ -1219,7 +1223,7 @@ fn powerpoint<R: Read + Seek>(
             {
                 labels.push("off-slide, not visible when presented".into());
             }
-            let text = shape.paragraphs.join(" / ");
+            let text = shape.paragraphs.join(PARAGRAPH_BREAK);
             if !text.trim().is_empty() {
                 units.push(Unit {
                     anchor: format!("{anchor}/shape:{}", shape.id),
@@ -1246,7 +1250,7 @@ fn powerpoint<R: Read + Seek>(
             let notes: Vec<String> = note_shapes
                 .iter()
                 .filter(|shape| shape.placeholder.as_deref() == Some("body"))
-                .map(|shape| shape.paragraphs.join(" / "))
+                .map(|shape| shape.paragraphs.join(PARAGRAPH_BREAK))
                 .filter(|text| !text.trim().is_empty())
                 .collect();
             if !notes.is_empty() {
@@ -1255,7 +1259,7 @@ fn powerpoint<R: Read + Seek>(
                     anchor: format!("{anchor}/notes"),
                     kind: UnitKind::Notes,
                     level: 0,
-                    text: notes.join(" / "),
+                    text: notes.join(PARAGRAPH_BREAK),
                     labels: vec!["speaker notes".into()],
                     cells: Vec::new(),
                 });

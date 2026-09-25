@@ -767,7 +767,11 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
   (`capability::provider::call_retrieves_external`), and a tool declares that it
   presents cards with `Tool::presents_cards`. For an MCP server, declare
   `serves = ["web"]` (or `documents`, etc.); a server that declares nothing
-  inherits the `mcp` broker's web/live-data claim.
+  inherits the `mcp` broker's web/live-data claim. A tool names the file a
+  successful call delivers for review with `Tool::delivered_file`
+  (`office_apply`'s draft): the presentation check stands down for the run,
+  an identical call gets the first call's result instead of a second draft,
+  and a card whose `artifact_path` previews that file is not shown.
 - The shipped prompt seed stays under 1500 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing

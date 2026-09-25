@@ -583,7 +583,7 @@ export default function Composer(props: { cwd: string }) {
         />
         <div class="composer-toolbar">
           <div class="composer-lead">
-            <details class="composer-more">
+            <details class="composer-more" data-menu>
               <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
               <div class="composer-more-menu">
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Target: ${props.cwd.split("/").pop() || "root"}`}</span></button>

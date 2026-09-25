@@ -412,7 +412,7 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
     .unwrap();
     let text = lines(&applied);
     assert!(text.contains("[slide:257] Slide 2: Agenda"), "{text}");
-    assert!(text.contains("Budget / Hiring"), "{text}");
+    assert!(text.contains("Budget ¶ Hiring"), "{text}");
     assert!(part(&applied.bytes, "[Content_Types].xml").contains("/ppt/slides/slide2.xml"));
     assert!(
         part(&applied.bytes, "ppt/slides/_rels/slide2.xml.rels")
@@ -494,7 +494,7 @@ fn placeholder_text_notes_move_and_delete() {
     let text = lines(&applied);
     assert!(text.contains("Slide 2: Launch plan v2"), "{text}");
     assert!(
-        text.contains("[slide:256/shape:3] Ship in June / Beta in May"),
+        text.contains("[slide:256/shape:3] Ship in June ¶ Beta in May"),
         "{text}"
     );
     assert!(
