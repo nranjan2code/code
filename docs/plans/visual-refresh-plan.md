@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete. V3 and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 done. V3.2 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -239,7 +239,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 
 ### V3 — Surfaces (after V2 merges)
 
-- [ ] **V3.1 Sidebar and header.** Complete tile and Newsreader wordmark;
+- [x] **V3.1 Sidebar and header.** Complete tile and Newsreader wordmark;
   Search as a row; agents with their own character and a one-line status;
   status shown only when something is wrong; one footer menu.
 - [ ] **V3.2 Conversation.** Answers on the page, results as the only card,
@@ -439,3 +439,14 @@ what was not.
   Background tasks became icons. Checked live: every rendered icon draws
   (39 on the conversation, 122 on Settings). Evidence: `after/V2.7-*`. The
   PR panel's "◌" pending mark stays (a technical view).
+- 2026-09-25: V3.1 done. Sidebar: the complete tile with a 22px Newsreader
+  wordmark; a Search row (⌘K) that opens the global search instead of a
+  hidden agent filter (the agent picker keeps its own search); agent rows
+  with a 28px character, the full name (it wraps instead of truncating, the
+  V2.4 regression) and one quiet line with what the agent is doing or its
+  latest conversation; "New agent"; one footer menu (Keyboard shortcuts,
+  Sign out) in place of two icon buttons. Header: the agent's character at
+  28px and its name in Newsreader 22px, set on the original
+  `.workspace-title h1` rule. Checked live at 1440 (light and dark) and 390
+  (no sideways scroll). Evidence: `after/V3.1-*`. All three reviewed agents
+  still share the bird; distinct characters by default are V3.8.
