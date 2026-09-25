@@ -142,8 +142,11 @@ fn cleanup_retired_plugins(root: &Path) -> Result<(), Box<dyn std::error::Error>
             .map_err(|error| format!("could not remove retired plugin '{name}': {error}"))?;
         // Prune stale network_allow entries for the removed plugin. Leaving
         // this behind would advertise a capability that no longer exists.
-        vak_config::prune_plugins_network_allow(root, name)
-            .map_err(|error| format!("could not prune network_allow for '{name}': {error}"))?;
+        let config = root.join("config.toml");
+        if config.is_file() {
+            vak_config::prune_plugins_network_allow(&config, name)
+                .map_err(|error| format!("could not prune network_allow for '{name}': {error}"))?;
+        }
     }
     Ok(())
 }

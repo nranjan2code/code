@@ -136,3 +136,77 @@ async fn a_global_write_under_a_project_pin_persists_without_taking_effect() {
         "and what the files resolve to agrees"
     );
 }
+
+fn install_retired_plugin(root: &std::path::Path, name: &str, scope: vak_plugin::InstallScope) {
+    let staging = tempfile::tempdir().unwrap();
+    let package = staging.path().join(name);
+    std::fs::create_dir_all(package.join("skills/legacy")).unwrap();
+    std::fs::write(
+        package.join("vak-plugin.json"),
+        format!(
+            r#"{{"schema":1,"name":"{name}","version":"1.0.0","description":"Old.","license":"MIT","components":{{"skills":["skills"]}}}}"#
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("skills/legacy/SKILL.md"),
+        "---\nname: legacy\ndescription: Old.\n---\n\nCall `python_eval`.\n",
+    )
+    .unwrap();
+    vak_plugin::PluginStore::new(root)
+        .install_local(
+            &package,
+            vak_plugin::InstallOptions {
+                scope,
+                allow_unlicensed: false,
+            },
+        )
+        .unwrap();
+}
+
+fn network_allow(path: &std::path::Path) -> Value {
+    let config: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    serde_json::to_value(&config["plugins"]["network_allow"]).unwrap()
+}
+
+/// A user-scope plugin's grant lives in the Shared layer and a workspace
+/// plugin's in the project layer; removing either prunes its own layer.
+#[tokio::test]
+async fn removing_retired_plugins_prunes_the_layer_of_each_scope() {
+    let _home = private_home();
+    let dir = tempfile::tempdir().unwrap();
+    let global = vak_config::global_path().unwrap();
+    let project = vak_config::project_path(dir.path());
+    install_retired_plugin(
+        global.parent().unwrap(),
+        "user-eval",
+        vak_plugin::InstallScope::User,
+    );
+    install_retired_plugin(
+        project.parent().unwrap(),
+        "project-eval",
+        vak_plugin::InstallScope::Workspace,
+    );
+    let grants = "[plugins]\nnetwork_allow = [\"user-eval\", \"project-eval\", \"kept\"]\n";
+    std::fs::write(&global, grants).unwrap();
+    std::fs::write(&project, grants).unwrap();
+    vak_core::trust::record(dir.path()).unwrap();
+    let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    let app = vak_server::router(core);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/plugins/retired")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    assert_eq!(network_allow(&global), json!(["project-eval", "kept"]));
+    assert_eq!(network_allow(&project), json!(["user-eval", "kept"]));
+}
