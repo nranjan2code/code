@@ -604,9 +604,11 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
     return (
       <div class="msg user">
         <div class="msg-bubble-wrap">
-          <div class="user-turn-head">
-            <span class="turn-author-chip">{item.authorName || "You"}</span>
-          </div>
+          <Show when={item.authorName}>
+            <div class="user-turn-head">
+              <span class="turn-author-chip">{item.authorName}</span>
+            </div>
+          </Show>
           <Show when={item.files?.length}>
             <div class="msg-user-files" aria-label="Attached files">
               <For each={item.files}>{(file) => <Artifact item={attachedFileItem(file, sessionId)} />}</For>

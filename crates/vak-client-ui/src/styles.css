@@ -2998,21 +2998,16 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .semantic-assistant .semantic-document { color: var(--text); line-height: 1.62; max-width: 760px; padding: 0; }
 .primary-result {
   width: min(760px, 100%);
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--border-soft) 82%, transparent);
-  border-radius: 18px;
-  background: color-mix(in srgb, var(--surface) 94%, var(--accent-wash));
 }
 .primary-result-note { margin-top: 10px; }
-.primary-result-caution { display: flex; align-items: center; gap: 8px; padding: 11px 16px; border-bottom: 1px solid var(--border-soft); background: color-mix(in srgb, var(--yellow) 9%, var(--surface)); color: var(--text); font-size: 13px; line-height: 1.4; }
-.primary-result-answer { padding: 17px 18px 15px; }
+.primary-result-caution { display: flex; align-items: center; gap: 8px; padding: 10px 14px; margin-bottom: 10px; border-radius: var(--radius); background: color-mix(in srgb, var(--yellow) 9%, var(--surface)); color: var(--text); font-size: 13px; line-height: 1.4; }
+.primary-result-answer { padding: 4px 0 8px; }
 .primary-result-answer .semantic-heading:first-child { margin-top: 0; }
 .primary-result-material {
   display: grid;
-  gap: 10px;
-  padding: 0 12px 12px;
+  gap: 12px;
+  padding: 0 0 8px;
 }
-.primary-result-material:first-child { padding-top: 12px; }
 .primary-result-material > .artifact-shelf,
 .primary-result-material > .rich-structured-card,
 .primary-result-material > .adaptive-presentation,
@@ -3026,8 +3021,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   flex-wrap: wrap;
   gap: 7px 14px;
   min-height: 38px;
-  padding: 8px 16px;
-  border-top: 1px solid var(--border-soft);
+  padding: 4px 0;
   color: var(--muted);
   font-size: 12px;
 }
@@ -3040,8 +3034,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
-  padding: 10px 14px 12px;
-  border-top: 1px solid var(--border-soft);
+  padding: 6px 0 0;
 }
 .primary-result-actions button {
   display: inline-flex;
