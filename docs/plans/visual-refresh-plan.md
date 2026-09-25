@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-done. V2.2 onward, V3 and V4.2 to V4.5 remain unstarted.**
+and V2.3 done. V2.2, V2.4 onward, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -185,7 +185,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   are replaced in the same change; the five retired palettes' previews go.
   Done when: exit criteria 2 holds for the token layer, and every component
   still renders in all three themes.
-- [ ] **V2.3 Newsreader.** WOFF2 files for Latin and Latin Extended in the
+- [x] **V2.3 Newsreader.** WOFF2 files for Latin and Latin Extended in the
   client, loaded with `font-display: swap` and a serif fallback; licence file
   alongside. Done when: the desktop shell and the web app both render it with
   no network access.
@@ -239,8 +239,7 @@ Start here in a fresh session; re-find each line first.
 5. **Verify:** contrast of every text token pair (script in doc 75 §5.1),
    then the live checks in §2 rule 3 for all three themes.
 
-V2.3 needs Newsreader WOFF2 files downloaded (Google Fonts, SIL OFL); ask
-the maintainer before downloading.
+V2.3 is done: `--display` exists and the wordmark and greeting use it.
 
 ### V3 — Surfaces (after V2 merges)
 
@@ -351,3 +350,15 @@ what was not.
   and the V1 behaviours (row spinner, connection pill, status only when
   something needs attention). Docs only; the stylesheet is unchanged.
   Next: V2.2 (token layer), in a fresh session.
+- 2026-09-25: V2.3 done, with the maintainer's approval to download.
+  Newsreader latin and latin-ext WOFF2 subsets (opsz 6-72, weights
+  400-600; 132 KB and 87 KB) from Google Fonts are bundled in
+  `crates/vak-client-ui/src/fonts/`, with the SIL OFL in
+  `public/fonts/Newsreader-OFL.txt` so it ships in both bundles. New token
+  `--display`; the wordmark (20px) and the greeting (28px) use it. Checked
+  live on the web app: the face loads from `/app/assets/`, and the page
+  makes no request to any other host. The desktop shell was not launched;
+  its bundle carries the files and references them by relative URL
+  (checked in `dist/`). Evidence: `after/V2.3-*`. `cargo test -p
+  vak-server`: 33 binaries, 460 tests, all pass (this run also covers the
+  V1 bundle; the V1 entry's count was taken from a truncated summary).
