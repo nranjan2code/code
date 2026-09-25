@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.7 done. V3.8 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.8 done. V3.9 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -265,7 +265,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   Canvas with device icons and plain labels.
 - [x] **V3.7 One sheet component** for every dialog: title, close at top
   right, focus trap, Escape, return focus.
-- [ ] **V3.8 Agents.** Picker and creation wizard in plain words; every
+- [x] **V3.8 Agents.** Picker and creation wizard in plain words; every
   agent gets its own character by default. The one-time "Meet Vakyartha"
   dialog folds into the greeting instead of covering it on first run.
 - [ ] **V3.9 Motion.** The durations and curve from doc 75 §5.4; message
@@ -691,3 +691,35 @@ what was not.
   feeds, Scheduled tasks, Invite someone, the transcript, the
   confirmation dialog and the Always allow rule (same component, not
   opened).
+- 2026-09-26: V3.8 done. New agent: plain steps ("name it and pick a
+  character", "say how it should work"), "Personality", "How it should
+  work", "Create agent"; the agent ID shows only with technical details on
+  (a taken name says so in words); Back and Next sit in the sheet's footer
+  and the inline styles moved to the stylesheet. Every agent gets its own
+  character by default: the wizard picks the template's companion when no
+  agent wears it, otherwise the first companion none does (only past seven
+  agents does one repeat), and offers the seven companions but not the
+  mascot, which doc 71 reserves for Vakyartha; the identity editor does
+  the same for agents other than Vakyartha. The four template
+  descriptions (`vak-server/src/agents.rs`) are in plain words. Your
+  agents: "Open"/"Current", "Change name and character", plain folder
+  text, "Your own agent"; the identity editor's layer line shows only with
+  technical details on. The one-time Meet Vakyartha dialog is gone
+  (`OnboardingWelcome.tsx` deleted): the same offer, create an agent or not
+  now plus the technical details choice, is a note in the greeting on a
+  home with no agents of its own, and it goes for good once answered (same
+  `vak.onboarded` key). Checked live: the picker at 1440 light and 390
+  dark; the wizard's starting points, a template's default (Moss, free)
+  and from scratch (Mira, the first free), and step 3 at 390, light and
+  dark; the note on a fresh home at 1440 light and dark and 390 light, no
+  dialog covering it, "Not now" removes it and it stays gone on the next
+  visit; no sideways scroll anywhere. Evidence: `after/V3.8-*`. Not
+  checked live: creating or saving an agent (the review server uses the
+  real data home, so nothing was written), a default when a template's
+  companion is already taken, and Create an agent from the note. Found,
+  not fixed: this workspace's two agents store `leaf` and `wave`, ids from
+  an older character set, so they still draw the Vakyartha bird; that is
+  pre-baseline data (invariant 29), fixed by choosing their characters in
+  Your agents, not by code. Also seen: the fresh home at `/tmp/vak-fresh-v1`
+  reports no AI service again, and a "rate limit exceeded" toast appeared
+  after the capture script's rapid reloads.
