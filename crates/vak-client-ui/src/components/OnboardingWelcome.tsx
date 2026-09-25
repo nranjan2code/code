@@ -1,5 +1,5 @@
 import { createEffect, createSignal, Show } from "solid-js";
-import { backend, setAgentCreateOpen } from "../store";
+import { backend, setAgentCreateOpen, setTechnicalDetails, technicalDetails } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
 import AgentMark from "./AgentMark";
@@ -44,6 +44,7 @@ export default function OnboardingWelcome() {
             Vakyartha is ready to help out of the box. You can also build your own specialists — an agent with its own
             personality, instructions, and workspace — for the things you do often.
           </p>
+          <label class="onboarding-technical"><input type="checkbox" checked={technicalDetails()} onChange={(event) => setTechnicalDetails(event.currentTarget.checked)} /> I build software: show technical details</label>
           <div style="display: flex; gap: 8px;">
             <button type="button" class="btn primary" onClick={() => { dismiss(); setAgentCreateOpen(true); }}>
               <Icon name="add" size={14} /> Create your first agent

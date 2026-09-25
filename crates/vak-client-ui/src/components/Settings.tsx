@@ -2,12 +2,12 @@ import { trapFocus } from "../focusTrap";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { host } from "../host";
 import {
-  density,
+  technicalDetails,
   openInEditor,
   pendingSettingsPage,
   pendingSettingsSection,
   providers,
-  setDensity,
+  setTechnicalDetails,
   setNotice,
   setProviders,
   setSettingsOpen,
@@ -23,7 +23,6 @@ import {
   activeAgent,
   setAgentPickerOpen,
   setAgentPickerTab,
-  type Density,
 } from "../store";
 import type { ConfigSnapshot } from "../types";
 import * as api from "../api";
@@ -146,6 +145,9 @@ async function copySettingText(value: string, label: string): Promise<void> {
     setNotice({ kind: "error", text: `Could not copy ${label.toLowerCase()}. Clipboard access was denied.` });
   }
 }
+
+/** Pages shown only with technical details on (docs/design/75 §6.3). */
+const TECHNICAL_PAGES = new Set(["services", "advanced", "prompts", "reliability"]);
 
 export default function Settings() {
   let settingsMain: HTMLElement | undefined;
@@ -902,7 +904,7 @@ export default function Settings() {
   });
   const visiblePages = createMemo(() => {
     const needle = query().trim().toLowerCase();
-    return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived");
+    return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived" && (technicalDetails() || !TECHNICAL_PAGES.has(item.id)));
   });
   const pageGroups = createMemo(() => {
     const groups = new Map<string, typeof pages>();
@@ -1212,7 +1214,7 @@ export default function Settings() {
                 <Row title="Quiet hours" description="Suppress background completion and update notifications overnight. Approval requests remain interruptive because work is paused until you decide."><select aria-label="Quiet hours" value={uiPreferences.quietHours} onChange={(event) => updateUiPreference("quietHours", event.currentTarget.value as "off" | "22-07")}><option value="off">Off</option><option value="22-07">22:00–07:00</option></select></Row>
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
-                <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
+                <Row title="Show technical details" description="Folders, file paths, IDs, tool output and the technical settings pages. Changes what you see, never what an agent may do."><Switch label="Show technical details" checked={technicalDetails()} onChange={(value) => setTechnicalDetails(value)} /></Row>
                 <Row title="Presentation styles" description="Choose how Vakyartha presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>
                 <Row title="Share presentation styles" description="Export your styles or import a collection."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
                 <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>

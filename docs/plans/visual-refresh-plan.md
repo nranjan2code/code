@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-to V2.5 done. V2.6 onward, V3 and V4.2 to V4.5 remain unstarted.**
+to V2.6 done. V2.7, V2.8, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -199,7 +199,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   tests that fails on banned terms (sandbox, ledger, receipt, frozen,
   candidate, execution, provenance, manifest, verifier, persona, fleet,
   daemon, MCP) outside technical-detail views.
-- [ ] **V2.6 Disclosure setting.** Show technical details replaces
+- [x] **V2.6 Disclosure setting.** Show technical details replaces
   `Density` (`store.ts`) and the Transcript detail row in Settings. Everyday
   hides what doc 75 §8 lists; onboarding asks once (D3). The setting uses a
   new key and starts off; the old `vak.density` value is not read.
@@ -401,3 +401,15 @@ what was not.
   rewritten string on its screen; the message box menu's strings are
   checked in source (the menu was closed). `cargo test -p vak-server`: 460
   pass. Not done: the Settings navigation names wait for V3.5's structure.
+- 2026-09-25: V2.6 done. `technicalDetails` (key `vak.technicalDetails`,
+  off by default) replaces `Density` and the Transcript detail row; the old
+  key is not read. Off hides the header folder chip, the … menu's Developer
+  group, Compare approaches and Activity log, the message box's model and
+  permission pickers, Review's technical details and hash, full file paths
+  in Details, and the Services, Advanced, Prompts and Reliability pages; on
+  shows them and full tool output. The Meet Vakyartha dialog offers it once
+  ("I build software"), and General keeps the switch. Checked live in both
+  states. Not checked live: the onboarding checkbox, tool output in a live
+  run, and an approval (approval and error rendering are not gated in
+  code). Result cards still show byte counts, because that text comes from
+  the server.

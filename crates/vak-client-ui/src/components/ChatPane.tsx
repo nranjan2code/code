@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import AgentMark from "./AgentMark";
@@ -32,7 +32,7 @@ function stripVakFence(text: string): string {
 
 /**
  * A new task's chat pane before anything has happened, and an existing
- * task with nothing rendered at the current density. Previously both
+ * task with nothing rendered at the current detail level. Previously both
  * rendered `null` — a void with no headline, hint, or affordance —
  * despite DESIGN.md naming "the chat empty state" as the canonical use
  * of the headline type scale (22px/620/-0.02em) it defines.
@@ -197,7 +197,7 @@ function visibleItems(list: Item[], liveTurn = false): Item[] {
         }
         return true;
       }
-      // In outcome density, intermediate tool executions remain in Workbench
+      // With technical details off, intermediate tool executions remain in Workbench
       // and task details rather than cluttering the chat canvas.
       return false;
     });
@@ -359,7 +359,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     const value = props.item.preview?.trim();
     if (value) {
       const shown = stripVakFence(value);
-      return shown.slice(0, density() === "audit" ? 4000 : 800);
+      return shown.slice(0, technicalDetails() ? 4000 : 800);
     }
     return props.item.done ? "No output returned." : "Waiting for a result…";
   };
@@ -412,10 +412,10 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
           </button>
         </div>
       </Show>
-      <Show when={open() || density() === "audit" || props.item.isError || !props.item.done}>
+      <Show when={open() || technicalDetails() || props.item.isError || !props.item.done}>
         <div class="tool-result" classList={{ err: props.item.isError }}>{result()}</div>
       </Show>
-      <details class="tool-details" open={open() || density() === "audit"}>
+      <details class="tool-details" open={open() || technicalDetails()}>
         <summary>View request details</summary>
         <pre class="tool-args">{argsPretty()}</pre>
       </details>
@@ -960,8 +960,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
 
   createEffect(() => {
-    // Density changes alter transcript layout. Reconcile the pinned state on next paint.
-    void density();
+    // The detail switch alters transcript layout. Reconcile the pinned state on next paint.
+    void technicalDetails();
     scheduleScroll();
   });
 

@@ -28,6 +28,7 @@ import {
   setAgentPickerTab,
   backend,
   coworkingPresence,
+  technicalDetails,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -156,6 +157,8 @@ export default function WorkspaceHeader() {
               </h1>
             </button>
 
+            <Show when={technicalDetails()}>
+
             <button
               type="button"
               class="target-dir-pill"
@@ -170,6 +173,8 @@ export default function WorkspaceHeader() {
               <Icon name="folder" size={12} />
               <span>{workspaceCwd() ? (workspaceCwd() as string).split("/").pop() || "root" : "workspace"}</span>
             </button>
+
+            </Show>
 
             <Show when={activeId() && taskStatus()}>
               <span class="run-state" classList={{ active: isRunning(activeId()) }}>
@@ -213,15 +218,17 @@ export default function WorkspaceHeader() {
               <For each={generalTools}>
                 {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
               </For>
-              <div class="menu-group-label">Developer</div>
-              <For each={devTools}>
-                {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
-              </For>
+              <Show when={technicalDetails()}>
+                <div class="menu-group-label">Developer</div>
+                <For each={devTools}>
+                  {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
+                </For>
+              </Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSideOpen(!sideOpen()); }}><Icon name="chat" />Side question ⌘;</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button>
+              <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button></Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity log</button>
+              <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity log</button></Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><Icon name="sync" />Background tasks</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>

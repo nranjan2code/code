@@ -16,6 +16,7 @@ import {
   candidateReviewRequest,
   setCandidateReviewRequest,
   setDockTab,
+  technicalDetails,
 } from "../store";
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
@@ -779,6 +780,7 @@ export default function WorkbenchPanel() {
                   </Show>
                 </div>
               }</Show>
+              <Show when={technicalDetails()}>
               <details class="candidate-review-provenance">
                 <summary>Technical details</summary>
                 <p><strong>Run</strong> <span>{prepared().execution_id}</span></p>
@@ -786,6 +788,7 @@ export default function WorkbenchPanel() {
                 <p><strong>Result</strong> <span>{prepared().result_id}</span></p>
                 <p><strong>Digest</strong> <span>{prepared().candidate_digest}</span></p>
               </details>
+              </Show>
             </div>
             <div class="candidate-review-body">
               <div class="candidate-review-files" aria-label="Draft files">
@@ -812,7 +815,7 @@ export default function WorkbenchPanel() {
                     });
                   }}>Open saved version in Canvas</button></Show>
                 }</Show>
-                <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
+                <Show when={technicalDetails() && prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
                 <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
                   <Show when={officeReview()} fallback={<p class="office-change-empty">Comparing…</p>}>{(review) => <OfficeChangeList
@@ -1303,7 +1306,7 @@ export default function WorkbenchPanel() {
                 }
               >
                 <div class="viewer-header">
-                  <span class="viewer-path">{selectedArtifact()}</span>
+                  <span class="viewer-path">{technicalDetails() ? selectedArtifact() : selectedArtifact()?.split("/").pop()}</span>
                   <Show when={loadingArtifact()}>
                     <span class="viewer-loading">Loading…</span>
                   </Show>

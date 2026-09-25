@@ -18,6 +18,7 @@ import {
   workspaceSwitching,
   agentForSession,
   agentOpening,
+  technicalDetails,
 } from "../store";
 import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -671,6 +672,7 @@ export default function Composer(props: { cwd: string }) {
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Folder: ${props.cwd.split("/").pop() || "root"}`}</span></button>
                 <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
+                <Show when={technicalDetails()}>
                 <select
                   class="composer-mode composer-model-select"
                   aria-label="Model"
@@ -688,6 +690,7 @@ export default function Composer(props: { cwd: string }) {
                   <option value="WorkspaceWrite">Edit files in this folder</option>
                   <option value="FullAccess">Full access to this computer</option>
                 </select>
+                </Show>
               </div>
             </details>
             <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} motion={agentForSession(activeId()).animation} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />

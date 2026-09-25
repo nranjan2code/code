@@ -20,8 +20,6 @@ import type {
   PresentationStreamEvent,
 } from "./types";
 
-export type Density = "outcome" | "balanced" | "audit";
-
 export type Item =
   | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; files?: api.InboxFile[] }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
@@ -130,12 +128,14 @@ export async function switchModel(newModel: string) {
 // here: it is derived from `GET /onboarding` on every read, so there is no
 // local flag that can disagree with the server about what is configured.
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
-const storedDensity = localStorage.getItem("vak.density");
-const initialDensity: Density = storedDensity === "balanced" || storedDensity === "audit" ? storedDensity : "outcome";
-export const [density, setDensitySignal] = createSignal<Density>(initialDensity);
-export function setDensity(value: Density) {
-  setDensitySignal(value);
-  localStorage.setItem("vak.density", value);
+/** Show technical details (DESIGN.md, docs/design/75 §8): one switch for how
+ * much machinery everyday screens show. Off for new installs. It changes what
+ * is shown, never what an agent may do, and never hides a safety state. */
+const storedTechnical = (() => { try { return localStorage.getItem("vak.technicalDetails"); } catch { return null; } })();
+export const [technicalDetails, setTechnicalDetailsSignal] = createSignal(storedTechnical === "1");
+export function setTechnicalDetails(value: boolean) {
+  setTechnicalDetailsSignal(value);
+  try { localStorage.setItem("vak.technicalDetails", value ? "1" : "0"); } catch { /* the choice still applies to this window */ }
 }
 export type DockTab = "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments";
 const storedDockTab = localStorage.getItem("vak.dockTab") as DockTab | null;

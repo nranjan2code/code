@@ -414,6 +414,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .workspace-more-menu button:disabled { opacity: .45; }
 .menu-group-label { margin: 5px 9px 2px; padding-top: 5px; border-top: 1px solid var(--border-soft); color: var(--faint, var(--muted)); font-size: 12px; font-weight: 600; }
 .agent-current { display: inline-flex; align-items: center; color: var(--accent); }
+.onboarding-technical { display: flex; align-items: center; gap: 8px; margin: 0 0 16px; color: var(--text-soft); font-size: var(--fs-meta); }
 .workspace-actions::-webkit-scrollbar { display: none; }
 .workspace-action-group { display: flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid transparent; border-radius: 9px; }
 .workspace-action-group:focus-within { border-color: var(--border-soft); background: rgba(255,255,255,.015); }
