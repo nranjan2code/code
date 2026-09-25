@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.8 done. V3.9 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.9 done. V3.10 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -268,7 +268,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 - [x] **V3.8 Agents.** Picker and creation wizard in plain words; every
   agent gets its own character by default. The one-time "Meet Vakyartha"
   dialog folds into the greeting instead of covering it on first run.
-- [ ] **V3.9 Motion.** The durations and curve from doc 75 §5.4; message
+- [x] **V3.9 Motion.** The durations and curve from doc 75 §5.4; message
   arrival, result reveal, skeletons; no hover movement.
 - [ ] **V3.11 Finish the CSS cleanup inside each surface rewrite:** the 30
   duplicate selector groups whose merge would change the cascade, the 3
@@ -723,3 +723,28 @@ what was not.
   Your agents, not by code. Also seen: the fresh home at `/tmp/vak-fresh-v1`
   reports no AI service again, and a "rate limit exceeded" toast appeared
   after the capture script's rapid reloads.
+- 2026-09-26: V3.9 done. One-shot motion is on the tokens: sheets
+  (`--dur-slow`), Settings, toasts and Canvas closing (`--dur`), tooltips
+  (`--dur-fast`, their show delay kept), all on `--ease`; V2.9 had already
+  moved every transition. No hover moves anything: the nudges on sidebar
+  rows, dock tabs, the Canvas button and file chips are gone (tooltips and
+  citation popovers still slide in as they appear). New turns fade up 6px
+  over `--dur`, and a settled answer reveals over `--dur-slow`, once: a turn
+  is marked when it is created, and only if its conversation's load has
+  been seen to start and finish, so opening a conversation animates
+  nothing. `components/Skeleton.tsx` is the one loading placeholder; it
+  replaces the three shimmer implementations (transcript, Settings,
+  sidebar) and the "Loading…" text in Connections, System health,
+  Background tasks, Invite, the folder picker, the file viewer and the two
+  Suspense fallbacks. The per-rule reduced-motion lines this replaced are
+  gone; the global reduced-motion rule covers everything. Checked live in
+  headless Chrome: opening a conversation (1440 light, 390 dark) draws 3
+  turns with none animated; sending on the fresh home (1440 light, 390
+  dark) animates the new turns from opacity 0 and 6px to rest in about
+  200ms; skeletons showed during every load and "Loading" text never did.
+  Evidence: `after/V3.9-*`. Not checked live: the result reveal on a real
+  answer (the fresh home has no AI service and the review server uses the
+  real data home, so no model answered), and the hover rules beyond
+  reading the stylesheet. Bug found on the way: Solid applies a static
+  `classList` in an effect after insertion, so the class has to be decided
+  when the turn is created.
