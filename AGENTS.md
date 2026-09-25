@@ -197,7 +197,8 @@ behaviour yet, and no session starts a later milestone unasked.
 The maintainer approved the direction and locked all five of its decisions
 on 2026-09-25, then asked for the logo and platform-icon correction (V4.1)
 and for implementation to continue stage by stage. V1 is done; V2, V3 and the
-rest of V4 follow in order; V2.1 (`DESIGN.md`) and V2.3 (Newsreader) are done.
+rest of V4 follow in order. V2 is done except V2.7 (icons), which waits for
+approval to download an icon set.
 
 **What it is.** One visual system for the shared client
 (`crates/vak-client-ui`), so for both the desktop and the web app:

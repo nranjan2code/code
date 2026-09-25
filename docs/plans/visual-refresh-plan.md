@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-to V2.6 done. V2.7, V2.8, V3 and V4.2 to V4.5 remain unstarted.**
+to V2.6 and V2.8 done; V2.7 waits for approval to download icons. V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -207,7 +207,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   approval shows the same in both.
 - [ ] **V2.7 Icons.** Choose Lucide or Phosphor, vendor it (pinned, with its
   licence), replace `components/Icon.tsx`'s set and every letter glyph.
-- [ ] **V2.8 Delete what is superseded.** The 21 dead `.everyday-rail`
+- [x] **V2.8 Delete what is superseded.** The 21 dead `.everyday-rail`
   rules, every duplicate selector (exit criterion 3), the `!important` rules
   that only existed to win against a later override, and unused hex
   literals.
@@ -262,6 +262,11 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   agent gets its own character by default.
 - [ ] **V3.9 Motion.** The durations and curve from doc 75 §5.4; message
   arrival, result reveal, skeletons; no hover movement.
+- [ ] **V3.11 Finish the CSS cleanup inside each surface rewrite:** the 30
+  duplicate selector groups whose merge would change the cascade, the 3
+  remaining `!important` rules (`.good-chip`, `.prompt-page > header`,
+  `.office-outline button`) and the 35 hex literals outside the tokens.
+  Decide each as its screen is rebuilt.
 - [ ] **V3.10 Anchor check.** The four doc 70 screens and the three doc 75
   screens compared with their references in the running app; doc 70's
   ledger updated with the evidence.
@@ -413,3 +418,14 @@ what was not.
   run, and an approval (approval and error rendering are not gated in
   code). Result cards still show byte counts, because that text comes from
   the server.
+- 2026-09-25: V2.8 done for everything that is provably neutral. Removed
+  the dead `.everyday-rail` rules (21, including media and grouped uses) and
+  merged 34 of 64 groups of identical top-level selectors into their last
+  occurrence; the other 30 were skipped because a rule between them sets
+  the same property on an overlapping selector, so merging would change the
+  cascade (moved to V3.11). Reviewed all 27 `!important`: 24 override inline
+  or library styles or enforce reduced motion; 3 go to V3.11. 35 hex
+  literals remain outside the tokens (V3.11). `styles.css` is 6,165 lines.
+  Checked by computed style: 30 properties of every rendered element on 7
+  screens (3,472 elements: conversation light, dark and 390px, agent picker,
+  Review, Settings General and Permissions) are identical before and after.
