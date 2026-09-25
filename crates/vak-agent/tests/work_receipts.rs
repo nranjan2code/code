@@ -286,7 +286,9 @@ async fn receipts_round_trip_through_disk() {
             EntryPayload::Activity(_) => "activity",
             EntryPayload::Work(_) => "work",
             EntryPayload::Intent(_) => "intent",
-            EntryPayload::TurnCapabilitiesBound(_) => "capabilities",
+            EntryPayload::TurnCapabilitiesBound(_) | EntryPayload::TurnCapabilitiesRef(_) => {
+                "capabilities"
+            }
             EntryPayload::ChildRun { .. } => "child-run",
             EntryPayload::Presentation(_) => "presentation",
             EntryPayload::TurnCard(_) => "turn-card",

@@ -129,6 +129,30 @@ pub struct TurnCapabilitiesBound {
     pub tool_domains: std::collections::BTreeMap<String, Vec<String>>,
 }
 
+impl TurnCapabilitiesBound {
+    /// What the interface is, without the epoch it was published under: two
+    /// turns with the same digest sent the model the same system prompt,
+    /// tools and index.
+    pub fn digest(&self) -> String {
+        let mut value = serde_json::to_value(self).unwrap_or(serde_json::Value::Null);
+        if let Some(object) = value.as_object_mut() {
+            object.remove("epoch");
+        }
+        payload_digest(&value)
+    }
+}
+
+/// A turn's capability binding, by reference to the entry that holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TurnCapabilitiesRef {
+    /// The `TurnCapabilitiesBound` entry this turn's interface equals.
+    pub entry: String,
+    /// `TurnCapabilitiesBound::digest` of that entry.
+    pub digest: String,
+    /// The capability epoch this turn was bound under.
+    pub epoch: u64,
+}
+
 /// One layer's contribution to the assembled system prompt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptLayerDescriptor {
@@ -860,6 +884,10 @@ pub enum EntryPayload {
     },
     /// Exact capability interface used by one provider turn.
     TurnCapabilitiesBound(TurnCapabilitiesBound),
+    /// A turn bound the same interface as an earlier `TurnCapabilitiesBound`
+    /// (same digest): recorded by reference instead of rewriting the whole
+    /// system prompt and tool schemas every turn.
+    TurnCapabilitiesRef(TurnCapabilitiesRef),
     /// A validated presentation (docs/design/68-context-engine.md §10).
     /// Never model-visible raw: `derive_messages` skips it like `Receipt`.
     Presentation(PresentationRecord),

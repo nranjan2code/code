@@ -821,6 +821,54 @@ fn turn_capability_binding_roundtrips_without_entering_context() {
     );
 }
 
+/// A turn bound to the same interface as the last one records a reference,
+/// not the whole system prompt and schemas again; a changed interface is
+/// written in full. Prints the bytes a turn's binding costs either way.
+#[test]
+fn unchanged_capabilities_not_rewritten() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    let mut log = SessionLog::create(path.clone(), header()).unwrap();
+    let bound = |epoch: u64, prompt: &str| TurnCapabilitiesBound {
+        epoch,
+        capability_ids: vec!["Tool:read".into()],
+        excluded_ids: Vec::new(),
+        system_prompt: prompt.repeat(400),
+        tool_schemas: vec![serde_json::json!({"name": "read", "description": "x".repeat(2000)})],
+        core_tool_names: vec!["read".into()],
+        deferred_tool_names: Vec::new(),
+        tool_index: String::new(),
+        tool_domains: Default::default(),
+    };
+    let size = || std::fs::metadata(&path).unwrap().len();
+
+    let before = size();
+    let first = log.append_turn_capabilities(bound(1, "system ")).unwrap();
+    let full = size() - before;
+    let before = size();
+    let second = log.append_turn_capabilities(bound(2, "system ")).unwrap();
+    let referenced = size() - before;
+    println!("capability binding: {full} bytes in full, {referenced} bytes by reference");
+
+    match &second.payload {
+        EntryPayload::TurnCapabilitiesRef(reference) => {
+            assert_eq!(reference.entry, first.id);
+            assert_eq!(reference.epoch, 2, "the epoch is still recorded");
+        }
+        other => panic!("an unchanged binding was rewritten: {other:?}"),
+    }
+    assert!(referenced * 10 < full, "{referenced} vs {full}");
+
+    let third = log
+        .append_turn_capabilities(bound(2, "a different system prompt "))
+        .unwrap();
+    assert!(matches!(
+        third.payload,
+        EntryPayload::TurnCapabilitiesBound(_)
+    ));
+    assert!(log.derive_messages().is_empty());
+}
+
 /// The conversation thread is a tail section (docs/design/68-context-engine.md
 /// §6/§10), not spliced into the projection, and it lists only directives no
 /// longer verbatim among `derive_messages()` — one still present in the

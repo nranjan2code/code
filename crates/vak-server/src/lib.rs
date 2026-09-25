@@ -4280,7 +4280,8 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Activity(_) => {}
                         vak_session::EntryPayload::Work(_) => {}
                         vak_session::EntryPayload::Intent(_) => {}
-                        vak_session::EntryPayload::TurnCapabilitiesBound(_) => {}
+                        vak_session::EntryPayload::TurnCapabilitiesBound(_)
+                        | vak_session::EntryPayload::TurnCapabilitiesRef(_) => {}
                         vak_session::EntryPayload::ChildRun { .. } => {}
                         vak_session::EntryPayload::Presentation(_) => {}
                         vak_session::EntryPayload::TurnCard(_) => {}

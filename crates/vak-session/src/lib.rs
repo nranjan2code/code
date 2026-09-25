@@ -26,7 +26,8 @@ pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, AttachedFile, CapabilityDescriptor,
     CapabilityInvocation, CapabilityKind, CompactionEntry, ConversationContext, ConversationOrigin,
     Entry, EntryPayload, FrozenContract, MessageMeta, MessageRecord, PromptLayerDescriptor,
-    SessionError, SessionHeader, TranscriptMessage, TurnCapabilitiesBound, TurnCardRecord,
+    SessionError, SessionHeader, TranscriptMessage, TurnCapabilitiesBound, TurnCapabilitiesRef,
+    TurnCardRecord,
 };
 pub use work::{
     WorkError, WorkProjection, project_work, validate_contract, validate_contract_for_admission,

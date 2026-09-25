@@ -713,15 +713,36 @@ impl SessionLog {
             })
     }
 
+    /// Records the interface a turn was bound to: in full when it differs
+    /// from the last one this conversation bound, otherwise as a
+    /// `TurnCapabilitiesRef` to that entry.
     pub fn append_turn_capabilities(
         &mut self,
         bound: crate::types::TurnCapabilitiesBound,
     ) -> Result<Entry, SessionError> {
+        let digest = bound.digest();
+        let previous =
+            self.chain_to_root()
+                .into_iter()
+                .rev()
+                .find_map(|entry| match &entry.payload {
+                    EntryPayload::TurnCapabilitiesBound(earlier) => {
+                        Some((entry.id.clone(), earlier.digest()))
+                    }
+                    _ => None,
+                });
         let parent = self.tail_id.clone();
-        self.append(Entry::new(
-            parent,
-            EntryPayload::TurnCapabilitiesBound(bound),
-        ))
+        let payload = match previous {
+            Some((entry, earlier)) if earlier == digest => {
+                EntryPayload::TurnCapabilitiesRef(crate::types::TurnCapabilitiesRef {
+                    entry,
+                    digest,
+                    epoch: bound.epoch,
+                })
+            }
+            _ => EntryPayload::TurnCapabilitiesBound(bound),
+        };
+        self.append(Entry::new(parent, payload))
     }
 
     pub fn append_work(&mut self, event: WorkEvent) -> Result<Entry, SessionError> {

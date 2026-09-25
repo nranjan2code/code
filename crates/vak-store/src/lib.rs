@@ -270,6 +270,7 @@ impl Store {
             // An evidence body repeats a tool result the Message entry
             // already indexes the window of; `recall` reaches the rest.
             EntryPayload::TurnCapabilitiesBound(_)
+            | EntryPayload::TurnCapabilitiesRef(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
             | EntryPayload::TurnCard(_)
@@ -435,6 +436,7 @@ impl Store {
                 is_error: false,
             }),
             EntryPayload::TurnCapabilitiesBound(_)
+            | EntryPayload::TurnCapabilitiesRef(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
             | EntryPayload::TurnCard(_)
