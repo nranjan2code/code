@@ -30,6 +30,13 @@ else
 fi
 
 cd "$ROOT_DIR"
+# A bump is its own commit. Mixing it into unrelated uncommitted work is how
+# an abandoned attempt once left a version change nobody could account for.
+if [[ -n "$(git status --porcelain)" ]]; then
+    printf 'error: working tree is dirty — commit or stash first, then bump\n' >&2
+    git status --short >&2
+    exit 1
+fi
 tmp="$(mktemp)"
 awk -v v="$target" '
     /^\[workspace\.package\]/ { in_section = 1; print; next }

@@ -919,6 +919,47 @@ mod platform {
         }
     }
 
+    /// The status the service's process last exited with, when the manager
+    /// knows one. Non-zero is a service that failed, not one that stopped.
+    pub fn last_exit(name: &str, runner: &dyn CommandRunner) -> Option<i32> {
+        #[cfg(target_os = "macos")]
+        {
+            let text = runner.text(
+                "launchctl",
+                &["print".to_string(), format!("gui/{}/{}", uid(runner), name)],
+            )?;
+            parse_launchd_last_exit(&text)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let text = runner.text(
+                "systemctl",
+                &[
+                    "--user".to_string(),
+                    "show".to_string(),
+                    "-P".to_string(),
+                    "ExecMainStatus".to_string(),
+                    systemd_unit_name(name),
+                ],
+            )?;
+            text.trim().parse::<i32>().ok()
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn parse_launchd_last_exit(text: &str) -> Option<i32> {
+        text.lines().find_map(|line| {
+            let value = line.trim().strip_prefix("last exit code = ")?;
+            let number: String = value
+                .chars()
+                .enumerate()
+                .take_while(|(i, c)| c.is_ascii_digit() || (*i == 0 && *c == '-'))
+                .map(|(_, c)| c)
+                .collect();
+            number.parse::<i32>().ok()
+        })
+    }
+
     #[cfg(target_os = "macos")]
     fn parse_launchd_pid(text: &str) -> Option<u32> {
         for line in text.lines() {
@@ -933,7 +974,7 @@ mod platform {
     }
 }
 
-use platform::{load, running_pid, start, unload};
+use platform::{last_exit, load, running_pid, start, unload};
 
 /// Outcome of syncing one service.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -981,6 +1022,9 @@ pub struct ServiceRow {
     /// before the last install touched it) — stale-image drift.
     pub binary_stale: bool,
     pub running_pid: Option<u32>,
+    /// A non-zero status the service last exited with: a service that is
+    /// failing, whether it is down or restarting, not one that was stopped.
+    pub failed_exit: Option<i32>,
 }
 
 fn write_atomic(path: &Path, contents: &str) -> Result<(), String> {
@@ -1139,6 +1183,10 @@ pub fn status_specs(
                 binary_stale: pid.is_some()
                     && points_at_installed
                     && binary_newer_than_unit(&spec.bin_path, &unit_path),
+                failed_exit: unit_present
+                    .then(|| last_exit(&spec.name, runner))
+                    .flatten()
+                    .filter(|status| *status != 0),
                 unit_path,
                 running_pid: pid,
             }
@@ -1650,6 +1698,36 @@ mod tests {
         let stale = status_specs(&specs, &paths, &fake)[0].clone();
         assert!(stale.binary_stale, "{stale:?}");
         assert!(stale.running_pid.is_some());
+    }
+
+    /// A service that keeps exiting with an error is reported as failing,
+    /// not as down: `launchctl print` names its last exit code.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_failing_service_reports_its_exit_status() {
+        let (_d, paths) = tmp_paths("failing");
+        let dir = tempfile::tempdir().unwrap();
+        let specs: Vec<ServiceSpec> = SERVICES
+            .iter()
+            .map(|d| spec_for(d, dir.path(), Path::new("/tmp/logs")))
+            .collect();
+        let _ = sync_specs(&specs, &paths, &Fake::with_pid(11));
+        let failing = Fake {
+            pid_text: Some("com.vak.x = {\n\tlast exit code = 78: EX_CONFIG\n}".into()),
+            ..Fake::new()
+        };
+        let row = status_specs(&specs, &paths, &failing)[0].clone();
+        assert_eq!(row.running_pid, None);
+        assert_eq!(row.failed_exit, Some(78));
+        let stopped = Fake {
+            pid_text: Some("com.vak.x = {\n\tlast exit code = 0\n}".into()),
+            ..Fake::new()
+        };
+        assert_eq!(status_specs(&specs, &paths, &stopped)[0].failed_exit, None);
+        assert_eq!(
+            platform::parse_launchd_last_exit("last exit code = (never exited)"),
+            None
+        );
     }
 
     #[test]

@@ -467,6 +467,22 @@ fn report_next_steps(root: &InstallRoot, stale_services: bool) {
 ///
 /// Shared by `self status` and the post-install report below, so the two
 /// can never disagree about what "stale" means.
+/// Each managed service of the installed build that is failing: its name,
+/// the status it last exited with, and where its log is. Empty when
+/// nothing is installed.
+pub(crate) fn failing_services() -> Vec<(String, i32)> {
+    let Ok(manifest) = Manifest::read(&InstallRoot::resolve(None)) else {
+        return Vec::new();
+    };
+    let Ok(cli) = manifest.cli_path() else {
+        return Vec::new();
+    };
+    service_rows(&cli)
+        .into_iter()
+        .filter_map(|row| row.failed_exit.map(|status| (row.name, status)))
+        .collect()
+}
+
 fn service_rows(cli: &Path) -> Vec<vak_ops::services::ServiceRow> {
     let data_home = vak_config::paths::data_home();
     let names = vak_ops::services::default_service_names(cli);
@@ -640,20 +656,25 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
         // unit_points_at_installed false, but they need different
         // instructions — and a fresh install is always the former.
         let flag = if !r.unit_present {
-            "not registered — run `self services-sync`"
+            "not registered — run `self services-sync`".to_string()
         } else if !r.unit_points_at_installed {
-            "✗ execs outside the managed prefix — run `self services-sync`"
+            "✗ execs outside the managed prefix — run `self services-sync`".to_string()
+        } else if let Some(status) = r.failed_exit {
+            format!(
+                "✗ failing: last exited with status {status} — see its log in {}",
+                vak_config::paths::logs_dir().display()
+            )
         } else if r.binary_stale {
-            "⚠ stale process — run `self services-sync`"
+            "⚠ stale process — run `self services-sync`".to_string()
         } else {
-            "✓"
+            "✓".to_string()
         };
         println!(
             "service   {} {state} · {} · {flag}",
             r.name,
             r.unit_path.display()
         );
-        if !r.unit_points_at_installed || r.binary_stale {
+        if !r.unit_points_at_installed || r.binary_stale || r.failed_exit.is_some() {
             drifted = true;
         }
     }
@@ -670,6 +691,9 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
         );
         drifted = true;
     }
+    if let Some(note) = untagged_build_note(&m.version, &m.git_sha) {
+        println!("note      {note}");
+    }
     if m.version != build {
         println!(
             "note      running build {build} differs from the install ({}) — expected when running from a source tree",
@@ -678,6 +702,45 @@ pub fn run_status(prefix: Option<PathBuf>) -> i32 {
     }
 
     if drifted { 1 } else { 0 }
+}
+
+/// When git can tell (this runs inside a clone that has the installed
+/// commit), whether the install is the tagged release it claims to be. An
+/// abandoned release once left an installed build whose version existed in
+/// no tag, and nothing said so.
+fn untagged_build_note(version: &str, sha: &str) -> Option<String> {
+    if sha.is_empty() || sha == "unknown" {
+        return None;
+    }
+    let git = |args: &[&str]| {
+        std::process::Command::new("git")
+            .args(args)
+            .output()
+            .ok()
+            .filter(|out| out.status.success())
+            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+    };
+    let commit = git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("{sha}^{{commit}}"),
+    ])?;
+    let tagged = git(&[
+        "rev-parse",
+        "--verify",
+        "--quiet",
+        &format!("refs/tags/v{version}^{{commit}}"),
+    ]);
+    match tagged {
+        Some(tag_commit) if tag_commit == commit => None,
+        Some(_) => Some(format!(
+            "installed {version} was built from {sha}, not from tag v{version}: a development build"
+        )),
+        None => Some(format!(
+            "installed {version} has no tag v{version}: a development build, not a release"
+        )),
+    }
 }
 
 /// Ask the installed binary what version it is. Used only to detect

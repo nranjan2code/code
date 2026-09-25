@@ -28,30 +28,6 @@ pub mod presentation_tools;
 /// `(allow, ask, deny)`.
 pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 
-/// Pin `VAK_HOME` to one throwaway directory for this whole test binary.
-///
-/// `global_path()` resolves to `default_workspace()/.vak/config.toml`, which
-/// on a developer's machine is their real `~/vak-home` config. A test that
-/// reads a layered setting therefore inherits whatever that operator has
-/// configured — the onboarding projection reported a posture as "chosen"
-/// because the developer running the suite had chosen one. Results must not
-/// depend on the machine the suite runs on.
-///
-/// Process-global by nature, so it is set once and leaked: `VAK_HOME` has no
-/// scope smaller than the process, and unsetting it while parallel tests run
-/// would be worse than pinning it.
-#[cfg(test)]
-pub(crate) fn pin_test_data_home() {
-    use std::sync::OnceLock;
-    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
-    HOME.get_or_init(|| {
-        #[allow(clippy::expect_used)]
-        let path = tempfile::tempdir().expect("test data home").keep();
-        vak_config::set_override("VAK_HOME", path.to_string_lossy().to_string());
-        path
-    });
-}
-
 pub mod prompts;
 pub mod reach;
 pub mod reflection;
@@ -9548,7 +9524,7 @@ mod capability_reach_tests {
     /// `Open`, and the suite fails on their machine only. That is exactly
     /// what happened.
     fn workspace(extra: &str) -> tempfile::TempDir {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let vak = dir.path().join(".vak");
         std::fs::create_dir_all(&vak).unwrap();

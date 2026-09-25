@@ -47,32 +47,6 @@
 //! - `POST /presentations/:id/deactivate` → remove one scoped activation
 //! - `DELETE /presentations/plugins/:plugin_id` → revoke a plugin's presentation records
 
-/// Pin `VAK_HOME` to one throwaway directory for this whole test binary.
-///
-/// `data_home()` backs the workspace-trust marker store, and a test that
-/// approves a channel or records a trust decision writes into it. Without
-/// this pin those writes land in the developer's real
-/// `~/Library/Application Support/vak/trusted` and stay there, one orphan
-/// marker per tempdir, quietly granting trust to paths that no longer
-/// exist. `sessions_home` is already isolated per test for exactly this
-/// reason; the data home was not.
-///
-/// Process-global by nature, so it is set once and leaked: `VAK_HOME` has
-/// no scope smaller than the process, and unsetting it while parallel tests
-/// are running would be worse than pinning it.
-#[cfg(test)]
-pub(crate) fn pin_test_data_home() {
-    use std::sync::OnceLock;
-    static HOME: OnceLock<std::path::PathBuf> = OnceLock::new();
-    HOME.get_or_init(|| {
-        #[allow(clippy::expect_used)]
-        let dir = tempfile::tempdir().expect("test data home");
-        let path = dir.keep();
-        vak_config::set_override("VAK_HOME", path.to_string_lossy().to_string());
-        path
-    });
-}
-
 mod admin;
 mod admin_ui;
 mod agent_chats;
@@ -444,7 +418,7 @@ mod eviction_tests {
     /// actually runs once the live set exceeds the cap.
     #[tokio::test]
     async fn idle_sessions_beyond_the_cap_are_evicted() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         MAX_LIVE_SESSIONS_TEST_OVERRIDE.store(3, std::sync::atomic::Ordering::SeqCst);
         let _restore = RestoreCap;
 
@@ -19164,7 +19138,7 @@ mod configuration_control_tests {
     use super::*;
 
     fn control_state(dir: &std::path::Path) -> AppState {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.to_path_buf()).unwrap();
         core.set_sessions_home(dir.join("home"));
         AppState::new(core)
@@ -19220,7 +19194,7 @@ mod configuration_control_tests {
     /// shipped, and which had no caller on any surface until now.
     #[tokio::test]
     async fn remembering_an_approval_writes_a_scoped_rule_that_applies_at_once() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -19269,7 +19243,7 @@ mod configuration_control_tests {
     /// waiting on it — and simply not remembered, with the reason reported.
     #[tokio::test]
     async fn a_call_that_cannot_be_narrowed_is_approved_but_not_remembered() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -19311,7 +19285,7 @@ mod configuration_control_tests {
     /// much heavier decision than answering one gate.
     #[tokio::test]
     async fn a_refusal_is_never_remembered() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -19628,7 +19602,7 @@ mod configuration_control_tests {
     /// after the shadow check shipped.
     #[tokio::test]
     async fn a_global_write_on_the_default_workspace_is_not_its_own_shadow() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let _restore = GlobalLayerGuard::take();
         let Some(global) = vak_config::global_path() else {
             return;
@@ -19678,7 +19652,7 @@ mod configuration_control_tests {
 
     #[tokio::test]
     async fn a_global_write_under_a_project_pin_persists_without_taking_effect() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let _restore = GlobalLayerGuard::take();
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
@@ -19721,7 +19695,7 @@ mod configuration_control_tests {
 
     #[tokio::test]
     async fn cross_process_mode_refresh_revokes_live_capability_before_apply() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         // Reads the default effective mode, which the shared global layer
         // decides — so it belongs under the same guard as the writers.
         let _global = GlobalLayerGuard::take();
@@ -20147,7 +20121,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_office_draft_is_reviewed_by_meaning_narrowed_and_accepted_through_promotion() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20429,7 +20403,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn the_canvas_reads_an_office_file_as_pages_and_structure_through_the_worker() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20547,7 +20521,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_draft_changed_after_office_apply_is_offered_only_whole() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20648,7 +20622,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn candidate_export_and_promotion_runs_planned_target_verifier() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20720,7 +20694,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn candidate_export_records_failed_html_check_without_claiming_target_success() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20750,7 +20724,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn promotion_rejects_files_outside_the_saved_candidate() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20778,7 +20752,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn candidate_launch_root_is_session_bound_and_hash_verified() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20834,7 +20808,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn promotion_uses_frozen_candidate_after_scratch_changes() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -21022,7 +20996,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test]
     async fn saved_human_comment_revision_fails_before_run_without_provider() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -21103,7 +21077,7 @@ mod sandbox_promotion_tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn human_feedback_produces_new_candidate_without_workspace_write() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -21229,7 +21203,7 @@ mod sandbox_promotion_tests {
     async fn owner_receives_live_comment_refresh_for_open_review() {
         use futures::StreamExt;
 
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -21617,7 +21591,7 @@ mod sandbox_promotion_tests {
 
     #[test]
     fn coworking_presence_is_observed_and_expires() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         let state = AppState::new(core);
@@ -21769,7 +21743,7 @@ mod sandbox_promotion_tests {
     async fn participant_message_is_attributed_idempotent_and_does_not_start_work() {
         use tower::ServiceExt;
 
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -21856,7 +21830,7 @@ mod sandbox_promotion_tests {
     async fn participant_one_time_approval_is_exact_attributed_and_cannot_create_a_rule() {
         use tower::ServiceExt;
 
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -22060,7 +22034,7 @@ mod sandbox_promotion_tests {
         use futures::StreamExt;
         use tower::ServiceExt;
 
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -22420,7 +22394,7 @@ mod scheduler_state_tests {
         tasks: Vec<TaskDef>,
         agent: Option<vak_session::types::AgentIdentity>,
     ) -> AppState {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         std::fs::create_dir_all(ws.join(".vak")).unwrap();
         std::fs::write(
             ws.join(".vak/config.toml"),

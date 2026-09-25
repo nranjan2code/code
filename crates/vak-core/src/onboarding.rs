@@ -586,7 +586,7 @@ mod permission_step_tests {
         // Otherwise `global_path()` is the developer's own ~/vak-home
         // config, and whether this test passes depends on whose machine it
         // runs on.
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         if let Some(mode) = mode {
             std::fs::create_dir_all(dir.path().join(".vak")).unwrap();

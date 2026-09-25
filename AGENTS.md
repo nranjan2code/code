@@ -102,11 +102,10 @@ Parked, and not to be assumed shipped: release supply-chain hardening
 (SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
 completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
-### Pending: the data architecture refactor (planned 2026-09-25, not started)
+### Pending: the data architecture refactor (M0 in progress since 2026-09-25)
 
-The maintainer has decided this refactor will happen and will say when it
-starts. Until then nothing in it is behaviour, and no session starts it
-unasked.
+The maintainer started it on 2026-09-25 with M0. Nothing after M0 is
+behaviour yet, and no session starts a later milestone unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids and a trace key on every record;
@@ -151,25 +150,38 @@ unasked.
    section names nothing left unchanged. Then update this section and the
    plan's status line.
 
-**Live defects M0 fixes.** Know them before touching these areas. They
-were read from code (doc 73 §2.2), and not all have been reproduced live:
-- `PUT /config/bus` writes NATS secrets in plaintext to the project's
-  `.vak/env`, and nothing reads them back.
+**M0 so far.** Landed, each with its exit test:
+- Bus secrets live in the secret store and apply live
+  (`bus_credentials_never_written_to_a_file`).
+- `vak self uninstall --purge` removes the logs root (`purge_includes_logs`).
+- Feed scripts write only where the server says, under `VAK_HOME`
+  (`feeds_write_under_overridden_home`).
+- `AgentSchedule` and `agents_runs.jsonl` are deleted; `TaskDef` is the one
+  schedule model.
+- A routine that cannot run leaves a `routine_failed` inbox entry, run ids
+  are full UUIDv7, a cron slot is spent only by a run that started, a run's
+  handle is its ledger id, and a child run's home is not nested
+  (`fire_task_records_refusal`, `non_git_space_routine_is_refused_loudly`,
+  `two_tasks_due_same_tick_both_fire`, `cron_slot_not_lost_on_failure`,
+  `scheduled_run_resolves_after_restart`, `child_core_home_is_not_nested`).
+- An unchanged capability binding is written by reference
+  (`unchanged_capabilities_not_rewritten`).
+
+**Still open in M0.** Know these before touching the areas:
 - A "deleted" session is only hidden from the session lists; the model's
-  `session_search`, admin search and the FTS store still return it.
-- `vak self uninstall --purge` skips the logs root and every undeclared file.
-- A scheduled run in a non-git space is silently dropped, and two runs due in
-  one tick can collide.
-- `AgentSchedule` is stored but never runs.
-- The Python feeds pipeline ignores `VAK_HOME`.
-- The paths in "What is authoritative" above describe neither today's
-  layout nor the planned one. Today an Agent's home is
-  `<data home>/agents/<agent_id>/` (`vak_config::paths::agent_home`), and a
-  non-built-in Agent's workspace is
+  `session_search`, admin search and the FTS store still return it
+  (`trashed_session_absent_from_every_search`, with the client's "Move to
+  trash" wording).
+- Doc 64's topology section and the paths in "What is authoritative" above
+  describe neither today's layout nor the planned one. Today an Agent's
+  home is `<data home>/agents/<agent_id>/` (`vak_config::paths::agent_home`),
+  and a non-built-in Agent's workspace is
   `<workspace>/.vak/agents/<agent_id>/workspace/`.
+- A non-git space's routine is refused, not run: running it needs M4's
+  copy environment.
 
 **Until it starts, don't deepen the debt:**
-- Build nothing on `AgentSchedule` or `agents_runs.jsonl`.
+- Build no second schedule model: scheduled work is a `TaskDef`.
 - Declare every new durable file in `vak_core::state::REGISTRY`.
 - Resolve every new path through `vak_config::paths` and the `Core` home
   accessors.

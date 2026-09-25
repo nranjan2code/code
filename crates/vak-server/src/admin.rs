@@ -1743,7 +1743,7 @@ mod tests {
         // Isolates the trust-marker store as well as the session ledger:
         // approving a channel records a trust decision, and that write must
         // not reach the developer's real data home.
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let cwd = dir.path().to_path_buf();
         let core = vak_core::Core::new(cwd).unwrap();

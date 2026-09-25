@@ -1,7 +1,35 @@
 # Changelog
 
-## Unreleased
+## 4.1.0 — 2026-09-25
 
+- **A routine that cannot run says why.** A scheduled task that is due but
+  cannot start (no model connected, a folder that is not a git repository,
+  its Agent gone or paused) leaves a "Routine failed" inbox entry with the
+  reason and what to do, once per missed slot, instead of silently not
+  running. A cron slot is no longer lost when a run fails to start, two
+  routines due in the same tick both run, and a routine's run opens from its
+  task after a restart.
+- **One schedule model.** The Agent schedule field, its run ledger and the
+  `vak agents schedule|runs` commands are gone: they were stored and never
+  run. Scheduled work is a task (`vak tasks`, `/tasks`).
+- **Bus credentials in the secret store.** `PUT /config/bus` keeps the NATS
+  credentials in the secret store instead of a plaintext `.vak/env` that
+  nothing read, and applies the bus at once; removing them from the admin
+  console works again.
+- **Purge removes logs, and feeds honour `VAK_HOME`.**
+  `vak self uninstall --purge` now removes the logs directory, and the feed
+  pipeline writes only under the data home the server names.
+- **Failing services show as failing.** `vak self status` and `vak doctor`
+  read how each managed service's process last exited: one that keeps
+  exiting with an error is reported with its status and fails `doctor`,
+  instead of showing as a plain "down ✓". `self status` also notes an
+  install that is not the tagged release it claims to be.
+- **Release scripts refuse early.** `release.sh` checks for a clean tree and
+  a changelog section for the version before anything else, and
+  `bump-version.sh` refuses a dirty tree.
+- **Smaller ledgers.** A turn bound to the same tools and system prompt as
+  the last one records a reference instead of writing them again (on a
+  typical binding, 375 bytes instead of about 5 KB per turn).
 - **Office files on channels and from scripts.** A file sent on Telegram
   and edited by the Agent comes back to the same chat as a document, under
   its own name, with a caption saying what changed; a file carrying a

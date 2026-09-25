@@ -42,6 +42,26 @@ done
 cd "$ROOT_DIR"
 VERSION="$(workspace_version)"
 
+# The cheap refusals come first, before the clean room deletes anything and
+# long before the test suite: a dirty tree, or a changelog whose newest
+# section is not this version (an "Unreleased" heading is right day to day
+# and wrong in a tagged release, which would ship with its entry unnamed).
+if [[ "$ALLOW_DIRTY" != true ]]; then
+    if [[ -n "$(git status --porcelain)" ]]; then
+        printf 'error: working tree is dirty — commit or pass --allow-dirty\n' >&2
+        git status --short >&2
+        exit 1
+    fi
+    printf '  ✓ %-44s clean\n' "working tree"
+fi
+CHANGELOG_HEAD="$(sed -n 's/^## \([^ ]*\).*/\1/p' "$ROOT_DIR/CHANGELOG.md" | head -1)"
+if [[ "$CHANGELOG_HEAD" != "$VERSION" ]]; then
+    printf 'error: CHANGELOG.md starts with "## %s"; a release of %s needs its own "## %s — <date>" section first\n' \
+        "$CHANGELOG_HEAD" "$VERSION" "$VERSION" >&2
+    exit 1
+fi
+printf '  ✓ %-44s %s\n' "CHANGELOG section" "$VERSION"
+
 # Release assembly is a clean-room operation. Never let a previous release,
 # frontend bundle, or developer Cargo tree participate in this run. These are
 # the only generated trees this script owns; keep the list explicit so a
@@ -256,15 +276,6 @@ if [[ "$SKIP_CHECKS" != true ]]; then
     printf '  ✓ %-44s passing\n' "cargo test"
 fi
 
-
-if [[ "$ALLOW_DIRTY" != true ]]; then
-    if [[ -n "$(git status --porcelain)" ]]; then
-        printf 'error: working tree is dirty — commit or pass --allow-dirty\n' >&2
-        git status --short >&2
-        exit 1
-    fi
-    printf '  ✓ %-44s clean\n' "working tree"
-fi
 
 GIT_SHA="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 printf '  ✓ %-44s %s\n' "commit" "$GIT_SHA"

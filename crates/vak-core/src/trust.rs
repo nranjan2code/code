@@ -148,7 +148,7 @@ mod tests {
     /// path and untrusted through the other.
     #[test]
     fn a_decision_is_visible_through_every_spelling_of_the_same_directory() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         let canonical = dir.path().canonicalize().unwrap();
         assert!(!is_trusted(dir.path()));
@@ -167,7 +167,7 @@ mod tests {
     /// to how they are addressed.
     #[test]
     fn a_legacy_uncanonicalized_marker_is_still_honoured() {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
         // `/var/...` on macOS canonicalizes to `/private/var/...`, so this
         // literal-form marker is at a different hash than the current one.

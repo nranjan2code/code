@@ -331,7 +331,7 @@ mod tests {
     use std::time::Duration;
 
     fn test_core(dir: &std::path::Path) -> Core {
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         Core::new_with_trust(dir.to_path_buf(), true).expect("core")
     }
 
@@ -352,7 +352,7 @@ mod tests {
             format!("permission_mode = \"{mode}\"\n"),
         )
         .expect("write config");
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         vak_core::trust::record(dir).expect("record trust");
     }
 
@@ -384,7 +384,7 @@ mod tests {
     fn an_untrusted_workspace_does_not_get_its_privileged_keys() {
         let default_dir = tempfile::tempdir().unwrap();
         let ws = tempfile::tempdir().unwrap();
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         std::fs::create_dir_all(ws.path().join(".vak")).unwrap();
         std::fs::write(
             ws.path().join(".vak/config.toml"),

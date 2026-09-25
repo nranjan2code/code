@@ -3624,7 +3624,7 @@ mod tests {
     fn a_bot_pin_narrows_the_chat_and_the_console_says_so() {
         use vak_config::PermissionMode::*;
         let ws = tempfile::tempdir().unwrap();
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         std::fs::create_dir_all(ws.path().join(".vak")).unwrap();
         std::fs::write(
             ws.path().join(".vak/config.toml"),
@@ -3659,7 +3659,7 @@ mod tests {
     fn the_workspace_ceiling_is_never_escaped_by_a_bot_or_a_chat() {
         use vak_config::PermissionMode::*;
         let ws = tempfile::tempdir().unwrap();
-        crate::pin_test_data_home();
+        vak_config::paths::isolate_home_for_tests();
         std::fs::create_dir_all(ws.path().join(".vak")).unwrap();
         std::fs::write(
             ws.path().join(".vak/config.toml"),

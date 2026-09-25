@@ -359,16 +359,20 @@ the pager's exit status, so a failed release prints success.
 **A gate must not accept "Unreleased" when a tag is being cut.**
 `check-version.sh` passes a CHANGELOG whose newest heading is `## Unreleased`
 — right for day-to-day work, wrong at release time, because the release can
-ship with its own entry unnamed. Converting that heading is currently a
-manual step that nothing enforces and `bump-version.sh` does not mention.
+ship with its own entry unnamed. `release.sh` therefore refuses unless the
+newest heading is the version being released, and it makes that check and
+the dirty-tree check first, before its clean room deletes anything or the
+test suite runs. `bump-version.sh` refuses a dirty tree, so a bump is always
+its own commit.
 
-### Open items for the next release
+**A failing service is not a stopped one.** `self status` and `doctor` read
+each managed unit's last exit status (`last exit code` from `launchctl
+print`, `ExecMainStatus` from systemd). A service that last exited non-zero
+is shown as failing with that status and fails `doctor`; a service that was
+stopped cleanly still reads as down. Before this, a crash-looping service
+showed as `down ✓` and `doctor` passed.
 
-- `doctor` reports "all checks passed" while managed services crash-loop; it
-  does not read per-unit exit status. `self status` shows a crash-looping
-  service as `down ✓`, indistinguishable from one deliberately disabled.
-- `bump-version.sh` should refuse to run on a dirty tree, and `release.sh`'s
-  dirty-tree gate should run first rather than after the test suite.
-- `self status` should flag an installed version with no corresponding git
-  tag; the abandoned attempt left a 0.2.5 build installed that existed
-  nowhere in the repository.
+**An untagged install says so.** Inside a clone that has the installed
+commit, `self status` notes when the install is not the `v<version>` tag it
+claims to be, as when an abandoned attempt left a 0.2.5 build installed that
+no tag held.

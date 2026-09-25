@@ -14,6 +14,24 @@ use std::path::PathBuf;
 
 use vak_core::{Core, health};
 
+/// The runtime's health report, plus one check per managed service that is
+/// failing. A service that keeps exiting with an error used to leave every
+/// check passing, because nothing read how its process last ended.
+fn collect(core: &Core) -> health::HealthReport {
+    let mut report = health::collect(core, None);
+    for (name, status) in crate::install::failing_services() {
+        report.checks.push(health::HealthCheck {
+            label: format!("service {name}"),
+            detail: Err(format!(
+                "last exited with status {status}; its log is in {}",
+                vak_config::paths::logs_dir().display()
+            )),
+        });
+        report.failures += 1;
+    }
+    report
+}
+
 pub fn run_doctor(cwd: PathBuf, trusted: bool, repair: bool) -> i32 {
     let core = match Core::new_with_trust(cwd.clone(), trusted) {
         Ok(c) => c,
@@ -24,7 +42,7 @@ pub fn run_doctor(cwd: PathBuf, trusted: bool, repair: bool) -> i32 {
     };
     crate::print_config_warnings(&core);
 
-    let mut report = health::collect(&core, None);
+    let mut report = collect(&core);
 
     if repair {
         let repaired = repair_known_failures(&core, &report);
@@ -33,7 +51,7 @@ pub fn run_doctor(cwd: PathBuf, trusted: bool, repair: bool) -> i32 {
                 println!("  ↻ {line}");
             }
             println!();
-            report = health::collect(&core, None);
+            report = collect(&core);
         }
     }
 
