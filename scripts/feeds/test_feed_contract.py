@@ -17,14 +17,26 @@ class FeedContractTests(unittest.TestCase):
         self.workspace = tempfile.TemporaryDirectory()
         os.environ["HOME"] = self.home.name
         os.environ["VAK_FEED_WORKSPACE"] = self.workspace.name
+        data = Path(self.home.name) / "data"
+        os.environ["VAK_FEEDS_DB"] = str(data / "feeds" / "feeds.duckdb")
+        os.environ["VAK_FEEDS_LOG"] = str(data / "feeds" / "security.log")
+        os.environ["VAK_FEEDS_CONFIG"] = str(data / "feeds.toml")
         from feed_utils import init_feed_system
 
         init_feed_system(self.workspace.name)
 
     def tearDown(self) -> None:
-        os.environ.pop("VAK_FEED_WORKSPACE", None)
+        for name in ("VAK_FEED_WORKSPACE", "VAK_FEEDS_DB", "VAK_FEEDS_LOG", "VAK_FEEDS_CONFIG"):
+            os.environ.pop(name, None)
         self.workspace.cleanup()
         self.home.cleanup()
+
+    def test_the_store_is_where_the_host_says(self) -> None:
+        from feed_utils import db_path
+
+        self.assertEqual(db_path(), Path(os.environ["VAK_FEEDS_DB"]))
+        self.assertTrue(db_path().exists(), "the store is created at the host's path")
+        self.assertTrue(str(db_path()).startswith(self.home.name))
 
     def test_item_scope_and_quarantine_are_persisted_and_hidden(self) -> None:
         from feed_search import search

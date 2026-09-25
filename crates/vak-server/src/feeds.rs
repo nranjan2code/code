@@ -49,6 +49,30 @@ fn authorize_feed_scope(scope: &str, mode: vak_config::PermissionMode) -> Result
     }
 }
 
+/// What a feed script is told about where it runs. Every path it writes is
+/// decided here, from the canonical data home (so an overridden `VAK_HOME`
+/// holds everything), never guessed by the script.
+fn feed_environment(
+    cwd: &std::path::Path,
+    scripts: &std::path::Path,
+) -> Vec<(&'static str, String)> {
+    let data = vak_config::paths::data_home();
+    let path = |p: PathBuf| p.to_string_lossy().into_owned();
+    vec![
+        ("PYTHONPATH", path(scripts.to_path_buf())),
+        ("VAK_FEED_WORKSPACE", path(cwd.to_path_buf())),
+        (
+            "VAK_FEEDS_DB",
+            path(data.join("feeds").join("feeds.duckdb")),
+        ),
+        (
+            "VAK_FEEDS_LOG",
+            path(data.join("feeds").join("security.log")),
+        ),
+        ("VAK_FEEDS_CONFIG", path(global_feeds_config_path())),
+    ]
+}
+
 /// Feed pipeline Python script directory.
 fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
     let workspace_dir = cwd.join("scripts").join("feeds");
@@ -134,12 +158,7 @@ async fn run_feed_script(
         .arg(&script_path)
         .args(args)
         .current_dir(&dir)
-        .env("PYTHONPATH", dir.to_string_lossy().to_string())
-        .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
-        .env(
-            "VAK_SESSIONS_HOME",
-            vak_config::paths::data_home().to_string_lossy().to_string(),
-        )
+        .envs(feed_environment(cwd, &dir))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -195,12 +214,7 @@ async fn run_feed_admin_script(
         .arg(&script_path)
         .args(args)
         .current_dir(&dir)
-        .env("PYTHONPATH", dir.to_string_lossy().to_string())
-        .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
-        .env(
-            "VAK_SESSIONS_HOME",
-            vak_config::paths::data_home().to_string_lossy().to_string(),
-        )
+        .envs(feed_environment(cwd, &dir))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .output()
@@ -244,12 +258,7 @@ async fn run_feed_mcp_request(
     let mut child = Command::new("python3")
         .arg(&script)
         .current_dir(&dir)
-        .env("PYTHONPATH", dir.to_string_lossy().to_string())
-        .env("VAK_FEED_WORKSPACE", cwd.to_string_lossy().to_string())
-        .env(
-            "VAK_SESSIONS_HOME",
-            vak_config::paths::data_home().to_string_lossy().to_string(),
-        )
+        .envs(feed_environment(cwd, &dir))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1283,9 +1292,34 @@ pub fn routes() -> Router<AppState> {
 }
 
 #[cfg(test)]
+#[allow(clippy::panic)]
 mod tests {
-    use super::{authorize_feed_scope, validate_source_url};
+    use super::{authorize_feed_scope, feed_environment, validate_source_url};
     use vak_config::PermissionMode;
+
+    /// Every path a feed script writes comes from the canonical data home,
+    /// so an overridden `VAK_HOME` holds the feed store, its log and its
+    /// config; the scripts used to work out the platform default for
+    /// themselves and wrote outside it.
+    #[test]
+    fn feeds_write_under_overridden_home() {
+        let home = vak_config::paths::isolate_home_for_tests();
+        let environment = feed_environment(
+            std::path::Path::new("/tmp/ws"),
+            std::path::Path::new("/tmp/scripts"),
+        );
+        for name in ["VAK_FEEDS_DB", "VAK_FEEDS_LOG", "VAK_FEEDS_CONFIG"] {
+            let (_, value) = environment
+                .iter()
+                .find(|(key, _)| *key == name)
+                .unwrap_or_else(|| panic!("{name} is passed"));
+            assert!(
+                std::path::Path::new(value).starts_with(&home),
+                "{name} = {value} is outside {}",
+                home.display()
+            );
+        }
+    }
 
     #[test]
     fn feed_scope_permissions_only_tighten() {

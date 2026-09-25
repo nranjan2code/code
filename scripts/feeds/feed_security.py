@@ -297,11 +297,10 @@ def sanitize_mcp_response(response: Any) -> Any:
 _security_log_path: Path | None = None
 
 
-def init_security_log(data_home: str | Path) -> None:
+def init_security_log(path: str | Path) -> None:
     global _security_log_path
-    log_dir = Path(data_home) / "feeds"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    _security_log_path = log_dir / "security.log"
+    _security_log_path = Path(path)
+    _security_log_path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def log_security_event(event_type: str, **context: Any) -> None:

@@ -33,28 +33,31 @@ from feed_security import (
 
 logger = logging.getLogger("feed_utils")
 
-# ─── Path Resolution ───
+# ─── Paths ───
+#
+# The server decides every path this pipeline writes, from the canonical
+# data home (which follows VAK_HOME), and passes it in. The pipeline never
+# guesses one: a guess ignored VAK_HOME and wrote outside an overridden home.
 
-def get_data_home() -> Path:
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "vak"
-    return Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share")) / "vak"
-
-
-def get_cache_home() -> Path:
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Caches" / "vak"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "vak"
-
-
-def feeds_dir() -> Path:
-    d = get_data_home() / "feeds"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+def _host_path(name: str) -> Path:
+    value = os.environ.get(name)
+    if not value:
+        raise RuntimeError(f"{name} is not set; feed scripts run under vak, which sets it")
+    return Path(value)
 
 
 def db_path() -> Path:
-    return feeds_dir() / "feeds.duckdb"
+    path = _host_path("VAK_FEEDS_DB")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def global_config_path() -> Path:
+    return _host_path("VAK_FEEDS_CONFIG")
+
+
+def security_log_path() -> Path:
+    return _host_path("VAK_FEEDS_LOG")
 
 
 def current_workspace_id() -> str:
@@ -204,8 +207,7 @@ def load_toml(path: Path) -> dict:
 def load_feed_config(workspace: str | Path | None = None) -> FeedConfig:
     if workspace is None:
         workspace = os.environ.get("VAK_FEED_WORKSPACE") or None
-    global_config_path = get_data_home() / "feeds.toml"
-    global_data = load_toml(global_config_path)
+    global_data = load_toml(global_config_path())
 
     workspace_config_path = None
     if workspace:
@@ -997,7 +999,7 @@ def log_alert(alert_id: int, item_id: int, match_score: float, match_reasons: li
 # ─── Initialization ───
 
 def init_feed_system(workspace: str | Path | None = None) -> FeedConfig:
-    init_security_log(get_data_home())
+    init_security_log(security_log_path())
     init_db()
     config = load_feed_config(workspace)
     logger.info("Feed system initialized: %d sources, %d alerts", len(config.sources), len(config.alerts))

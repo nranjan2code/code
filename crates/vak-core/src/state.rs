@@ -286,6 +286,18 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
+        path: "feeds",
+        root: Root::Data,
+        owner: "vak-server (scripts/feeds)",
+        schema: None,
+        // The feed store (DuckDB) and the feeds' security log, both at
+        // paths the server hands the Python pipeline.
+        kind: Kind::Ledger,
+        on_update: OnUpdate::Untouched,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
+    StateEntry {
         path: "feeds.toml",
         root: Root::Data,
         owner: "vak-server",
