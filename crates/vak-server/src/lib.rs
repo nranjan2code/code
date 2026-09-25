@@ -9382,10 +9382,15 @@ async fn remove_retired_plugins(
                 match store.remove(name) {
                     Ok(_) => {
                         removed.push(name.clone());
-                        let _ = vak_config::prune_plugins_network_allow(
-                            &core.cwd().join(".vak/config.toml"),
-                            name,
-                        );
+                        let config = match scope {
+                            InstallScope::User => vak_config::global_path(),
+                            InstallScope::Workspace => Some(vak_config::project_path(core.cwd())),
+                        };
+                        if let Some(config) = config.filter(|path| path.is_file())
+                            && let Err(e) = vak_config::prune_plugins_network_allow(&config, name)
+                        {
+                            errors.push(format!("{name}: {e}"));
+                        }
                     }
                     Err(e) => errors.push(format!("{name}: {e}")),
                 }
