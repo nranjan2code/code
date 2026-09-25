@@ -15286,10 +15286,10 @@ async fn put_global_hooks(
                 .into_response();
         }
     };
-    if let Err(error) = persist_hooks_to_config(&path, &hooks) {
+    if let Err(error) = vak_config::persist_hooks(&path, &hooks) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": error })),
+            Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response();
     }
@@ -15346,197 +15346,46 @@ fn validated_hook_configs(hooks: &[HookInput]) -> Result<Vec<vak_config::HookCon
         .collect()
 }
 
-fn persist_hooks_to_config(
-    path: &std::path::Path,
-    hooks: &[vak_config::HookConfig],
-) -> Result<(), String> {
-    let mut root = if path.is_file() {
-        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
-        toml::from_str::<toml::Value>(&raw).map_err(|error| error.to_string())?
-    } else {
-        toml::Value::Table(toml::map::Map::new())
-    };
-    let Some(table) = root.as_table_mut() else {
-        return Err("config root is not a table".into());
-    };
-    table.insert(
-        "hooks".into(),
-        toml::Value::Array(
-            hooks
-                .iter()
-                .map(|hook| {
-                    let mut value = toml::map::Map::new();
-                    value.insert("event".into(), toml::Value::String(hook.event.clone()));
-                    value.insert("command".into(), toml::Value::String(hook.command.clone()));
-                    if let Some(matcher) = &hook.matcher {
-                        value.insert("match".into(), toml::Value::String(matcher.clone()));
-                    }
-                    value.insert(
-                        "timeout_ms".into(),
-                        toml::Value::Integer(
-                            hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64,
-                        ),
-                    );
-                    value.insert("enabled".into(), toml::Value::Boolean(hook.enabled));
-                    value.insert(
-                        "failure_mode".into(),
-                        toml::Value::String(hook.failure_mode.as_deref().unwrap_or("open").into()),
-                    );
-                    toml::Value::Table(value)
-                })
-                .collect(),
-        ),
-    );
-    let text = toml::to_string_pretty(&root).map_err(|error| error.to_string())?;
-    let parent = path.parent().ok_or("config has no parent")?;
-    std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-    let temp = parent.join(format!(".config.toml.{}.tmp", std::process::id()));
-    std::fs::write(&temp, text).map_err(|error| error.to_string())?;
-    std::fs::rename(temp, path).map_err(|error| error.to_string())
-}
-
 async fn put_hooks(
     State(state): State<AppState>,
     Json(body): Json<HooksPutBody>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
     let core = scoped_core!(&state, None, body.agent.as_deref());
-    for hook in &body.hooks {
-        if !matches!(
-            hook.event.as_str(),
-            "session_start"
-                | "session-start"
-                | "pre_tool_use"
-                | "pre-tool-use"
-                | "post_tool_use"
-                | "post-tool-use"
-                | "stop"
-        ) {
+    let hooks = match validated_hook_configs(&body.hooks) {
+        Ok(hooks) => hooks,
+        Err(message) => {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({ "error": format!("unknown hook event '{}'", hook.event) }),
-                ),
+                Json(serde_json::json!({ "error": message })),
             )
                 .into_response();
         }
-        if hook.enabled && hook.command.trim().is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "enabled hooks need a command" })),
-            )
-                .into_response();
-        }
-        if hook.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) == 0 {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": "hook timeout must be greater than zero" })),
-            )
-                .into_response();
-        }
-        if !matches!(
-            hook.failure_mode.as_deref().unwrap_or("open").trim(),
-            "open" | "closed"
-        ) {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(
-                    serde_json::json!({ "error": "hook failure_mode must be 'open' or 'closed'" }),
-                ),
-            )
-                .into_response();
-        }
-    }
-    let path = core.cwd().join(".vak/config.toml");
-    let mut root: toml::Value = if path.exists() {
-        match std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|raw| toml::from_str(&raw).ok())
-        {
-            Some(v) => v,
-            None => {
-                return (
-                    StatusCode::BAD_REQUEST,
-                    Json(serde_json::json!({ "error": "workspace config is invalid" })),
-                )
-                    .into_response();
-            }
-        }
-    } else {
-        toml::Value::Table(toml::map::Map::new())
     };
     // A disabled hook is kept in config, not dropped — round-tripping the
     // toggle used to delete the definition outright (there was nowhere in
     // `[[hooks]]` to record "off"), which is not what a checkbox should do.
-    let values = body
-        .hooks
-        .iter()
-        .map(|h| {
-            let mut t = toml::map::Map::new();
-            t.insert("event".into(), toml::Value::String(h.event.clone()));
-            t.insert(
-                "command".into(),
-                toml::Value::String(h.command.trim().into()),
-            );
-            if let Some(m) = h.matcher.as_ref().filter(|m| !m.trim().is_empty()) {
-                t.insert("match".into(), toml::Value::String(m.clone()));
-            }
-            t.insert(
-                "timeout_ms".into(),
-                toml::Value::Integer(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS) as i64),
-            );
-            t.insert("enabled".into(), toml::Value::Boolean(h.enabled));
-            t.insert(
-                "failure_mode".into(),
-                toml::Value::String(h.failure_mode.as_deref().unwrap_or("open").trim().into()),
-            );
-            toml::Value::Table(t)
-        })
-        .collect::<Vec<_>>();
-    let Some(table) = root.as_table_mut() else {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "config root is not a table" })),
-        )
-            .into_response();
-    };
-    table.insert("hooks".into(), toml::Value::Array(values));
-    let out = match toml::to_string_pretty(&root) {
-        Ok(v) => v,
-        Err(e) => {
+    match vak_config::persist_hooks(&vak_config::project_path(core.cwd()), &hooks) {
+        Ok(()) => {}
+        Err(vak_config::ConfigError::Parse { .. }) => {
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": format!("serialize config: {e}") })),
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "workspace config is invalid" })),
             )
                 .into_response();
         }
-    };
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Err(e) = std::fs::write(&path, out) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("write config: {e}") })),
-        )
-            .into_response();
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("write config: {error}") })),
+            )
+                .into_response();
+        }
     }
     // Disabled hooks are still handed to Core — `build_hooks_from` is what
     // skips them when it builds the live `HookDef` list — so the effective
     // set stays correct without this endpoint duplicating that filter.
-    core.apply_persisted_hooks(
-        body.hooks
-            .iter()
-            .map(|h| vak_config::HookConfig {
-                event: h.event.clone(),
-                matcher: h.matcher.clone().filter(|m| !m.trim().is_empty()),
-                command: h.command.trim().to_string(),
-                timeout_ms: Some(h.timeout_ms.unwrap_or(vak_hooks::DEFAULT_TIMEOUT_MS)),
-                enabled: h.enabled,
-                failure_mode: h.failure_mode.clone(),
-            })
-            .collect(),
-    );
+    core.apply_persisted_hooks(hooks);
     let enabled_count = body.hooks.iter().filter(|h| h.enabled).count();
     vak_core::security_events::record(
         &core.sessions_home(),
@@ -15880,16 +15729,8 @@ fn apply_scoped_mcp_change(
     server: Option<vak_config::McpServerConfig>,
 ) -> Result<(), String> {
     let path = scope.config_path(core)?;
-    let mut config = read_mcp_config(&path)?;
-    match server {
-        Some(server) => {
-            config.servers.insert(id.to_string(), server);
-        }
-        None => {
-            config.servers.remove(id);
-        }
-    }
-    vak_config::persist_mcp_servers(&path, &config.servers).map_err(|error| error.to_string())?;
+    vak_config::persist_mcp_server(&path, id, server.as_ref())
+        .map_err(|error| error.to_string())?;
     let effective = vak_config::load_with_trust(core.cwd(), core.project_config_trusted())
         .map_err(|error| error.to_string())?;
     core.apply_persisted_mcp_servers(effective.mcp);

@@ -114,6 +114,20 @@ mode, and theme persist changed fields atomically to the workspace
 provider discovery, and admin snapshots expose effective values, provenance,
 and the route revision.
 
+Every write to a `config.toml`, whatever the setting, goes through one path
+in `vak-config` (`update_config_file`): one process-wide lock held from the
+read to the rename, the edit applied to the raw TOML table so a key this
+version does not know is written back unchanged (invariant 29), and a rename
+over the target from a temporary file whose name no other write shares
+(process id plus a per-process sequence, created exclusively). Two settings
+saved at the same moment, such as `PUT /config/mcp` and `PATCH /config`,
+therefore both land, and a reader sees the whole old document or the whole
+new one. An edit that changes nothing leaves the file untouched. A new
+setting gets a writer in `vak-config` built on that path, never its own lock
+or temporary file. The lock covers one process: two processes saving the
+same file at the same instant still each write a whole document, and the
+later rename wins.
+
 New-session admission in other local processes refreshes persisted
 provider/model, max turns, theme, MCP, hooks, and permission mode; a
 permission change revokes live capabilities before apply. CLI, task,
