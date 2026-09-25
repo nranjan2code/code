@@ -1,8 +1,8 @@
 # Plan — visual refresh (Ink and Saffron)
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
-completed by explicit request; V1 landed except V1.12, which needs its own
-session (server and ledger). V2, V3 and V4.2 to V4.5 remain unstarted.**
+completed by explicit request; V1 complete (V1.12 closed as obsolete). V2,
+V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -143,7 +143,14 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   service" from the setup status the client already reads.
   Done when: a fresh home shows it; a configured home shows no status at
   rest.
-- [ ] **V1.12 Revision requests show as the user's message**, with raw IDs.
+- [x] **V1.12 Revision requests show as the user's message**, with raw IDs.
+  *Closed without a change:* the current server runs a revision in an
+  isolated child run and records a `CandidateRevision` activity in the
+  conversation, not a user message; the revision text reaches only the
+  child's prompt (`dispatch_candidate_revision`), and no other code writes
+  it. The bubble in the review is a historical ledger entry from an earlier
+  revision path; append-only ledgers keep it. Checked in
+  source, not reproduced live. The original analysis follows.
   Where: the text is built in `crates/vak-server/src/lib.rs` (the candidate
   revision route, "Revise candidate … Owner selected comment …"), rendered
   by `components/ChatPane.tsx`. Fix: a typed kind on the message
@@ -302,3 +309,7 @@ what was not.
   AI service" in the header, with no status at rest on a configured home.
   Evidence: `after/V1.*`. Not checked live: the goal-chip tooltip (V1.9,
   source only); V1.12 not started. Client typecheck and node tests pass.
+- 2026-09-25: V1.12 closed without a code change: the review's revision
+  bubble is a historical ledger entry from an earlier revision path; today's
+  path records a `CandidateRevision` activity and sends the text only to the
+  isolated child (source check only).

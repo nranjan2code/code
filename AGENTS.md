@@ -192,12 +192,12 @@ behaviour yet, and no session starts a later milestone unasked.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
 - Keep conversation content out of logs.
 
-### Pending: the visual refresh (V1 and V4.1 landed; the rest pending)
+### Pending: the visual refresh (V1 and V4.1 done; V2 next)
 
 The maintainer approved the direction and locked all five of its decisions
 on 2026-09-25, then asked for the logo and platform-icon correction (V4.1)
-and for implementation to begin. V1 has landed except V1.12; V2, V3 and the
-rest of V4 remain unstarted, and no session starts one unasked.
+and for implementation to continue stage by stage. V1 is done; V2, V3 and the
+rest of V4 follow in order.
 
 **What it is.** One visual system for the shared client
 (`crates/vak-client-ui`), so for both the desktop and the web app:
