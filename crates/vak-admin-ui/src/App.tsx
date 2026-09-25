@@ -35,15 +35,22 @@ import type {
   ActiveWorker, SkillItem, SkillProposal, TaskItem, TranscriptEntry, VoiceConfig, WorkReceipt,
 } from "./types";
 
-// Theme state: initialized from localStorage and synchronized to document root dataset
-const [theme, setTheme] = createSignal<"warm" | "dark" | "contrast">(
-  (localStorage.getItem("vak_admin_theme") as "warm" | "dark" | "contrast") || "warm"
+// The client's four theme choices; a stored retired id resolves to system.
+type ThemeChoice = "system" | "light" | "dark" | "contrast";
+const THEME_CHOICES: readonly ThemeChoice[] = ["system", "light", "dark", "contrast"];
+const storedTheme = localStorage.getItem("vak_admin_theme") as ThemeChoice | null;
+const [theme, setTheme] = createSignal<ThemeChoice>(
+  storedTheme && THEME_CHOICES.includes(storedTheme) ? storedTheme : "system",
 );
+const systemDarkQuery = matchMedia("(prefers-color-scheme: dark)");
+const [systemDark, setSystemDark] = createSignal(systemDarkQuery.matches);
+systemDarkQuery.addEventListener("change", (e) => setSystemDark(e.matches));
 
 createEffect(() => {
   const t = theme();
   localStorage.setItem("vak_admin_theme", t);
-  document.documentElement.dataset.theme = t === "warm" ? "" : t;
+  const resolved = t === "system" ? (systemDark() ? "dark" : "light") : t;
+  document.documentElement.dataset.theme = resolved;
 });
 
 // Unread inbox badge: polled lightly while signed in.
@@ -6694,8 +6701,9 @@ function Settings() {
               <div class="theme-grid">
                 <For
                   each={[
-                    { id: "warm", label: "Warm dark", class: "" },
-                    { id: "dark", label: "Midnight", class: "dark" },
+                    { id: "system", label: "Match system", class: "system" },
+                    { id: "light", label: "Light", class: "" },
+                    { id: "dark", label: "Dark", class: "dark" },
                     { id: "contrast", label: "High contrast", class: "contrast" },
                   ] as const}
                 >
