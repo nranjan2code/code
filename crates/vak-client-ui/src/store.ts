@@ -757,16 +757,18 @@ export const [feedsOpen, setFeedsOpen] = createSignal(false);
 export type SettingsPageId =
   | "general"
   | "appearance"
+  | "voice"
+  | "notifications"
+  | "connections"
+  | "privacy"
   | "agent"
-  | "permissions"
+  | "models"
   | "reliability"
-  | "integrations"
+  | "prompts"
   | "services"
-  | "learning"
-  | "advanced"
+  | "storage"
   | "archived";
 export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
-export const [pendingSettingsSection, setPendingSettingsSection] = createSignal<"voice" | null>(null);
 // Read-only historical transcript viewer (docs/design/29): any session by id,
 // served from disk — no attach, no stream, never touches live view state.
 export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);

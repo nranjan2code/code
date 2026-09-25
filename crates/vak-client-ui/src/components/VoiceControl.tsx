@@ -3,7 +3,7 @@ import * as api from "../api";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
 import { SpeechDetector } from "../voice-activity";
 import { VoiceSessionSocket, type DiscardReason } from "../voice";
-import { setNotice, setPendingSettingsPage, setPendingSettingsSection, setSettingsOpen } from "../store";
+import { setNotice, setPendingSettingsPage, setSettingsOpen } from "../store";
 import { spokenReplyText } from "../structured";
 import AgentMark, { type CharacterState } from "./AgentMark";
 import Icon from "./Icon";
@@ -149,8 +149,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       if (!config.voice?.enabled) {
         setConnecting(false);
         setStatus("Set up voice");
-        setPendingSettingsPage("general");
-        setPendingSettingsSection("voice");
+        setPendingSettingsPage("voice");
         setSettingsOpen(true);
         return;
       }

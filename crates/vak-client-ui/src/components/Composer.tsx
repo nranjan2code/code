@@ -701,7 +701,7 @@ export default function Composer(props: { cwd: string }) {
               </div>
             </details>
             <Show when={health()?.permission_mode === "FullAccess"}>
-              <button type="button" class="composer-safety" title="Vak can run any command and open files outside this folder. Change it in Settings." onClick={() => { setPendingSettingsPage("permissions"); setSettingsOpen(true); }}><Icon name="warning" size={14} /><span>Full access</span></button>
+              <button type="button" class="composer-safety" title="Vak can run any command and open files outside this folder. Change it in Settings." onClick={() => { setPendingSettingsPage("privacy"); setSettingsOpen(true); }}><Icon name="warning" size={14} /><span>Full access</span></button>
             </Show>
             <input
               ref={fileInput}

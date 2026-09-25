@@ -2256,11 +2256,18 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-search input { width: 100%; height: 36px; outline: 0; border: 1px solid var(--border); border-radius: 10px; padding: 6px 10px 6px 34px; color: var(--text); background: var(--surface-raised); }
 .settings-search input:focus { border-color: var(--border-strong); }
 .settings-nav-label { padding: 0 12px 6px; color: var(--faint); font-size: 12px; font-weight: 600; }
-.settings-scope-link { display: block; margin: 0 9px 12px; padding: 0; color: var(--muted); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
+.settings-scope-link { display: block; margin: 0 0 12px; padding: 0; color: var(--muted); font-size: 13px; text-decoration: underline; text-underline-offset: 2px; text-align: left; }
 .settings-scope-link:hover { color: var(--text-soft); }
-.settings-agent-switcher { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-.settings-agent-switcher select { padding: 6px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px; }
-.settings-nav-label.archived-nav-label { margin-top: 20px; }
+.settings-nav-group + .settings-nav-group { margin-top: 20px; }
+.settings-page-back { display: none; }
+.settings-technical { border-top: 1px solid var(--border-soft); }
+.settings-technical > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 17px; color: var(--text-soft); cursor: pointer; font-size: 14px; font-weight: 500; list-style: none; }
+.settings-technical > summary::-webkit-details-marker { display: none; }
+.settings-technical > summary .icon { color: var(--faint); transition: transform 200ms cubic-bezier(0.2, 0, 0, 1); }
+.settings-technical[open] > summary .icon { transform: rotate(90deg); }
+.settings-technical > summary:hover { background: var(--surface-hover); }
+.settings-section-title { margin: 40px 0 16px; font-family: var(--display); font-size: 22px; font-weight: 600; line-height: 28px; }
+.settings-content > header.agent-settings-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .settings-nav nav { display: flex; flex-direction: column; gap: 2px; }
 .settings-nav nav button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 7px 11px; border-radius: 8px; color: var(--muted); text-align: left; }
 .settings-nav nav button:hover { color: var(--text-soft); background: var(--surface-hover); }
@@ -2279,7 +2286,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-content > header.archived-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .archived-header .settings-button { display: inline-flex; align-items: center; gap: 6px; color: var(--red); border-color: color-mix(in srgb, var(--red) 25%, transparent); background: color-mix(in srgb, var(--red) 7%, transparent); }
 .archived-header .settings-button:hover, .settings-button.danger:hover { border-color: color-mix(in srgb, var(--red) 45%, transparent); background: color-mix(in srgb, var(--red) 13%, transparent); }
-.settings-content header h1 { margin: 0 0 5px; font-size: 28px; font-weight: 500; letter-spacing: -.025em; }
+.settings-content header h1 { margin: 0 0 6px; font-family: var(--display); font-size: 22px; font-weight: 600; line-height: 28px; }
 .settings-content header p { margin: 0; color: var(--muted); }
 .settings-group { margin: 0 0 29px; }
 .settings-group > h3 { margin: 0 0 9px; color: var(--text-soft); font-size: 13px; font-weight: 600; }
@@ -2325,7 +2332,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .switch span { position: absolute; top: 3px; left: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--text-soft); box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform 140ms ease; }
 .switch.on { background: var(--accent); }
 .switch.on span { background: #fff; transform: translateX(15px); }
-.settings-value { color: var(--muted); font-family: var(--mono); font-size: 12px; overflow-wrap: anywhere; }
+.settings-value { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
 @container (max-width: 600px) {
   .setting-row { flex-wrap: wrap; gap: 9px; }
   .setting-copy { flex-basis: 100%; }
@@ -2729,11 +2736,15 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 
 @media (max-width: 600px) {
   .settings-shell { display: flex; flex-direction: column; overflow: hidden; }
-  .settings-nav { flex: none; max-height: 220px; padding: 12px 10px 10px; overflow-y: auto; border-right: 0; border-bottom: 1px solid var(--border-soft); }
+  .settings-nav { flex: 1; min-height: 0; padding: 12px 10px 10px; overflow-y: auto; border-right: 0; }
+  .settings-shell[data-phone-view="page"] .settings-nav { display: none; }
+  .settings-shell[data-phone-view="list"] .settings-main { display: none; }
+  .settings-page-back { display: flex; align-items: center; gap: 8px; min-height: 40px; margin: 0 0 16px -8px; padding: 6px 8px; border-radius: 8px; color: var(--muted); font-size: 15px; }
+  .settings-page-back .icon { transform: rotate(180deg); }
+  .settings-content > header.agent-settings-header { flex-direction: column; gap: 12px; }
   .settings-nav-foot { display: none; }
   .settings-back { margin-bottom: 8px; }
   .settings-search { margin-bottom: 14px; }
-  .settings-nav-label.archived-nav-label { margin-top: 12px; }
   .settings-main { flex: 1; min-height: 0; }
   .settings-content { width: calc(100% - 28px); padding: 28px 0 56px; }
   .prompt-page { --prompt-gutter: 13px; }
