@@ -729,6 +729,40 @@ fn second_handle_on_same_file_is_locked_out() {
     assert!(SessionLog::open(path).is_ok());
 }
 
+/// A process spawned while a ledger is dropped and reopened briefly owns a
+/// copy of its locked descriptor (fork to exec). The reopen must ride that
+/// out rather than report the session as held by another writer.
+#[cfg(unix)]
+#[test]
+fn reopen_while_children_spawn_is_never_locked() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("s.jsonl");
+    drop(SessionLog::create(path.clone(), header()).unwrap());
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let spawners: Vec<_> = (0..4)
+        .map(|_| {
+            let stop = stop.clone();
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = std::process::Command::new("true").status();
+                }
+            })
+        })
+        .collect();
+    let failures = (0..2000)
+        .filter(|_| SessionLog::open(path.clone()).is_err())
+        .count();
+    stop.store(true, Ordering::Relaxed);
+    for s in spawners {
+        s.join().unwrap();
+    }
+    assert_eq!(failures, 0, "{failures} reopens reported the ledger locked");
+}
+
 #[test]
 fn open_read_only_succeeds_while_handle_is_locked() {
     let dir = tempdir().unwrap();

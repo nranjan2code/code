@@ -27,6 +27,35 @@ pub struct TailSections {
     pub workspace: Option<String>,
 }
 
+/// How long a ledger lock that is held by someone else is waited for before
+/// the open reports `Locked`.
+const LOCK_WAIT: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Take the ledger's exclusive lock, waiting briefly if it is held.
+///
+/// `flock` belongs to the open file description, and any process spawned
+/// from this one owns a copy of every descriptor from its fork until its
+/// exec closes the close-on-exec ones; `posix_spawn` has the same window
+/// inside the kernel on macOS. A ledger dropped and reopened while a tool,
+/// hook or MCP server is starting therefore sees its own lock as held for a
+/// few microseconds. A real second writer holds it far longer than
+/// `LOCK_WAIT` and is still refused.
+fn lock_exclusive(file: &File, path: &Path) -> Result<(), SessionError> {
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(()),
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(std::fs::TryLockError::WouldBlock) => {
+                return Err(SessionError::Locked(path.to_path_buf()));
+            }
+            Err(std::fs::TryLockError::Error(e)) => return Err(e.into()),
+        }
+    }
+}
+
 pub struct SessionLog {
     path: PathBuf,
     file: File,
@@ -58,8 +87,7 @@ impl SessionLog {
             .open(&path)?;
         // Cross-process safety: an exclusive lock for the lifetime of the
         // handle keeps two processes from interleaving appends.
-        file.try_lock()
-            .map_err(|_| SessionError::Locked(path.clone()))?;
+        lock_exclusive(&file, &path)?;
         if file.metadata()?.len() > 0 {
             return Err(SessionError::Exists(path));
         }
@@ -164,8 +192,7 @@ impl SessionLog {
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
         let file = OpenOptions::new().append(true).open(&path)?;
-        file.try_lock()
-            .map_err(|_| SessionError::Locked(path.clone()))?;
+        lock_exclusive(&file, &path)?;
         let reader = BufReader::new(File::open(&path)?);
         let parsed = Self::parse_entries(&path, reader)?;
         Ok(SessionLog {

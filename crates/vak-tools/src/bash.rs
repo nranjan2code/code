@@ -415,15 +415,14 @@ pub fn scrub_environment(cmd: &mut tokio::process::Command) {
     }
 }
 
+/// Put the child in its own process group so `kill_process_group` reaches
+/// everything it starts. `process_group` needs no `pre_exec` closure, so std
+/// can keep using `posix_spawn` and no unsafe code runs in the forked child.
 pub fn isolate_process_group(cmd: &mut tokio::process::Command) {
     #[cfg(unix)]
-    #[allow(unsafe_code)]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setpgid(0, 0);
-            Ok(())
-        });
-    }
+    cmd.process_group(0);
+    #[cfg(not(unix))]
+    let _ = cmd;
 }
 
 fn shell_command(command: &str) -> tokio::process::Command {
