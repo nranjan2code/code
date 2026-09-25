@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.5 done. V3.6 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.6 done. V3.7 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -261,7 +261,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 - [x] **V3.5 Settings.** Everyday, Agents and Advanced navigation (doc 75
   §6.3), outcome wording, one agent header, Technical details rows; on phones
   a list that opens each page.
-- [ ] **V3.6 Review and Canvas.** Review as a sheet with the preview first;
+- [x] **V3.6 Review and Canvas.** Review as a sheet with the preview first;
   Canvas with device icons and plain labels.
 - [ ] **V3.7 One sheet component** for every dialog: title, close at top
   right, focus trap, Escape, return focus.
@@ -608,6 +608,31 @@ what was not.
   `--dur*`, `--fs-section` and `--shadow-float` tokens) at `cd1a45a1` as
   well, before this change; V3.5 touches none of those tokens. Every other
   workspace test passed.
+- 2026-09-26: V3.6 done. Review is one scrolling sheet between a fixed
+  header (Newsreader title, close at top right; the second "Back to
+  conversation" button is gone) and the decision footer, in three
+  sections: the preview first (an HTML draft drawn as a page in a
+  `sandbox="allow-scripts"` frame with no network, other text as its
+  source, Office as a pointer to Canvas), then Changes (version, counts,
+  the files with their checkboxes, "Compare with the current file" folded,
+  or the Office change list), then Before you accept (where it goes, the
+  saved copy, format checks, any failed check named in plain words, the
+  comments). The destination folder path, file size and hash, run and
+  draft ids, the check names and commands and the preview-environment log
+  moved into Technical details; byte counts left the file rows. The
+  two-pane layout and its three responsive override blocks are gone.
+  Canvas: Desktop, Tablet and Phone are Lucide monitor, tablet and
+  smartphone icons (added to `Icon.tsx`) with the name as label and
+  `aria-pressed`; the badge reads "Draft preview · Version N" and replaces
+  the separate Saved draft chip; the file path shows only with technical
+  details on; "Back to the answer"; the footer reads "Safe preview,
+  offline". Checked live at 1440 (light and dark) and 390 (light and dark):
+  Review opens with the preview on top, scrolls to the decision, the
+  technical disclosure opens, Canvas opens from Review; no sideways scroll.
+  Evidence: `after/V3.6-*`. The review workspace's draft renders blank in
+  both Review and Canvas because its `<title>` is unclosed (the draft the
+  review comment asks to fix), not because of the frame. Not checked live:
+  an Office draft and a multi-file draft in the new layout.
 - 2026-09-26: V2.9 done, by maintainer decision. The three `design_tokens`
   failures began at V2.2 (`1ef0f8c3`), not `cd1a45a1`. (1) The admin console
   still carried the pre-refresh warm-dark palette although DESIGN.md says it

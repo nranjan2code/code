@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, Index, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, Index, Show, onCleanup } from "solid-js";
 import {
   workbenchExecutions,
   workbenchLoadError,
@@ -15,7 +15,6 @@ import {
   setWorkbenchTab,
   candidateReviewRequest,
   setCandidateReviewRequest,
-  setDockTab,
   technicalDetails,
 } from "../store";
 import * as api from "../api";
@@ -26,6 +25,7 @@ import { isOfficePath } from "../officeFiles";
 import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
+import { sandboxedSrcdoc } from "../safeUrl";
 import { trapFocus } from "../focusTrap";
 import { activate } from "../App";
 
@@ -161,6 +161,26 @@ export default function WorkbenchPanel() {
   const [inspectedFiles, setInspectedFiles] = createSignal<string[]>([]);
   const [beforeContent, setBeforeContent] = createSignal<string | null>(null);
   const [afterContent, setAfterContent] = createSignal<string | null>(null);
+  // Review shows an HTML draft as the page it is, offline and in a sandbox,
+  // before the source and the comparison.
+  const [draftPage] = createResource(
+    () => {
+      const version = candidate();
+      const path = reviewedPath();
+      const content = afterContent();
+      return version && path && content !== null && /\.html?$/i.test(path) ? { version, path, content } : false;
+    },
+    async ({ version, path, content }) => {
+      try {
+        return await artifactPreviewHtml(path, content, "'none'", {
+          readFile: (file) => api.readSandboxCandidateFile(version.session_id, version.candidate.candidate_id, file),
+          readFileRaw: (file) => api.readSandboxCandidateFileRaw(version.session_id, version.candidate.candidate_id, file),
+        });
+      } catch {
+        return sandboxedSrcdoc(content, "'none'");
+      }
+    },
+  );
   const [reviewFileError, setReviewFileError] = createSignal<string | null>(null);
   const [reviewComment, setReviewComment] = createSignal("");
   // The Office anchor the next comment points at (docs/design/72, F9).
@@ -728,95 +748,75 @@ export default function WorkbenchPanel() {
         {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
           <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review changes files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
-              <div><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
-              <div class="candidate-review-header-actions"><button type="button" class="btn" onClick={() => { setReviewOpen(false); setDockTab(null); }}>Back to conversation</button><button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button></div>
+              <div><h2>Review changes</h2><p>Nothing changes in {destinationLabel()} until you accept.</p></div>
+              <button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button>
             </header>
-            <div class="candidate-review-summary" aria-label="Draft details">
-              <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
-                <label for="candidate-review-version">Draft version</label>
-                <select id="candidate-review-version" onChange={(event) => {
-                  const selected = pendingCandidates().find((record) => record.candidate.candidate_id === event.currentTarget.value);
-                  if (selected) selectCandidate(selected);
-                }}>
-                  <For each={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id)}>{(record, index) =>
-                    <option value={record.candidate.candidate_id} selected={record.candidate.candidate_id === prepared().candidate.candidate_id}>Version {index() + 1}{record.narrowed ? ` · keeps ${record.narrowed.keep.length} ${record.narrowed.keep.length === 1 ? "change" : "changes"}` : ""} · {new Date(record.updated_at).toLocaleString()}</option>
-                  }</For>
-                </select>
-              </Show>
-              <div class="candidate-review-counts">
-                <strong>{candidateSummary().newFiles} new</strong>
-                <strong>{candidateSummary().changedFiles} changed</strong>
-                <Show when={candidateSummary().deletedFiles > 0}><strong>{candidateSummary().deletedFiles} deleted</strong></Show>
-                <Show when={candidateSummary().unchangedFiles > 0}><span>{candidateSummary().unchangedFiles} unchanged</span></Show>
-              </div>
-              <div class="candidate-review-decision-grid">
-                <div><span>Change</span><strong>{prepared().candidate.files.length === 1 ? `${fileState(prepared().candidate.files[0])}: ${prepared().candidate.files[0].path}` : `${prepared().candidate.files.length} files in this draft`}</strong></div>
-                <div><span>Destination</span><strong>{destinationLabel()}</strong><small title={prepared().candidate.destination_root}>{prepared().candidate.destination_root}</small></div>
-                <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>{prepared().verified ? "Saved copy is intact" : "Saved copy could not be checked"}</small></div>
-                <div><span>Format checks</span><strong>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} passed · ${prepared().draft_checks?.filter((check) => check.status !== "passed").length} failed on draft` : prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "Draft checks inspect saved bytes. The same checks rerun after acceptance in the workspace." : "Vakyartha can't check this type of file automatically yet."}</small></div>
-              </div>
-              <Show when={(prepared().draft_checks?.length ?? 0) > 0}>
-                <div class="candidate-review-checks" aria-label="Saved draft format checks">
-                  <strong>Saved draft checks</strong>
-                  <For each={prepared().draft_checks}>{(check) => <p><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</p>}</For>
+            <div class="candidate-review-scroll">
+              <section class="candidate-review-section" aria-label="Preview">
+                <div class="candidate-review-section-head">
+                  <h3>{reviewedPath()?.split("/").pop() ?? "Choose a file"}</h3>
+                  <Show when={reviewedPath()}>{(path) =>
+                    <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
+                      const version = prepared();
+                      setReviewOpen(false);
+                      openArtifactCanvas({
+                        id: `${version.candidate.candidate_id}:${path()}`,
+                        title: path().split("/").pop() || path(),
+                        artifactPath: path(),
+                        sessionId: version.session_id,
+                        resultId: version.result_id,
+                        executionId: version.execution_id,
+                        candidateId: version.candidate.candidate_id,
+                      });
+                    }}>Open saved version in Canvas</button></Show>
+                  }</Show>
                 </div>
-              </Show>
-              <Show when={(prepared().candidate.workspace_checks?.length ?? 0) > 0}>
-                <div class="candidate-review-checks">
-                  <strong>Optional workspace checks after acceptance</strong>
-                  <For each={prepared().candidate.workspace_checks}>{(check) => <p>{check.label} · <code>{check.command}</code></p>}</For>
-                  <small>These commands run only when you choose Run workspace check after the files are accepted.</small>
-                </div>
-              </Show>
-              <Show when={previewPreparations().filter((record) => record.candidate_id === prepared().candidate.candidate_id).at(-1)}>{(record) =>
-                <div class="candidate-review-checks">
-                  <h3>Preview environment</h3>
-                  <p>{record().state} · <code>{record().command}</code></p>
-                  <Show when={record().evidence}>
-                    <details class="candidate-review-provenance">
-                      <summary>Preparation details</summary>
-                      <pre>{record().evidence.slice(-4_000)}</pre>
-                    </details>
-                  </Show>
-                </div>
-              }</Show>
-              <Show when={technicalDetails()}>
-              <details class="candidate-review-provenance">
-                <summary>Technical details</summary>
-                <p><strong>Run</strong> <span>{prepared().execution_id}</span></p>
-                <p><strong>Draft</strong> <span>{prepared().candidate.candidate_id}</span></p>
-                <p><strong>Result</strong> <span>{prepared().result_id}</span></p>
-                <p><strong>Digest</strong> <span>{prepared().candidate_digest}</span></p>
-              </details>
-              </Show>
-            </div>
-            <div class="candidate-review-body">
-              <div class="candidate-review-files" aria-label="Draft files">
-                <For each={prepared().candidate.files}>{(file) => <div class="candidate-review-file">
-                  <input type="checkbox" aria-label={`Apply ${file.path}`} checked={reviewedFiles().includes(file.path)} onChange={() => toggleReviewedFile(file.path)} />
-                  <button type="button" classList={{ active: reviewedPath() === file.path }} onClick={() => setReviewedPath(file.path)}>{file.path}</button>
-                  <span>{fileState(file)} · {inspectedFiles().includes(file.path) ? "Viewed" : formatBytes(file.bytes)}</span>
-                </div>}</For>
-              </div>
-              <div class="candidate-review-preview">
-                <h3>{reviewedPath() ?? "Choose a file"}</h3>
-                <Show when={reviewedPath()}>{(path) =>
-                  <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
-                    const version = prepared();
-                    setReviewOpen(false);
-                    openArtifactCanvas({
-                      id: `${version.candidate.candidate_id}:${path()}`,
-                      title: path().split("/").pop() || path(),
-                      artifactPath: path(),
-                      sessionId: version.session_id,
-                      resultId: version.result_id,
-                      executionId: version.execution_id,
-                      candidateId: version.candidate.candidate_id,
-                    });
-                  }}>Open saved version in Canvas</button></Show>
-                }</Show>
-                <Show when={technicalDetails() && prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p class="candidate-review-hash">{formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</p>}</Show>
                 <Show when={reviewFileError()}>{(message) => <p role="alert" class="inline-error">{message()}</p>}</Show>
+                <Show when={draftPage() && !reviewFileError()}>
+                  <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={draftPage()} />
+                </Show>
+                <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
+                  <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre>
+                </Show>
+                <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
+                  <p class="office-change-empty">Open the saved version to see the whole document. The changes are listed below.</p>
+                </Show>
+              </section>
+              <section class="candidate-review-section" aria-label="Changes">
+                <h3>Changes</h3>
+                <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
+                  <label for="candidate-review-version">Draft version</label>
+                  <select id="candidate-review-version" onChange={(event) => {
+                    const selected = pendingCandidates().find((record) => record.candidate.candidate_id === event.currentTarget.value);
+                    if (selected) selectCandidate(selected);
+                  }}>
+                    <For each={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id)}>{(record, index) =>
+                      <option value={record.candidate.candidate_id} selected={record.candidate.candidate_id === prepared().candidate.candidate_id}>Version {index() + 1}{record.narrowed ? ` · keeps ${record.narrowed.keep.length} ${record.narrowed.keep.length === 1 ? "change" : "changes"}` : ""} · {new Date(record.updated_at).toLocaleString()}</option>
+                    }</For>
+                  </select>
+                </Show>
+                <div class="candidate-review-counts">
+                  <strong>{candidateSummary().newFiles} new</strong>
+                  <strong>{candidateSummary().changedFiles} changed</strong>
+                  <Show when={candidateSummary().deletedFiles > 0}><strong>{candidateSummary().deletedFiles} deleted</strong></Show>
+                  <Show when={candidateSummary().unchangedFiles > 0}><span>{candidateSummary().unchangedFiles} unchanged</span></Show>
+                </div>
+                <div class="candidate-review-files" aria-label="Draft files">
+                  <For each={prepared().candidate.files}>{(file) => <div class="candidate-review-file">
+                    <input type="checkbox" aria-label={`Apply ${file.path}`} checked={reviewedFiles().includes(file.path)} onChange={() => toggleReviewedFile(file.path)} />
+                    <button type="button" classList={{ active: reviewedPath() === file.path }} onClick={() => setReviewedPath(file.path)}>{file.path}</button>
+                    <span>{fileState(file)}{inspectedFiles().includes(file.path) ? " · Viewed" : ""}</span>
+                  </div>}</For>
+                </div>
+                <Show when={reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
+                  <details class="candidate-review-compare">
+                    <summary>Compare with the current file</summary>
+                    <div class="candidate-review-columns">
+                      <div><strong>Now</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
+                      <div><strong>After</strong><pre>{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre></div>
+                    </div>
+                  </details>
+                </Show>
                 <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
                   <Show when={officeReview()} fallback={<p class="office-change-empty">Comparing…</p>}>{(review) => <OfficeChangeList
                     review={review()}
@@ -832,12 +832,15 @@ export default function WorkbenchPanel() {
                     }}
                   />}</Show>
                 </Show>
-                <Show when={reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
-                  <div class="candidate-review-columns">
-                    <div><strong>Current workspace</strong><pre>{beforeContent() ?? "New file or preview unavailable"}</pre></div>
-                    <div><strong>Draft</strong><pre>{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre></div>
-                  </div>
-                </Show>
+              </section>
+              <section class="candidate-review-section" aria-label="Decision">
+                <h3>Before you accept</h3>
+                <div class="candidate-review-decision-grid">
+                  <div><span>Goes to</span><strong>{destinationLabel()}</strong></div>
+                  <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>{prepared().verified ? "Saved copy is intact" : "Saved copy could not be checked"}</small></div>
+                  <div><span>Format checks</span><strong>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} passed · ${prepared().draft_checks?.filter((check) => check.status !== "passed").length} failed on draft` : prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "Draft checks inspect saved bytes. The same checks rerun after acceptance in the workspace." : "Vakyartha can't check this type of file automatically yet."}</small></div>
+                </div>
+                <For each={(prepared().draft_checks ?? []).filter((check) => check.status !== "passed")}>{(check) => <p role="alert" class="inline-error">A check failed on {check.path.split("/").pop()}.</p>}</For>
                 <Show when={candidateComments().length > 0}>
                   <div class="candidate-review-comments" aria-label="Comments on this draft">
                     <h4>Comments</h4>
@@ -857,7 +860,43 @@ export default function WorkbenchPanel() {
                   <button type="button" class="btn" disabled={reviewCommentBusy() || !reviewComment().trim()} onClick={() => void sendReviewComment()}>{reviewCommentBusy() ? "Saving…" : "Save comment"}</button>
                   <Show when={reviewCommentMessage()}>{(message) => <p role="status">{message()}</p>}</Show>
                 </div>
-              </div>
+                <Show when={technicalDetails()}>
+                  <details class="candidate-review-provenance">
+                    <summary>Technical details</summary>
+                    <p><strong>Folder</strong> <span>{prepared().candidate.destination_root}</span></p>
+                    <Show when={prepared().candidate.files.find((file) => file.path === reviewedPath())}>{(file) => <p><strong>File</strong> <span>{file().path} · {formatBytes(file().bytes)} · draft hash {file().candidate_hash.slice(0, 12)}</span></p>}</Show>
+                    <p><strong>Run</strong> <span>{prepared().execution_id}</span></p>
+                    <p><strong>Draft</strong> <span>{prepared().candidate.candidate_id}</span></p>
+                    <p><strong>Result</strong> <span>{prepared().result_id}</span></p>
+                    <p><strong>Digest</strong> <span>{prepared().candidate_digest}</span></p>
+                  <Show when={(prepared().draft_checks?.length ?? 0) > 0}>
+                    <div class="candidate-review-checks" aria-label="Saved draft format checks">
+                      <strong>Saved draft checks</strong>
+                      <For each={prepared().draft_checks}>{(check) => <p><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</p>}</For>
+                    </div>
+                  </Show>
+                  <Show when={(prepared().candidate.workspace_checks?.length ?? 0) > 0}>
+                    <div class="candidate-review-checks">
+                      <strong>Optional workspace checks after acceptance</strong>
+                      <For each={prepared().candidate.workspace_checks}>{(check) => <p>{check.label} · <code>{check.command}</code></p>}</For>
+                      <small>These commands run only when you choose Run workspace check after the files are accepted.</small>
+                    </div>
+                  </Show>
+                  <Show when={previewPreparations().filter((record) => record.candidate_id === prepared().candidate.candidate_id).at(-1)}>{(record) =>
+                    <div class="candidate-review-checks">
+                      <h3>Preview environment</h3>
+                      <p>{record().state} · <code>{record().command}</code></p>
+                      <Show when={record().evidence}>
+                        <details class="candidate-review-provenance">
+                          <summary>Preparation details</summary>
+                          <pre>{record().evidence.slice(-4_000)}</pre>
+                        </details>
+                      </Show>
+                    </div>
+                  }</Show>
+                  </details>
+                </Show>
+              </section>
             </div>
             <footer class="candidate-review-footer">
               <span>{officeExcluded().size > 0 ? "Make a version with the changes you kept, or keep every change, before accepting." : `Applying ${reviewedFiles().length} selected ${reviewedFiles().length === 1 ? "change" : "changes"} to ${destinationLabel()} · ${reviewedFiles().filter((path) => inspectedFiles().includes(path)).length} viewed`}</span>
