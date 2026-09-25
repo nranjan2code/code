@@ -426,7 +426,10 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_main_window(tray.app_handle());
             }
         });
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/icon.png"))?;
+    // Give the status item the purpose-built 32px representation. Passing the
+    // 512px Dock artwork leaves AppKit to choose a scale and has produced an
+    // opaque-looking square in the menu bar on Retina displays.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
     tray = tray.icon(icon);
     tray.build(app)?;
     start_tray_monitor(app.handle().clone());
