@@ -1,349 +1,378 @@
 ---
-name: vak
-description: An agent you can inspect, constrain, and extend.
+name: vakyartha
+description: A calm agent that listens, shows the result first, and explains the machinery when asked.
 colors:
-  bg: "#171714"
-  surface: "#1c1c19"
-  surface-raised: "#22221f"
-  surface-hover: "#292925"
-  surface-active: "#30302b"
-  sidebar: "#1f1f1c"
-  border: "#34342f"
-  border-soft: "#2a2a26"
-  text: "#eeeae2"
-  text-soft: "#c4c0b8"
-  muted: "#918e86"
-  faint: "#8b8880"
-  burnt-terracotta: "#df795f"
-  burnt-terracotta-bright: "#ee9278"
-  burnt-terracotta-wash: "rgba(223, 121, 95, 0.13)"
-  green: "#73a982"
-  yellow: "#d4a85d"
-  red: "#d86f72"
-  blue: "#7c9fc9"
+  paper: "#F6F5F1"
+  surface: "#FFFFFF"
+  sidebar: "#EFEEE8"
+  line: "#E3E1DA"
+  ink: "#1B1E36"
+  ink-2: "#474B66"
+  ink-3: "#5F6380"
+  primary: "#2F3C94"
+  primary-wash: "#E8EAF6"
+  link: "#2F3C94"
+  saffron: "#F5A400"
+  saffron-wash: "#FCEFD9"
+  saffron-ink: "#8A5300"
+  success: "#2E6B4A"
+  danger: "#A33A3A"
+  mark-navy: "#101D3D"
+  dark-paper: "#0F1120"
+  dark-surface: "#171A2B"
+  dark-sidebar: "#13162A"
+  dark-line: "#2A2E47"
+  dark-ink: "#ECEBF5"
+  dark-ink-2: "#BDBFD3"
+  dark-ink-3: "#9295AE"
+  dark-primary: "#4B59C9"
+  dark-link: "#A3ADF7"
 typography:
-  headline:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', sans-serif"
+  hero:
+    fontFamily: "Newsreader, 'Iowan Old Style', Georgia, serif"
+    fontSize: "36px"
+    fontWeight: 500
+    lineHeight: "42px"
+  greeting:
+    fontFamily: "Newsreader, 'Iowan Old Style', Georgia, serif"
+    fontSize: "28px"
+    fontWeight: 500
+    lineHeight: "34px"
+  page-title:
+    fontFamily: "Newsreader, 'Iowan Old Style', Georgia, serif"
     fontSize: "22px"
-    fontWeight: 620
-    lineHeight: 1.2
-    letterSpacing: "-0.02em"
-  title:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', sans-serif"
+    fontWeight: 600
+    lineHeight: "28px"
+  section:
+    fontFamily: "system-ui"
+    fontSize: "18px"
+    fontWeight: 600
+    lineHeight: "26px"
+  reading:
+    fontFamily: "system-ui"
+    fontSize: "16px"
+    fontWeight: 400
+    lineHeight: "26px"
+  interface:
+    fontFamily: "system-ui"
     fontSize: "15px"
-    fontWeight: 620
-    lineHeight: 1.3
-    letterSpacing: "-0.01em"
-  body:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', sans-serif"
-    fontSize: "13px"
+    fontWeight: 400
+    lineHeight: "22px"
+  control:
+    fontFamily: "system-ui"
+    fontSize: "14px"
     fontWeight: 500
-    lineHeight: 1.5
-    letterSpacing: "normal"
-  label:
-    fontFamily: "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Segoe UI', sans-serif"
-    fontSize: "11px"
-    fontWeight: 550
-    lineHeight: 1.4
-    letterSpacing: "normal"
-  mono:
-    fontFamily: "'SFMono-Regular', 'SF Mono', ui-monospace, Menlo, Consolas, monospace"
+    lineHeight: "20px"
+  meta:
+    fontFamily: "system-ui"
     fontSize: "13px"
+    fontWeight: 400
+    lineHeight: "18px"
+  caption:
+    fontFamily: "system-ui"
+    fontSize: "12px"
     fontWeight: 500
-    lineHeight: 1.5
-    letterSpacing: "normal"
+    lineHeight: "16px"
+  code:
+    fontFamily: "ui-monospace, 'SF Mono', Menlo, Consolas, monospace"
+    fontSize: "14px"
+    fontWeight: 400
+    lineHeight: "22px"
 rounded:
-  sm: "7px"
-  md: "10px"
-  lg: "14px"
+  control: "8px"
+  card: "12px"
+  sheet: "16px"
   pill: "999px"
 spacing:
   xs: "4px"
   sm: "8px"
   md: "12px"
   lg: "16px"
-  xl: "22px"
+  xl: "24px"
+  xxl: "32px"
+  xxxl: "48px"
 components:
   button-primary:
-    backgroundColor: "{colors.burnt-terracotta}"
-    textColor: "#201713"
-    rounded: "{rounded.sm}"
-    padding: "5px 11px"
-  button-primary-hover:
-    backgroundColor: "{colors.burnt-terracotta-bright}"
+    backgroundColor: "{colors.primary}"
+    textColor: "#FFFFFF"
+    rounded: "{rounded.control}"
+    height: "36px"
+    padding: "0 14px"
   button-secondary:
-    backgroundColor: "{colors.surface-raised}"
-    textColor: "{colors.text-soft}"
-    rounded: "{rounded.sm}"
-    padding: "5px 11px"
-  button-secondary-hover:
-    backgroundColor: "{colors.surface-hover}"
-    textColor: "{colors.text}"
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    border: "1px solid {colors.line}"
+    rounded: "{rounded.control}"
+    height: "36px"
+    padding: "0 14px"
   chip:
     backgroundColor: "transparent"
-    textColor: "{colors.muted}"
+    textColor: "{colors.ink-2}"
+    border: "1px solid {colors.line}"
     rounded: "{rounded.pill}"
-    padding: "2px 8px"
-  chip-active:
-    backgroundColor: "{colors.surface-active}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.pill}"
+    padding: "4px 12px"
   card:
     backgroundColor: "{colors.surface}"
-    rounded: "{rounded.md}"
-    padding: "13px"
+    border: "1px solid {colors.line}"
+    rounded: "{rounded.card}"
+    padding: "16px"
+  message-box:
+    backgroundColor: "{colors.surface}"
+    border: "1px solid {colors.line}"
+    rounded: "{rounded.sheet}"
+    minHeight: "56px"
   input:
-    backgroundColor: "{colors.surface-active}"
-    textColor: "{colors.text}"
-    rounded: "{rounded.sm}"
-    padding: "5px 10px"
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.ink}"
+    border: "1px solid {colors.line}"
+    rounded: "{rounded.control}"
+    padding: "8px 12px"
 ---
 
-# Design System: vak
+# Design System: Vakyartha
+
+Status: **target system, adopted 2026-09-25** (docs/design/75-visual-refresh.md,
+decisions D1 to D5). Stages V2.2 to V2.4 of `docs/plans/visual-refresh-plan.md`
+move the stylesheet onto these tokens; until they land, the client still
+carries the previous values. Build new work to this document, not to the
+stylesheet.
 
 ## Overview
 
-**Creative North Star: "The Auditor's Desk"**
+**North star: the Good Listener.** Vakyartha is an everyday agent for people
+who are mostly not developers. It should feel calm and attentive: it listens,
+answers in plain words, shows the result first, and explains the machinery
+when someone asks. The interface conceals operational detail until that detail
+helps a decision; it never removes a capability and never hides a safety
+state.
 
-vak's UI is a quiet, focused workspace for someone reviewing serious work — the desktop client and admin portal both read as instruments for a practiced hand, not showrooms for a brand. Density is high but never cramped: an odd, deliberately calibrated type scale (font-weights like 540, 560, 580, 620 rather than round hundreds) and tight, consistent spacing give every control the feel of having been tuned, not eyeballed. The palette stays almost entirely neutral — warm near-blacks and soft off-whites — so that the single accent, a burnt terracotta, reads as a genuine signal every time it appears: a brand mark, a primary action, an active nav item, a running session's pulse dot. Depth is conveyed through tonal layering (background → surface → surface-raised → surface-hover) rather than shadow; shadow is reserved for things that must visibly float above the layout.
+The name comes from Sanskrit *vāk*, speech, and the mascot is a songbird. The
+brand is **Ink and Saffron**: indigo ink for words and actions, and the mark's
+saffron as the one accent, reserved for the moments Vakyartha is live.
 
-The system deliberately rejects the generic flat-blue enterprise SaaS look, and it rejects skeuomorphism, heavy gradients, or glassmorphic chrome. Nothing is decorative. Every visual choice — a border color, a radius, a font-weight — is there to make dense, high-stakes information (diffs, approvals, receipts, permission state) scannable at speed without shouting.
+**Key characteristics**
 
-**Key Characteristics:**
-- Dark-first, warm near-black surfaces with tonal (not shadow-based) depth at rest — and a warm *light* palette that is a genuine second ground, not an inversion (see Colors)
-- One accent color, spent sparingly, so it always means something
-- A dense, odd-weight type scale tuned in single-digit increments, not round steps
-- Flat by default; box-shadow appears only on things that float (modals, toasts, popovers)
-- SF Mono / system-mono for anything code- or receipt-shaped; system sans everywhere else
+- Readable first: 16px conversation text, 14px controls, nothing under 12px.
+- One ink colour for text and actions; one accent, and it means live.
+- Light and dark designed together; neither is an inversion of the other.
+- Flat at rest. The message box is the one resting element that floats.
+- Plain words everywhere; technical detail one deliberate step away.
 
-## Colors
+### One system, two densities
 
-The palette is a warm, near-monochrome dark scale (off-black through warm off-white) with one accent spent deliberately, plus a small fixed set of status colors that never shift role.
+The **everyday** surfaces (the shared client in `crates/vak-client-ui`, for
+the desktop and the web app) use the sizes in this document.
 
-### Primary
-- **Burnt Terracotta** (`#df795f`): the sole accent. Brand mark, primary buttons, active nav/session state, focus rings, running-session pulse. Its rarity — reserved for "this is active" or "this is the primary action" — is the point.
-- **Burnt Terracotta Bright** (`#ee9278`): hover/pressed state of the accent, and icon-button "on" state.
-- **Burnt Terracotta Wash** (`rgba(223, 121, 95, 0.13)`): soft background fill behind an active accent element (e.g. the brand mark tile).
+The **operator** surfaces (the admin console and the client's technical
+views: Workbench, terminal, diffs, receipts) use the same colours, faces and
+rules with a compact spacing step. They may show IDs, paths and monospace
+readouts, because that is their job; the 12px minimum still applies.
 
-### Neutral
-- **Void** (`#171714`, `--bg`): app background, the deepest layer.
-- **Surface** (`#1c1c19`, `--surface`): base panel/card layer, one step up from void.
-- **Surface Raised** (`#22221f`, `--surface-raised`): buttons, composer, modals — the layer things sit "on."
-- **Surface Hover** (`#292925`) / **Surface Active** (`#30302b`): interactive-state layers, one and two steps brighter than raised.
-- **Sidebar** (`#1f1f1c`): the sidebar's own distinct panel tone, between surface and raised.
-- **Border** (`#34342f`) / **Border Soft** (`#2a2a26`): default and quiet dividers.
-- **Warm Paper** (`#eeeae2`, `--text`): primary text, warm off-white rather than pure white.
-- **Text Soft** (`#c4c0b8`): secondary text.
-- **Muted** (`#918e86`): tertiary/label text, icon default color.
-- **Faint** (`#8b8880`): placeholders, timestamps, the quietest text on the page. It is the quietest token that still clears WCAG AA (4.50:1 on `--surface-raised`); the previous `#68665f` sat at 2.78:1 while this system mandated it for *all* placeholder text, so the failure was systematic rather than incidental. Do not darken it.
+## Colours
 
-### Status (fixed roles, used only for state — never decorative)
-- **Green** (`#73a982`): success, running/active indicators.
-- **Yellow** (`#d4a85d`): pending approval, warning, tool-call-in-flight.
-- **Red** (`#d86f72`): danger, destructive actions, errors.
-- **Blue** (`#7c9fc9`): informational accent; also doubles as the accent color in the alternate `data-theme="dark"` palette.
+The complete palette is in the front matter. Every text pair clears WCAG AA
+(4.5:1); the ratios are computed, never estimated (doc 75 §5.1 lists them).
 
-### Light (`data-theme="light"`, and the default `system` resolves here)
+- **Paper** (`#F6F5F1`, dark `#0F1120`): the window. Lighter and less yellow
+  than the old cream; dark mode is indigo night, not brown-black.
+- **Surface** (`#FFFFFF`, dark `#171A2B`): cards, sheets, the message box.
+- **Ink** (`#1B1E36`, dark `#ECEBF5`), **ink-2** and **ink-3**: text, in three
+  steps. Ink-3 is the quietest text allowed, including placeholders.
+- **Primary** (`#2F3C94`, dark `#4B59C9`): buttons and selection, with white
+  text. **Link** (`#2F3C94`, dark `#A3ADF7`): links and text buttons.
+- **Saffron** (`#F5A400`): the one accent. **Saffron-ink** (`#8A5300`) when
+  text must carry it.
+- **Success** and **danger**: state only, always with an icon and a word.
 
-Warm paper, not an inversion. Inverting a warm dark palette produces a cold
-light one — the greys go blue and it stops reading as the same product — so
-light is built from the same hue family on paper rather than ink:
-`--bg #f4f1ea`, `--surface #faf8f3`, `--text #23211c`.
+### Named rules
 
-**The accent DARKENS here** (`--accent #a8462a`) rather than brightening.
-Burnt Terracotta at `#df795f` is 2.4:1 on white: unreadable as text, and a
-button label on it fails outright. Every status color darkens for the same
-reason. Every text token clears WCAG AA against `--surface`, and `--faint`
-— the quietest, mandated for *all* placeholder text — is again the value
-that decides how far the palette can be pushed. Do not lighten it.
+**The Ink Rule.** Indigo carries text, buttons, links and the selected item.
+Nothing decorative uses it.
 
-The **default is `system`**, resolved in JS to a concrete `data-theme` so
-one attribute always names the palette actually in force. Anything reading
-a token out of the DOM (the terminal hands its computed values to xterm,
-which cannot read CSS variables) then sees the same answer as the
-stylesheet, instead of half the app tracking a media query and half not.
+**Saffron Means Live.** Saffron fills the microphone while listening, the dot
+while an agent works, and the badge when Vakyartha waits for a person. It
+appears nowhere else, so a glance says whether Vakyartha needs you. Saffron is
+a fill; it is never text on a light ground.
 
-### Named Rules
-**The One Accent Rule.** Burnt Terracotta is the only color used to mean "this is the primary thing" or "this is active." It never doubles as decoration; if a new element needs emphasis, reach for a status color (if it's stateful) or a tonal layer (if it's structural) before reaching for the accent again.
+**The No-Second-Palette Rule.** Every colour resolves to a token or a
+`color-mix()` of tokens. Literal hex belongs only in a theme's token block
+and in the theme previews in Settings, which must depict their own palette.
 
-**The No-Second-Palette Rule.** Every color in the app resolves to a token
-or a `color-mix()` of tokens. Literal hex belongs in exactly two places: a
-theme's own token block, and the theme *previews* in Settings — which must
-depict their palette rather than the active one. This is a rule because it
-was broken at scale: the presentation components carried a whole second,
-cold palette (indigo, emerald, rose, amber, sky, slate on near-black
-grounds) that read as a different product and had to be removed wholesale.
-A fallback naming a different color (`var(--accent, #7c5cff)`) is the same
-violation waiting for one bad load order.
+**Colour Is Never Alone.** Every state pairs its hue with a second channel:
+a word, an icon, or a fill difference (hollow at rest, solid when running,
+ringed when it needs a person), plus an accessible label. Roughly 8% of men
+cannot tell a green dot from a red one.
+
+**Tinting a ground invalidates the calibration.** Text tokens are measured
+against untinted grounds. On a tinted ground (an approval card, a saffron
+wash) step every text token up one level and re-measure.
+
+### Themes
+
+Four choices: **Match system** (the default, resolved in script to a concrete
+`data-theme` so every reader of a token sees the same answer), **Light**,
+**Dark** and **High contrast**. A stored theme id that no longer exists
+resolves to Match system.
 
 ## Typography
 
-**Body/UI Font:** `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", sans-serif` — the system sans stack, used for all UI chrome.
-**Mono Font:** `"SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace` — used for code blocks, receipts, terminal, and any raw data.
+- **Display: Newsreader**, bundled with the client as WOFF2 (Latin and Latin
+  Extended, SIL Open Font License), with a serif fallback. Used only for the
+  wordmark, agent names, page titles, the greeting and result headlines.
+- **Text: the system font** (SF Pro on macOS, Segoe UI Variable on Windows).
+- **Code: the system monospace**, only for code and file contents.
 
-**Character:** A working developer-tool voice — the system sans stack keeps it native and fast-rendering rather than making a typographic statement, and precision comes instead from a tightly tuned weight and size scale (odd values like 540, 560, 580, 620; 10.5px, 11.5px, 12.5px) that reads as calibrated rather than templated.
+| Role | Size / line | Face and weight |
+|---|---|---|
+| Hero | 36 / 42 | Newsreader 500 |
+| Greeting | 28 / 34 | Newsreader 500 |
+| Page title | 22 / 28 | Newsreader 600 |
+| Section | 18 / 26 | System 600 |
+| Reading | 16 / 26 | System 400 |
+| Interface | 15 / 22 | System 400 |
+| Control | 14 / 20 | System 500 |
+| Meta | 13 / 18 | System 400 |
+| Caption | 12 / 16 | System 500 |
 
-### Hierarchy
-- **Headline** (620, 22px, 1.2 line-height, -0.02em): empty-state headers (e.g. chat empty state).
-- **Title** (620, 13.5–15px, 1.3, -0.01em): workspace title, modal titles.
-- **Section Label** (600, 12px): sidebar section titles, nav group headers.
-- **Body** (500, 13px, 1.5): default UI text, messages, descriptions.
-- **Item Label** (540–580, 12–12.5px): sidebar items, nav items, form labels.
-- **Micro Label** (500–550, 10–11.5px): timestamps, hints, badges, hotkey glyphs, tooltips — always paired with `--muted` or `--faint` color, never `--text`.
+### Named rules
 
-### The landing surface's ramp
+**The Twelve-Pixel Floor.** No text is smaller than 12px at the default text
+size, on any surface.
 
-`/` is the one surface that is not app chrome, and it carries its own,
-larger ramp: display `clamp(35px, 6vw, 60px)` at 620, section headings
-`clamp(24px, 3.1vw, 34px)` at 620, body 15–16px at 500, and mono readouts
-at 12–12.5px. The 13px body of the desktop and admin clients is tuned for a
-dense working panel read at arm's length all day; a page someone lands on
-once needs a first viewport that reads across a room.
+**Three Weights.** 400, 500 and 600. Nothing in between.
 
-Everything else is unchanged: the same token set, the same odd weights, the
-same one-accent rule, the same flat-by-default surfaces. Only the sizes
-scale, and only on this one file. A design-system scan of
-`crates/vak-server/site/src/styles.css` therefore reports type-ramp drift
-by construction; that is this paragraph, not a defect.
+**Sentence Case.** Labels, buttons and headings use sentence case. No
+capitalised micro-labels.
 
-### Named Rules
-**The Odd-Weight Rule.** Font-weights are tuned in single-digit steps (500, 540, 550, 560, 570, 580, 600, 620, 650) rather than snapped to round hundreds. Treat existing weights as calibrated values to reuse, not round to the nearest 100.
+**Monospace Means Code.** File names, counts, versions and percentages in
+everyday screens use the text face.
+
+Answers wrap at about 68 characters. The text-size preference scales every
+step.
 
 ## Layout
 
-A three-region CSS grid app shell: `sidebar` (fixed ~278px, collapsible to 0) / `main` (flexible, `minmax(420px, 1fr)`) / `dock` (auto-width side panel), with a full-width `banner` row and a `status` bar (30px) beneath. The banner row is `auto`, so it collapses to nothing when no banner is rendered and reserves exactly its own height when one is — a floating banner cannot reserve space, and guessing a padding for it fails at the first width where its text wraps.
+A three-region CSS grid: `sidebar` / `main` / `dock`, with a `banner` row
+beneath. The banner row is `auto`, so it takes no space when nothing is shown.
 
-**Anything placed directly in the app grid must name its area.** A child with no `grid-area` is auto-placed into the *dock track*: the setup banner did this and rendered a ~540px column that squeezed the whole workspace, visible only before setup was finished — the one time a new user is looking.
+**Anything placed directly in the app grid names its area.** A child with no
+`grid-area` is auto-placed into the dock track: the setup banner once did this
+and squeezed the whole workspace on first run.
 
-### Below 900px, columns become overlays
+**One breakpoint owns one layout.** Below 900px the sidebar and dock become
+overlays; below 600px it is one column. The narrow layout exists to read,
+answer an approval and steer a run, so an approval gets full-width controls
+with nothing truncated.
 
-The sidebar and dock leave the flow and float; the resize handles go. Below 600px it is a single column, the header keeps only the controls that answer "what is happening / stop it", and the editor and terminal are **not** rendered at all. The narrow target is deliberate: read the transcript, read a diff, **answer an approval**, steer a run. An approval is a run that has stopped and is waiting on a person — the one thing that genuinely cannot wait for someone to reach a laptop — so it gets the only mobile-specific layout: full-width target, full-width buttons, nothing truncated.
+Spacing follows a 4px grid (4, 8, 12, 16, 24, 32, 48). Sidebar rows are 40px,
+buttons 36px, and the message box at least 56px. Conversation content is
+centred at about 720px.
 
-One breakpoint owns one layout. Two overlapping small-screen treatments is how the sidebar ended up "opening" at `display: none`. The main workspace itself stacks a fixed-height header (64px) over scrollable content. Density is high: sidebar items are 34–36px tall, buttons 30px (25px for `.sm`), section rows ~29px. Spacing is tight and consistent — 6–9px internal padding is the norm for interactive rows, 13–22px for panel/modal padding. The admin UI reuses the same grid and spacing rhythm so the two surfaces read as one product.
+## Elevation and depth
 
-## Elevation & Depth
+Flat at rest; surfaces separate by tone and spacing, with a 1px line only
+where spacing cannot do it. Shadow means floating:
 
-Flat by default. Structural depth between surfaces comes from tonal layering — `bg` → `surface` → `surface-raised` → `surface-hover` → `surface-active` — not from shadow. `box-shadow` (`--shadow-lg`, plus a few bespoke soft shadows) is reserved for elements that visibly float above the normal layout: modals, toasts, the mention menu, the scroll-to-latest pill, and the workspace-switching indicator. At-rest content — sidebar items, cards, chat bubbles, buttons — never carries a shadow.
-
-### Shadow Vocabulary
-- **Overlay** (`--shadow-lg`: `0 24px 70px rgba(0,0,0,.42), 0 2px 10px rgba(0,0,0,.22)`): modals, mention menu, toasts, tooltips — the standard "floating above everything" shadow.
-- **Ambient lift** (e.g. `0 4px 8px rgba(0,0,0,.28)`, `0 7px 22px rgba(0,0,0,.3)`): smaller transient elements (workspace-switching pill, scroll-to-latest pill) that float but sit lower in the stack than a modal.
-
-### Named Rules
-**The Flat-By-Default Rule.** Surfaces at rest are flat and distinguished only by tone. Shadow is added exclusively as a response to an element leaving the document's normal stacking context (fixed/absolute overlays), never as decoration on a resting card or button.
+- The message box floats over the conversation and carries one soft shadow.
+- Sheets, menus, toasts and the connection pill leave the layout and carry
+  the overlay shadow.
+- Cards, results, buttons and sidebar rows never carry a shadow.
 
 ## Shapes
 
-Radius is small and consistent: `--radius-sm` (7px) for buttons, inputs, and small controls; `--radius` (10px) for cards and mid-size containers; `--radius-lg` (14px) for modals and larger panels. Fully round (`999px`/`50%`) is reserved for pills (chips, status badges, the running-session dot) and circular icon targets (avatars, the sidebar help button). Borders are 1px, almost always `--border` or `--border-soft`, and are the primary way containers are delimited — not shadow, not heavier fills.
+Radius 8 for controls and inputs, 12 for cards, 16 for the message box and
+sheets, and full for avatars, pills and status dots.
+
+## Motion
+
+- 120ms for hover and press, 200ms for menus and panels, 320ms for sheets.
+  One curve: `cubic-bezier(0.2, 0, 0, 1)`.
+- New messages fade up 6px; a result reveals once; skeletons replace loading
+  text.
+- Nothing moves under the pointer.
+- Reduced motion, from the system or the app setting, stills everything.
 
 ## Components
 
-Buttons, chips, and inputs are quiet and confident: restrained color (the accent appears only on the primary button and active/focus states), flat at rest, with short 120–140ms transitions on hover rather than motion for its own sake.
-
 ### Buttons
-- **Shape:** 7px radius (`--radius-sm`); `.lg` variant steps up to a taller 42px min-height, `.sm` down to 25px.
-- **Default:** `surface-raised` background, `text-soft` color, 1px `border`; hover shifts to `surface-hover`/`text`/a slightly lighter border.
-- **Primary:** solid Burnt Terracotta background, near-black (`#201713`) text; hover shifts to Burnt Terracotta Bright.
-- **Danger:** transparent-tinted red wash (`rgba(216,111,114,.09)`) with red text and a soft red border — never a solid red fill.
-- **Active/press:** `translateY(1px)` on `:active`, no shadow change.
+Primary: primary fill, white text. Secondary: surface fill, ink text, 1px
+line. Text buttons use the link colour. Danger: a danger-tinted wash with
+danger text, never a solid red fill. Each says what happens ("Review
+changes", "Keep draft", "Apply 1 change").
 
 ### Chips
-- **Style:** pill radius (999px), transparent background, `muted` text, 1px `border`.
-- **State:** `.on` (selected/active) fills with `surface-active` and switches text to `--text` with a stronger border; hover on unselected chips lightens text and adds `surface-hover`.
+Pill-shaped, ink-2 text, 1px line; selected chips take the primary wash.
 
-### Cards / Containers
-- **Corner Style:** 10px radius (`--radius`) for standard cards/panels; `--radius-lg` (14px) for modals and larger feature cards (e.g. chat-empty-mark, gate-card). Use the token — the desktop modal hardcoded 15px, which is why the token read as unused.
-- **Background:** `surface` for resting cards, `surface-raised` for anything meant to sit "on top" (composer, modal, popovers).
-- **Shadow Strategy:** none at rest; see Elevation & Depth for floating elements.
-- **Border:** 1px, `border` or `border-soft`.
-- **Internal Padding:** 13px for compact cards (prompt chips, tool/worker blocks), 21–22px for modals, up to 36–42px for centered feature cards (gate-card).
+### Cards and results
+Surface fill, 12px radius, 1px line, 16px padding, no shadow. In a
+conversation only the result is a card; the answer's prose sits on the page.
 
-### Inputs / Fields
-- **Style:** filled (`#292925`/`surface-active`-family background), 1px transparent border by default, 7–8px radius.
-- **Focus:** border shifts to a lighter neutral (`#4b4b44`) plus a subtly lighter background; interactive elements broadly use a 2px accent-tinted outline (`rgba(238,146,120,.75)`) via `:focus-visible`.
-- **Placeholder:** always `--faint`, never `--muted` or darker.
+### Inputs
+Surface fill, 1px line, 8px radius; focus shows a 2px primary ring.
+Placeholders use ink-3.
 
-### Navigation (Sidebar)
-- **Style:** 8–9px radius nav rows, `text-soft`/`muted` icon color at rest, shifting to `text`/`text-soft` on hover, `surface-active` fill plus `text` color when active. Section titles are 12px/600-weight `--muted` labels with an optional inline add/action control that only shows real affordance on hover.
-- **Mobile/compact treatment:** a `data-compact-sidebar` mode reduces item height and hides secondary metadata rather than reflowing to a different pattern.
+### Sheets
+One sheet component for every dialog: centred, 16px radius, the title with
+the close button beside it, a focus trap, Escape to close, and focus returned
+to whatever opened it.
 
-### Status Signals (signature component)
-A recurring 6px `.dot` communicates run state across both surfaces: neutral `--faint` at rest, `--green` with a soft pulsing glow (`box-shadow` + `pulse` keyframe) when a session is actively running. The same status-color vocabulary (green/yellow/red/blue, each with a matching low-opacity "soft" wash) extends to badges and approval/tool-call blocks.
+### Navigation
+Sidebar rows are 40px, with the agent's character, its name and a one-line
+status. The selected row takes the surface fill. Opening an agent shows a
+spinner on its own row, never loading text.
 
-**Color is never the only carrier.** The states being encoded — running, awaiting approval, denied — are the ones this product exists to make visible, and for roughly 8% of men a green dot and a red dot are the same dot. Every status signal pairs its hue with a second channel: a fill difference on the dot (hollow at rest, solid when running, ringed when it needs a person), and an `aria-label` or visually-hidden label so the state is announced, not just shown. An earlier version of this document praised these signals as "legible by color alone", which is precisely the WCAG 1.4.1 failure to avoid.
+### Status signals
+A small dot: hollow at rest, solid while running, ringed when it needs a
+person, and saffron only while live. The header names only what needs
+attention ("Working", "Needs your decision", "Needs an AI service"); a ready
+conversation shows no status.
 
-### Evidence Meter (signature component)
-A four-segment track rendering the satisfaction lattice — `asserted < cited <
-observed < attested` — wherever the product has to say how strongly a claim of
-"done" is backed. Segments are solid up to the level actually achieved and
-hollow past it; a 2px rule sits beneath the segment for the level the work is
-*held* to; and when achieved falls short of required, the intervening segments
-take a dashed Burnt Terracotta border.
+### Connection pill
+Hidden while connected. A first connection is silent for five seconds; a
+drop shows a small pill above the message box after 1.5 seconds, with its own
+word and dot fill for reconnecting, catching up and offline.
 
-That accent use is deliberate and consistent with The One Accent Rule: a
-shortfall is a live gap blocking a closure, which is precisely "this needs
-you", not decoration.
+### Evidence meter
+A four-segment track for the satisfaction lattice (asserted < cited <
+observed < attested). Segments are solid up to the level achieved and hollow
+past it; a 2px rule beneath marks the level required; a shortfall takes a
+dashed saffron border, because a shortfall is a gap that needs a person. It
+carries an `aria-label` naming both levels.
 
-**Color is never the only carrier**, as everywhere else in this system. The
-fill difference (solid vs hollow) is a second channel, the required-level rule
-is a third, and the component carries an `aria-label` naming both the achieved
-and required levels in words.
+### Approval gate
+A saffron-washed card that states the pending effect and its facts, with the
+decision buttons full width on phones. On the tinted ground every text token
+steps up one level (see the calibration rule).
 
-An earlier revision marked the required level with a 1px tick *above* a 13px
-segment. It was invisible at real sizes, and it is the half of the meter that
-says how demanding the work is — the rule below the track replaced it because
-there is room there and it never collides with the fill state.
+## Words
 
-### Approval Gate (landing surface)
+Name things by what people recognise: your agents, folder, draft, changes,
+connections, AI service. Show numbers and IDs only when they help a decision;
+byte counts, hashes, run IDs and paths live under Technical details. Setup
+and error messages say what happened and what to do next, one sentence each.
+The glossary is doc 75 §7.
 
-The one component the front door adds. A yellow-bordered card on a
-yellow-tinted raised surface, stating the pending effect and its facts
-(tool, mode, network, reversibility), with **Approve** as the primary
-button and **Deny** as the danger button, and a resolved state that
-replaces both with the verdict and its timestamp.
+## Brand
 
-Its tint is why every text token on the card steps up one level —
-`--faint` is calibrated to exactly 4.50:1 on `--surface-raised`, so mixing
-8% yellow into that ground puts it under AA, and `--red` as a *label*
-lands at 3.75:1 there. The card therefore uses `--text-soft` where the
-rest of the system would use `--muted`, and mixes the danger label toward
-the foreground (`color-mix(in srgb, var(--red) 70%, var(--text))`) so it
-still reads as red and still clears AA. **Tinting a ground invalidates the
-contrast calibration of every token measured against the untinted one.**
+- The mark (`docs/brand/mark/vak-logo-master.png`) stays whole: never split,
+  recoloured or given light and dark variants. Platform exports follow
+  `docs/brand/README.md`.
+- The 3D character portraits are for large moments at 64px or more; flat
+  glyphs take over at 32px and below.
+- The product line is the campaign line, "Ask. Then go live your day."
 
-### Connection State (status bar)
+## Do's and don'ts
 
-Four states — `live`, `reconnecting`, `resyncing`, `offline` — because over
-a network "Working" is a claim about a round trip that may not have
-happened. `resyncing` is deliberately its own state and not a flavour of
-reconnecting: it means events were *lost* and the transcript is being
-rebuilt, which is a different thing to tell a reader.
+### Do
+- Reserve saffron for live states and indigo for actions and selection.
+- Keep every text pair above 4.5:1, measured.
+- Put technical detail behind Details or Show technical details.
+- Pair every state colour with a word or an icon.
+- Replace an old rule when you change a component; never append an override.
 
-Colour is never the only carrier, as everywhere else: each state carries
-its own word and its own dot fill (solid when live, hollow-ringed when
-offline), so it survives greyscale and colour blindness alike.
-
-### Intent Strip (desktop composer)
-A per-turn read-out with three tones — `quiet`, `notice`, `warn` — chosen by
-consequence rather than by novelty. `quiet` is `--faint` micro-label type with
-no border and reads as chrome; `warn` takes an accent border, the accent wash,
-and states its sentence inline rather than behind a disclosure.
-
-The rule this encodes: **an element that appears before every action must earn
-its escalation.** If it shouts routinely it will be tuned out, and the one
-time it matters nobody will be looking. Escalation is rare so that it lands.
-
-## Do's and Don'ts
-
-### Do:
-- **Do** reserve Burnt Terracotta for primary actions and active/running state; everything else stays neutral or a fixed status color.
-- **Do** express depth with tonal layering (`bg`/`surface`/`surface-raised`/`surface-hover`/`surface-active`) and reach for `--shadow-lg` only when an element leaves normal document flow (modal, toast, popover, floating pill).
-- **Do** keep the type scale's odd weights and half-pixel sizes (540/560/580/620; 10.5px/11.5px/12.5px) rather than rounding to nearest 100/whole pixel.
-- **Do** pair micro-label text (timestamps, hints, badges) with `--muted` or `--faint`, never full `--text` color.
-- **Do** keep the desktop and admin surfaces on the same token set — the admin UI is explicitly built to match `vak-desktop`, not to diverge stylistically.
-
-### Don't:
-- **Don't** add box-shadow to resting cards, buttons, or sidebar items — shadow means "this is floating," not "this is important."
-- **Don't** introduce a second accent color or use a status color (green/yellow/red/blue) decoratively outside its state meaning.
-- **Don't** reach for gradients or glassmorphic blur outside the few already-established floating overlays (toast, scroll-latest pill, mention menu) that use `backdrop-filter: blur(...)` deliberately.
-- **Don't** use pure black/white; every "black" is the warm `--bg` (`#171714`) family and every "white" is warm `--text` (`#eeeae2`), never `#000`/`#fff`.
+### Don't
+- Use text smaller than 12px, or a weight other than 400, 500 or 600.
+- Add a shadow to a resting card, button or row.
+- Use monospace for anything that is not code or file contents.
+- Introduce a second accent, a gradient, or glass effects.
+- Show an ID, path, byte count or hash on an everyday screen by default.

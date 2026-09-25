@@ -1,8 +1,8 @@
 # Plan — visual refresh (Ink and Saffron)
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
-completed by explicit request; V1 complete (V1.12 closed as obsolete). V2,
-V3 and V4.2 to V4.5 remain unstarted.**
+completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
+done. V2.2 onward, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -176,7 +176,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
 
 ### V2 — Foundation
 
-- [ ] **V2.1 `DESIGN.md` rewrite.** The new north star (working name: the
+- [x] **V2.1 `DESIGN.md` rewrite.** The new north star (working name: the
   Good Listener), the rules kept from today (doc 75 §5.8), the changes (doc
   75 §5.9), and the Ink and Saffron tokens. The Auditor's Desk sections go.
 - [ ] **V2.2 Token layer.** Light, Dark and High contrast as Ink and Saffron
@@ -313,3 +313,11 @@ what was not.
   bubble is a historical ledger entry from an earlier revision path; today's
   path records a `CandidateRevision` activity and sends the text only to the
   isolated child (source check only).
+- 2026-09-25: V2.1 done. `DESIGN.md` now describes the target system: the
+  Good Listener north star, one system with everyday and operator
+  densities, Ink and Saffron tokens for light and dark, Newsreader and the
+  nine-step scale, the kept rules (colour never alone, contrast
+  calibration, no second palette, grid areas, one breakpoint per layout)
+  and the V1 behaviours (row spinner, connection pill, status only when
+  something needs attention). Docs only; the stylesheet is unchanged.
+  Next: V2.2 (token layer), in a fresh session.

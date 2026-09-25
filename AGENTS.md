@@ -197,7 +197,7 @@ behaviour yet, and no session starts a later milestone unasked.
 The maintainer approved the direction and locked all five of its decisions
 on 2026-09-25, then asked for the logo and platform-icon correction (V4.1)
 and for implementation to continue stage by stage. V1 is done; V2, V3 and the
-rest of V4 follow in order.
+rest of V4 follow in order; V2.1 (`DESIGN.md`) is done.
 
 **What it is.** One visual system for the shared client
 (`crates/vak-client-ui`), so for both the desktop and the web app:
@@ -233,8 +233,9 @@ rest of V4 follow in order.
    saved as the plan says. A build or typecheck alone is not done.
 
 **Until it starts, don't deepen the debt:**
-- `DESIGN.md` still describes the shipped look; the refresh replaces it in
-  V2. Don't extend its dense type scale or its terracotta accent.
+- `DESIGN.md` describes the target system (V2.1); the stylesheet moves onto
+  it in V2.2 to V2.4. Build new work to `DESIGN.md`, not to the old values
+  still in `styles.css`.
 - Name things in user-facing strings by what people recognise (doc 75 §7).
 - Add no font size under 12px and no hex literal outside a theme block.
 - Edit a selector's existing rule instead of adding an override later in
