@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.3 done. V3.4 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.4 done. V3.5 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -248,7 +248,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   upload a recording); mic as the voice button, saffron while listening;
   model and permission switches in the + menu only with technical details
   on (doc 75 §8); "Full access" always in view.
-- [ ] **V3.4 First run.** The mascot greeting, starters with examples, and an
+- [x] **V3.4 First run.** The mascot greeting, starters with examples, and an
   in-app "Connect an AI service" sheet (local model if found, or an account
   key), replacing the admin-console hand-off.
   Done when: a fresh home reaches a first answer without leaving the app.
@@ -260,7 +260,8 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 - [ ] **V3.7 One sheet component** for every dialog: title, close at top
   right, focus trap, Escape, return focus.
 - [ ] **V3.8 Agents.** Picker and creation wizard in plain words; every
-  agent gets its own character by default.
+  agent gets its own character by default. The one-time "Meet Vakyartha"
+  dialog folds into the greeting instead of covering it on first run.
 - [ ] **V3.9 Motion.** The durations and curve from doc 75 §5.4; message
   arrival, result reveal, skeletons; no hover movement.
 - [ ] **V3.11 Finish the CSS cleanup inside each surface rewrite:** the 30
@@ -268,9 +269,55 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   remaining `!important` rules (`.good-chip`, `.prompt-page > header`,
   `.office-outline button`) and the 35 hex literals outside the tokens.
   Decide each as its screen is rebuilt.
+- [ ] **V3.12 Plain words for a failed turn.** A message sent before an AI
+  service is connected fails with the server's own text ("provider auth
+  missing: set ANTHROPIC_API_KEY for provider 'anthropic'"). It should say
+  that no AI service is connected and offer Connect. The failure needs a
+  typed kind from the server, never matching on the text.
+  Done when: a fresh home that sends before connecting sees one plain
+  sentence and a Connect button.
+- [ ] **V3.13 One frame per card.** The first answer on a fresh home (a
+  small local model's entity card) shows a "Kind: entity" row and sits in a
+  frame inside a frame. Everyday view drops the kind row and draws one
+  frame.
+  Done when: that answer shows one frame and no kind row, light and dark.
 - [ ] **V3.10 Anchor check.** The four doc 70 screens and the three doc 75
   screens compared with their references in the running app; doc 70's
   ledger updated with the evidence.
+
+#### Handoff for V3.5 (written 2026-09-25, after V3.4)
+
+Settings is one 1,954-line component (`crates/vak-client-ui/src/components/Settings.tsx`)
+and deserves a session of its own. What it has today, and where each part
+goes (doc 75 §6.3):
+
+| Today (`Page` id, nav group) | Holds | Goes to |
+|---|---|---|
+| `general` (Experience) | notifications, quiet hours, sound cues, suggested prompts, Show technical details, presentation styles, shortcuts, the Voice section, desktop working directory | Everyday: General; Notifications (alerts, quiet hours); Voice and sound (Voice section, sound cues) |
+| `appearance` (Experience) | theme, layout and text, cards and previews | Everyday: Appearance |
+| `permissions` (This agent) | approvals, isolation, rules | Everyday: Privacy and safety (outcome words: Look only · Edit files in this folder · Full access to this computer; Every time · Only outside this folder · Don't ask) |
+| `learning` (This agent) | memory notes and skill proposals | Everyday: Privacy and safety (what Vakyartha remembers) |
+| `archived` (Experience) | archived tasks | Everyday: Privacy and safety, or History; keep it reachable |
+| `integrations` (This agent) | connections (MCP), skills, hooks, plugins | Everyday: Connections; hooks and plugins behind the Technical details row |
+| `agent` (This agent) | provider, model, key, turn limit, freshness, helpers, chat bots | Agents: one page per agent (name once, model, one notice line); Chat bots to Connections; turn limit, freshness, helpers and context size behind a Technical details row, values intact |
+| `prompts`, `reliability` | prompt layers; retries, breaker, route ladder | Advanced: Prompts; Reliability; Models and routing (route ladder) |
+| `services`, `advanced` | services and health; paths, context, configuration | Advanced: Services and health; Storage and backup |
+
+Keep:
+- `TECHNICAL_PAGES` becomes the Advanced group, shown only with technical
+  details on.
+- The scope toggle (Shared defaults or This agent) applies only to Agent
+  pages and Advanced; Everyday pages are local preferences.
+- Invariant 21 and 27: a GET that seeds a PUT still reports only the layer
+  that PUT writes.
+
+Re-point the three deep links when the ids change: `BudgetBanner.tsx`
+("services"), `VoiceControl.tsx` ("general" plus section "voice") and the
+message box's Full access notice in `Composer.tsx` ("permissions").
+`SettingsPageId` in `store.ts` is the one list of ids.
+
+On phones, Settings is a list that opens each page, with a back row. Check
+it at 390 as well as 1440, light and dark, like every other item.
 
 ### V4 — Brand assets and desktop chrome
 
@@ -485,3 +532,35 @@ what was not.
   `after/V3.3-*`. Seen for later: an older revision request still shows as a
   raw user message carrying a comment id (check under V3.6), and a small
   dash sits at the left edge of the phone conversation (check under V3.10).
+- 2026-09-25: V3.4 done (commit `ad5e53b4`). An empty conversation greets
+  in the mascot's voice ("Hi, I'm Vakyartha.", Newsreader 36px, 28px on a
+  phone) and offers the four starters with everyday examples; "Nothing here
+  yet" and its "inspect prior work" are gone. The setup card rides in the
+  greeting (the app-wide banner stands down while one is on screen) and
+  keeps the saffron wash elsewhere; the header's "Needs an AI service" is a
+  saffron button. Both open the in-app Connect sheet: a model already
+  running on this computer (found through the providers that need no key)
+  is one click, or an account key with each key offered once. The sheet
+  makes the wizard's own calls with the wizard's scopes (key in the Shared
+  scope, provider and model in the Agent's project layer), so identical
+  choices give identical configuration (doc 46 D7); the other setup steps
+  still open the one wizard. One `setupEpoch` signal refetches every
+  `GET /onboarding` reader. Also fixed: the model lookup's failure no
+  longer shows as a message-box error (it named ANTHROPIC_API_KEY on a
+  fresh home, surfaced by V3.3's health fix) and now titles the model
+  switch; conversations with no message no longer list as "Recent results";
+  and an empty conversation reads from the top instead of pinning to the
+  bottom, with no "Latest" button. Done-when checked on a fresh home
+  (`/tmp/vak-fresh-v1`, fresh browser profile): greeting, Connect, "Use
+  this model" (Ollama), the sheet closed, the card and status cleared, and
+  the first answer arrived in 93 s without leaving the app; `/onboarding`
+  then reported `core_ready`. Checked at 1440 (light and dark) and 390
+  (light and dark): no sideways scroll, the sheet inside the viewport with
+  focus inside it, and a conversation with content still pins to the
+  bottom. Evidence: `after/V3.4-*`. Follow-ups found on the way are V3.12,
+  V3.13 and the V3.8 note.
+  Test note: the full `cargo test -p vak-server` run failed once in
+  `configuration_control_tests::forwarding_can_be_turned_on_and_survives_a_reload`
+  (`Core::new` returned an error under full-suite load); it passed 3 of 3
+  alone and the whole library target passed twice (319). V3.4 changed no
+  server code; like V3.2's, it is a server-side flake under load.

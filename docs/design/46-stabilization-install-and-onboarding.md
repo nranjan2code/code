@@ -112,6 +112,15 @@ Taken 2026-09-02; these close doc 36's and 37's open questions.
 | D10 | **The wizard is written for someone who has never heard of an LLM harness.** Plain language, one decision per screen, no unexplained jargon, progressive disclosure for everything technical. | Explicit design contract in Part IV. A screen that needs the reader to already know what a "route" or "sandbox backend" is has failed. |
 | D8 | **No legacy, no migration.** Every compatibility path listed in Part I is deleted outright, not deprecated. | Listed explicitly in Part VI so nothing is removed by accident. |
 
+**Amendment to D7 (2026-09-25, docs/design/75-visual-refresh.md §6.2).** The
+workspace client completes the provider and route steps in place, in the
+"Connect an AI service" sheet (`crates/vak-client-ui/src/components/ConnectSheet.tsx`),
+because leaving the app to connect a model was the first thing a new person
+met. The sheet is not a second setup: it makes the wizard's own calls with
+the wizard's scopes, so identical choices give identical configuration, and
+`GET /onboarding` stays the one judge of ready. Every other step still opens
+the wizard.
+
 ---
 
 ## Part III — The unified model
