@@ -2,6 +2,7 @@
 //! < environment. Unknown keys are ignored with a warning, never fatal.
 
 pub mod credentials;
+pub mod file_update;
 pub mod finops;
 pub mod paths;
 
