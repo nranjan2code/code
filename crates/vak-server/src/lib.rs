@@ -19598,160 +19598,14 @@ mod configuration_control_tests {
     }
 
     // ---- global writes shadowed by a project pin (finding 07) --------------
-
-    /// The project layer merges last, so a project pin wins. Applying the
-    /// global value anyway made the running process disagree with what the
-    /// files resolve to — until a restart put it back, which read as the
-    /// operator's change being forgotten.
-    /// Exclusive access to the process-shared global config layer.
-    ///
-    /// `VAK_HOME` has no scope smaller than the process, so the pinned test
-    /// data home — and with it `global_path()` — is one file shared by every
-    /// test in this binary. Restoring it on drop is not enough on its own:
-    /// tests run in parallel, so a test that merely *reads* the global
-    /// default can observe another test's write in the window before the
-    /// restore. Both writers and readers take this guard, which serializes
-    /// them and puts the file back afterwards.
-    struct GlobalLayerGuard {
-        _lock: std::sync::MutexGuard<'static, ()>,
-        original: Option<String>,
-    }
-
-    impl GlobalLayerGuard {
-        fn take() -> Self {
-            static LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
-            let lock = LOCK
-                .get_or_init(|| Mutex::new(()))
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let original = vak_config::global_path().and_then(|p| std::fs::read_to_string(p).ok());
-            GlobalLayerGuard {
-                _lock: lock,
-                original,
-            }
-        }
-    }
-
-    impl Drop for GlobalLayerGuard {
-        fn drop(&mut self) {
-            let Some(path) = vak_config::global_path() else {
-                return;
-            };
-            match &self.original {
-                Some(text) => {
-                    let _ = std::fs::write(&path, text);
-                }
-                None => {
-                    let _ = std::fs::remove_file(&path);
-                }
-            }
-        }
-    }
-
-    /// The gateway's own workspace IS the default workspace, so one file
-    /// serves as both layers and `load_with_trust` skips the project pass.
-    /// Reporting it as "shadowed" told an operator their change would not
-    /// take effect when it would — observed live, on a real install, right
-    /// after the shadow check shipped.
-    #[tokio::test]
-    async fn a_global_write_on_the_default_workspace_is_not_its_own_shadow() {
-        vak_config::paths::isolate_home_for_tests();
-        let _restore = GlobalLayerGuard::take();
-        let Some(global) = vak_config::global_path() else {
-            return;
-        };
-        let workspace = global
-            .parent()
-            .and_then(|vak| vak.parent())
-            .expect("global config sits under <workspace>/.vak/")
-            .to_path_buf();
-        std::fs::create_dir_all(global.parent().expect("parent")).unwrap();
-        std::fs::write(&global, "permission_mode = \"read-only\"\n").unwrap();
-        vak_core::trust::record(&workspace).unwrap();
-
-        let core = Core::new_with_trust(workspace.clone(), true).unwrap();
-        core.set_sessions_home(workspace.join(".sessions"));
-        let state = AppState::new(core.clone());
-        assert_eq!(
-            vak_config::project_path(core.cwd()),
-            global,
-            "this test is only meaningful when the two layers are one file"
-        );
-
-        let response = patch_global_config(
-            State(state.clone()),
-            Json(ConfigPatch {
-                permission_mode: Some("workspace-write".into()),
-                ..Default::default()
-            }),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
-            .await
-            .unwrap();
-        let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(
-            json["shadowed_by_project"],
-            serde_json::json!([]),
-            "one file cannot shadow itself: {json}"
-        );
-        assert_eq!(
-            core.effective_permission_mode(),
-            vak_config::PermissionMode::WorkspaceWrite,
-            "and the change must actually be in force"
-        );
-    }
-
-    #[tokio::test]
-    async fn a_global_write_under_a_project_pin_persists_without_taking_effect() {
-        vak_config::paths::isolate_home_for_tests();
-        let _restore = GlobalLayerGuard::take();
-        let dir = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
-        std::fs::write(
-            dir.path().join(".vak/config.toml"),
-            "permission_mode = \"read-only\"\n",
-        )
-        .unwrap();
-        vak_core::trust::record(dir.path()).unwrap();
-        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
-        core.set_sessions_home(dir.path().join("home"));
-        let state = AppState::new(core.clone());
-        assert_eq!(
-            core.effective_permission_mode(),
-            vak_config::PermissionMode::ReadOnly
-        );
-
-        let response = patch_global_config(
-            State(state.clone()),
-            Json(ConfigPatch {
-                permission_mode: Some("full-access".into()),
-                ..Default::default()
-            }),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::OK);
-
-        assert_eq!(
-            core.effective_permission_mode(),
-            vak_config::PermissionMode::ReadOnly,
-            "the project pin still decides what this process runs at"
-        );
-        let global = vak_config::load_with_trust(dir.path(), true).unwrap();
-        assert_eq!(
-            global.permission_mode,
-            vak_config::PermissionMode::ReadOnly,
-            "and what the files resolve to agrees"
-        );
-    }
+    //
+    // Those tests write the Shared layer, which every test in this binary
+    // reads through `Core::new`, so they run in a binary of their own:
+    // `tests/shared_config_layer.rs`. No test here may write that layer.
 
     #[tokio::test]
     async fn cross_process_mode_refresh_revokes_live_capability_before_apply() {
         vak_config::paths::isolate_home_for_tests();
-        // Reads the default effective mode, which the shared global layer
-        // decides — so it belongs under the same guard as the writers.
-        let _global = GlobalLayerGuard::take();
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -20000,7 +19854,14 @@ mod sandbox_promotion_tests {
         }
     }
 
-    fn seed_bound_result(core: &Core, session_id: &str, execution_id: &str) {
+    /// Returns the still-locked ledger so a caller that appends more keeps
+    /// the one handle: releasing the lock and taking it again races any
+    /// fork a parallel test makes, whose child holds the lock until exec.
+    fn seed_bound_result(
+        core: &Core,
+        session_id: &str,
+        execution_id: &str,
+    ) -> vak_session::SessionLog {
         let path = core
             .sessions_home()
             .join("sessions")
@@ -20051,6 +19912,7 @@ mod sandbox_promotion_tests {
             meta: None,
         })
         .unwrap();
+        log
     }
 
     /// Target verification runs in the broker worker, so a test that
@@ -20110,13 +19972,7 @@ mod sandbox_promotion_tests {
     /// A ledger in which the Agent made `calls` (`office_apply` id and
     /// arguments), each succeeding, then answered.
     fn seed_office_calls(core: &Core, session_id: &str, calls: &[(&str, serde_json::Value)]) {
-        seed_bound_result(core, session_id, "unused");
-        let path = core
-            .sessions_home()
-            .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
-            .join(format!("{session_id}.jsonl"));
-        let mut log = vak_session::SessionLog::open(path).unwrap();
+        let mut log = seed_bound_result(core, session_id, "unused");
         log.append_message(vak_session::types::MessageRecord {
             message: vak_llm::Message::user_text("Update the budget"),
             meta: None,

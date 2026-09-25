@@ -301,19 +301,40 @@ pub fn set_home_override(path: &std::path::Path) {
 /// pass. Tests were reading the developer's machine.
 ///
 /// Idempotent per process: the first call wins and later ones return the
-/// same directory, so tests sharing a binary share one empty home. That is
-/// the isolation that matters — each test already scopes its own cwd and
-/// sessions home.
+/// same directory, so tests sharing a binary share one home. That is the
+/// isolation that matters — each test already scopes its own cwd and
+/// sessions home. The directory is always a new one: pids are recycled, and
+/// a home an earlier process left (seeded Shared skills and plugins, a
+/// Shared config) would otherwise be this process's starting state.
+///
+/// Sharing holds only while no test in the binary writes the Shared layer,
+/// which every `Core::new` reads. A test that must write it runs in a
+/// binary of its own, on a private home per test — see
+/// `crates/vak-server/tests/shared_config_layer.rs`.
 pub fn isolate_home_for_tests() -> PathBuf {
     static ISOLATED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
     ISOLATED
         .get_or_init(|| {
-            let dir = std::env::temp_dir().join(format!("vak-test-home-{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&dir);
+            let dir = fresh_test_home();
             set_home_override(&dir);
             dir
         })
         .clone()
+}
+
+/// A directory under the temp dir that this call created, so nothing an
+/// earlier process left can be in it.
+fn fresh_test_home() -> PathBuf {
+    let base = std::env::temp_dir();
+    let _ = std::fs::create_dir_all(&base);
+    let pid = std::process::id();
+    let mut dir = base.join(format!("vak-test-home-{pid}"));
+    let mut taken = 0u64;
+    while std::fs::create_dir(&dir).is_err_and(|e| e.kind() == std::io::ErrorKind::AlreadyExists) {
+        taken += 1;
+        dir = base.join(format!("vak-test-home-{pid}-{taken}"));
+    }
+    dir
 }
 
 #[cfg(test)]
@@ -395,6 +416,24 @@ mod tests {
             resolve_base_home(Some(PathBuf::from("relative")), None),
             PathBuf::from("/")
         );
+    }
+
+    /// The home used to be named by pid alone and reused whenever a pid
+    /// came round again, so a test process could start inside the home of
+    /// a finished one, Shared skills and all.
+    #[test]
+    fn a_test_home_is_never_a_directory_that_already_existed() {
+        let first = fresh_test_home();
+        std::fs::write(first.join("left-behind"), "stale").unwrap();
+        let second = fresh_test_home();
+        assert_ne!(first, second);
+        assert_eq!(
+            std::fs::read_dir(&second).unwrap().count(),
+            0,
+            "a new home starts empty"
+        );
+        let _ = std::fs::remove_dir_all(&first);
+        let _ = std::fs::remove_dir_all(&second);
     }
 
     #[test]

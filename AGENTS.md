@@ -1514,7 +1514,13 @@ files did exactly that: a real MCP server was advertised inside tests, and a
 personal provider key could make an "unconfigured" case pass on one machine
 and fail in CI. Neither
 `std::env::set_var` nor `unsafe` is needed for this; the override map sits
-above the real environment in `get_var`'s precedence.
+above the real environment in `get_var`'s precedence. That home is shared by
+every test in the binary, and every `Core::new` reads its Shared config, so a
+test that writes `vak_config::global_path()` goes in a test binary of its own,
+on a private home per test held under one lock, as
+`crates/vak-server/tests/shared_config_layer.rs` does. Two such tests once
+sat beside three hundred readers, and removing the file between another
+test's existence check and its read failed `Core::new` under full-suite load.
 
 `check-version.sh` covers the stamps a user reads (README badge, CHANGELOG,
 git tags), not just the ones the build system reads, and fails on a version
