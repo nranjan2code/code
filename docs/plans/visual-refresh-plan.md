@@ -212,6 +212,36 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   that only existed to win against a later override, and unused hex
   literals.
 
+#### Handoff for V2.2 (written 2026-09-25, at `c060f202`)
+
+Start here in a fresh session; re-find each line first.
+
+1. **Keep the token names, change the values.** `--accent` stays the action
+   colour (194 uses) and becomes indigo; add `--live` / `--live-wash` /
+   `--live-ink` for saffron. Map: `--bg`→paper, `--surface`/`--surface-raised`
+   →surface, `--sidebar`→sidebar, `--border`/`--border-soft`→line,
+   `--text`→ink, `--text-soft`→ink-2, `--muted`/`--faint`→ink-3,
+   `--accent`/`--accent-bright`→primary, `--on-accent`→white. Values:
+   `DESIGN.md` front matter and doc 75 §5.1.
+2. **Blocks to replace** in `crates/vak-client-ui/src/styles.css`: `:root`
+   (line 1, today warm dark), `light` (74), `dark` (113), `sage` (123),
+   `paper` (133), `mist` (143), `dawn` (153), `contrast` (163), plus the
+   per-theme `.artifact-canvas-body` selectors near line 5723. Result:
+   `:root` = Light, `dark` = indigo night, `contrast`; delete `warm`, `sage`,
+   `paper`, `mist`, `dawn`.
+3. **Theme ids in code:** `store.ts` (the `theme` union, line ~675),
+   `App.tsx` (system resolution ~1253 and the light list ~1262),
+   `components/Settings.tsx` theme grid (~1311) and its previews. A stored
+   retired id resolves to `system`.
+4. **Move live states to saffron:** `.dot.run` (~307, green today), the
+   listening voice control (~857), the approval / needs-you badge, and the
+   header status dot. Nothing else uses `--live`.
+5. **Verify:** contrast of every text token pair (script in doc 75 §5.1),
+   then the live checks in §2 rule 3 for all three themes.
+
+V2.3 needs Newsreader WOFF2 files downloaded (Google Fonts, SIL OFL); ask
+the maintainer before downloading.
+
 ### V3 — Surfaces (after V2 merges)
 
 - [ ] **V3.1 Sidebar and header.** Complete tile and Newsreader wordmark;
