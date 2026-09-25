@@ -27,10 +27,36 @@ pub struct TailSections {
     pub workspace: Option<String>,
 }
 
+/// The ledger's descriptor. A writable handle holds the ledger's exclusive
+/// lock and releases it with an explicit unlock when dropped. Closing alone
+/// would not: a lock lasts while any duplicate of its descriptor is open,
+/// and a child being spawned holds duplicates of every open descriptor
+/// until it execs, so a ledger dropped and reopened while any thread was
+/// spawning a process failed with `Locked` although nothing held it.
+struct LedgerFile {
+    file: File,
+    locked: bool,
+}
+
+impl LedgerFile {
+    fn lock(file: File, path: &Path) -> Result<Self, SessionError> {
+        file.try_lock()
+            .map_err(|_| SessionError::Locked(path.to_path_buf()))?;
+        Ok(Self { file, locked: true })
+    }
+}
+
+impl Drop for LedgerFile {
+    fn drop(&mut self) {
+        if self.locked {
+            let _ = self.file.unlock();
+        }
+    }
+}
+
 pub struct SessionLog {
     path: PathBuf,
-    file: File,
-    read_only: bool,
+    file: LedgerFile,
     entries: Vec<Entry>,
     by_id: HashMap<String, usize>,
     tail_id: Option<String>,
@@ -58,15 +84,13 @@ impl SessionLog {
             .open(&path)?;
         // Cross-process safety: an exclusive lock for the lifetime of the
         // handle keeps two processes from interleaving appends.
-        file.try_lock()
-            .map_err(|_| SessionError::Locked(path.clone()))?;
-        if file.metadata()?.len() > 0 {
+        let file = LedgerFile::lock(file, &path)?;
+        if file.file.metadata()?.len() > 0 {
             return Err(SessionError::Exists(path));
         }
         let mut log = SessionLog {
             path,
             file,
-            read_only: false,
             entries: Vec::new(),
             by_id: HashMap::new(),
             tail_id: None,
@@ -163,15 +187,12 @@ impl SessionLog {
     }
 
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
-        let file = OpenOptions::new().append(true).open(&path)?;
-        file.try_lock()
-            .map_err(|_| SessionError::Locked(path.clone()))?;
+        let file = LedgerFile::lock(OpenOptions::new().append(true).open(&path)?, &path)?;
         let reader = BufReader::new(File::open(&path)?);
         let parsed = Self::parse_entries(&path, reader)?;
         Ok(SessionLog {
             path,
             file,
-            read_only: false,
             entries: parsed.entries,
             by_id: parsed.by_id,
             tail_id: parsed.tail_id,
@@ -184,13 +205,15 @@ impl SessionLog {
     /// exclusive write lock. Allows web clients, exports, and inspectors to
     /// read and rehydrate sessions that are currently active in another process.
     pub fn open_read_only(path: PathBuf) -> Result<Self, SessionError> {
-        let file = File::open(&path)?;
+        let file = LedgerFile {
+            file: File::open(&path)?,
+            locked: false,
+        };
         let reader = BufReader::new(File::open(&path)?);
         let parsed = Self::parse_entries(&path, reader)?;
         Ok(SessionLog {
             path,
             file,
-            read_only: true,
             entries: parsed.entries,
             by_id: parsed.by_id,
             tail_id: parsed.tail_id,
@@ -201,7 +224,7 @@ impl SessionLog {
 
     /// Returns whether this SessionLog was opened read-only.
     pub fn is_read_only(&self) -> bool {
-        self.read_only
+        !self.file.locked
     }
 
     /// Non-fatal problems seen while opening the ledger.
@@ -210,7 +233,7 @@ impl SessionLog {
     }
 
     pub fn append(&mut self, entry: Entry) -> Result<Entry, SessionError> {
-        if self.read_only {
+        if !self.file.locked {
             return Err(SessionError::Locked(self.path.clone()));
         }
         if let Some(pid) = &entry.parent_id
@@ -227,14 +250,14 @@ impl SessionLog {
             line: 0,
             message: e.to_string(),
         })?;
-        writeln!(self.file, "{line}")?;
+        writeln!(self.file.file, "{line}")?;
         // `File::flush` is a no-op — `std::fs::File` has no userspace buffer,
         // so its `Write::flush` returns Ok without a syscall. That is what
         // this used to call, which meant the "durable, reconstructable"
         // ledger had no write barrier at all and lost its tail on power loss.
         // `sync_data` skips the metadata flush `sync_all` forces; the file
         // length is data for an append-only log.
-        self.file.sync_data()?;
+        self.file.file.sync_data()?;
         self.tail_hash = Some(crate::types::line_digest(&line));
         self.by_id.insert(entry.id.clone(), self.entries.len());
         self.tail_id = Some(entry.id.clone());
@@ -1973,4 +1996,30 @@ fn hash_cwd(cwd: &Path) -> String {
         h = h.wrapping_mul(0x0000_0100_0000_01b3);
     }
     format!("{h:016x}")
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+    use super::*;
+
+    /// A child being spawned holds a duplicate of every open descriptor
+    /// until it execs; the duplicate here stands in for one.
+    #[test]
+    fn the_lock_lasts_exactly_as_long_as_the_handle() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("session.jsonl");
+        std::fs::write(&path, "").unwrap();
+
+        let log = SessionLog::open(path.clone()).unwrap();
+        assert!(matches!(
+            SessionLog::open(path.clone()),
+            Err(SessionError::Locked(_))
+        ));
+
+        let duplicate = log.file.file.try_clone().unwrap();
+        drop(log);
+        SessionLog::open(path).expect("the dropped handle's lock stayed with a duplicate");
+        drop(duplicate);
+    }
 }
