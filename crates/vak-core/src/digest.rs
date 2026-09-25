@@ -194,7 +194,11 @@ fn proposal_opened_ts(path: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
 
 /// Build the digest over the trailing `days` (24h windows). `days == 0`
 /// yields an empty report by construction (the window is empty).
-pub fn digest(home: &Path, days: u32) -> DigestReport {
+/// `home` is the Agent's home (its memory and skill proposals);
+/// `shared_home` holds what every Agent shares: the cost ledger and the
+/// trash. Spend stays whole, because it was spent; a trashed session is left
+/// out of `distinct_sessions`, the one place a digest names a session.
+pub fn digest(home: &Path, shared_home: &Path, days: u32) -> DigestReport {
     let mut report = DigestReport {
         days,
         ..Default::default()
@@ -206,8 +210,12 @@ pub fn digest(home: &Path, days: u32) -> DigestReport {
     report.since = Some(since);
 
     let mut sessions = BTreeSet::new();
-    fold_costs(home, since, &mut sessions, &mut report);
-    report.distinct_sessions = sessions.into_iter().collect();
+    fold_costs(shared_home, since, &mut sessions, &mut report);
+    let trashed = crate::trash::trashed(shared_home);
+    report.distinct_sessions = sessions
+        .into_iter()
+        .filter(|id| !trashed.contains(id))
+        .collect();
 
     for path in memory_files(home) {
         report.memory_notes_appended += count_fresh_notes(&path, since);
@@ -266,7 +274,7 @@ mod tests {
     #[test]
     fn missing_files_yield_zeros_not_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let r = digest(dir.path(), 7);
+        let r = digest(dir.path(), dir.path(), 7);
         assert_eq!(r.total_usd, 0.0);
         assert_eq!(r.dispatches, 0);
         assert!(r.by_model.is_empty());
@@ -276,7 +284,7 @@ mod tests {
         assert_eq!(r.skill_proposals_opened, 0);
         // Empty home with no memory/ dir at all must behave identically.
         let empty = tempfile::tempdir().unwrap();
-        assert_eq!(digest(empty.path(), 30).dispatches, 0);
+        assert_eq!(digest(empty.path(), empty.path(), 30).dispatches, 0);
     }
 
     #[test]
@@ -286,7 +294,7 @@ mod tests {
         ledger
             .append(&row(chrono::Utc::now(), "m", "p", Some(1.0), "s"))
             .unwrap();
-        let r = digest(dir.path(), 0);
+        let r = digest(dir.path(), dir.path(), 0);
         assert_eq!(r.dispatches, 0);
         assert!(r.since.is_none());
     }
@@ -344,7 +352,7 @@ mod tests {
             ))
             .unwrap();
 
-        let r = digest(dir.path(), 7);
+        let r = digest(dir.path(), dir.path(), 7);
         assert!((r.total_usd - 2.75).abs() < 1e-9, "{}", r.total_usd);
         assert_eq!(r.unpriced_rows, 1);
         assert_eq!(r.dispatches, 4);
@@ -389,7 +397,7 @@ mod tests {
 
         memory::append_profile_note(home, "preference", "editor", "vim bindings", "su").unwrap();
 
-        let r = digest(home, 7);
+        let r = digest(home, home, 7);
         assert_eq!(
             r.memory_notes_appended, 2,
             "fresh workspace + profile notes"
@@ -417,7 +425,7 @@ mod tests {
         // No parseable comment → falls back to mtime (now) → counts.
         std::fs::write(proj.join("mtime-only.md"), "no comment here").unwrap();
 
-        let r = digest(home, 7);
+        let r = digest(home, home, 7);
         assert_eq!(r.skill_proposals_opened, 2);
     }
 }

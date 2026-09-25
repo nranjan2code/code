@@ -11,6 +11,9 @@ use vak_session::{DEFAULT_LIMIT, ExternalDoc, search_extended};
 
 pub struct SessionSearchTool {
     pub sessions_home: PathBuf,
+    /// The shared data home, where the trash is kept: a session in the
+    /// trash is never a hit.
+    pub trash_home: PathBuf,
     pub cwd: PathBuf,
     /// Usually the running session: its content is already in context.
     pub exclude_session_id: String,
@@ -149,6 +152,7 @@ impl vak_tools::Tool for SessionSearchTool {
         let cwd = self.cwd.clone();
         let query = query.to_string();
         let exclude = self.exclude_session_id.clone();
+        let trash_home = self.trash_home.clone();
         let agent_id = self.agent_id.clone();
         let audience_id = self.audience_id.clone();
         // Curated memory participates in recall and outranks transcripts
@@ -246,7 +250,7 @@ impl vak_tools::Tool for SessionSearchTool {
                 // Filter after a larger ranked window so an unrelated Agent's
                 // hits cannot consume the caller's small result limit.
                 limit.clamp(DEFAULT_LIMIT, 50).saturating_mul(2).min(50),
-                Some(&exclude),
+                &crate::trash::search_exclusions(&trash_home, Some(&exclude)),
                 &extras,
             )?;
             if agent_id.is_some() || audience_id.is_some() {
@@ -341,6 +345,7 @@ mod tests {
 
         let tool = SessionSearchTool {
             sessions_home: home.to_path_buf(),
+            trash_home: home.to_path_buf(),
             cwd: cwd.clone(),
             exclude_session_id: "current".into(),
             agent_id: None,
@@ -378,6 +383,7 @@ mod tests {
         std::fs::create_dir_all(&cwd).unwrap();
         let tool = SessionSearchTool {
             sessions_home: dir.path().to_path_buf(),
+            trash_home: dir.path().to_path_buf(),
             cwd: cwd.clone(),
             exclude_session_id: String::new(),
             agent_id: None,
@@ -453,7 +459,8 @@ mod tests {
             .unwrap();
         }
         let tool = SessionSearchTool {
-            sessions_home: home,
+            sessions_home: home.clone(),
+            trash_home: home,
             cwd,
             exclude_session_id: String::new(),
             agent_id: Some("researcher".into()),
@@ -502,7 +509,8 @@ mod tests {
         .unwrap();
 
         let tool = SessionSearchTool {
-            sessions_home: home,
+            sessions_home: home.clone(),
+            trash_home: home,
             cwd: cwd.clone(),
             exclude_session_id: String::new(),
             agent_id: None,

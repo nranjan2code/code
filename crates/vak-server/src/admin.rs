@@ -85,8 +85,8 @@ pub(crate) async fn list_sessions_admin(
     // a ledger file under this process's own workspace (see
     // `workspace_project_hash` on `/admin/api/config`).
     let archive_map = crate::read_archive(&state.core);
-    let deleted_map = crate::read_deleted(&state.core);
     let shared = state.core.shared_data_home();
+    let trashed = vak_core::trash::trashed(&shared);
     let agent_map = map_session_agents(&shared);
 
     match store.list_sessions() {
@@ -98,7 +98,7 @@ pub(crate) async fn list_sessions_admin(
                     .unwrap_or("vak");
                 q.project.as_ref().is_none_or(|p| &s.project_hash == p)
                     && q.agent.as_ref().is_none_or(|a| a == "all" || s_agent == a)
-                    && !deleted_map.get(&s.session_id).copied().unwrap_or(false)
+                    && !trashed.contains(&s.session_id)
             });
             let visible: Vec<_> = visible.collect();
             let total = visible.len();
@@ -232,6 +232,9 @@ pub(crate) async fn session_transcript_admin(
     let Some(store) = &state.store else {
         return Json(serde_json::json!({ "error": "store not available" }));
     };
+    if vak_core::trash::is_trashed(&state.core.shared_data_home(), &session_id) {
+        return Json(serde_json::json!({ "error": "session is in the trash" }));
+    }
     // Fetch offset+limit so we can report whether more pages exist.
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let offset = q.offset.unwrap_or(0);
@@ -318,7 +321,12 @@ pub(crate) async fn search_admin(
         project_hash: q.project,
         role: q.role,
         kind: q.kind,
-        exclude_session: q.exclude_session,
+        excluded_sessions: vak_core::trash::search_exclusions(
+            &state.core.shared_data_home(),
+            q.exclude_session.as_deref(),
+        )
+        .into_iter()
+        .collect(),
         ..Default::default()
     };
     match store.search(&q.q, limit, &filter) {

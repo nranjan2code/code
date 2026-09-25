@@ -634,7 +634,8 @@ async fn backup_roundtrip_preserves_ledgers_and_rejects_self_backup() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn digest_reports_window_math_and_clamps_days() {
     let srv = spawn_server("").await;
-    let ledger = vak_core::finops::FinOpsLedger::new(&srv.home);
+    // Where every run writes it: the shared data home, not the Agent's.
+    let ledger = vak_core::finops::FinOpsLedger::new(&srv._dir.path().join("home"));
     ledger
         .append(&vak_core::finops::CostRow {
             ts: chrono::Utc::now() - chrono::Duration::hours(2),

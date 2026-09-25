@@ -36,9 +36,13 @@ fn run_export(cwd: PathBuf, session_id: String, html: bool, out: Option<PathBuf>
             return 2;
         }
     };
+    if vak_core::trash::is_trashed(&core.shared_data_home(), &session_id) {
+        eprintln!("error: session '{session_id}' is in the trash");
+        return 1;
+    }
     let home = core.sessions_home();
     let path = vak_session::SessionPath::new_session_file(&home, core.cwd(), &session_id);
-    let log = match vak_session::SessionLog::open(path) {
+    let log = match vak_session::SessionLog::open_read_only(path) {
         Ok(l) => l,
         Err(e) => {
             eprintln!("error: could not open session '{session_id}': {e}");
@@ -273,15 +277,16 @@ fn latest_session_id(core: &Core) -> Option<String> {
             }
         }
     }
+    let trashed = vak_core::trash::trashed(&shared);
     let mut rows: Vec<_> = Vec::new();
     for dir in session_dirs {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for e in entries.flatten() {
                 let name = e.file_name().to_string_lossy().into_owned();
-                let maybe_m = name
-                    .ends_with(".jsonl")
-                    .then(|| e.metadata().ok().and_then(|meta| meta.modified().ok()))
-                    .flatten();
+                let maybe_m = (name.ends_with(".jsonl")
+                    && !trashed.contains(name.trim_end_matches(".jsonl")))
+                .then(|| e.metadata().ok().and_then(|meta| meta.modified().ok()))
+                .flatten();
                 if let Some(m) = maybe_m {
                     rows.push((m, name));
                 }
@@ -1806,12 +1811,14 @@ fn run_sessions_list(cwd: PathBuf) {
             }
         }
     }
+    let trashed = vak_core::trash::trashed(&shared);
     let mut rows: Vec<(std::time::SystemTime, u64, String)> = Vec::new();
     for dir in &session_dirs {
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let maybe_row = (name.ends_with(".jsonl")
+                    && !trashed.contains(name.trim_end_matches(".jsonl"))
                     && !rows.iter().any(|(_, _, n)| n == &name))
                 .then(|| {
                     entry

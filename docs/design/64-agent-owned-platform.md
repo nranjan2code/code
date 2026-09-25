@@ -154,34 +154,54 @@ are user/operator actions.
 
 ## Agent workspace and execution scratch topology
 
-In an Agent-owned platform, each Agent (the default `vak` or any custom user-defined Agent) is granted an independent filesystem workspace directly under the user's data home:
+This section describes the 4.x tree as built. The planned tenant/space layout
+replaces it in the data architecture refactor (docs/plans/data-architecture-plan.md,
+M3b); until then these are the real paths. `vak_config::paths` is the only
+place that resolves them, and `vak_core::state::REGISTRY` declares every
+durable file.
+
+Two roots hold an Agent's things, and they are different directories:
+
+- **The data home** (`vak_config::paths::data_home`: `~/Library/Application
+  Support/vak` on macOS, `~/.local/share/vak` on Linux, `VAK_HOME` when set)
+  holds application state. An Agent's private state lives under
+  `<data home>/agents/<agent_id>/` (`vak_config::paths::agent_home`); what
+  every Agent shares sits at the top of the data home
+  (`Core::shared_data_home()`).
+- **The workspace** is the directory an Agent's file and shell tools work in
+  (`vak_config::paths::agent_workspace`). The built-in `vak` Agent works in
+  the base workspace itself (`~/vak-home` for services, or the directory a
+  person opened); any other Agent works in
+  `<workspace>/.vak/agents/<agent_id>/workspace/`, so Agents never see each
+  other's files.
 
 ```text
-~/vak-home/
+<data home>/
 ├── agents/
-│   ├── vak/
-│   │   ├── sessions/<cwd-hash>/<session-id>.jsonl
-│   │   ├── memory/
-│   │   └── config.toml
-│   └── <custom-agent-id>/
+│   └── <agent_id>/                    # vak_config::paths::agent_home; vak included
 │       ├── sessions/<cwd-hash>/<session-id>.jsonl
-│       ├── memory/
-│       └── config.toml
-├── gateway/
-│   ├── allowlist.json
-│   └── bots.json
-├── operations/
-│   ├── incidents.jsonl
-│   └── actions.jsonl
-├── finops/
-│   └── ledger.jsonl
-├── index/
-└── tasks.json
+│       ├── memory/<cwd-hash>/MEMORY.md
+│       ├── memory/user/USER.md
+│       └── skill-proposals/
+├── gateway/                           # allowlist.json, bots.json, bindings
+├── operations/                        # incidents.jsonl, actions.jsonl
+├── cost-log.jsonl                     # the FinOps ledger
+├── inbox.jsonl
+├── tasks.json                         # scheduled work: vak_core::tasks::TaskDef
+├── archive.json                       # archived sessions (hidden from the sidebar)
+└── deleted.json                       # the trash (vak_core::trash)
+<cache home>/store.db                  # the rebuildable FTS index over every ledger
+
+<workspace>/
+├── .vak/config.toml                   # the project layer
+├── .vak/agents.json                   # Agent definitions for this workspace
+├── .vak/agents/<agent_id>/workspace/  # a non-built-in Agent's workspace
+└── .vak/scratch/<agent_id>/           # execution runtime state (invariant 35)
 ```
 
-1. **Private Agent Workspaces (`vak_config::paths::agent_home`)**:
-   - `Core::sessions_home()` resolves through `self.agent_identity` to `<base>/agents/<agent_id>/`.
-   - Each Agent's session logs, memory notes (`append_note`), reflection entries, and local configuration stay completely isolated.
+1. **Private Agent state (`vak_config::paths::agent_home`)**:
+   - `Core::sessions_home()` resolves through `self.agent_identity` to `<data home>/agents/<agent_id>/`.
+   - Each Agent's session logs, memory notes (`append_note`), reflection entries and skill proposals stay isolated.
    - Admission locks are acquired per-agent and per-session, ensuring that turns running on one Agent never block or stall turns running on another Agent.
 
 2. **Execution Scratch (`.vak/scratch/<agent_id>/`)**:
@@ -190,8 +210,8 @@ In an Agent-owned platform, each Agent (the default `vak` or any custom user-def
    - Promotion manifests (`CandidateManifest`) and diff viewers review candidates only from an execution that ran inside the agent-scoped scratch path.
 
 3. **Global Shared Infrastructure (`Core::shared_data_home()`)**:
-   - Cross-agent services access top-level `~/vak-home/` directly via `shared_data_home()`.
-   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), FinOps token ledger, global full-text search index, and scheduled background tasks (`tasks.json`).
+   - Cross-agent services use the top of the data home through `shared_data_home()`.
+   - This encompasses channel routing and transport credentials (`gateway/allowlist.json`, `gateway/bots.json`), operational receipts (`operations/`), the FinOps ledger (`cost-log.jsonl`), the inbox, scheduled tasks (`tasks.json`), the archive and the trash. The full-text search index is in the cache home.
 
 4. **Client Presentation and Workbench Isolation (`vak-client-ui`)**:
    - The desktop and web UI maintains `sessionWorkbenchMap: Record<string, WorkbenchExecution[]>`, keying execution events by session ID rather than a single flat global array.

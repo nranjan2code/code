@@ -1431,7 +1431,7 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
         .unwrap();
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
-    assert_eq!(body["deleted"], 1, "only workspace B's own session, {body}");
+    assert_eq!(body["trashed"], 1, "only workspace B's own session, {body}");
 
     let deleted: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(home.join("deleted.json")).unwrap()).unwrap();

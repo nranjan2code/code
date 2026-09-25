@@ -23,7 +23,7 @@ pub fn run_digest(cwd: PathBuf, days: u32) -> i32 {
         }
     };
     let days = clamp_days(days);
-    let report = vak_core::digest::digest(&core.sessions_home(), days);
+    let report = vak_core::digest::digest(&core.sessions_home(), &core.shared_data_home(), days);
     print_digest(&report);
     0
 }

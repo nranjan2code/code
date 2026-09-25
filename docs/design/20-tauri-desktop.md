@@ -466,6 +466,14 @@ contract (`vak-server/tests/server_ext.rs` covers every one):
   at `<sessions-home>/archive.json`; ledger files are untouched (invariant 2).
   `/sessions` gains an `archived` field; sidebar gains an archived filter chip
   plus hover archive/restore action on each row.
+- **Trash**: `DELETE /sessions/{id}` (archived and idle only) and
+  `DELETE /sessions/archived` move sessions to the trash,
+  `<sessions-home>/deleted.json`, read only through `vak_core::trash`. A
+  trashed session is hidden everywhere: every list and search, the model's
+  `session_search`, transcripts, exports, the digest, and `Core::open_session`
+  refuses it. `GET /sessions?trash=true` lists the trash and
+  `POST /sessions/{id}/restore` takes one back out, archived. Nothing is
+  erased (data architecture plan, M0; erasure is M7).
 - **Skills slash palette**: `GET /skills` exposes name+description for
   project/user skills; typing `/` first in the composer opens a palette that
   inserts "use the <name> skill" — plain prompt text, so it ships inside the

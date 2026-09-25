@@ -889,12 +889,22 @@ export function setArchived(id: string, archived: boolean): Promise<{ archived: 
   });
 }
 
-export function deleteSession(id: string): Promise<{ deleted: string }> {
+/** Moves an archived task to the trash, which hides it everywhere,
+ * search included. Nothing is erased; `restoreFromTrash` brings it back. */
+export function trashSession(id: string): Promise<{ trashed: string }> {
   return req(`/sessions/${id}`, { method: "DELETE" });
 }
 
-export function deleteAllArchived(): Promise<{ deleted: number }> {
+export function trashAllArchived(): Promise<{ trashed: number }> {
   return req("/sessions/archived", { method: "DELETE" });
+}
+
+export function listTrash(): Promise<{ sessions: SessionSummary[] }> {
+  return req("/sessions?trash=true");
+}
+
+export function restoreFromTrash(id: string): Promise<{ restored: string }> {
+  return req(`/sessions/${id}/restore`, { method: "POST" });
 }
 
 export function listSkills(): Promise<{

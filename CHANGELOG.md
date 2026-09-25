@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Trash means hidden everywhere.** "Delete" on an archived conversation is
+  now "Move to trash", and it does what it says: a trashed conversation is
+  gone from the sidebar, every search (the assistant's own search of past
+  conversations included), the admin console, transcripts, exports and the
+  digest, and nothing reopens it. Settings › Archived tasks lists the trash,
+  and Restore brings a conversation back. Nothing is erased yet.
+- **The digest counts spend again.** The digest read the cost ledger from
+  the Agent's folder instead of the shared one it is written to, so it could
+  report no spend at all.
+- **Docs describe the real layout.** Doc 64 and AGENTS.md now draw where an
+  Agent's sessions, memory and workspace actually live in 4.x. This finishes
+  M0 of the data architecture plan.
+
 ## 4.1.0 — 2026-09-25
 
 - **A routine that cannot run says why.** A scheduled task that is due but

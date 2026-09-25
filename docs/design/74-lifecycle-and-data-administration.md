@@ -478,7 +478,8 @@ GET    /data/sync …  (M9)
 
 These replace, in the same change (invariant 30):
 - `POST /sessions/{id}/archive`, `DELETE /sessions/{id}`,
-  `DELETE /sessions/archived`
+  `DELETE /sessions/archived`, `POST /sessions/{id}/restore`,
+  `GET /sessions?trash=true` (M0's trash, `vak_core::trash`)
 - `POST /memory/cleanup`
 - `POST /workspaces/forget`
 - `POST /backup/export|import`

@@ -383,6 +383,15 @@ impl AppState {
         }
     }
 
+    /// Drops a session's live handle, so a trashed session is not served
+    /// from memory after it leaves every list.
+    fn forget_session(&self, id: &str) {
+        self.sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
+    }
+
     /// Snapshot of every live session handle (admin surfaces aggregate
     /// across sessions; nothing here crosses a session's approval scope —
     /// answering still goes through the per-session endpoint).
@@ -716,6 +725,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/archive", post(set_archived))
         .route("/sessions/archived", delete(delete_all_archived))
         .route("/sessions/{id}", delete(delete_session))
+        .route("/sessions/{id}/restore", post(restore_session))
         .route("/skills", get(list_skills))
         .route("/commands", get(list_commands))
         .route("/plugins", get(list_plugins))
@@ -2681,7 +2691,8 @@ async fn search_sessions(
     let cwd = core.cwd().clone();
     let query = q.q.clone();
     let limit = q.limit.unwrap_or(vak_session::DEFAULT_LIMIT);
-    let exclude = q.exclude.clone();
+    let excluded =
+        vak_core::trash::search_exclusions(&core.shared_data_home(), q.exclude.as_deref());
     let all = q.all;
     let mut extras = Vec::new();
     let mut workspace_notes = vak_core::memory::list_notes(&home, &cwd);
@@ -2730,10 +2741,10 @@ async fn search_sessions(
         // Both hit shapes are Serialize; the workspace path keeps its flat
         // SessionHit wire shape, cross-project adds the project_hash wrapper.
         let searched = if all {
-            vak_session::search_all_extended(&home, &query, limit, exclude.as_deref(), &extras)
+            vak_session::search_all_extended(&home, &query, limit, &excluded, &extras)
                 .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
         } else {
-            vak_session::search_extended(&home, &cwd, &query, limit, exclude.as_deref(), &extras)
+            vak_session::search_extended(&home, &cwd, &query, limit, &excluded, &extras)
                 .map(|hits| serde_json::to_value(&hits).map_err(|e| e.to_string()))
         };
         match searched {
@@ -3994,6 +4005,14 @@ async fn ensure_session_handle(
     // calls it on every task switch, and mid-run the handle's session is
     // temporarily owned by the agent — so this must be a no-op, not a
     // second open.
+    if vak_core::trash::is_trashed(&state.core.shared_data_home(), session_id) {
+        return Err(vak_core::CoreError::Session(vak_session::SessionError::Io(
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("session is in the trash: {session_id}"),
+            ),
+        )));
+    }
     if let Some(handle) = state.get(session_id) {
         return Ok((session_id.to_owned(), handle));
     }
@@ -4085,15 +4104,26 @@ fn resolve_process_core_for_cwd(state: &AppState, active: &Core, cwd: &std::path
         .unwrap_or_else(|_| state.core.clone())
 }
 
+#[derive(serde::Deserialize, Default)]
+struct ListSessionsQuery {
+    /// Lists the trash instead: only the sessions moved there, so a person
+    /// can restore one. Nothing else reads a trashed session.
+    #[serde(default)]
+    trash: bool,
+}
+
 /// Sidebar projection over the persisted store: one summary per JSONL file.
-async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn list_sessions(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<ListSessionsQuery>,
+) -> Json<serde_json::Value> {
     // Sessions are stored per workspace, so this follows the workspace the
     // client has open rather than the one the process started in.
     let active = state.active_core();
     let dir = vak_session::SessionPath::sessions_dir(&state.core.sessions_home(), active.cwd());
     let active_cwd = active.cwd().to_string_lossy().into_owned();
     let archive_map = read_archive(&state.core);
-    let deleted_map = read_deleted(&state.core);
+    let trashed = vak_core::trash::trashed(&state.core.shared_data_home());
     let mut sessions = Vec::new();
     let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(&dir)
         .map(|read| read.flatten().collect())
@@ -4143,7 +4173,7 @@ async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value>
         let Some(session_id) = path.file_stem().and_then(|s| s.to_str()).map(String::from) else {
             continue;
         };
-        if deleted_map.get(&session_id).copied().unwrap_or(false) {
+        if trashed.contains(&session_id) != query.trash {
             continue;
         }
         let updated_at = std::fs::metadata(&path)
@@ -7346,7 +7376,7 @@ fn operator_only(principal: &AuthenticatedPrincipal) -> Result<(), StatusCode> {
 }
 
 fn conversation_exists(state: &AppState, id: &str) -> bool {
-    state.get(id).is_some() || find_session_on_disk(&state.core, id).is_some()
+    state.get(id).is_some() || open_historical_session(state, id).is_some()
 }
 
 fn conversation_audience(state: &AppState, id: &str) -> Option<String> {
@@ -8012,8 +8042,12 @@ fn find_session_on_disk(core: &Core, id: &str) -> Option<vak_session::SessionLog
 
 /// Historical sessions live on disk but not in the in-memory handle map
 /// (a fresh server process starts with an empty map). Open read-only for
-/// export/inspection without mutating run bookkeeping.
+/// export/inspection without mutating run bookkeeping. A trashed session is
+/// not opened: it is hidden everywhere (`vak_core::trash`).
 fn open_historical_session(state: &AppState, id: &str) -> Option<vak_session::SessionLog> {
+    if vak_core::trash::is_trashed(&state.core.shared_data_home(), id) {
+        return None;
+    }
     find_session_on_disk(&state.core, id)
 }
 
@@ -8474,7 +8508,11 @@ async fn digest_report(
     axum::extract::Query(q): axum::extract::Query<DigestQuery>,
 ) -> Json<vak_core::digest::DigestReport> {
     let days = q.days.unwrap_or(7).clamp(1, 90);
-    Json(vak_core::digest::digest(&state.core.sessions_home(), days))
+    Json(vak_core::digest::digest(
+        &state.core.sessions_home(),
+        &state.core.shared_data_home(),
+        days,
+    ))
 }
 
 // ---- Intent kernel + commitments (docs/design/47-commitment-kernel.md) -----
@@ -9041,32 +9079,11 @@ fn archive_path(core: &Core) -> PathBuf {
     core.shared_data_home().join("archive.json")
 }
 
-fn deleted_path(core: &Core) -> PathBuf {
-    core.shared_data_home().join("deleted.json")
-}
-
 fn read_archive(core: &Core) -> HashMap<String, bool> {
     std::fs::read_to_string(archive_path(core))
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok())
         .unwrap_or_default()
-}
-
-fn read_deleted(core: &Core) -> HashMap<String, bool> {
-    std::fs::read_to_string(deleted_path(core))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
-}
-
-fn write_deleted(core: &Core, map: &HashMap<String, bool>) {
-    if let Some(parent) = deleted_path(core).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let tmp = deleted_path(core).with_extension("json.tmp");
-    if std::fs::write(&tmp, serde_json::to_string(map).unwrap_or_default()).is_ok() {
-        let _ = std::fs::rename(&tmp, deleted_path(core));
-    }
 }
 
 fn write_archive(core: &Core, map: &HashMap<String, bool>) {
@@ -9152,13 +9169,46 @@ async fn delete_session(
         )
             .into_response();
     }
-    let mut deleted = read_deleted(&state.core);
-    deleted.insert(id.clone(), true);
-    write_deleted(&state.core, &deleted);
+    if let Err(error) = vak_core::trash::set(
+        &state.core.shared_data_home(),
+        std::slice::from_ref(&id),
+        true,
+    ) {
+        return trash_write_failed(&error);
+    }
+    state.forget_session(&id);
     // Drop the session's cached FinOps spend gate along with it (docs/design/42-managed-work-contracts.md// Phase D) — otherwise a long-running server accumulates one entry per
     // session ever seen, forever.
     state.core.forget_spend_gate(&id);
-    Json(serde_json::json!({ "deleted": id })).into_response()
+    Json(serde_json::json!({ "trashed": id })).into_response()
+}
+
+fn trash_write_failed(error: &std::io::Error) -> axum::response::Response {
+    (
+        StatusCode::INTERNAL_SERVER_ERROR,
+        Json(serde_json::json!({ "error": format!("could not update the trash: {error}") })),
+    )
+        .into_response()
+}
+
+/// Takes a session back out of the trash. It returns archived, where it was
+/// when it was trashed.
+async fn restore_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let home = state.core.shared_data_home();
+    if !find_session_in_cwd(&state.core, &id) || !vak_core::trash::is_trashed(&home, &id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "no such session in the trash" })),
+        )
+            .into_response();
+    }
+    if let Err(error) = vak_core::trash::set(&home, std::slice::from_ref(&id), false) {
+        return trash_write_failed(&error);
+    }
+    Json(serde_json::json!({ "restored": id })).into_response()
 }
 
 async fn delete_all_archived(State(state): State<AppState>) -> axum::response::Response {
@@ -9184,17 +9234,20 @@ async fn delete_all_archived(State(state): State<AppState>) -> axum::response::R
         )
             .into_response();
     }
-    let mut deleted = read_deleted(&state.core);
-    let mut count = 0u64;
-    for id in local_archived {
-        if !deleted.get(&id).copied().unwrap_or(false) {
-            deleted.insert(id.clone(), true);
-            count += 1;
-        }
-        state.core.forget_spend_gate(&id);
+    let home = state.core.shared_data_home();
+    let already = vak_core::trash::trashed(&home);
+    let newly: Vec<String> = local_archived
+        .into_iter()
+        .filter(|id| !already.contains(id))
+        .collect();
+    if let Err(error) = vak_core::trash::set(&home, &newly, true) {
+        return trash_write_failed(&error);
     }
-    write_deleted(&state.core, &deleted);
-    Json(serde_json::json!({ "deleted": count })).into_response()
+    for id in &newly {
+        state.forget_session(id);
+        state.core.forget_spend_gate(id);
+    }
+    Json(serde_json::json!({ "trashed": newly.len() })).into_response()
 }
 
 async fn list_skills(

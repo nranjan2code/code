@@ -94,22 +94,27 @@ Read before changing behaviour in these areas:
 ### What is authoritative
 
 **`64-agent-owned-platform.md` is the authoritative product model.** Agents own
-conversations, dedicated workspaces (`~/vak-home/agents/<agent_id>/`), private
-session ledgers, memory boundaries, lifecycle, channel targets, scheduled work,
-request admission, and delivery provenance. Bots are transport identities and
-channels are endpoints; internal tasks are implementation details behind the
-Agent conversation. Global infrastructure (gateway, operations, FinOps, FTS,
-tasks) stays shared at `~/vak-home/` via `Core::shared_data_home()`.
-Invariant 37 states the enforceable half of this.
+conversations, private state under `<data home>/agents/<agent_id>/`
+(`vak_config::paths::agent_home`: session ledgers, memory), their own
+workspace (`vak_config::paths::agent_workspace`: the base workspace for the
+built-in `vak`, `<workspace>/.vak/agents/<agent_id>/workspace/` for any
+other), lifecycle, channel targets, scheduled work, request admission, and
+delivery provenance. Bots are transport identities and channels are
+endpoints; internal tasks are implementation details behind the Agent
+conversation. Global infrastructure (gateway, operations, FinOps, tasks, the
+archive and the trash) stays shared at the top of the data home via
+`Core::shared_data_home()`; the FTS index is in the cache home. Doc 64's
+topology section draws the tree. Invariant 37 states the enforceable half of
+this.
 
 Parked, and not to be assumed shipped: release supply-chain hardening
 (SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
 completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
-### Pending: the data architecture refactor (M0 in progress since 2026-09-25)
+### Pending: the data architecture refactor (M0 done 2026-09-25; M1 next)
 
-The maintainer started it on 2026-09-25 with M0. Nothing after M0 is
-behaviour yet, and no session starts a later milestone unasked.
+The maintainer started it on 2026-09-25 with M0, which is done. Nothing
+after M0 is behaviour yet, and no session starts a later milestone unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids and a trace key on every record;
@@ -154,7 +159,7 @@ behaviour yet, and no session starts a later milestone unasked.
    section names nothing left unchanged. Then update this section and the
    plan's status line.
 
-**M0 so far.** Landed, each with its exit test:
+**M0, done.** Landed, each with its exit test:
 - Bus secrets live in the secret store and apply live
   (`bus_credentials_never_written_to_a_file`).
 - `vak self uninstall --purge` removes the logs root (`purge_includes_logs`).
@@ -170,27 +175,28 @@ behaviour yet, and no session starts a later milestone unasked.
   `scheduled_run_resolves_after_restart`, `child_core_home_is_not_nested`).
 - An unchanged capability binding is written by reference
   (`unchanged_capabilities_not_rewritten`).
+- The trash is honoured everywhere: a trashed session is gone from every
+  list and search (the model's `session_search` included), its transcript,
+  export and digest, and nothing reopens it; it can be restored.
+  `vak_core::trash` is the one source (`trashed_session_absent_from_every_search`).
+- Doc 64's topology section and "What is authoritative" describe the real
+  4.x tree.
 
-**Still open in M0.** Know these before touching the areas:
-- A "deleted" session is only hidden from the session lists; the model's
-  `session_search`, admin search and the FTS store still return it
-  (`trashed_session_absent_from_every_search`, with the client's "Move to
-  trash" wording).
-- Doc 64's topology section and the paths in "What is authoritative" above
-  describe neither today's layout nor the planned one. Today an Agent's
-  home is `<data home>/agents/<agent_id>/` (`vak_config::paths::agent_home`),
-  and a non-built-in Agent's workspace is
-  `<workspace>/.vak/agents/<agent_id>/workspace/`.
+**Known gaps M0 leaves for later milestones:**
 - A non-git space's routine is refused, not run: running it needs M4's
   copy environment.
+- The trash hides; it never erases. Erasure is M7.
 
-**Until it starts, don't deepen the debt:**
+**Until the next milestone lands, don't deepen the debt:**
 - Build no second schedule model: scheduled work is a `TaskDef`.
 - Declare every new durable file in `vak_core::state::REGISTRY`.
 - Resolve every new path through `vak_config::paths` and the `Core` home
   accessors.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
 - Keep conversation content out of logs.
+- Read a session for a person or the model through a path that honours the
+  trash (`open_historical_session`, `Core::open_session`, or
+  `vak_core::trash`), never by opening its ledger file directly.
 
 ### Pending: the visual refresh (planned 2026-09-25; brand correction started)
 
@@ -289,7 +295,9 @@ session starts one unasked.
    is nothing here for git to accidentally pick up. Point lookups go
    through `vak_config::read_env_file_var/get_var`. Real environment
    variables take precedence over a stored secret. Never hardcode, echo,
-   or commit keys. Keys are
+   or commit keys. No API writes a secret to a file: a secret an endpoint
+   accepts (a provider key, a bot token, bus credentials) goes to the
+   credential store (`bus_credentials_never_written_to_a_file`). Keys are
    user-supplied and user-revocable: `Core::set_provider_key` /
    `remove_provider_key` own the whole lifecycle, and both invalidate the
    cached provider client and the discovered-model cache.
@@ -749,14 +757,15 @@ session starts one unasked.
     run, child/delegated run, and channel delivery has one resolved Agent
     identity plus its ConversationKey, audience, origin, and configuration
     revision. Each top-level agent (the built-in `vak` and user-defined custom
-    agents) owns a dedicated workspace under `~/vak-home/agents/<agent_id>/`,
-    encompassing private append-only session ledgers under
-    `sessions/<cwd-hash>/`, private memory under `memory/`, and private
-    configuration, with quarantined execution scratch partitioned under
+    agents) owns private state under `<data home>/agents/<agent_id>/`
+    (`vak_config::paths::agent_home`), encompassing private append-only
+    session ledgers under `sessions/<cwd-hash>/` and private memory under
+    `memory/`, and its own workspace (`vak_config::paths::agent_workspace`),
+    with quarantined execution scratch partitioned under
     `<workspace>/.vak/scratch/<agent_id>/`. Cross-agent infrastructure (the
     gateway allowlist, bots, operations incidents, actions receipts, FinOps
-    ledger, FTS search index, and scheduled tasks) remains shared at top-level
-    `~/vak-home/` via `Core::shared_data_home()`. Agent identity is resolved
+    ledger, scheduled tasks, the archive and the trash) remains shared at the
+    top of the data home via `Core::shared_data_home()`. Agent identity is resolved
     at admission and cannot be supplied by untrusted client text. Bots
     identify transport credentials; channels identify endpoints; neither is an
     Agent. Paused, archived, or revoked Agents and endpoints fail closed,

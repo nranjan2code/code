@@ -18,6 +18,9 @@ import {
   uiPreferences,
   updateUiPreference,
   sessions,
+  setSessions,
+  activeId,
+  splitId,
   backend,
   activeAgentId,
   activeAgent,
@@ -25,11 +28,11 @@ import {
   setAgentPickerTab,
   type Density,
 } from "../store";
-import type { ConfigSnapshot } from "../types";
+import type { ConfigSnapshot, SessionSummary } from "../types";
 import * as api from "../api";
 import { watchConfig } from "../streamHub";
 import { relTime } from "../time";
-import { loadHealth, refreshSessions, openAgentChat } from "../App";
+import { loadHealth, refreshSessions, openAgentChat, closeSplit } from "../App";
 import { sortByRecent } from "../agentRecents";
 import { capabilityHue, capabilityInitial } from "../capabilityIcon";
 import Icon, { type IconName } from "./Icon";
@@ -60,7 +63,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: str
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "This agent", section: "agent" },
   { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills", group: "This agent", section: "agent" },
   { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote", group: "This agent", section: "agent" },
-  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore delete history", group: "Experience", section: "app" },
+  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore trash history", group: "Experience", section: "app" },
 ];
 
 const pageSection = (id: Page): SettingsSection => pages.find((p) => p.id === id)?.section ?? "app";
@@ -926,9 +929,40 @@ export default function Settings() {
   };
   const showArchivedPage = createMemo(() => {
     const needle = query().trim().toLowerCase();
-    return !needle || "archived tasks restore delete history".includes(needle);
+    return !needle || "archived tasks restore trash history".includes(needle);
   });
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
+  const [trashedSessions, setTrashedSessions] = createSignal<SessionSummary[]>([]);
+  const refreshTrash = async () => {
+    try {
+      setTrashedSessions((await api.listTrash()).sessions);
+    } catch {
+      setTrashedSessions([]);
+    }
+  };
+  createEffect(() => {
+    if (page() === "archived") void refreshTrash();
+  });
+  // The client keeps an open conversation listed even when the server no
+  // longer lists it, so a trashed one is dropped here and left for another.
+  const leaveTrashed = async (ids: string[]) => {
+    const trashed = new Set(ids);
+    const agentId = activeAgentId();
+    setSessions((current) => current.filter((session) => !trashed.has(session.session_id)));
+    const split = splitId();
+    if (split && trashed.has(split)) closeSplit();
+    const active = activeId();
+    if (active && trashed.has(active)) await openAgentChat(agentId);
+  };
+  const restoreFromTrash = async (id: string) => {
+    try {
+      await api.restoreFromTrash(id);
+      await Promise.all([refreshSessions(), refreshTrash()]);
+      setNotice({ kind: "info", text: "Task taken out of the trash. It is back in Archived tasks." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not restore that task: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
 
   const restoreTask = async (id: string) => {
     try {
@@ -940,41 +974,44 @@ export default function Settings() {
     }
   };
 
-  const deleteTask = (id: string) => {
+  const trashTask = (id: string) => {
     const task = archivedSessions().find((session) => session.session_id === id);
     setConfirmConfig({
-      title: `Permanently delete “${task?.title || "Untitled task"}”?`,
-      description: "This task and its conversation events will be deleted from Vakyartha's ledger. This action cannot be undone.",
-      confirmLabel: "Delete Task",
+      title: `Move “${task?.title || "Untitled task"}” to the trash?`,
+      description: "It will be hidden everywhere, including search and past-conversation recall. Nothing is erased: you can restore it from the trash.",
+      confirmLabel: "Move to trash",
       cancelLabel: "Cancel",
       isDanger: true,
       onConfirm: async () => {
         try {
-          await api.deleteSession(id);
-          await refreshSessions();
-          setNotice({ kind: "info", text: "Task deleted from history." });
+          await api.trashSession(id);
+          await leaveTrashed([id]);
+          await Promise.all([refreshSessions(), refreshTrash()]);
+          setNotice({ kind: "info", text: "Task moved to the trash." });
         } catch (error) {
-          setNotice({ kind: "error", text: `Could not delete that task: ${error instanceof Error ? error.message : String(error)}` });
+          setNotice({ kind: "error", text: `Could not move that task to the trash: ${error instanceof Error ? error.message : String(error)}` });
         }
       },
     });
   };
 
-  const deleteAllArchived = () => {
+  const trashAllArchived = () => {
     if (!archivedSessions().length) return;
     setConfirmConfig({
-      title: `Delete all ${archivedSessions().length} archived tasks?`,
-      description: "All archived tasks and their events will be permanently removed from Vakyartha's ledger. This action cannot be undone.",
-      confirmLabel: "Delete All Archived",
+      title: `Move all ${archivedSessions().length} archived tasks to the trash?`,
+      description: "They will be hidden everywhere, including search and past-conversation recall. Nothing is erased: you can restore each one from the trash.",
+      confirmLabel: "Move all to trash",
       cancelLabel: "Cancel",
       isDanger: true,
       onConfirm: async () => {
         try {
-          const result = await api.deleteAllArchived();
-          await refreshSessions();
-          setNotice({ kind: "info", text: `${result.deleted} archived task${result.deleted === 1 ? "" : "s"} deleted.` });
+          const trashed = archivedSessions().map((session) => session.session_id);
+          const result = await api.trashAllArchived();
+          await leaveTrashed(trashed);
+          await Promise.all([refreshSessions(), refreshTrash()]);
+          setNotice({ kind: "info", text: `${result.trashed} archived task${result.trashed === 1 ? "" : "s"} moved to the trash.` });
         } catch (error) {
-          setNotice({ kind: "error", text: `Could not delete archived tasks: ${error instanceof Error ? error.message : String(error)}` });
+          setNotice({ kind: "error", text: `Could not move archived tasks to the trash: ${error instanceof Error ? error.message : String(error)}` });
         }
       },
     });
@@ -1296,11 +1333,17 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "archived"}>
-              <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void deleteAllArchived()}><Icon name="trash" size={14} /> Delete all</button></header>
-              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from Vakyartha’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
+              <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void trashAllArchived()}><Icon name="trash" size={14} /> Move all to trash</button></header>
+              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive and trash are both reversible</strong><span>Archived tasks stay searchable. Moving one to the trash hides it everywhere, search included, until you restore it. Nothing is erased.</span></div></div>
               <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
                 <section class="archived-list" aria-label="Archived tasks">
-                  <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={() => void deleteTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
+                  <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Move to trash" aria-label={`Move ${session.title || "untitled task"} to the trash`} onClick={() => void trashTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
+                </section>
+              </Show>
+              <Show when={trashedSessions().length}>
+                <header class="archived-header"><div><h2>Trash</h2><p>Hidden everywhere, search included, until you restore them.</p></div></header>
+                <section class="archived-list" aria-label="Trash">
+                  <For each={trashedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="trash" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""}</span></span><button class="settings-button" onClick={() => void restoreFromTrash(session.session_id)}><Icon name="restore" size={13} /> Restore</button></div>}</For>
                 </section>
               </Show>
             </Show>

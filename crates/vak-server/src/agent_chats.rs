@@ -297,6 +297,7 @@ fn scan_candidates(
     cwd: std::path::PathBuf,
     agent_id: String,
     conversation: ConversationContext,
+    trashed: std::collections::HashSet<String>,
 ) -> Vec<(SessionHeader, bool)> {
     let mut candidates = Vec::new();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -317,6 +318,7 @@ fn scan_candidates(
             }
         };
         if h.cwd == cwd
+            && !trashed.contains(&h.session_id)
             && h.parent_session_id.is_none()
             && h.agent.as_ref().is_some_and(|a| a.id == agent_id)
             && h.conversation.as_ref() == Some(&conversation)
@@ -444,7 +446,8 @@ pub(crate) async fn open(
         let cwd = core.cwd().clone();
         let agent_id = identity.id.clone();
         let conversation = conversation.clone();
-        move || scan_candidates(dir, cwd, agent_id, conversation)
+        let trashed = vak_core::trash::trashed(&core.shared_data_home());
+        move || scan_candidates(dir, cwd, agent_id, conversation, trashed)
     })
     .await
     {

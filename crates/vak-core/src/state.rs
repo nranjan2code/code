@@ -165,6 +165,28 @@ pub const REGISTRY: &[StateEntry] = &[
         in_backup: true,
     },
     StateEntry {
+        path: "deleted.json",
+        root: Root::Data,
+        owner: "vak-core (trash)",
+        schema: None,
+        // The trash: session ids hidden everywhere until restored.
+        kind: Kind::Config,
+        on_update: OnUpdate::AdditiveOnly,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
+    StateEntry {
+        path: "archive.json",
+        root: Root::Data,
+        owner: "vak-server",
+        schema: None,
+        // Session ids hidden from the everyday list, still searchable.
+        kind: Kind::Config,
+        on_update: OnUpdate::AdditiveOnly,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
+    StateEntry {
         path: "inbox.jsonl",
         root: Root::Data,
         owner: "vak-core",

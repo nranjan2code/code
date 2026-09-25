@@ -1113,12 +1113,12 @@ export function SessionsList() {
   };
 
   const removeSession = async (s: SessionListItem) => {
-    if (!confirmDestructive(`Permanently delete session “${s.session_id}”? Its JSONL ledger and history will be deleted.`)) return;
+    if (!confirmDestructive(`Move session “${s.session_id}” to the trash? It will be hidden everywhere, search included. Nothing is erased; it can be restored from the workspace client's Archived tasks page.`)) return;
     setBusySession(s.session_id);
     try {
-      await api.deleteSession(s.session_id);
+      await api.trashSession(s.session_id);
       await refetch();
-      pushToast("info", "Session deleted");
+      pushToast("info", "Session moved to the trash");
     } catch (err) {
       pushToast("alert", String(err instanceof Error ? err.message : err));
     } finally {
@@ -1128,13 +1128,13 @@ export function SessionsList() {
 
   const deleteAllArchived = async () => {
     const count = archivedCount();
-    if (!confirmDestructive(`Delete all ${count} archived sessions in this workspace? This cannot be undone.`)) return;
+    if (!confirmDestructive(`Move all ${count} archived sessions in this workspace to the trash? They will be hidden everywhere, search included. Nothing is erased.`)) return;
     setBulkBusy(true);
     try {
-      const res = await api.deleteAllArchived();
+      const res = await api.trashAllArchived();
       await refetch();
-      const countDeleted = res.deleted ?? 0;
-      pushToast("info", `Deleted ${countDeleted} archived session${countDeleted === 1 ? "" : "s"}`);
+      const moved = res.trashed ?? 0;
+      pushToast("info", `Moved ${moved} archived session${moved === 1 ? "" : "s"} to the trash`);
     } catch (err) {
       pushToast("alert", String(err instanceof Error ? err.message : err));
     } finally {
@@ -1306,7 +1306,7 @@ export function SessionsList() {
               disabled={bulkBusy()}
               onClick={deleteAllArchived}
             >
-              {bulkBusy() ? "Deleting…" : "Delete All Archived"}
+              {bulkBusy() ? "Moving…" : "Move All Archived to Trash"}
             </button>
           </Show>
           <button type="button" class="button small ghost" onClick={() => void refetch()}>
@@ -1388,7 +1388,7 @@ export function SessionsList() {
                             disabled={busySession() === s.session_id}
                             onClick={() => removeSession(s)}
                           >
-                            Delete
+                            Move to Trash
                           </button>
                         </div>
                       </td>

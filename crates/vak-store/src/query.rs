@@ -31,7 +31,26 @@ pub struct SearchFilter {
     pub role: Option<String>,
     pub since: Option<String>,
     pub until: Option<String>,
-    pub exclude_session: Option<String>,
+    /// Sessions no result may come from: the one searching, and the trash.
+    pub excluded_sessions: Vec<String>,
+}
+
+fn exclude_sessions(
+    column: &str,
+    excluded: &[String],
+    conditions: &mut Vec<String>,
+    params: &mut Vec<Box<dyn rusqlite::types::ToSql>>,
+) {
+    if excluded.is_empty() {
+        return;
+    }
+    let slots = vec!["?"; excluded.len()].join(", ");
+    conditions.push(format!("{column} NOT IN ({slots})"));
+    params.extend(
+        excluded
+            .iter()
+            .map(|id| Box::new(id.clone()) as Box<dyn rusqlite::types::ToSql>),
+    );
 }
 
 impl Store {
@@ -76,10 +95,12 @@ impl Store {
             conditions.push("entries_fts.ts <= ?".to_string());
             params.push(Box::new(until.clone()));
         }
-        if let Some(ref excl) = filter.exclude_session {
-            conditions.push("entries_fts.session_id != ?".to_string());
-            params.push(Box::new(excl.clone()));
-        }
+        exclude_sessions(
+            "entries_fts.session_id",
+            &filter.excluded_sessions,
+            &mut conditions,
+            &mut params,
+        );
 
         let where_clause = conditions.join(" AND ");
         let sql = format!(
@@ -172,10 +193,12 @@ impl Store {
             conditions.push("ts <= ?".to_string());
             params.push(Box::new(until.clone()));
         }
-        if let Some(ref excl) = filter.exclude_session {
-            conditions.push("session_id != ?".to_string());
-            params.push(Box::new(excl.clone()));
-        }
+        exclude_sessions(
+            "session_id",
+            &filter.excluded_sessions,
+            &mut conditions,
+            &mut params,
+        );
 
         let where_clause = if conditions.is_empty() {
             "1=1".to_string()
@@ -422,7 +445,7 @@ mod tests {
                 "rust compiler",
                 10,
                 &SearchFilter {
-                    exclude_session: Some("s1".into()),
+                    excluded_sessions: vec!["s1".into()],
                     ..Default::default()
                 },
             )

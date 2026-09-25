@@ -38,6 +38,7 @@ pub mod seed;
 pub mod session_search;
 pub mod skills;
 pub mod state;
+pub mod trash;
 
 pub mod gateway_token;
 pub mod tasks;
@@ -2956,6 +2957,7 @@ impl Core {
 
     /// Reopens an existing session ledger for resumed runs.
     pub async fn open_session(&self, session_id: &str) -> Result<SessionLog, CoreError> {
+        self.refuse_trashed(session_id)?;
         let path = vak_session::SessionPath::new_session_file(
             &self.sessions_home(),
             &self.inner.cwd,
@@ -2966,12 +2968,27 @@ impl Core {
 
     /// Opens an existing session ledger in read-only mode without acquiring an exclusive write lock.
     pub async fn open_session_read_only(&self, session_id: &str) -> Result<SessionLog, CoreError> {
+        self.refuse_trashed(session_id)?;
         let path = vak_session::SessionPath::new_session_file(
             &self.sessions_home(),
             &self.inner.cwd,
             session_id,
         );
         Ok(SessionLog::open_read_only(path)?)
+    }
+
+    /// A trashed session is hidden everywhere, so nothing reopens it: a
+    /// resume, a channel binding or an Agent conversation starts afresh.
+    fn refuse_trashed(&self, session_id: &str) -> Result<(), CoreError> {
+        if trash::is_trashed(&self.shared_data_home(), session_id) {
+            return Err(CoreError::Session(vak_session::SessionError::Io(
+                std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    format!("session is in the trash: {session_id}"),
+                ),
+            )));
+        }
+        Ok(())
     }
 
     /// SDK seam: relocate session storage (tests, embedded runtimes).
@@ -3498,6 +3515,7 @@ impl Core {
         if self.effective_memory_search_enabled() {
             tools.push(Arc::new(session_search::SessionSearchTool {
                 sessions_home: self.sessions_home(),
+                trash_home: self.shared_data_home(),
                 cwd: self.inner.cwd.clone(),
                 exclude_session_id: scope.session_id.clone(),
                 agent_id: scope.agent_id.clone(),

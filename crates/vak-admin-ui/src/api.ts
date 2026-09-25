@@ -449,14 +449,13 @@ export const api = {
       body: JSON.stringify({ archived }),
     }).then((r) => handle(r)),
 
-  /** The server only allows deleting a session that is already archived
-   * and not currently running — a deliberate two-step so nothing vanishes
-   * from a single click. Soft-delete: marks it in `deleted.json`, the
-   * ledger file itself is untouched. */
-  deleteSession: (sessionId: string): Promise<{ deleted: string }> =>
+  /** Moves an archived, idle session to the trash, which hides it
+   * everywhere, search included. Nothing is erased: the ledger is untouched
+   * and `POST /sessions/{id}/restore` brings it back. */
+  trashSession: (sessionId: string): Promise<{ trashed: string }> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" }).then((r) => handle(r)),
 
-  deleteAllArchived: (): Promise<{ deleted: number }> =>
+  trashAllArchived: (): Promise<{ trashed: number }> =>
     fetch("/sessions/archived", { method: "DELETE" }).then((r) => handle(r)),
 
   runPrompt: (sessionId: string, prompt: string): Promise<void> =>

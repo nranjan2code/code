@@ -1,8 +1,7 @@
 # Plan — data architecture, lifecycle, tracing and cloud
 
-Status: **plan, revision 2 (2026-09-25). M0 in progress: everything but
-trash-everywhere and the doc 64 topology rewrite has landed (see AGENTS.md,
-"Pending").**
+Status: **plan, revision 2 (2026-09-25). M0 is done (2026-09-25); M1 is
+next and waits for the maintainer (see AGENTS.md, "Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
   and `docs/design/74-lifecycle-and-data-administration.md` (lifecycles,

@@ -77,16 +77,17 @@ pub enum SearchError {
     Io(#[from] std::io::Error),
 }
 /// Search every ledger under `home` for the given workspace `cwd`.
-/// `exclude_session` (usually the current session) never matches — its
-/// content is already in the caller's context.
+/// A session in `excluded` never matches: the current one (its content is
+/// already in the caller's context) and every session in the trash, which
+/// is hidden everywhere.
 pub fn search(
     sessions_home: &Path,
     cwd: &Path,
     query: &str,
     limit: usize,
-    exclude_session: Option<&str>,
+    excluded: &std::collections::HashSet<String>,
 ) -> Result<Vec<SessionHit>, SearchError> {
-    search_extended(sessions_home, cwd, query, limit, exclude_session, &[])
+    search_extended(sessions_home, cwd, query, limit, excluded, &[])
 }
 
 /// Same scan with curated documents (memory blocks) folded into ranking.
@@ -96,7 +97,7 @@ pub fn search_extended(
     cwd: &Path,
     query: &str,
     limit: usize,
-    exclude_session: Option<&str>,
+    excluded: &std::collections::HashSet<String>,
     extras: &[ExternalDoc],
 ) -> Result<Vec<SessionHit>, SearchError> {
     let terms = tokenize_impl(query);
@@ -151,9 +152,7 @@ pub fn search_extended(
                 else {
                     continue;
                 };
-                if exclude_session == Some(session_id.as_str())
-                    || !seen_sessions.insert(session_id.clone())
-                {
+                if excluded.contains(&session_id) || !seen_sessions.insert(session_id.clone()) {
                     continue;
                 }
                 collect_ranked(&path, &session_id, &terms, &phrase, None, &mut ranked)?;
@@ -173,9 +172,9 @@ pub fn search_all(
     home: &Path,
     query: &str,
     limit: usize,
-    exclude_session: Option<&str>,
+    excluded: &std::collections::HashSet<String>,
 ) -> Result<Vec<ProjectHit>, SearchError> {
-    search_all_extended(home, query, limit, exclude_session, &[])
+    search_all_extended(home, query, limit, excluded, &[])
 }
 
 /// Cross-project search with curated documents included in the same ranking.
@@ -183,7 +182,7 @@ pub fn search_all_extended(
     home: &Path,
     query: &str,
     limit: usize,
-    exclude_session: Option<&str>,
+    excluded: &std::collections::HashSet<String>,
     extras: &[ExternalDoc],
 ) -> Result<Vec<ProjectHit>, SearchError> {
     let terms = tokenize_impl(query);
@@ -249,7 +248,7 @@ pub fn search_all_extended(
             else {
                 continue;
             };
-            if exclude_session == Some(session_id.as_str()) {
+            if excluded.contains(&session_id) {
                 continue;
             }
             collect_ranked(
@@ -635,7 +634,14 @@ mod tests {
             &[user_msg("run the deploy script now")],
         );
 
-        let hits = search(&home, &cwd, "deploy script", DEFAULT_LIMIT, None).unwrap();
+        let hits = search(
+            &home,
+            &cwd,
+            "deploy script",
+            DEFAULT_LIMIT,
+            &Default::default(),
+        )
+        .unwrap();
         // Message-level hits: both messages of the first ledger match.
         assert_eq!(hits.len(), 3);
         assert_eq!(
@@ -674,21 +680,27 @@ mod tests {
             &cwd,
             "kubernetes ingress",
             DEFAULT_LIMIT,
-            Some("aaaaaaaa-current"),
+            &std::collections::HashSet::from(["aaaaaaaa-current".to_string()]),
         )
         .unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].session_id, "bbbbbbbb-other");
 
         assert!(
-            search(&home, &cwd, "   ", DEFAULT_LIMIT, None)
+            search(&home, &cwd, "   ", DEFAULT_LIMIT, &Default::default())
                 .unwrap()
                 .is_empty()
         );
         assert!(
-            search(&home, &cwd, "zzzqqq nonexistent", DEFAULT_LIMIT, None)
-                .unwrap()
-                .is_empty()
+            search(
+                &home,
+                &cwd,
+                "zzzqqq nonexistent",
+                DEFAULT_LIMIT,
+                &Default::default()
+            )
+            .unwrap()
+            .is_empty()
         );
     }
 
@@ -711,7 +723,15 @@ mod tests {
             ts: None,
             role: None,
         }];
-        let hits = search_extended(&home, &cwd, "deploy rollback", 5, None, &extras).unwrap();
+        let hits = search_extended(
+            &home,
+            &cwd,
+            "deploy rollback",
+            5,
+            &Default::default(),
+            &extras,
+        )
+        .unwrap();
         assert!(hits.len() >= 2);
         assert_eq!(hits[0].role, "memory");
         assert_eq!(hits[0].session_id, "deploy");
@@ -763,7 +783,7 @@ mod tests {
                 "{filler}NEEDLE-HAYSTACK trailing words"
             ))],
         );
-        let hits = search(&home, &cwd, "needle", 5, None).unwrap();
+        let hits = search(&home, &cwd, "needle", 5, &Default::default()).unwrap();
         assert_eq!(hits.len(), 1);
         let snip = &hits[0].snippet;
         assert!(snip.starts_with('…'), "long text gets a leading ellipsis");
@@ -783,7 +803,11 @@ mod tests {
             &[user_msg("alpha bravo charlie baseline")],
         );
 
-        assert!(search(&home, &cwd, "foxtrot", 5, None).unwrap().is_empty());
+        assert!(
+            search(&home, &cwd, "foxtrot", 5, &Default::default())
+                .unwrap()
+                .is_empty()
+        );
 
         let path = SessionPath::new_session_file(&home, &cwd, "eeeeeeee-append");
         let mut log = SessionLog::open(path).unwrap();
@@ -791,13 +815,13 @@ mod tests {
             .unwrap();
         drop(log);
 
-        let hits = search(&home, &cwd, "foxtrot", 5, None).unwrap();
+        let hits = search(&home, &cwd, "foxtrot", 5, &Default::default()).unwrap();
         assert_eq!(hits.len(), 1, "append must invalidate the cached ledger");
         assert_eq!(hits[0].session_id, "eeeeeeee-append");
         assert_eq!(hits[0].role, "user");
 
         // The warmed cache answers again without re-reading the file.
-        let again = search(&home, &cwd, "foxtrot", 5, None).unwrap();
+        let again = search(&home, &cwd, "foxtrot", 5, &Default::default()).unwrap();
         assert_eq!(hits, again);
     }
 
@@ -842,14 +866,14 @@ mod tests {
         }
 
         let t0 = std::time::Instant::now();
-        let cold_hits = search(&home, &cwd, "xylophone quantum", 20, None).unwrap();
+        let cold_hits = search(&home, &cwd, "xylophone quantum", 20, &Default::default()).unwrap();
         let cold = t0.elapsed();
 
         let mut warm_min = std::time::Duration::MAX;
         let mut last_hits = Vec::new();
         for _ in 0..3 {
             let t = std::time::Instant::now();
-            last_hits = search(&home, &cwd, "xylophone quantum", 20, None).unwrap();
+            last_hits = search(&home, &cwd, "xylophone quantum", 20, &Default::default()).unwrap();
             warm_min = warm_min.min(t.elapsed());
         }
 
@@ -915,8 +939,20 @@ mod tests {
         };
         let (ha, hb, hc) = (hash(&cwd_a), hash(&cwd_b), hash(&cwd_c));
 
-        let first = search_all(&home, "needle", 20, Some("zz-excluded")).unwrap();
-        let second = search_all(&home, "needle", 20, Some("zz-excluded")).unwrap();
+        let first = search_all(
+            &home,
+            "needle",
+            20,
+            &std::collections::HashSet::from(["zz-excluded".to_string()]),
+        )
+        .unwrap();
+        let second = search_all(
+            &home,
+            "needle",
+            20,
+            &std::collections::HashSet::from(["zz-excluded".to_string()]),
+        )
+        .unwrap();
 
         assert_eq!(first.len(), 3, "one keeper hit per project dir");
         assert_eq!(
