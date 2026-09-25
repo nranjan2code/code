@@ -205,7 +205,7 @@ Every text pair passes WCAG AA. The ratios were computed, not estimated.
 | ink | `#1B1E36` | `#ECEBF5` | Text | 15.0 / 15.9 |
 | ink-2 | `#474B66` | `#BDBFD3` | Secondary text | 7.8 / 9.5 |
 | ink-3 | `#5F6380` | `#9295AE` | Captions, hints, placeholders | 5.4 / 5.9 |
-| primary | `#2F3C94` | `#4B59C9` | Buttons, selection; white text on it | 9.6 / 5.9 |
+| primary | `#2F3C94` | `#A3ADF7` | Buttons, links, selection; white text on it in light, dark ink in dark | 9.6 / 8.8 |
 | link | `#2F3C94` | `#A3ADF7` | Links, text buttons | 8.8 / 8.1 |
 | saffron | `#F5A400` | `#F5A400` | The one accent: listening, speaking, working, needs you. A fill, never text on light. | ink on it 7.9 |
 | saffron-ink | `#8A5300` | `#F5B04A` | Text that must carry the accent | 6.3 on white |
@@ -350,7 +350,9 @@ stays the model's own text.
   hasn't changed yet", and Review changes, Open, Ask for changes.
 - The message box is one field: + holds attach, mention a file, skills and
   upload a recording; the mic is the voice button (saffron while listening);
-  send sits beside it. Model and permissions move to the agent menu.
+  send sits beside it. Model and permission switches join the + menu only
+  with technical details on (§8). "Full access" always shows beside +,
+  because it is a safety state.
 
 ### 6.2 First run
 

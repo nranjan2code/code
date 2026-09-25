@@ -18,6 +18,9 @@ import {
   workspaceSwitching,
   agentForSession,
   agentOpening,
+  technicalDetails,
+  setPendingSettingsPage,
+  setSettingsOpen,
 } from "../store";
 import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -94,6 +97,8 @@ export default function Composer(props: { cwd: string }) {
   let draftText = "";
   const [modelList, setModelList] = createSignal<string[]>([]);
   const [lookupError, setLookupError] = createSignal("");
+  // Why the model switch is empty; it only matters to that switch.
+  const [modelError, setModelError] = createSignal("");
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
   const drafts = new Map<string, {text: string; files: { name: string; mime: string; data: string }[]; inbox: InboxChip[]}>();
@@ -147,10 +152,10 @@ export default function Composer(props: { cwd: string }) {
     if (!p) return;
     api.discoverModels(p).then((r) => {
       setModelList(r.models);
-      setLookupError("");
+      setModelError("");
     }).catch((error) => {
       setModelList([]);
-      setLookupError(`Model discovery unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      setModelError(error instanceof Error ? error.message : String(error));
     });
   });
 
@@ -540,7 +545,7 @@ export default function Composer(props: { cwd: string }) {
       <Show when={replyTarget()}>
         {(target) => <div class="composer-target" role="status">
           <span>Replying to {target().label}</span>
-          <button type="button" class="icon-button subtle" aria-label="Remove reply target" onClick={() => setReplyTarget(null)}>×</button>
+          <button type="button" class="icon-button subtle" aria-label="Remove reply target" onClick={() => setReplyTarget(null)}><Icon name="close" size={14} /></button>
         </div>}
       </Show>
       <Show when={slashMatches().length}>
@@ -666,14 +671,18 @@ export default function Composer(props: { cwd: string }) {
         <div class="composer-toolbar">
           <div class="composer-lead">
             <details class="composer-more" data-menu>
-              <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
+              <summary class="composer-round" aria-label="Add files, mentions and more"><Icon name="add" size={16} /></summary>
               <div class="composer-more-menu">
-                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Target: ${props.cwd.split("/").pop() || "root"}`}</span></button>
-                <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
-                <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
+                <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; fileInput.click(); }}><Icon name="file" size={14} /><span>Attach files</span></button>
+                <label class="voice-recording-entry"><Icon name="mic" size={14} /><span>Upload a recording</span><input type="file" accept="audio/*" aria-label="Upload a recording" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; if (file) window.dispatchEvent(new CustomEvent("vak:voice-recording", { detail: file })); }} /></label>
+                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Folder: ${props.cwd.split("/").pop() || "root"}`}</span></button>
+                <button type="button" onClick={beginMention}><Icon name="at" size={14} /><span>Mention a file</span></button>
+                <button type="button" onClick={beginSlash}><Icon name="slash" size={14} /><span>Use a skill or command</span></button>
+                <Show when={technicalDetails()}>
                 <select
                   class="composer-mode composer-model-select"
                   aria-label="Model"
+                  title={modelError() || undefined}
                   value={health()?.model ?? ""}
                   onChange={(e) => void switchModel(e.currentTarget.value)}
                   disabled={modelList().length === 0}
@@ -684,13 +693,16 @@ export default function Composer(props: { cwd: string }) {
                   </For>
                 </select>
                 <select class="composer-mode" aria-label="Permission mode" value={health()?.permission_mode ?? ""} onChange={(e) => void changeMode(e.currentTarget.value)}>
-                  <option value="ReadOnly">Read only</option>
-                  <option value="WorkspaceWrite">Workspace write</option>
-                  <option value="FullAccess">Full access</option>
+                  <option value="ReadOnly">Look only</option>
+                  <option value="WorkspaceWrite">Edit files in this folder</option>
+                  <option value="FullAccess">Full access to this computer</option>
                 </select>
+                </Show>
               </div>
             </details>
-            <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} motion={agentForSession(activeId()).animation} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
+            <Show when={health()?.permission_mode === "FullAccess"}>
+              <button type="button" class="composer-safety" title="Vak can run any command and open files outside this folder. Change it in Settings." onClick={() => { setPendingSettingsPage("privacy"); setSettingsOpen(true); }}><Icon name="warning" size={14} /><span>Full access</span></button>
+            </Show>
             <input
               ref={fileInput}
               type="file"
@@ -701,19 +713,10 @@ export default function Composer(props: { cwd: string }) {
                 e.currentTarget.value = "";
               }}
             />
-            <button
-              class="composer-context composer-attach"
-              title="Attach files (or paste / drop them here)"
-              aria-label="Attach files"
-              onClick={() => fileInput.click()}
-            >
-              <Icon name="add" size={13} />
-              <span>Attach</span>
-            </button>
           </div>
 
           <Show when={armedGoal()}>
-            <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
+            <div class="goal-chip" title="Goal set. The result is checked against these criteria before the task finishes.">
               <Icon name="spark" size={13} />
               <span>{armedGoal()!.objective.slice(0, 60)}</span>
               {" · "}
@@ -723,11 +726,12 @@ export default function Composer(props: { cwd: string }) {
                 title="Disarm goal"
                 onClick={() => setArmedGoal(null)}
               >
-                ✕
+                <Icon name="close" size={12} />
               </button>
             </div>
           </Show>
           <div class="composer-actions">
+            <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} motion={agentForSession(activeId()).animation} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
             <Show
               when={isRunning(activeId())}
               fallback={

@@ -1,8 +1,8 @@
-import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { activeId, receiptsOpen, setReceiptsOpen } from "../store";
 import * as api from "../api";
 import type { DispatchAttempt, WorkReceipt } from "../types";
+import Sheet from "./Sheet";
 
 function purposeLabel(p: WorkReceipt["purpose"]): string {
   switch (p) {
@@ -77,16 +77,7 @@ export default function ReceiptsModal() {
 
   return (
     <Show when={receiptsOpen()}>
-      <div class="modal-back" onClick={() => setReceiptsOpen(false)}>
-        <div
-          class="modal checkpoints-modal receipts-modal"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="receipts-title"
-          onClick={(e) => e.stopPropagation()}
-          use:trapFocus
-        >
-          <h3 id="receipts-title">Dispatch forensics</h3>
+      <Sheet size="wide" class="checkpoints-modal receipts-modal" title="Activity log" onClose={() => setReceiptsOpen(false)}>
           <p class="history-sub">
             Every paid model call in this task, exactly as recorded in the
             append-only ledger. Expand a step to see its frozen-ladder
@@ -195,10 +186,8 @@ export default function ReceiptsModal() {
           <div class="bo-foot" style="margin-top:10px">
             <span class="hint">append-only ledger · billing without a verdict settles unknown</span>
             <button class="btn primary" onClick={() => void refresh()}>Refresh</button>
-            <button class="btn primary" onClick={() => setReceiptsOpen(false)}>Close</button>
           </div>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }

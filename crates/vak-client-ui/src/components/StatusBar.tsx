@@ -1,50 +1,62 @@
-import { createMemo, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, Show } from "solid-js";
 import { connection, type Connection } from "../store";
+
+type Trouble = Exclude<Connection, "live">;
 
 /** What each connection state means to a reader, in words rather than hue.
  *
  * Colour is never the only carrier (DESIGN.md): each state also has its own
- * label text and its own dot fill, so the difference survives both a
- * greyscale screen and the ~8% of men for whom green and red are one dot. */
-const CONNECTION_COPY: Record<Connection, { label: string; title: string }> = {
-  live: { label: "Live", title: "Streaming events from the agent" },
+ * label and its own dot fill, so the difference survives a greyscale screen. */
+const CONNECTION_COPY: Record<Trouble, { label: string; title: string }> = {
+  connecting: { label: "Connecting…", title: "Connecting to Vakyartha." },
   reconnecting: {
-    label: "Reconnecting",
-    title: "The event stream dropped. Retrying — work already running is unaffected.",
+    label: "Reconnecting…",
+    title: "The connection dropped. Trying again; work already running continues.",
   },
   resyncing: {
-    label: "Resyncing",
-    title: "Reconnected past the replay window; rebuilding the transcript from the ledger.",
+    label: "Catching up…",
+    title: "Reconnected after a long gap. Reloading the conversation.",
   },
   offline: {
     label: "Offline",
-    title: "No connection to the server. Anything you send is held until it returns.",
+    title: "No connection. Anything you send waits until it returns.",
   },
 };
 
+/** How long a state must last before it is shown. A first connection stays
+ * silent for a few seconds, so an ordinary load shows nothing at all. */
+const GRACE_MS: Record<Trouble, number> = {
+  connecting: 5000,
+  reconnecting: 1500,
+  resyncing: 1500,
+  offline: 1500,
+};
+
 export default function StatusBar() {
-  const conn = createMemo(() => CONNECTION_COPY[connection()]);
+  const [shown, setShown] = createSignal<Trouble | null>(null);
+  createEffect(() => {
+    const state = connection();
+    if (state === "live") {
+      setShown(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setShown(state), GRACE_MS[state]);
+    onCleanup(() => window.clearTimeout(timer));
+  });
+  const copy = createMemo(() => {
+    const state = shown();
+    return state ? CONNECTION_COPY[state] : null;
+  });
 
   return (
-    <Show when={connection() !== "live"}>
-      <footer class="statusbar statusbar-alert">
-        <div class="st-left">
-          {/* First, because on a remote surface "can I even reach it" outranks
-              every other fact in this bar. */}
-          <span
-            class="st-item st-conn"
-            data-conn={connection()}
-            title={conn().title}
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <span class="dot" classList={{ run: connection() === "live" }} aria-hidden="true" />
-            <span class="visually-hidden">Connection: </span>
-            {conn().label}
-          </span>
+    <Show when={shown()}>
+      {(state) => (
+        <div class="statusbar" data-conn={state()} title={copy()?.title} role="status" aria-live="polite" aria-atomic="true">
+          <span class="dot" aria-hidden="true" />
+          <span class="visually-hidden">Connection: </span>
+          {copy()?.label}
         </div>
-      </footer>
+      )}
     </Show>
   );
 }

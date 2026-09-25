@@ -137,19 +137,19 @@ function terminalTheme() {
   const read = (token: string, fallback: string) =>
     getComputedStyle(document.documentElement).getPropertyValue(token).trim() || fallback;
   return {
-    background: read("--bg", "#171714"),
-    foreground: read("--text-soft", "#c4c0b8"),
-    cursor: read("--accent", "#df795f"),
-    cursorAccent: read("--bg", "#171714"),
-    selectionBackground: read("--surface-active", "#30302b"),
-    black: read("--surface-raised", "#22221f"),
-    red: read("--red", "#d86f72"),
-    green: read("--green", "#73a982"),
-    yellow: read("--yellow", "#d4a85d"),
-    blue: read("--blue", "#7c9fc9"),
-    magenta: read("--accent-bright", "#ee9278"),
-    cyan: read("--blue", "#7c9fc9"),
-    white: read("--text", "#eeeae2"),
+    background: read("--bg", "#0f1120"),
+    foreground: read("--text-soft", "#bdbfd3"),
+    cursor: read("--accent", "#a3adf7"),
+    cursorAccent: read("--bg", "#0f1120"),
+    selectionBackground: read("--surface-active", "#2c3149"),
+    black: read("--surface-raised", "#1e2236"),
+    red: read("--red", "#f08a8a"),
+    green: read("--green", "#7cc39a"),
+    yellow: read("--yellow", "#f5b04a"),
+    blue: read("--blue", "#8fb3e0"),
+    magenta: read("--accent-bright", "#b9c1fa"),
+    cyan: read("--blue", "#8fb3e0"),
+    white: read("--text", "#ecebf5"),
     brightBlack: read("--faint", "#8b8880"),
   };
 }

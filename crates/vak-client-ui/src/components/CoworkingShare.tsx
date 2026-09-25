@@ -1,7 +1,7 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
-import { trapFocus } from "../focusTrap";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 export default function CoworkingShare(props: { sessionId: string; onClose: () => void }) {
   const [invitations, setInvitations] = createSignal<api.CoworkingInvitation[]>([]);
@@ -67,12 +67,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
     }
   };
 
-  return <div class="modal-backdrop" role="presentation" onClick={props.onClose}>
-    <section class="modal coworking-share" role="dialog" aria-modal="true" aria-labelledby="coworking-share-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") props.onClose(); }} use:trapFocus>
-      <header class="modal-header">
-        <div><h2 id="coworking-share-title">Invite someone to this conversation</h2><p>They can join the conversation and review its saved drafts. Their messages never start Agent work or change your workspace.</p></div>
-        <button type="button" class="icon-button subtle" aria-label="Close sharing" onClick={props.onClose}><Icon name="close" /></button>
-      </header>
+  return <Sheet title="Invite someone to this conversation" subtitle="They can join the conversation and review its saved drafts. Their messages never start Agent work or change your workspace." onClose={props.onClose} class="coworking-share">
       <Show when={error()}>{(message) => <p class="coworking-share-error" role="alert">{message()}</p>}</Show>
       <Show when={issuedToken()}>{(token) => <div class="coworking-issued" aria-live="polite">
         <strong>Invitation created</strong>
@@ -100,6 +95,5 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
           </For>
         </Show>
       </div>
-    </section>
-  </div>;
+  </Sheet>;
 }

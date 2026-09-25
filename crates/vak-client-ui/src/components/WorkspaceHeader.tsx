@@ -1,7 +1,9 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { host } from "../host";
 import {
   activeId,
+  setConnectOpen,
+  setupEpoch,
   dockTab,
   inboxOpen,
   inboxUnread,
@@ -28,6 +30,7 @@ import {
   setAgentPickerTab,
   backend,
   coworkingPresence,
+  technicalDetails,
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
@@ -64,12 +67,16 @@ export default function WorkspaceHeader() {
   // one — otherwise every agent shows the same directory regardless of which
   // is selected.
   const workspaceCwd = createMemo(() => session()?.cwd || backend().cwd);
+  // Setup state is read from the server on every open (store.ts): the header
+  // names only what needs attention, so a ready conversation shows no status.
+  const [setup] = createResource(setupEpoch, () => api.onboarding());
+  const needsService = () => { const state = setup(); return !!state && !state.core_ready && state.provider?.state === "incomplete"; };
   const taskStatus = createMemo(() => {
     const id = activeId();
-    if (!id) return "New task";
+    if (!id) return "";
     if (itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "Needs your decision";
     if (isRunning(id)) return isStopping(id) ? "Stopping…" : retryOf(id) ? "Retrying" : "Working";
-    return "Ready";
+    return needsService() ? "Needs an AI service" : "";
   });
   const characterState = createMemo(() => {
     const id = activeId();
@@ -79,9 +86,12 @@ export default function WorkspaceHeader() {
   const [exporting, setExporting] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
 
+  // Closing hides the item that has focus, so focus goes back to the menu's
+  // button; a sheet opened from the menu then returns focus there.
   const closeMoreMenu = (event: MouseEvent) => {
-    event.currentTarget instanceof HTMLElement
-      && event.currentTarget.closest("details")?.removeAttribute("open");
+    const menu = event.currentTarget instanceof HTMLElement ? event.currentTarget.closest("details") : null;
+    menu?.removeAttribute("open");
+    menu?.querySelector<HTMLElement>("summary")?.focus({ preventScroll: true });
   };
 
   // Unread badge shares the BudgetBanner's polling cadence; the inbox page
@@ -143,36 +153,44 @@ export default function WorkspaceHeader() {
                 setAgentPickerTab("fleet");
                 setAgentPickerOpen(true);
               }}
-              title="Switch Agent Specialist"
+              title="Switch agent"
             >
-              <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
-                <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={20} state={characterState()} interactive />
+              <h1 class="agent-header-title">
+                <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={28} state={characterState()} interactive />
                 <span>{title()}</span>
-                <span style="font-size: 11px; opacity: 0.6;">▾</span>
+                <span style="font-size: 12px; opacity: 0.6;">▾</span>
               </h1>
             </button>
+
+            <Show when={technicalDetails()}>
 
             <button
               type="button"
               class="target-dir-pill"
-              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: 11.5px; color: var(--muted); cursor: pointer; text-decoration: none;"
+              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: 13px; color: var(--muted); cursor: pointer; text-decoration: none;"
               onClick={() => {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);
               }}
-              title={`Project Working Directory: ${workspaceCwd() || "default"}`}
-              aria-label={`Project Working Directory: ${workspaceCwd() || "default"}`}
+              title={`Folder: ${workspaceCwd() || "default"}`}
+              aria-label={`Folder: ${workspaceCwd() || "default"}`}
             >
               <Icon name="folder" size={12} />
               <span>{workspaceCwd() ? (workspaceCwd() as string).split("/").pop() || "root" : "workspace"}</span>
             </button>
 
-            <Show when={activeId()}>
-              <span class="run-state" classList={{ active: isRunning(activeId()) }}>
-                <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
-                  aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
-                {taskStatus()}
-              </span>
+            </Show>
+
+            <Show when={activeId() && taskStatus()}>
+              <Show when={taskStatus() === "Needs an AI service"} fallback={
+                <span class="run-state" classList={{ active: isRunning(activeId()), attention: taskStatus() === "Needs your decision" }}>
+                  <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
+                    aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
+                  {taskStatus()}
+                </span>
+              }>
+                <button type="button" class="run-state attention" onClick={() => setConnectOpen(true)}>{taskStatus()}</button>
+              </Show>
             </Show>
             <Show when={coworkingPresence(activeId()).length > 0}>
               <div class="coworking-presence" aria-label="People here now">
@@ -209,16 +227,18 @@ export default function WorkspaceHeader() {
               <For each={generalTools}>
                 {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
               </For>
-              <div class="menu-group-label">Developer</div>
-              <For each={devTools}>
-                {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
-              </For>
+              <Show when={technicalDetails()}>
+                <div class="menu-group-label">Developer</div>
+                <For each={devTools}>
+                  {(tool) => <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setDockTab(tool.id); }}><Icon name={tool.icon} />{tool.label}</button>}
+                </For>
+              </Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setSideOpen(!sideOpen()); }}><Icon name="chat" />Side question ⌘;</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button>
+              <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button></Show>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity receipts</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><span class="menu-letter">W</span>Background tasks</button>
+              <Show when={technicalDetails()}><button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity log</button></Show>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><Icon name="sync" />Background tasks</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>
           </div>

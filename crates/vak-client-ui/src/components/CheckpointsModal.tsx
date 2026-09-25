@@ -1,8 +1,8 @@
-import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, Show } from "solid-js";
 import { activeAgentId, activeId, historyOpen, isRunning, setHistoryOpen, setNotice } from "../store";
 import * as api from "../api";
 import type { CheckpointInfo } from "../types";
+import Sheet from "./Sheet";
 
 function timeLabel(iso: string): string {
   const date = new Date(iso);
@@ -52,13 +52,7 @@ export default function CheckpointsModal() {
 
   return (
     <Show when={historyOpen()}>
-      <div class="modal-back" onClick={() => setHistoryOpen(false)}>
-        <div class="modal checkpoints-modal" role="dialog" aria-modal="true" aria-labelledby="history-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
-          <h3 id="history-title">Time travel — workspace snapshots</h3>
-          <p class="history-sub">
-            Every turn starts with a full snapshot of the workspace. Restoring rewrites files to
-            that moment; the conversation ledger stays intact.
-          </p>
+      <Sheet size="wide" class="checkpoints-modal" title="History" subtitle="Every turn starts with a snapshot of the workspace. Restoring puts files back to that moment; the conversation is kept." onClose={() => setHistoryOpen(false)}>
           <Show when={running()}>
             <div class="gate-err">A run is active — stop it before rewinding the workspace.</div>
           </Show>
@@ -102,10 +96,8 @@ export default function CheckpointsModal() {
 
           <div class="bo-foot" style="margin-top:10px">
             <span class="hint">newest work wins · keys and other secrets are never snapshotted</span>
-            <button class="btn primary" onClick={() => setHistoryOpen(false)}>Close</button>
           </div>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }

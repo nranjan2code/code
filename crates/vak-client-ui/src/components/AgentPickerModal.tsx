@@ -1,5 +1,4 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
-import { trapFocus } from "../focusTrap";
 import {
   activeAgentId,
   activeId,
@@ -21,6 +20,7 @@ import { playCharacterCue } from "../characterSound";
 import { sortByRecent } from "../agentRecents";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 type LifecycleFilter = "active" | "all" | "paused" | "archived";
 
@@ -191,62 +191,34 @@ export default function AgentPickerModal() {
 
   return (
     <Show when={agentPickerOpen()}>
-      <div class="modal-back" onClick={() => setAgentPickerOpen(false)}>
-        <div
-          class="modal"
-          style="max-width: 680px; width: 92vw;"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="agent-picker-title"
-          onClick={(e) => e.stopPropagation()}
-          use:trapFocus
-        >
-          {/* Header */}
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <div>
-              <h3 id="agent-picker-title" style="margin: 0; font-size: 16px; font-weight: 600;">
-                Agent Fleet & Working Target
-              </h3>
-              <span style="color: var(--muted); font-size: 12px;">
-                Select an autonomous persona or point to an execution directory.
-              </span>
-            </div>
-            <button
-              type="button"
-              class="icon-button subtle"
-              aria-label="Close"
-              onClick={() => setAgentPickerOpen(false)}
-            >
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-
+      <>
+      <Sheet class="agent-picker" title="Your agents" subtitle="Choose who to work with, or which folder they use." onClose={() => setAgentPickerOpen(false)}>
           {/* Navigation Tabs */}
           <div style="display: flex; gap: 6px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px;">
             <button
               type="button"
               class="tab-button"
               classList={{ active: agentPickerTab() === "fleet" }}
-              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 13px; border-radius: var(--radius-sm);"
+              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 14px; border-radius: var(--radius-sm);"
               onClick={() => setAgentPickerTab("fleet")}
             >
               <Icon name="spark" size={14} />
-              <span>Fleet Roster ({allAgents().length})</span>
+              <span>Agents ({allAgents().length})</span>
             </button>
             <button
               type="button"
               class="tab-button"
               classList={{ active: agentPickerTab() === "target" }}
-              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 13px; border-radius: var(--radius-sm);"
+              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 14px; border-radius: var(--radius-sm);"
               onClick={() => setAgentPickerTab("target")}
             >
               <Icon name="folder" size={14} />
-              <span>Target Directory</span>
+              <span>Folder</span>
             </button>
           </div>
 
           <Show when={error()}>
-            <div style="background: var(--rose-wash); color: var(--red); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 12px; margin-bottom: 12px;">
+            <div style="background: var(--rose-wash); color: var(--red); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 12px;">
               {error()}
             </div>
           </Show>
@@ -256,10 +228,10 @@ export default function AgentPickerModal() {
             <div style="display: flex; gap: 8px; margin-bottom: 8px;">
               <input
                 type="search"
-                placeholder="Find agent by name, id, or specialty…"
+                placeholder="Find an agent…"
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                style="flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 12.5px;"
+                style="flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px;"
               />
               <button
                 type="button"
@@ -286,12 +258,12 @@ export default function AgentPickerModal() {
             </div>
             <div style="max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
               <Show when={loading()}>
-                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 13px;">
+                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 14px;">
                   Loading agent fleet…
                 </div>
               </Show>
               <Show when={!loading() && filteredAgents().length === 0}>
-                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 13px;">
+                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 14px;">
                   No matching agents found.
                 </div>
               </Show>
@@ -309,27 +281,22 @@ export default function AgentPickerModal() {
                         <AgentMark character={agent.character} motion={agent.animation} size={36} />
                         <div style="min-width: 0;">
                           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
-                            <strong style="font-size: 14px;">{agent.name}</strong>
-                            <span style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); font-family: var(--mono);">
-                              {agent.id}
-                            </span>
+                            <strong style="font-size: 15px;">{agent.name}</strong>
                             <Show when={isActive()}>
-                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font-weight: 600;">
-                                CURRENT
-                              </span>
+                              <span class="agent-current" title="Current agent"><Icon name="check" size={14} /><span class="visually-hidden">Current agent</span></span>
                             </Show>
                             <Show when={agent.lifecycle === "paused"}>
-                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
-                                PAUSED
+                              <span style="font-size: 13px; padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                                Paused
                               </span>
                             </Show>
                             <Show when={agent.lifecycle === "archived"}>
-                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
-                                ARCHIVED
+                              <span style="font-size: 13px; padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                                Archived
                               </span>
                             </Show>
                           </div>
-                          <p style="margin: 3px 0 0; font-size: 12px; color: var(--muted); line-height: 1.3;">
+                          <p style="margin: 3px 0 0; font-size: 13px; color: var(--muted); line-height: 1.3;">
                             {agent.personality || "Persistent autonomous specialist."}
                           </p>
                         </div>
@@ -410,13 +377,13 @@ export default function AgentPickerModal() {
           <Show when={agentPickerTab() === "target"}>
             <div>
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px;">
-                <span style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block;">
-                  {activeAgentId() === "vak" ? "Current Working Directory" : "Isolated Working Directory"}
+                <span style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block;">
+                  {activeAgentId() === "vak" ? "Folder" : "This agent's own folder"}
                 </span>
-                <strong style="font-family: var(--mono); font-size: 13px; color: var(--text); word-break: break-all;">
+                <strong style="font-family: var(--mono); font-size: 14px; color: var(--text); word-break: break-all;">
                   {activeWorkspace() || "Default workspace"}
                 </strong>
-                <p style="margin: 4px 0 0; font-size: 11.5px; color: var(--muted);">
+                <p style="margin: 4px 0 0; font-size: 13px; color: var(--muted);">
                   {activeAgentId() === "vak"
                     ? "The active agent will run tools, inspect files, and execute commands within this directory."
                     : "Nested under the project workspace so this agent never sees another agent's files. Change the project workspace below to move it."}
@@ -432,14 +399,9 @@ export default function AgentPickerModal() {
               />
             </div>
           </Show>
-        </div>
+      </Sheet>
         <Show when={editing()} keyed>{(agent) =>
-          <div class="modal-back" onClick={(event) => { event.stopPropagation(); setEditing(null); }}>
-            <div class="modal agent-identity-editor" role="dialog" aria-modal="true" aria-labelledby="agent-identity-title" onClick={(event) => event.stopPropagation()} use:trapFocus>
-              <div class="agent-identity-editor-head">
-                <div><h3 id="agent-identity-title">Agent identity</h3><p>Changes apply to new conversations. Existing conversations keep their recorded identity.</p></div>
-                <button type="button" class="icon-button subtle" aria-label="Close identity editor" onClick={() => setEditing(null)}><Icon name="close" size={14} /></button>
-              </div>
+          <Sheet class="agent-identity-editor" title="Agent identity" subtitle="Changes apply to new conversations. Conversations already started keep their identity." onClose={() => setEditing(null)} busy={editBusy()} footer={<><button type="button" class="btn" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="btn primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></>}>
               <label class="agent-identity-field"><span>Name</span><input value={editName()} maxlength={120} onInput={(event) => setEditName(event.currentTarget.value)} /></label>
               <fieldset class="agent-identity-characters">
                 <legend>Character</legend>
@@ -458,11 +420,9 @@ export default function AgentPickerModal() {
                 <label class="agent-identity-field"><span>Voice style</span><select value={editVoice()} onChange={(event) => setEditVoice(event.currentTarget.value)}><option value="default">Default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="quiet">Quiet</option></select></label>
               </div>
               <p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p>
-              <div class="agent-identity-actions"><button type="button" class="btn" disabled={editBusy()} onClick={() => setEditing(null)}>Cancel</button><button type="button" class="btn primary" disabled={editBusy() || !editName().trim()} onClick={() => void saveIdentity()}>{editBusy() ? "Saving…" : "Save identity"}</button></div>
-            </div>
-          </div>
+          </Sheet>
         }</Show>
-      </div>
+      </>
     </Show>
   );
 }

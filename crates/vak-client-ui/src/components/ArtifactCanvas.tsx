@@ -10,6 +10,7 @@ import {
   activeId,
   openCandidateReview,
   type ActiveComponentPreview,
+  technicalDetails,
 } from "../store";
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
@@ -610,17 +611,14 @@ export default function ArtifactCanvas() {
         <header class="artifact-canvas-header">
           <div class="artifact-canvas-title-group">
             <span class="artifact-canvas-badge">
-              {displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Dev Server" : displayType() === "office" ? "Office" : "Preview"}
+              {canvasArtifact()?.candidateId ? `Draft preview${candidateVersion() ? ` · Version ${candidateVersion()}` : ""}` : displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Live preview" : displayType() === "office" ? "Document" : "Preview"}
             </span>
             <strong class="artifact-canvas-title">{title()}</strong>
-            <Show when={path()}>
+            <Show when={path() && technicalDetails()}>
               <span class="artifact-canvas-path">{path()}</span>
             </Show>
             <Show when={canvasArtifact()?.resultId}>{(resultId) =>
-              <button type="button" class="artifact-canvas-result" title={resultId()} onClick={returnToConversation}>Back to conversation result</button>
-            }</Show>
-            <Show when={canvasArtifact()?.candidateId}>{(candidateId) =>
-              <span class="artifact-canvas-result" title={candidateId()}>Saved draft{candidateVersion() ? ` · Version ${candidateVersion()}` : ""}</span>
+              <button type="button" class="artifact-canvas-result" title={resultId()} onClick={returnToConversation}>Back to the answer</button>
             }</Show>
           </div>
 
@@ -657,30 +655,33 @@ export default function ArtifactCanvas() {
                   class="artifact-canvas-device-btn"
                   classList={{ active: device() === "desktop" }}
                   onClick={() => setCanvasDevice("desktop")}
-                  title="Desktop (100%)"
-                  aria-label="Desktop viewport"
+                  title="Desktop"
+                  aria-label="Desktop"
+                  aria-pressed={device() === "desktop"}
                 >
-                  100%
+                  <Icon name="monitor" size={16} />
                 </button>
                 <button
                   type="button"
                   class="artifact-canvas-device-btn"
                   classList={{ active: device() === "tablet" }}
                   onClick={() => setCanvasDevice("tablet")}
-                  title="Tablet (768px)"
-                  aria-label="Tablet viewport"
+                  title="Tablet"
+                  aria-label="Tablet"
+                  aria-pressed={device() === "tablet"}
                 >
-                  768px
+                  <Icon name="tablet" size={16} />
                 </button>
                 <button
                   type="button"
                   class="artifact-canvas-device-btn"
                   classList={{ active: device() === "mobile" }}
                   onClick={() => setCanvasDevice("mobile")}
-                  title="Mobile (375px)"
-                  aria-label="Mobile viewport"
+                  title="Phone"
+                  aria-label="Phone"
+                  aria-pressed={device() === "mobile"}
                 >
-                  375px
+                  <Icon name="phone" size={16} />
                 </button>
               </div>
             </Show>
@@ -715,8 +716,8 @@ export default function ArtifactCanvas() {
               <Icon name="preview" size={14} />
             </button>
             <Show when={canvasArtifact()?.candidateId && canvasArtifact()?.executionId}>
-              <button type="button" class="artifact-canvas-btn" onClick={returnToReview} title="Return to candidate review">
-                <Icon name="diff" size={14} /> Review draft
+              <button type="button" class="artifact-canvas-btn" onClick={returnToReview} title="Back to review">
+                <Icon name="diff" size={14} /> Review changes
               </button>
             </Show>
             <button
@@ -917,11 +918,11 @@ export default function ArtifactCanvas() {
               when={activeServerPort() || canvasArtifact()?.serverUrl}
               fallback={
                 <>
-                  Sandboxed · net: {canvasArtifact()?.connectSrc ?? "blocked"}
+                  Safe preview, {canvasArtifact()?.connectSrc ? "online" : "offline"}
                 </>
               }
             >
-              Dev server: {activeServerPort() ? `http://127.0.0.1:${activeServerPort()}` : canvasArtifact()?.serverUrl}
+              Live preview: {activeServerPort() ? `http://127.0.0.1:${activeServerPort()}` : canvasArtifact()?.serverUrl}
             </Show>
           </span>
         </footer>

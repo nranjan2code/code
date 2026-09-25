@@ -48,6 +48,10 @@ jobs:
       - name: typecheck client
         working-directory: crates/vak-client-ui
         run: npm run typecheck
+      # Pure client logic and the plain-words check (tests/plain-words.mjs).
+      - name: client node tests
+        working-directory: crates/vak-client-ui
+        run: for t in tests/*.mjs; do node "$t" || exit 1; done
       # Builds BOTH bundles: dist/ for the Tauri shell and dist-web/ for the
       # copy vak-server embeds at /app (docs/design/48-web-client.md).
       - name: build client

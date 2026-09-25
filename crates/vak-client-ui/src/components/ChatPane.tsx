@@ -1,10 +1,12 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, density, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 import AgentMark from "./AgentMark";
+import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import PresentationTimelineView, { Artifact, StructuredView } from "./PresentationRenderer";
@@ -32,14 +34,27 @@ function stripVakFence(text: string): string {
 
 /**
  * A new task's chat pane before anything has happened, and an existing
- * task with nothing rendered at the current density. Previously both
+ * task with nothing rendered at the current detail level. Previously both
  * rendered `null` — a void with no headline, hint, or affordance —
  * despite DESIGN.md naming "the chat empty state" as the canonical use
  * of the headline type scale (22px/620/-0.02em) it defines.
  */
+/** The starters an empty conversation offers, each with an everyday example
+ * (docs/design/75 §6.2). The prompt is what lands in the message box. */
+const STARTERS: readonly { label: string; example: string; prompt: string }[] = [
+  { label: "Research a question", example: "Compare three laptops for a student", prompt: "Compare three laptops for a student and recommend one." },
+  { label: "Write or rewrite", example: "Make this email warmer and shorter", prompt: "Make this email warmer and shorter: " },
+  { label: "Analyze data", example: "What changed in this spreadsheet?", prompt: "What changed in this spreadsheet? " },
+  { label: "Plan something", example: "A relaxed Saturday with the kids", prompt: "Plan a relaxed Saturday with the kids." },
+];
+
 function EmptyChat(props: { hasSession: boolean }) {
+  // While a greeting is on screen it carries the setup card (App.tsx).
+  onMount(() => setGreetingsShown((n) => n + 1));
+  onCleanup(() => setGreetingsShown((n) => n - 1));
   const ongoing = createMemo(() => sessions().filter((session) => session.running).slice(0, 3));
-  const completed = createMemo(() => sessions().filter((session) => !session.running).slice(0, 3));
+  // A conversation with no title has had no message yet: nothing to resume.
+  const completed = createMemo(() => sessions().filter((session) => !session.running && session.title).slice(0, 3));
   const [previews, setPreviews] = createSignal<Record<string, string>>({});
   const [previewLoaded, setPreviewLoaded] = createSignal<ReadonlySet<string>>(new Set());
   createEffect(() => {
@@ -61,17 +76,15 @@ function EmptyChat(props: { hasSession: boolean }) {
   return (
     <div class="chat-empty">
       <div class="chat-empty-mark">
-        <span class="vak-companion" aria-hidden="true">◌</span>
-        <Icon name="chat" size={16} />
+        <AgentMark character={agentForSession(activeId()).character} size={narrowViewport() ? 72 : 104} />
       </div>
-      <h2 class="chat-empty-headline">
-        {props.hasSession ? "Nothing here yet" : "What would you like to do?"}
-      </h2>
+      <h2 class="chat-empty-headline">Hi, I'm {agentForSession(activeId()).name}.</h2>
       <p class="chat-empty-hint">
         {props.hasSession
-          ? "This conversation is ready when you are. Ask a follow-up or open its details to inspect prior work."
-          : "Ask a question or hand over something to plan, find, create, remember, schedule, or complete."}
+          ? "Pick up where you left off, or ask something new."
+          : "Ask a question, plan something or hand over a task. Talk or type, whichever is easier."}
       </p>
+      <SetupBanner inGreeting />
       <Show when={!props.hasSession}>
         <Show when={ongoing().length > 0}>
           <div class="home-ongoing" aria-label="Ongoing work" aria-live="polite">
@@ -82,28 +95,24 @@ function EmptyChat(props: { hasSession: boolean }) {
         <Show when={completed().length > 0}>
           <div class="home-recent" aria-label="Recent results">
             <div class="home-ongoing-heading"><span>Recent results</span><small>Pick up where you left off</small></div>
-            <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark">✓</span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
+            <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark"><Icon name="check" size={14} /></span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
           </div>
         </Show>
-        <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">
-          <For each={[
-            ["Research a question", "Research this question and summarize the important points."],
-            ["Write or rewrite", "Help me write or rewrite this clearly: "],
-            ["Analyze data", "Help me analyze this data and explain the key findings."],
-            ["Plan something", "Help me make a practical plan for: "],
-          ]}>
-            {([label, prompt]) => (
-              <button
-                type="button"
-                class="chat-empty-example"
-                onClick={() => window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: prompt } }))}
-              >
-                {label}
-              </button>
-            )}
-          </For>
-        </div>
       </Show>
+      <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">
+        <For each={STARTERS}>
+          {(starter) => (
+            <button
+              type="button"
+              class="chat-empty-example"
+              onClick={() => window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: starter.prompt } }))}
+            >
+              <strong>{starter.label}</strong>
+              <span>{starter.example}</span>
+            </button>
+          )}
+        </For>
+      </div>
     </div>
   );
 }
@@ -198,7 +207,7 @@ function visibleItems(list: Item[], liveTurn = false): Item[] {
         }
         return true;
       }
-      // In outcome density, intermediate tool executions remain in Workbench
+      // With technical details off, intermediate tool executions remain in Workbench
       // and task details rather than cluttering the chat canvas.
       return false;
     });
@@ -360,7 +369,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
     const value = props.item.preview?.trim();
     if (value) {
       const shown = stripVakFence(value);
-      return shown.slice(0, density() === "audit" ? 4000 : 800);
+      return shown.slice(0, technicalDetails() ? 4000 : 800);
     }
     return props.item.done ? "No output returned." : "Waiting for a result…";
   };
@@ -407,16 +416,16 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
             onClick={() => {
               openWorkbenchExecution();
             }}
-            title="Inspect execution in Workbench Sandbox"
+            title="View activity in Workbench"
           >
             <Icon name="terminal" size={12} /> Inspect in Workbench
           </button>
         </div>
       </Show>
-      <Show when={open() || density() === "audit" || props.item.isError || !props.item.done}>
+      <Show when={open() || technicalDetails() || props.item.isError || !props.item.done}>
         <div class="tool-result" classList={{ err: props.item.isError }}>{result()}</div>
       </Show>
-      <details class="tool-details" open={open() || density() === "audit"}>
+      <details class="tool-details" open={open() || technicalDetails()}>
         <summary>View request details</summary>
         <pre class="tool-args">{argsPretty()}</pre>
       </details>
@@ -541,22 +550,22 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
       </Show>
     </Show>
     <Show when={showRulePreview()}>
-      <div class="modal-back" onClick={() => setShowRulePreview(false)}>
-        <div class="modal confirm-modal ap-rule-modal" role="dialog" aria-modal="true" aria-labelledby={`rule-title-${props.item.id}`} onClick={(e) => e.stopPropagation()} use:trapFocus>
-          <h3 id={`rule-title-${props.item.id}`}>Create persistent rule?</h3>
-          <p>This rule will apply automatically to matching requests in this workspace.</p>
-          <dl class="ap-rule-preview">
-            <div><dt>Matcher</dt><dd><code>{props.item.tool}</code></dd></div>
-            <div><dt>Workspace</dt><dd>{props.sessionId || "Current workspace"}</dd></div>
-            <div><dt>Effect</dt><dd>Allow this request pattern</dd></div>
-            <div><dt>Revoke</dt><dd>Settings → Permissions → Rules</dd></div>
-          </dl>
-          <div class="confirm-modal-actions">
-            <button type="button" class="btn-subtle" onClick={() => setShowRulePreview(false)}>Cancel</button>
-            <button type="button" class="btn-action" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Create rule</button>
-          </div>
-        </div>
-      </div>
+      <Sheet
+        size="narrow"
+        title="Always allow this?"
+        subtitle="Matching requests in this workspace will go ahead without asking."
+        onClose={() => setShowRulePreview(false)}
+        footer={<>
+          <button type="button" class="btn" onClick={() => setShowRulePreview(false)}>Cancel</button>
+          <button type="button" class="btn primary" onClick={() => { setShowRulePreview(false); void approve(props.item.id, true, props.sessionId, true); }}>Always allow</button>
+        </>}
+      >
+        <dl class="ap-rule-preview">
+          <div><dt>Applies to</dt><dd><code>{props.item.tool}</code></dd></div>
+          <div><dt>Where</dt><dd>This workspace</dd></div>
+          <div><dt>Undo it</dt><dd>Settings → Privacy and safety</dd></div>
+        </dl>
+      </Sheet>
     </Show>
   </div>
     </Show>
@@ -605,9 +614,11 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
     return (
       <div class="msg user">
         <div class="msg-bubble-wrap">
-          <div class="user-turn-head">
-            <span class="turn-author-chip">{item.authorName || "You"}</span>
-          </div>
+          <Show when={item.authorName}>
+            <div class="user-turn-head">
+              <span class="turn-author-chip">{item.authorName}</span>
+            </div>
+          </Show>
           <Show when={item.files?.length}>
             <div class="msg-user-files" aria-label="Attached files">
               <For each={item.files}>{(file) => <Artifact item={attachedFileItem(file, sessionId)} />}</For>
@@ -754,7 +765,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
                       <Icon name="preview" size={12} /> Open Canvas
                     </button>
                     <Show when={index() === 0 && art.execId}>
-                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!, props.sessionId ?? undefined)}><Icon name="diff" size={12} /> Review draft</button>
+                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!, props.sessionId ?? undefined)}><Icon name="diff" size={12} /> Review changes</button>
                     </Show>
                   </div>
                 )}
@@ -859,6 +870,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     });
   };
   const working = createMemo(() => activeWorkingState(sid()));
+  // An empty conversation shows the greeting, which reads from the top.
+  const showsGreeting = createMemo(() => !sid() || !(visibleItems(itemsOf(sid())).length || working()));
 
   const onScroll = () => {
     if (smoothScrolling) return;
@@ -914,7 +927,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       setActiveTurn(Math.max(1, count - 1));
       return;
     }
-    if (pinned && !smoothScrolling) {
+    if (pinned && !smoothScrolling && !showsGreeting()) {
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
       pinned = true;
       setAtBottom(true);
@@ -961,8 +974,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   });
 
   createEffect(() => {
-    // Density changes alter transcript layout. Reconcile the pinned state on next paint.
-    void density();
+    // The detail switch alters transcript layout. Reconcile the pinned state on next paint.
+    void technicalDetails();
     scheduleScroll();
   });
 
@@ -1070,7 +1083,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
             {/* Unified continuous chat canvas: The transcript stays permanently mounted
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
-            <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
+            <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={itemsOf(sid()).some((item) => item.kind === "user")} />}>
               <Index each={displayedTurns()}>{(entry) => <div class="chat-turn" data-turn-index={entry().index}>
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
                 <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
@@ -1083,7 +1096,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         </Show>
         </div>
       </div>
-      <Show when={!atBottom()}>
+      <Show when={!atBottom() && !showsGreeting()}>
         <button type="button" class="scroll-latest" onClick={() => scrollToBottom(true)}>
           <Icon name="chevron" size={13} /> Latest
         </button>

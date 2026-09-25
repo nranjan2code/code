@@ -1,8 +1,9 @@
 import { createEffect, createSignal, Show } from "solid-js";
-import { backend, setAgentCreateOpen } from "../store";
+import { backend, setAgentCreateOpen, setTechnicalDetails, technicalDetails } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
 import AgentMark from "./AgentMark";
+import Sheet from "./Sheet";
 
 const SEEN_KEY = "vak.onboarded";
 
@@ -36,22 +37,24 @@ export default function OnboardingWelcome() {
 
   return (
     <Show when={visible()}>
-      <div class="modal-back" onClick={dismiss}>
-        <div class="modal" style="max-width: 420px;" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" onClick={(e) => e.stopPropagation()}>
-          <div style="margin-bottom: 12px;"><AgentMark character="vak" size={44} /></div>
-          <h2 id="onboarding-title" style="margin: 0 0 6px;">Meet Vakyartha</h2>
-          <p style="margin: 0 0 18px; color: var(--muted); font-size: 13.5px; line-height: 1.5;">
-            Vakyartha is ready to help out of the box. You can also build your own specialists — an agent with its own
-            personality, instructions, and workspace — for the things you do often.
-          </p>
-          <div style="display: flex; gap: 8px;">
-            <button type="button" class="btn primary" onClick={() => { dismiss(); setAgentCreateOpen(true); }}>
-              <Icon name="add" size={14} /> Create your first agent
-            </button>
-            <button type="button" class="btn" onClick={dismiss}>Start with Vakyartha</button>
-          </div>
-        </div>
-      </div>
+      <Sheet
+        size="narrow"
+        title="Meet Vakyartha"
+        onClose={dismiss}
+        footer={<>
+          <button type="button" class="btn" onClick={dismiss}>Start with Vakyartha</button>
+          <button type="button" class="btn primary" onClick={() => { dismiss(); setAgentCreateOpen(true); }}>
+            <Icon name="add" size={14} /> Create your first agent
+          </button>
+        </>}
+      >
+        <div class="onboarding-mark"><AgentMark character="vak" size={44} /></div>
+        <p class="onboarding-copy">
+          Vakyartha is ready to help out of the box. You can also build your own specialists — an agent with its own
+          personality, instructions, and workspace — for the things you do often.
+        </p>
+        <label class="onboarding-technical"><input type="checkbox" checked={technicalDetails()} onChange={(event) => setTechnicalDetails(event.currentTarget.checked)} /> I build software: show technical details</label>
+      </Sheet>
     </Show>
   );
 }

@@ -2,16 +2,15 @@ import { trapFocus } from "../focusTrap";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
 import { host } from "../host";
 import {
-  density,
+  technicalDetails,
   openInEditor,
   pendingSettingsPage,
-  pendingSettingsSection,
+  setPendingSettingsPage,
   providers,
-  setDensity,
+  setTechnicalDetails,
   setNotice,
   setProviders,
   setSettingsOpen,
-  setPendingSettingsSection,
   setSettingsScope,
   settingsScope,
   setShowShortcuts,
@@ -26,8 +25,8 @@ import {
   activeAgent,
   setAgentPickerOpen,
   setAgentPickerTab,
-  type Density,
 } from "../store";
+import type { SettingsPageId } from "../store";
 import type { ConfigSnapshot, SessionSummary } from "../types";
 import * as api from "../api";
 import { watchConfig } from "../streamHub";
@@ -43,36 +42,35 @@ import DigestCard from "./DigestCard";
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
 
-type Page = "general" | "appearance" | "agent" | "prompts" | "permissions" | "reliability" | "integrations" | "services" | "learning" | "advanced" | "archived";
+type Page = SettingsPageId;
 
-// Two top-level buckets, not four cosmetic ones: everything in "App" is pure
-// local/global preference (no agent, no scope toggle needed); everything in
-// "Agent" reads or writes config for whichever agent is selected below and is
-// where the Platform-Defaults/This-Workspace scope toggle actually applies.
-const SETTINGS_SECTIONS = { app: "App Settings", agent: "Agent Settings" } as const;
-type SettingsSection = keyof typeof SETTINGS_SECTIONS;
+// Everyday pages are what anyone changes; Agents holds one page per agent;
+// Advanced is shown only with technical details on (docs/design/75 §6.3).
+type NavGroup = "Everyday" | "Advanced";
 
-const pages: { id: Page; label: string; icon: IconName; hint: string; group: string; section: SettingsSection }[] = [
-  { id: "general", label: "General", icon: "gear", hint: "notifications suggestions", group: "Experience", section: "app" },
-  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text density motion", group: "Experience", section: "app" },
-  { id: "services", label: "Services", icon: "grid", hint: "gateway bridge tray watchdog background", group: "Experience", section: "app" },
-  { id: "advanced", label: "Advanced", icon: "tune", hint: "paths context configuration", group: "Experience", section: "app" },
-  { id: "agent", label: "Model & Provider", icon: "spark", hint: "provider model turns workers", group: "This agent", section: "agent" },
-  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "This agent", section: "agent" },
-  { id: "permissions", label: "Permissions", icon: "shield", hint: "access sandbox approvals", group: "This agent", section: "agent" },
-  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "This agent", section: "agent" },
-  { id: "integrations", label: "Integrations", icon: "plug", hint: "mcp hooks skills", group: "This agent", section: "agent" },
-  { id: "learning", label: "Learning", icon: "history", hint: "memory notes skill proposals review promote", group: "This agent", section: "agent" },
-  { id: "archived", label: "Archived tasks", icon: "archive", hint: "restore trash history", group: "Experience", section: "app" },
+const pages: { id: Page; label: string; icon: IconName; hint: string; group: NavGroup }[] = [
+  { id: "general", label: "General", icon: "gear", hint: "suggestions technical details presentation styles shortcuts", group: "Everyday" },
+  { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text size motion cards previews", group: "Everyday" },
+  { id: "voice", label: "Voice and sound", icon: "mic", hint: "voice speak aloud microphone sound cues chime", group: "Everyday" },
+  { id: "notifications", label: "Notifications", icon: "bell", hint: "alerts quiet hours", group: "Everyday" },
+  { id: "connections", label: "Connections", icon: "plug", hint: "tools skills chat bots telegram discord slack mcp hooks plugins", group: "Everyday" },
+  { id: "privacy", label: "Privacy and safety", icon: "shield", hint: "permissions access approvals memory remembers archived trash history", group: "Everyday" },
+  { id: "models", label: "Models and routing", icon: "layers", hint: "route ladder fallbacks", group: "Advanced" },
+  { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Advanced" },
+  { id: "prompts", label: "Prompts", icon: "spark", hint: "system prompt identity rules guardrails persona", group: "Advanced" },
+  { id: "services", label: "Services and health", icon: "grid", hint: "gateway bridge tray watchdog background health", group: "Advanced" },
+  { id: "storage", label: "Storage and backup", icon: "archive", hint: "paths configuration backup export import", group: "Advanced" },
 ];
 
-const pageSection = (id: Page): SettingsSection => pages.find((p) => p.id === id)?.section ?? "app";
+/** Pages that read or write one agent's configuration, so the Shared
+ * defaults switch applies to them. */
+const SCOPED_PAGES = new Set<Page>(["agent", "connections", "privacy", "prompts"]);
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
-  { id: "identity", label: "Identity", help: "Who the agent is. The narrowest layer that sets this wins." },
-  { id: "operating-rules", label: "Operating rules", help: "How it works. The narrowest layer that sets this wins." },
-  { id: "guardrails", label: "Guardrails", help: "Every layer's guardrails apply together. Nothing narrower can remove one." },
-  { id: "surface-note", label: "Surface note", help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across layers." },
+  { id: "identity", label: "Identity", help: "Who the agent is. This agent's version replaces the shared one." },
+  { id: "operating-rules", label: "Operating rules", help: "How it works. This agent's version replaces the shared one." },
+  { id: "guardrails", label: "Guardrails", help: "Shared and agent guardrails all apply; none can be removed here." },
+  { id: "surface-note", label: "Surface note", help: "What Vakyartha should know about where its replies appear. Notes from every level add up." },
 ];
 
 const PROMPT_LAYER_LABELS: Record<api.PromptLayerDescriptor["layer"], string> = {
@@ -95,6 +93,12 @@ function Row(props: { title: string; description: string; children: JSX.Element;
 
 function Group(props: { title?: string; id?: string; children: JSX.Element }) {
   return <section id={props.id} class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
+}
+
+/** A closed "Technical details" row whose values stay intact behind it
+ * (docs/design/75 §6.3). */
+function TechnicalRow(props: { children: JSX.Element }) {
+  return <details class="settings-technical"><summary><span>Technical details</span><Icon name="chevron" /></summary>{props.children}</details>;
 }
 
 function CapabilityIcon(props: { name: string }) {
@@ -388,24 +392,27 @@ export default function Settings() {
   }
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
+  // On a phone Settings is a list that opens each page; a deep link lands
+  // on its page directly.
+  const [phoneView, setPhoneView] = createSignal<"list" | "page">(pendingSettingsPage() ? "page" : "list");
+  setPendingSettingsPage(null);
 
   const selectPage = (next: Page) => {
     setPage(next);
     setQuery("");
+    setPhoneView("page");
     // Every settings destination is a new document. Retaining the previous
     // page's scroll position made headings disappear above the viewport and
     // made the first visible card look clipped or unstyled.
     queueMicrotask(() => settingsMain?.scrollTo({ top: 0, behavior: "auto" }));
   };
-  let focusVoiceWhenLoaded = pendingSettingsSection() === "voice";
-  setPendingSettingsSection(null);
   onMount(() => {
     const previouslyFocused = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     // The modal is inserted through a lazy Suspense boundary; the shared
     // focus trap can run before the first control has a layout box. Explicitly
     // hand focus to the modal once its component is mounted.
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!focusVoiceWhenLoaded) settingsRoot.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]")?.focus({ preventScroll: true });
+      settingsRoot.querySelector<HTMLElement>("button, input, select, textarea, [tabindex]")?.focus({ preventScroll: true });
     }));
     onCleanup(() => {
       if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus({ preventScroll: true });
@@ -414,16 +421,6 @@ export default function Settings() {
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [evidenceAgeHours, setEvidenceAgeHours] = createSignal(24);
   const [loading, setLoading] = createSignal(true);
-  createEffect(() => {
-    if (!focusVoiceWhenLoaded || loading() || page() !== "general") return;
-    requestAnimationFrame(() => {
-      const section = settingsRoot.querySelector<HTMLElement>("#voice-settings");
-      if (!section) return;
-      focusVoiceWhenLoaded = false;
-      section.scrollIntoView({ block: "start" });
-      section.querySelector<HTMLElement>("button, input, select, textarea")?.focus({ preventScroll: true });
-    });
-  });
   // Background-service states (docs/design/27-operations.md); polled while
   // the Services page is open.
   const [ops, setOps] = createSignal<api.OpsStatusShape | null>(null);
@@ -541,6 +538,12 @@ export default function Settings() {
   const [hooksDirty, setHooksDirty] = createSignal(false);
   const [hooksSaving, setHooksSaving] = createSignal(false);
   const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks" | "plugins">("mcp");
+  // Automations and add-ons are technical; with details off the tab falls
+  // back to connections rather than showing a page with no tab selected.
+  const shownCapabilityTab = () => {
+    const tab = capabilityTab();
+    return !technicalDetails() && (tab === "hooks" || tab === "plugins") ? "mcp" : tab;
+  };
   const visibleSkills = createMemo(() =>
     scope() === "user" ? skills().filter((skill) => skill.scope === "user") : skills(),
   );
@@ -580,7 +583,7 @@ export default function Settings() {
       }
       setMcpDirty(false);
     } catch (e) {
-      setNotice({ kind: "error", text: `Could not load MCP servers: ${e instanceof Error ? e.message : String(e)}` });
+      setNotice({ kind: "error", text: `Could not load connections: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
 
@@ -662,7 +665,7 @@ export default function Settings() {
     // egress from the toggle, because the config tier re-evaluates the deny
     // list on every admission.
     if (on && plugin?.network_denied) {
-      setNotice({ kind: "error", text: `${name} is blocked by plugins.network_deny; remove the deny entry to grant sandbox egress.` });
+      setNotice({ kind: "error", text: `${name} is blocked by plugins.network_deny; remove that entry to let it use the network.` });
       return;
     }
     setPluginBusy(true);
@@ -837,13 +840,13 @@ export default function Settings() {
     onCleanup(() => clearInterval(t));
   });
   createEffect(() => {
-    if (page() !== "learning") return;
+    if (page() !== "privacy") return;
     void refreshLearning();
     const t = setInterval(() => void refreshLearning(), 8000);
     onCleanup(() => clearInterval(t));
   });
   createEffect(() => {
-    if (page() !== "integrations") return;
+    if (page() !== "connections") return;
     scope();
     void refreshMcp();
     void refreshCapabilities();
@@ -903,34 +906,35 @@ export default function Settings() {
     const stop = watchConfig(() => void load());
     onCleanup(stop);
   });
-  const visiblePages = createMemo(() => {
+  const matches = (text: string) => {
     const needle = query().trim().toLowerCase();
-    return (needle ? pages.filter((item) => `${item.label} ${item.hint}`.toLowerCase().includes(needle)) : pages).filter((item) => item.id !== "archived");
-  });
+    return !needle || text.toLowerCase().includes(needle);
+  };
   const pageGroups = createMemo(() => {
-    const groups = new Map<string, typeof pages>();
-    for (const item of visiblePages()) groups.set(item.group, [...(groups.get(item.group) ?? []), item]);
-    return [...groups.entries()];
+    const visible = pages.filter((item) => matches(`${item.label} ${item.hint}`) && (item.group === "Everyday" || technicalDetails()));
+    return (["Everyday", "Advanced"] as const)
+      .map((group) => [group, visible.filter((item) => item.group === group)] as const)
+      .filter(([, items]) => items.length > 0);
   });
 
-  // Lets you jump between agents from inside an agent-scoped settings page
-  // instead of closing Settings, switching in the sidebar, and reopening.
+  // One Agents entry per agent: picking one opens that agent's page.
   const [settingsAgents, setSettingsAgents] = createSignal<api.Agent[]>([]);
   createEffect(() => {
     void api.listAgents().then((r) => setSettingsAgents(r.agents)).catch(() => setSettingsAgents([]));
   });
-  const settingsAgentOptions = createMemo(() =>
-    sortByRecent(settingsAgents().filter((a) => (a.lifecycle ?? "active") === "active"))
-  );
-  const switchSettingsAgent = async (id: string) => {
+  const agentEntries = createMemo(() => [
+    { id: "vak", name: "Vakyartha" },
+    ...sortByRecent(settingsAgents().filter((a) => a.id !== "vak" && (a.lifecycle ?? "active") === "active")),
+  ].filter((agent) => matches(`${agent.name} agent model ai service key turns helpers context`)));
+  const openAgentPage = async (id: string) => {
+    setSettingsScope("workspace");
+    selectPage("agent");
+    if (id === activeAgentId()) return;
     setLoading(true);
     await openAgentChat(id);
     await load();
   };
-  const showArchivedPage = createMemo(() => {
-    const needle = query().trim().toLowerCase();
-    return !needle || "archived tasks restore trash history".includes(needle);
-  });
+  const agentName = () => activeAgentId() === "vak" ? "Vakyartha" : activeAgent()?.name ?? "Vakyartha";
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
   const [trashedSessions, setTrashedSessions] = createSignal<SessionSummary[]>([]);
   const refreshTrash = async () => {
@@ -1108,7 +1112,7 @@ export default function Settings() {
         setCatalogNote(e instanceof Error ? e.message : String(e));
       }
       await Promise.all([loadProviders(), loadHealth()]);
-      setNotice({ kind: "info", text: `Key stored locally (${res.env_var}).` });
+      setNotice({ kind: "info", text: "Key saved on this device." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not store key: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -1181,36 +1185,27 @@ export default function Settings() {
   };
 
   return (
-    <div ref={settingsRoot} class="settings-shell" role="dialog" aria-modal="true" aria-label="Settings" use:trapFocus>
+    <div ref={settingsRoot} class="settings-shell" data-phone-view={phoneView()} role="dialog" aria-modal="true" aria-label="Settings" use:trapFocus>
       <aside class="settings-nav">
         <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vakyartha</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
-        <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
-          {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
-        </For>
-        {/* Editing a specific agent is the default and needs no toggle at
-            all; switching to the shared platform default is the deliberate,
-            secondary action, so it's a quiet link rather than a persistent
-            control every user has to parse first. */}
-        <Show when={pageSection(page()) === "agent"}>
-          <Show
-            when={scope() === "user"}
-            fallback={<button type="button" class="settings-scope-link" onClick={() => setSettingsScope("user")}>Change the platform default instead</button>}
-          >
-            <button type="button" class="settings-scope-link" onClick={() => setSettingsScope("workspace")}>← Back to editing {activeAgent()?.name ?? "your agent"}</button>
+        <Show when={pageGroups().length > 0 || agentEntries().length > 0} fallback={<div class="settings-no-results">No matching settings</div>}>
+          <For each={pageGroups().filter(([group]) => group === "Everyday")}>
+            {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id || (item.id === "privacy" && page() === "archived") }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
+          </For>
+          <Show when={agentEntries().length > 0}>
+            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><Icon name="spark" /><span>{agent.name}</span></button>}</For></nav></div>
           </Show>
-        </Show>
-        <Show when={showArchivedPage()}>
-          <div class="settings-nav-label archived-nav-label">Archived</div>
-          <nav>
-            <button type="button" classList={{ active: page() === "archived" }} onClick={() => selectPage("archived")}><Icon name="archive" /><span>Archived tasks</span></button>
-          </nav>
+          <For each={pageGroups().filter(([group]) => group === "Advanced")}>
+            {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
+          </For>
         </Show>
         <div class="settings-nav-foot"><div class="settings-app-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div><div><strong>Vakyartha</strong><span>{backend().version ? `Version ${backend().version}` : "Version unavailable"}</span></div></div>
       </aside>
 
       <main ref={settingsMain} class="settings-main">
         <div class="settings-content">
+          <button type="button" class="settings-page-back" onClick={() => setPhoneView("list")}><Icon name="chevron" /><span>Settings</span></button>
           <Show when={voiceProviders.error || presentationLibrary.error || promptLayer.error || promptEffective.error}>
             <div class="settings-load-error" role="alert">
               Some settings could not be loaded. Existing values were kept; use the relevant section's refresh or reopen Settings to retry.
@@ -1220,36 +1215,21 @@ export default function Settings() {
             </div>
           </Show>
           <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
-            <Show when={pageSection(page()) === "agent"}>
-              <Show when={scope() === "workspace"}>
-                <div class="settings-agent-switcher">
-                  <span class="settings-nav-label" style="margin: 0;">Editing agent</span>
-                  <select
-                    aria-label="Agent to edit"
-                    value={activeAgentId()}
-                    onChange={(e) => void switchSettingsAgent(e.currentTarget.value)}
-                  >
-                    <option value="vak">Vakyartha</option>
-                    <For each={settingsAgentOptions()}>{(a) => <option value={a.id}>{a.name}</option>}</For>
-                  </select>
-                </div>
+            <Show when={SCOPED_PAGES.has(page())}>
+              {/* Editing one agent is the default; the shared defaults are the
+                  deliberate, secondary choice, so they sit behind a quiet link. */}
+              <Show
+                when={scope() === "user"}
+                fallback={<button type="button" class="settings-scope-link" onClick={() => setSettingsScope("user")}>Change the shared defaults for every agent instead</button>}
+              >
+                <button type="button" class="settings-scope-link" onClick={() => setSettingsScope("workspace")}>Back to {agentName()}</button>
               </Show>
-              <div class="settings-callout scope-callout" role="status">
-                <Icon name={scope() === "user" ? "layers" : "folder"} />
-                <div>
-                  <strong>{scope() === "user" ? "Editing Platform Defaults" : `Editing ${activeAgent()?.name ?? "this agent"}`}</strong>
-                  <span>{scope() === "user" ? "Inherited by every agent unless it overrides the value." : (config()?.paths.cwd ?? backend().cwd ?? "Current agent")}</span>
-                </div>
-              </div>
             </Show>
             <Show when={page() === "general"}>
-              <header><h1>General</h1><p>Notifications, sounds, and other app-wide preferences.</p></header>
-              <Group title="Experience">
-                <Row title="Desktop notifications" description="Notify when the active task finishes while Vakyartha is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
-                <Row title="Quiet hours" description="Suppress background completion and update notifications overnight. Approval requests remain interruptive because work is paused until you decide."><select aria-label="Quiet hours" value={uiPreferences.quietHours} onChange={(event) => updateUiPreference("quietHours", event.currentTarget.value as "off" | "22-07")}><option value="off">Off</option><option value="22-07">22:00–07:00</option></select></Row>
-                <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
+              <header><h1>General</h1><p>How Vakyartha looks after you day to day.</p></header>
+              <Group>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
-                <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
+                <Row title="Show technical details" description="Folders, file paths, IDs, tool output and the technical settings pages. Changes what you see, never what an agent may do."><Switch label="Show technical details" checked={technicalDetails()} onChange={(value) => setTechnicalDetails(value)} /></Row>
                 <Row title="Presentation styles" description="Choose how Vakyartha presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>
                 <Row title="Share presentation styles" description="Export your styles or import a collection."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
                 <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>
@@ -1312,27 +1292,42 @@ export default function Settings() {
                 </Show>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
-              <Group id="voice-settings" title="Voice">
+            </Show>
+
+            <Show when={page() === "notifications"}>
+              <header><h1>Notifications</h1><p>When Vakyartha lets you know something happened.</p></header>
+              <Group>
+                <Row title="Desktop notifications" description="Let you know when work finishes while Vakyartha is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
+                <Row title="Quiet hours" description="No finished-work or update alerts overnight. Requests for your approval still come through, because the work waits for you."><select aria-label="Quiet hours" value={uiPreferences.quietHours} onChange={(event) => updateUiPreference("quietHours", event.currentTarget.value as "off" | "22-07")}><option value="off">Off</option><option value="22-07">22:00–07:00</option></select></Row>
+              </Group>
+            </Show>
+
+            <Show when={page() === "voice"}>
+              <header><h1>Voice and sound</h1><p>Talk with {agentName()} and hear it answer.</p></header>
+              <Group title="Voice">
                 <Row title="Enable voice conversations" description="Talk with Vakyartha using your microphone."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
-                <Row title="Speak updates aloud" description="Read task updates and approval requests aloud."><Switch label="Speak updates aloud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
-                <Row title="Session limit" description="Longest voice conversation, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
-                <Row title="Simultaneous conversations" description="How many voice conversations can run at once."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
-                <Row title="Audio size limit" description="Largest recording accepted in one conversation, in bytes."><input type="number" min="1" max={256 * 1024 * 1024} value={config()?.voice?.max_audio_bytes ?? 16 * 1024 * 1024} onChange={(e) => void updateVoice({ voice_max_audio_bytes: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Speak updates aloud" description="Read updates and approval requests aloud."><Switch label="Speak updates aloud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
                 <Row title="Available voice services" description="Shows which services are ready to use."><span class="settings-value">{voiceProviders.loading ? "Checking…" : (voiceProviders()?.providers.map((provider) => `${provider.name} · ${provider.readiness ? (provider.readiness.ready ? "ready" : provider.readiness.detail) : provider.configured ? "ready" : "setup needed"}`).join(", ") || "None available")}</span></Row>
                 <Row title="Voice service" description="Used for listening and speaking."><select value={config()?.voice?.provider ?? ""} onChange={(e) => void updateVoice({ voice_provider: e.currentTarget.value || null })}><option value="">Use shared setting</option><For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For></select></Row>
-                <Row title="Listening model" description="Converts speech to text."><input type="text" value={config()?.voice?.transcription_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_transcription_model: e.currentTarget.value.trim() || null })} /></Row>
-                <Row title="Speaking model" description="Converts text to speech."><input type="text" value={config()?.voice?.synthesis_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_synthesis_model: e.currentTarget.value.trim() || null })} /></Row>
                 <Show when={uiPreferences.voiceEnabled}>
-                  <Row title="Voice" description="Exact voice id from your provider; blank uses the provider's default."><input value={uiPreferences.voiceName} placeholder="Provider default" onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value.trim())} /></Row>
+                  <Row title="Voice" description="The voice's name from your voice service; leave blank for its default."><input value={uiPreferences.voiceName} placeholder="Service default" onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value.trim())} /></Row>
                   <Row title="Speaking style" description="Describe how Vakyartha should sound."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
                 </Show>
+                <TechnicalRow>
+                  <Row title="Listening model" description="Converts speech to text."><input type="text" value={config()?.voice?.transcription_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_transcription_model: e.currentTarget.value.trim() || null })} /></Row>
+                  <Row title="Speaking model" description="Converts text to speech."><input type="text" value={config()?.voice?.synthesis_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_synthesis_model: e.currentTarget.value.trim() || null })} /></Row>
+                  <Row title="Session limit" description="Longest voice conversation, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
+                  <Row title="Simultaneous conversations" description="How many voice conversations can run at once."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
+                  <Row title="Audio size limit" description="Largest recording accepted in one conversation, in bytes."><input type="number" min="1" max={256 * 1024 * 1024} value={config()?.voice?.max_audio_bytes ?? 16 * 1024 * 1024} onChange={(e) => void updateVoice({ voice_max_audio_bytes: Number(e.currentTarget.value) })} /></Row>
+                </TechnicalRow>
               </Group>
-              <Group title="Desktop">
-                <Row title="Working directory" description={config()?.paths.cwd ?? backend().cwd ?? ""}><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open config</button></Row>
+              <Group title="Sound">
+                <Row title="Sound cues" description="A short chime when work starts and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
               </Group>
             </Show>
 
             <Show when={page() === "archived"}>
+              <button type="button" class="settings-scope-link" onClick={() => selectPage("privacy")}>Back to Privacy and safety</button>
               <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void trashAllArchived()}><Icon name="trash" size={14} /> Move all to trash</button></header>
               <div class="settings-callout"><Icon name="archive" /><div><strong>Archive and trash are both reversible</strong><span>Archived tasks stay searchable. Moving one to the trash hides it everywhere, search included, until you restore it. Nothing is erased.</span></div></div>
               <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
@@ -1351,26 +1346,27 @@ export default function Settings() {
             <Show when={page() === "appearance"}>
               <header><h1>Appearance</h1><p>Make the workspace comfortable for long sessions.</p></header>
               <Group title="Theme">
-                <div class="theme-grid"><For each={[{ id: "system", label: "Match system" }, { id: "light", label: "Warm light" }, { id: "warm", label: "Warm dark" }, { id: "dark", label: "Midnight" }, { id: "contrast", label: "High contrast" }, { id: "sage", label: "Quiet sage" }, { id: "paper", label: "Soft paper" }, { id: "mist", label: "Morning mist" }, { id: "dawn", label: "Soft dawn" }] as const}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
+                <div class="theme-grid"><For each={[{ id: "system", label: "Match system" }, { id: "light", label: "Light" }, { id: "dark", label: "Dark" }, { id: "contrast", label: "High contrast" }] as const}>{(theme) => <button class="theme-choice" classList={{ active: uiPreferences.theme === theme.id }} onClick={() => updateUiPreference("theme", theme.id)}><span class={`theme-preview ${theme.id}`}><i /><i /><i /></span><strong>{theme.label}</strong><Show when={uiPreferences.theme === theme.id}><Icon name="check" /></Show></button>}</For></div>
               </Group>
               <Group title="Layout and text">
                 <Row title="Text size" description="Conversation and interface text."><div class="range-control"><input type="range" min="90" max="120" step="5" value={uiPreferences.textScale} onInput={(event) => updateUiPreference("textScale", Number(event.currentTarget.value))} /><span>{uiPreferences.textScale}%</span></div></Row>
                 <Row title="Code size" description="Code blocks, diffs, editor, and terminal labels."><div class="range-control"><input type="range" min="90" max="125" step="5" value={uiPreferences.codeScale} onInput={(event) => updateUiPreference("codeScale", Number(event.currentTarget.value))} /><span>{uiPreferences.codeScale}%</span></div></Row>
                 <Row title="Compact task list" description="Fit more tasks in the sidebar with tighter rows."><Switch label="Compact task list" checked={uiPreferences.compactSidebar} onChange={(value) => updateUiPreference("compactSidebar", value)} /></Row>
                 <Row title="Reduce motion" description="Disable pulsing, smooth scrolling, and animated transitions."><Switch label="Reduce motion" checked={uiPreferences.reduceMotion} onChange={(value) => updateUiPreference("reduceMotion", value)} /></Row>
-                <Row title="Rich output" description="Render link previews, metrics, media, and other typed presentation items."><Switch label="Rich output" checked={uiPreferences.richPreviews} onChange={(value) => updateUiPreference("richPreviews", value)} /></Row>
-                <Row title="External media" description="Allow safe images and media from approved HTTP(S) sources."><Switch label="External media" checked={uiPreferences.externalMedia} onChange={(value) => updateUiPreference("externalMedia", value)} /></Row>
+                <Row title="Cards and previews" description="Show results as cards, charts and link previews."><Switch label="Cards and previews" checked={uiPreferences.richPreviews} onChange={(value) => updateUiPreference("richPreviews", value)} /></Row>
+                <Row title="Images from the web" description="Show images and media from safe web addresses."><Switch label="Images from the web" checked={uiPreferences.externalMedia} onChange={(value) => updateUiPreference("externalMedia", value)} /></Row>
                 <Row title="Autoplay media" description="Never enabled by default; turn on only for trusted media sources."><Switch label="Autoplay media" checked={uiPreferences.autoplayMedia} onChange={(value) => updateUiPreference("autoplayMedia", value)} /></Row>
                 <Row title="Experimental skills" description="Allow sandboxed, not-yet-promoted presentation skills to render with fallback diagnostics."><Switch label="Experimental skills" checked={uiPreferences.experimentalSkills} onChange={(value) => updateUiPreference("experimentalSkills", value)} /></Row>
               </Group>
             </Show>
 
             <Show when={page() === "agent"}>
-              <header><h1>Model & Provider</h1><p>Configure the model used when starting new tasks.</p></header>
-              <div class="settings-callout scope-callout"><Icon name="spark" /><div><strong>Editing: {activeAgent()?.name ?? "Vakyartha"}</strong><span>Every page under "This agent" applies to whichever agent is currently active. To manage agents themselves — create, rename, or switch — use Fleet Roster.</span></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Open Fleet Roster</button></div>
-              <div class="settings-callout"><Icon name="spark" /><div><strong>Saved to this agent</strong><span>Applied changes take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
+              <header class="agent-settings-header">
+                <div><h1>{scope() === "user" ? "Shared defaults" : agentName()}</h1><p>{scope() === "user" ? "Every agent starts from these unless it sets its own." : "Changes apply to new conversations. Conversations already started keep the model they began with."}</p></div>
+                <button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Manage agents</button>
+              </header>
               <Group title="Model">
-                <Row title="Provider" description={`${currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."} · saved source: ${config()?.provider_source ?? "unknown"}`}>
+                <Row title="AI service" description="Where this agent's answers come from.">
                   <select
                     class="settings-input"
                     value={provider()}
@@ -1386,10 +1382,7 @@ export default function Settings() {
                     <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
                   </select>
                 </Row>
-                <Row
-                  title="Model"
-                  description={catalogNote() ?? `${catalog().length} models available for this key. Saved source: ${config()?.model_source ?? "unknown"}.`}
-                >
+                <Row title="Model" description={catalogNote() ?? `${catalog().length} models available with this account.`}>
                   <Show
                     when={!customModel()}
                     fallback={
@@ -1423,24 +1416,19 @@ export default function Settings() {
                     </select>
                   </Show>
                 </Row>
-                <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
-                <Row title="Evidence freshness" description="How long a successful tool receipt remains fresh for outcome verification."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
-                <Row title="Workers" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.workers ? "Enabled" : "Disabled in config"}</span></Row>
-              </Group>
-              <Group title="Credentials">
                 <Row
-                  title={`${keyProvider()} — ${currentProviderInfo()?.env_var ?? "no key needed"}`}
+                  title="Account key"
                   description={
                     currentProviderInfo()?.requires_key
-                      ? `${currentProviderInfo()?.configured ? "Saved on this device" : "Not set yet"} · ${currentProviderInfo()?.pool_size ?? 0} credential${(currentProviderInfo()?.pool_size ?? 0) === 1 ? "" : "s"} in the routing pool · stored in this device's secure credential store (OS keychain, or an encrypted file when no keychain is available). A real environment variable takes precedence.`
-                      : `${keyProvider()} runs locally and needs no key.`
+                      ? (currentProviderInfo()?.configured ? "Saved securely on this device." : "Not added yet.")
+                      : `${keyProvider()} runs on this computer and needs no key.`
                   }
                 >
                   <Show
                     when={keyDraft() === null}
                     fallback={
                       <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder={`paste ${currentProviderInfo()?.env_var ?? "API key"}`} aria-label={`${currentProviderInfo()?.env_var ?? "API key"} for ${keyProvider()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder="Paste your key" aria-label={`Account key for ${keyProvider()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
                         <button class="btn primary sm" disabled={keyBusy() || !keyDraft()?.trim()} onClick={() => void saveKey()}>{keyBusy() ? "Saving…" : "Save"}</button>
                         <button class="settings-button" onClick={() => setKeyDraft(null)}>Cancel</button>
                       </span>
@@ -1456,24 +1444,23 @@ export default function Settings() {
                     </Show>
                   </Show>
                 </Row>
-                {/* A chat credential belongs to a bot, not to a surface
-                    (AGENTS.md invariant 23), and several bots can share a
-                    transport. The per-surface token field that used to sit
-                    here could only ever describe one bot per transport, so
-                    it is gone: bots are created and credentialed in the
-                    admin console, which is also where a chat is approved. */}
-                <Row
-                  title="Chat bots"
-                  description="Telegram, Discord, and Slack bots — each with its own token, policy, and route — are managed in the admin console."
-                >
-                  <span class="key-edit">
-                    <button class="settings-button" onClick={() => host.openAdmin("#/gateway")}>Open admin console</button>
-                  </span>
-                </Row>
+                <TechnicalRow>
+                  <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
+                  <Row title="Check freshness" description="How long a successful check still counts as current."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
+                  <Row title="Helpers" description="Vakyartha can split big jobs across helpers that work in parallel."><span class="settings-status good">{config()?.workers ? "On" : "Off in configuration"}</span></Row>
+                  <Row title="Context size" description="Most the model reads at once before older turns are summarised."><span class="metric">{fmt(config()?.context_window ?? 0)} tokens</span></Row>
+                  <Row title="Maximum output" description="Most the model writes in one reply."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
+                  <Row title="Where these come from" description={`AI service: ${config()?.provider_source ?? "unknown"} · model: ${config()?.model_source ?? "unknown"}`}><span /></Row>
+                  <Show when={currentProviderInfo()?.requires_key}>
+                    <Row title="Key storage" description={`${currentProviderInfo()?.env_var ?? "API key"} · ${currentProviderInfo()?.pool_size ?? 0} in the routing pool · kept in this device's secure credential store (the OS keychain, or an encrypted file when there is none). A real environment variable takes precedence.`}><span /></Row>
+                  </Show>
+                </TechnicalRow>
               </Group>
               <div class="settings-actions">
                 <button class="btn primary" disabled={saving() || !agentDirty() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
-                <button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit persistent config</button>
+                <Show when={technicalDetails()}>
+                  <button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit configuration file</button>
+                </Show>
                 {/* Selecting in the dropdowns changes nothing until this is
                     pressed; without a marker that reads as a silent no-op. */}
                 <Show when={agentDirty()} fallback={<span class="settings-status good">Saved</span>}>
@@ -1482,18 +1469,20 @@ export default function Settings() {
               </div>
             </Show>
 
-            <Show when={page() === "permissions"}>
-              <header><h1>Permissions</h1><p>Choose what Vakyartha can do and when it should ask first.</p></header>
-              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
-              <Group title="Approvals">
-                <p class="settings-group-copy">Choose how often Vakyartha pauses for your approval.</p>
+            <Show when={page() === "privacy"}>
+              <header><h1>Privacy and safety</h1><p>{scope() === "user" ? "What every agent may do unless it sets its own, and when it asks." : `What ${agentName()} may do, when it asks, and what it remembers.`}</p></header>
+              <section class="settings-group"><h3>What it may do</h3>
+              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Look only", text: "Read and search this folder. Makes no changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Edit files in this folder", text: "Asks before anything sensitive.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access to this computer", text: "Runs any command and opens files outside this folder.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              </section>
+              <section class="settings-group"><h3>When to ask</h3>
+                <p class="settings-group-copy">How often it pauses for your approval.</p>
                 <div class="permission-options">
                   <For
                     each={
                       [
-                        { id: "ask", title: "Ask me every time", text: "Pause and wait for you before anything that needs approval.", icon: "shield" as IconName },
-                        { id: "approve-safe", title: "Approve workspace actions", text: "Reading and editing here can continue. Web and outside access still ask.", icon: "check" as IconName },
-                        { id: "auto-approve", title: "Approve automatically", text: "Continue without pausing unless a rule requires approval.", icon: "code" as IconName },
+                        { id: "ask", title: "Every time", text: "Pause for anything that needs approval.", icon: "shield" as IconName },
+                        { id: "approve-safe", title: "Only outside this folder", text: "Reading and editing here continue. Web and outside access still ask.", icon: "check" as IconName },
+                        { id: "auto-approve", title: "Don't ask", text: "Vakyartha keeps going unless a rule requires your approval.", icon: "warning" as IconName },
                       ] as const
                     }
                   >
@@ -1511,33 +1500,142 @@ export default function Settings() {
                     )}
                   </For>
                 </div>
-              </Group>
-              <Group title="Sandbox">
-                <Row title="Workspace files" description="Keep file access inside this workspace."><span class="settings-status good">Protected</span></Row>
-                <Row title="Command isolation" description="Keep commands separated from the rest of this device."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
-              </Group>
-              <Group title="Rules">
-                <p class="settings-group-copy">Specific rules take priority over the approval choice above.</p>
-                <For
-                  each={
-                    [
-                      { key: "deny", title: "Never allow", empty: "Nothing is blocked outright." },
-                      { key: "ask", title: "Always ask first", empty: "Nothing is singled out to ask about." },
-                      { key: "allow", title: "Always allow", empty: "Nothing is pre-approved." },
-                    ] as const
+              </section>
+              <Show
+                when={technicalDetails()}
+                fallback={
+                  <Group title="Your rules">
+                    <Row title="Custom rules" description="Rules you set win over the choice above.">
+                      <span class="settings-value">{(() => { const n = (["deny", "ask", "allow"] as const).reduce((count, key) => count + (config()?.permissions?.[key]?.length ?? 0), 0); return n ? `${n} rule${n === 1 ? "" : "s"}` : "None"; })()}</span>
+                    </Row>
+                  </Group>
+                }
+              >
+                <Group title="Isolation">
+                  <Row title="Workspace files" description="File access stays inside this agent's folder."><span class="settings-status good">Protected</span></Row>
+                  <Row title="Command isolation" description="Keep commands separated from the rest of this device."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
+                </Group>
+                <Group title="Rules">
+                  <p class="settings-group-copy">Specific rules take priority over the approval choice above.</p>
+                  <For
+                    each={
+                      [
+                        { key: "deny", title: "Never allow", empty: "Nothing is blocked outright." },
+                        { key: "ask", title: "Always ask first", empty: "Nothing is singled out to ask about." },
+                        { key: "allow", title: "Always allow", empty: "Nothing is pre-approved." },
+                      ] as const
+                    }
+                  >
+                    {(section) => (
+                      <Row title={section.title} description={
+                        (config()?.permissions?.[section.key]?.length ?? 0) > 0
+                          ? config()!.permissions[section.key].join(", ")
+                          : section.empty
+                      }>
+                        <span />
+                      </Row>
+                    )}
+                  </For>
+                  <Row title="Permission rules" description="Choose which actions are allowed, blocked, or require approval."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row>
+                </Group>
+              </Show>
+              <h2 class="settings-section-title">What it remembers</h2>
+              <Show when={recentNotes().length > 0}>
+                <section class="memory-recent" aria-label="Recent memory activity">
+                  <span class="memory-recent-label">Recent</span>
+                  <div class="memory-recent-chips">
+                    <For each={recentNotes()}>
+                      {(n) => (
+                        <button
+                          class="memory-recent-chip"
+                          classList={{ picked: recentPickedId() === n.id }}
+                          title={n.text}
+                          onClick={() => jumpToNote(n)}
+                        >
+                          <span class="badge">{n.kind}</span>
+                          <Show when={(n.scope ?? "workspace") === "profile"}>
+                            <span class="memory-recent-scope">every agent</span>
+                          </Show>
+                          <span class="memory-recent-time">{relTime(n.ts)}</span>
+                        </button>
+                      )}
+                    </For>
+                  </div>
+                </section>
+              </Show>
+              <nav class="capability-tabs memory-tabs" aria-label="Memory tiers">
+                <button classList={{ active: tier() === "workspace" }} onClick={() => setTier("workspace")}><Icon name="folder" /><span>This agent</span><em>{notes().filter((n) => (n.scope ?? "workspace") === "workspace").length}</em></button>
+                <button classList={{ active: tier() === "profile" }} onClick={() => setTier("profile")}><Icon name="spark" /><span>Every agent</span><em>{notes().filter((n) => n.scope === "profile").length}</em></button>
+              </nav>
+              <Group title={tier() === "profile" ? "Remembered for every agent" : `Remembered by ${agentName()}`}>
+                <Show when={tier() === "profile"}>
+                  <p class="settings-hint memory-hint">Every agent can recall these notes.</p>
+                </Show>
+                <Show
+                  when={!addingNote()}
+                  fallback={
+                    <div class="memory-add">
+                      <div class="memory-add-fields">
+                        <label>Kind<input value={noteKind()} aria-label="Note kind" onInput={(e) => setNoteKind(e.currentTarget.value)} /></label>
+                        <label>Tag <span class="label-hint">optional</span><input value={noteTag()} aria-label="Note tag" onInput={(e) => setNoteTag(e.currentTarget.value)} /></label>
+                      </div>
+                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every agent…" : "Something that should hold for this agent…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+                      <div class="task-add-row">
+                        <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addMemoryNote()}>Save note</button>
+                        <button class="btn" onClick={() => setAddingNote(false)}>Cancel</button>
+                      </div>
+                    </div>
                   }
                 >
-                  {(section) => (
-                    <Row title={section.title} description={
-                      (config()?.permissions?.[section.key]?.length ?? 0) > 0
-                        ? config()!.permissions[section.key].join(", ")
-                        : section.empty
-                    }>
-                      <span />
-                    </Row>
-                  )}
-                </For>
-                <Row title="Permission rules" description="Choose which actions are allowed, blocked, or require approval."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row>
+                  <div class="task-add-row"><button class="btn" onClick={() => setAddingNote(true)}><Icon name="add" /> Add a note</button></div>
+                </Show>
+                <Show
+                  when={tierNotes().length > 0}
+                  fallback={<Row title="Nothing remembered yet" description={tier() === "profile" ? "Add a preference once and every agent can use it." : "Important decisions and preferences will appear here."}><span class="settings-status good">Ready</span></Row>}
+                >
+                  <div class="archived-list" aria-label="Memory notes">
+                    <For each={tierNotes().slice().reverse()}>
+                      {(n) => (
+                        <div class="task-row memory-note" data-note-id={n.id} classList={{ picked: recentPickedId() === n.id }}>
+                          <div class="task-main">
+                            <div class="task-name">
+                              <Show when={technicalDetails()}><span class="badge memory-id" title={`Note id ${n.id}`}>{n.id.slice(0, 8)}</span></Show>
+                              {n.tag || n.kind}
+                              <span class="badge">{n.kind}</span>
+                              <Show when={n.tag && n.tag !== n.kind}><span class="badge">tag: {n.tag}</span></Show>
+                            </div>
+                            <small class="memory-meta">{new Date(n.ts).toLocaleString()}<Show when={technicalDetails()}> · from {n.session_id.slice(0, 8)}</Show></small>
+                            <Show
+                              when={editingId() === n.id}
+                              fallback={<p class="memory-text">{n.text}</p>}
+                            >
+                              <textarea
+                                class="memory-amend"
+                                rows={3}
+                                aria-label="Edit note"
+                                value={editText()}
+                                onInput={(e) => setEditText(e.currentTarget.value)}
+                              />
+                              <div class="task-add-row">
+                                <button class="btn primary sm" disabled={!editText().trim()} onClick={() => void amendNote(n.id)}>Save</button>
+                                <button class="btn sm" onClick={() => setEditingId(null)}>Cancel</button>
+                              </div>
+                            </Show>
+                          </div>
+                          <div class="task-actions">
+                            <Show when={editingId() !== n.id}>
+                              <button class="chip sm" onClick={() => { setEditingId(n.id); setEditText(n.text); }}>Edit</button>
+                            </Show>
+                            <button class="chip sm danger-chip" onClick={() => void forgetNote(n.id)}>Forget</button>
+                          </div>
+                        </div>
+                      )}
+                    </For>
+                  </div>
+                </Show>
+              </Group>
+              <Group title="History">
+                <Row title="Archived tasks" description="Hidden from the sidebar until you restore them."><button type="button" class="settings-button" onClick={() => selectPage("archived")}>{archivedSessions().length ? `Open (${archivedSessions().length})` : "Open"}</button></Row>
               </Group>
             </Show>
 
@@ -1553,6 +1651,11 @@ export default function Settings() {
                 <Row title="Cooldown" description="Time before a half-close probe is allowed."><span class="metric">{config()?.circuit_breaker_cooldown_secs}s</span></Row>
                 <Row title="Completion guard" description="Blocks premature completion and asks the agent to verify work."><span class="settings-status good">{config()?.stop_policy.enabled ? "Enabled" : "Disabled"}</span></Row>
               </Group>
+              <button class="settings-button" onClick={() => void openWorkspaceConfig()}>Tune in workspace config</button>
+            </Show>
+
+            <Show when={page() === "models"}>
+              <header><h1>Models and routing</h1><p>Which models take over when the chosen one fails.</p></header>
               <Group title="Route ladder">
                 <Row title="Objective" description={`How fallback legs are ordered: ${config()?.route.objective === "auto" ? "derived from request demand (utility / balanced / quality-critical)." : `fixed to ${config()?.route.objective}.`}`}><span class="metric">{config()?.route.objective}</span></Row>
                 <Row
@@ -1573,146 +1676,28 @@ export default function Settings() {
               <DigestCard />
             </Show>
 
-            <Show when={page() === "learning"}>
-              <header><h1>Learning</h1><p>Review what Vakyartha remembers and the skills it has suggested.</p></header>
-              <Group title={`Skill proposals (${proposals().length})`}>
-                <Show
-                  when={proposals().length > 0}
-                  fallback={<Row title="No suggestions yet" description="New skill suggestions will wait here for your review."><span class="settings-status good">Up to date</span></Row>}
-                >
-                  <For each={proposals()}>
-                    {(p) => (
-                      <div class="setting-row">
-                        <div class="setting-copy">
-                          <strong>{p.name}</strong>
-                          <span>{p.description}</span>
-                        </div>
-                        <div class="setting-control">
-                          <button class="settings-button" onClick={() => void promote(p.id)}>Promote</button>
-                          <button class="settings-button" onClick={() => void reject(p.id)}>Reject</button>
-                        </div>
-                      </div>
-                    )}
-                  </For>
-                </Show>
-              </Group>
-              <Show when={recentNotes().length > 0}>
-                <section class="memory-recent" aria-label="Recent memory activity">
-                  <span class="memory-recent-label">Recent</span>
-                  <div class="memory-recent-chips">
-                    <For each={recentNotes()}>
-                      {(n) => (
-                        <button
-                          class="memory-recent-chip"
-                          classList={{ picked: recentPickedId() === n.id }}
-                          title={n.text}
-                          onClick={() => jumpToNote(n)}
-                        >
-                          <span class="badge">{n.kind}</span>
-                          <Show when={(n.scope ?? "workspace") === "profile"}>
-                            <span class="memory-recent-scope">profile</span>
-                          </Show>
-                          <span class="memory-recent-time">{relTime(n.ts)}</span>
-                        </button>
-                      )}
-                    </For>
-                  </div>
-                </section>
-              </Show>
-              <nav class="capability-tabs memory-tabs" aria-label="Memory tiers">
-                <button classList={{ active: tier() === "workspace" }} onClick={() => setTier("workspace")}><Icon name="folder" /><span>Workspace</span><em>{notes().filter((n) => (n.scope ?? "workspace") === "workspace").length}</em></button>
-                <button classList={{ active: tier() === "profile" }} onClick={() => setTier("profile")}><Icon name="spark" /><span>Profile</span><em>{notes().filter((n) => n.scope === "profile").length}</em></button>
-              </nav>
-              <Group title={tier() === "profile" ? "Profile memories" : "Workspace memories"}>
-                <Show when={tier() === "profile"}>
-                  <p class="settings-hint memory-hint">Global tier — these notes are recalled by every agent.</p>
-                </Show>
-                <Show
-                  when={!addingNote()}
-                  fallback={
-                    <div class="memory-add">
-                      <div class="memory-add-fields">
-                        <label>Kind<input value={noteKind()} aria-label="Note kind" onInput={(e) => setNoteKind(e.currentTarget.value)} /></label>
-                        <label>Tag <span class="label-hint">optional</span><input value={noteTag()} aria-label="Note tag" onInput={(e) => setNoteTag(e.currentTarget.value)} /></label>
-                      </div>
-                      <textarea rows={2} placeholder={tier() === "profile" ? "Something that should hold across every agent…" : "Something that should hold for this agent…"} aria-label="Note text" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
-                      <div class="task-add-row">
-                        <button class="btn primary" disabled={!noteText().trim() || !noteKind().trim()} onClick={() => void addMemoryNote()}>Append note</button>
-                        <button class="btn" onClick={() => setAddingNote(false)}>Cancel</button>
-                      </div>
-                    </div>
-                  }
-                >
-                  <div class="task-add-row"><button class="btn" onClick={() => setAddingNote(true)}><Icon name="add" /> Add {tier() === "profile" ? "profile" : "workspace"} note</button></div>
-                </Show>
-                <Show
-                  when={tierNotes().length > 0}
-                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every agent can use it." : "Important decisions and preferences will appear here."}><span class="settings-status good">Ready</span></Row>}
-                >
-                  <div class="archived-list" aria-label="Memory notes">
-                    <For each={tierNotes().slice().reverse()}>
-                      {(n) => (
-                        <div class="task-row memory-note" data-note-id={n.id} classList={{ picked: recentPickedId() === n.id }}>
-                          <div class="task-main">
-                            <div class="task-name">
-                              <span class="badge memory-id" title={`Note id ${n.id}`}>{n.id.slice(0, 8)}</span>
-                              {n.tag || n.kind}
-                              <span class="badge">{n.kind}</span>
-                              <Show when={n.tag && n.tag !== n.kind}><span class="badge">tag: {n.tag}</span></Show>
-                            </div>
-                            <small class="memory-meta">{new Date(n.ts).toLocaleString()} · from {n.session_id.slice(0, 8)}</small>
-                            <Show
-                              when={editingId() === n.id}
-                              fallback={<p class="memory-text">{n.text}</p>}
-                            >
-                              <textarea
-                                class="memory-amend"
-                                rows={3}
-                                aria-label={`Amend note ${n.id.slice(0, 8)}`}
-                                value={editText()}
-                                onInput={(e) => setEditText(e.currentTarget.value)}
-                              />
-                              <div class="task-add-row">
-                                <button class="btn primary sm" disabled={!editText().trim()} onClick={() => void amendNote(n.id)}>Save</button>
-                                <button class="btn sm" onClick={() => setEditingId(null)}>Cancel</button>
-                              </div>
-                            </Show>
-                          </div>
-                          <div class="task-actions">
-                            <Show when={editingId() !== n.id}>
-                              <button class="chip sm" onClick={() => { setEditingId(n.id); setEditText(n.text); }}>amend</button>
-                            </Show>
-                            <button class="chip sm danger-chip" onClick={() => void forgetNote(n.id)}>forget</button>
-                          </div>
-                        </div>
-                      )}
-                    </For>
-                  </div>
-                </Show>
-              </Group>
-            </Show>
-
-            <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Choose the tools available to every agent." : "Choose the tools available to this agent."}</p></header>
-              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared tools" : `Tools for ${activeAgent()?.name ?? "this agent"}`}</strong><span>{scope() === "user" ? "Available to every agent." : "Changes here do not affect your other agents."}</span></div></div>
+            <Show when={page() === "connections"}>
+              <header><h1>Connections</h1><p>{scope() === "user" ? "Tools and chat bots every agent can use." : `Tools and chat bots ${agentName()} can use. Your other agents are not affected.`}</p></header>
               <nav class="capability-tabs" aria-label="Capability types">
-                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>Connections</span><em>{totalMcpCount()}</em></button>
-                <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
-                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Automations</span><em>{totalHooksCount()}</em></button>
-                <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Add-ons</span><em>{totalPluginsCount()}</em></button>
+                <button classList={{ active: shownCapabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>Connections</span><em>{totalMcpCount()}</em></button>
+                <button classList={{ active: shownCapabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
+                <Show when={technicalDetails()}>
+                  <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Automations</span><em>{totalHooksCount()}</em></button>
+                  <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Add-ons</span><em>{totalPluginsCount()}</em></button>
+                </Show>
               </nav>
-              <Show when={capabilityTab() === "mcp"}>
+              <Show when={shownCapabilityTab() === "mcp"}>
                 <Group title="Connections"><Show when={mcpServers()} fallback={<Row title="Loading connections…" description="Checking your connected tools."><span /></Row>}>
                   <div class="mcp-editor">
-                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon mcp"><Icon name="plug" /></span><strong>{scope() === "user" ? "No shared MCP servers connected" : (Object.keys(inheritedMcpServers()).length > 0 ? "No project-specific MCP overrides" : "No MCP servers connected")}</strong><span>{scope() === "user" ? "Add a shared server to make it available across all your projects." : (Object.keys(inheritedMcpServers()).length > 0 ? "This project is using the shared MCP servers listed below. Add a server here to create a project-specific override or tool." : "Add a local server to give the agent tools such as search, browser, or data access.")}</span></div>}>
+                    <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon mcp"><Icon name="plug" /></span><strong>{scope() === "user" ? "No shared connections yet" : (Object.keys(inheritedMcpServers()).length > 0 ? "Nothing added for this agent" : "No connections yet")}</strong><span>{scope() === "user" ? "Add one to give every agent a tool such as search, a browser or your data." : (Object.keys(inheritedMcpServers()).length > 0 ? "This agent uses the shared connections below. Add one here to give only this agent a tool." : "Add a connection to give the agent tools such as search, a browser or your data.")}</span></div>}>
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
                         <div class="mcp-row-head"><div><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
                         <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
                         <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow internet access</span></label></div>
                       </div>}</For>
                     </Show>
-                    <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                    <p class="settings-hint">{scope() === "user" ? "These servers are available to every agent. Saved secrets are never shown here." : "Settings here apply only to this agent. Internet access stays off until you enable it."}</p>
+                    <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add connection</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
+                    <p class="settings-hint">{scope() === "user" ? "Every agent can use these. Saved keys are never shown here." : "These apply only to this agent. Internet access stays off until you turn it on."}</p>
 
                     <Show when={scope() === "workspace" && Object.keys(inheritedMcpServers()).length > 0}>
                       <div class="inherited-capabilities-group">
@@ -1733,21 +1718,21 @@ export default function Settings() {
                                     <CapabilityIcon name={name} />
                                     <div>
                                       <strong>{name}</strong>
-                                      <code>{def.command} {def.args.join(" ")}</code>
-                                      <small>{def.network ? "Network allowed" : "Local only"}</small>
+                                      <Show when={technicalDetails()}><code>{def.command} {def.args.join(" ")}</code></Show>
+                                      <small>{def.network ? "Can use the internet" : "This computer only"}</small>
                                     </div>
                                   </div>
                                   <div class="inherited-actions">
                                     <Show when={isOverridden()} fallback={
                                       <>
-                                        <span class="capability-state inherited">Inherited (Active)</span>
+                                        <span class="capability-state inherited">Shared</span>
                                         <button class="settings-button" onClick={() => {
                                           updateServer(name, { command: def.command, args: [...def.args], env: { ...def.env }, network: def.network });
-                                          setNotice({ kind: "info", text: `Copied ${name} to project settings. You can now edit it.` });
-                                        }}>Customize for project</button>
+                                          setNotice({ kind: "info", text: `Copied ${name} to this agent's connections. You can now change it.` });
+                                        }}>Change for this agent</button>
                                       </>
                                     }>
-                                      <span class="capability-state muted">Overridden by project</span>
+                                      <span class="capability-state muted">Changed for this agent</span>
                                     </Show>
                                   </div>
                                 </div>
@@ -1760,11 +1745,11 @@ export default function Settings() {
                   </div>
                 </Show></Group>
               </Show>
-              <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon skills"><Icon name="spark" /></span><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vakyartha home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button type="button" class="settings-button" onClick={async () => { try { if (!navigator.clipboard) throw new Error("Clipboard access is unavailable"); await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command. Clipboard access was denied." }); } }}>Copy to composer</button></div></details>}</For></div></Show></Group>
-                <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
+              <Show when={shownCapabilityTab() === "skills"}>
+                <Group title={`Skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon skills"><Icon name="spark" /></span><strong>No skills discovered</strong><span>{scope() === "user" ? "Skills you add to the shared defaults appear here for every agent." : "Skills added for this agent or for every agent appear here."}</span></div>}><p class="settings-hint">{scope() === "user" ? "Every agent can use these skills." : "Skills for this agent and for every agent. Each shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Every agent" : "This agent"}</small></span></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source && technicalDetails()}><code>{skill.source}</code></Show><button type="button" class="settings-button" onClick={async () => { try { if (!navigator.clipboard) throw new Error("Clipboard access is unavailable"); await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command. Clipboard access was denied." }); } }}>Copy to composer</button></div></details>}</For></div></Show></Group>
+                <Group title={`Suggested skills (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No suggestions waiting" description="Agents can suggest skills to reuse; nothing is used until you approve it."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Approve</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
-              <Show when={capabilityTab() === "hooks"}>
+              <Show when={shownCapabilityTab() === "hooks"}>
                 <Group title="Lifecycle automation"><div class="settings-callout"><Icon name="shield" /><div><strong>Hooks run commands at controlled lifecycle points.</strong><span>Use closed failure handling for guards where a timeout or unavailable script must stop the operation.</span></div></div><Show when={hooks().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon hooks"><Icon name="tune" /></span><strong>{scope() === "user" ? "No shared hooks configured" : (inheritedHooks().length > 0 ? "No project-specific hooks" : "No hooks configured")}</strong><span>{scope() === "user" ? "Add a hook to run a safe, repeatable action at session or tool lifecycle events across all projects." : (inheritedHooks().length > 0 ? "This project is using the shared hooks listed below. Add a hook here to run project-specific actions." : "Add a hook to run a safe, repeatable action at session or tool lifecycle events.")}</span></div>}><div class="hook-editor"><For each={hooks()}>{(hook, index) => <div class="hook-row"><div class="hook-row-head"><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : "Enabled"}</span><Switch checked={hook.enabled !== false} label={`Enable hook ${index() + 1}`} onChange={(v) => updateHook(index(), { enabled: v })} /><button class="settings-button danger" aria-label={`Remove hook ${index() + 1}`} onClick={() => removeHook(index())}><Icon name="trash" /></button></div><label>Lifecycle event<select value={hook.event} onChange={(e) => updateHook(index(), { event: e.currentTarget.value })}><option value="session_start">Session start</option><option value="pre_tool_use">Before a tool runs</option><option value="post_tool_use">After a tool runs</option><option value="stop">Task stop</option></select></label><label>Tool matcher <span class="label-hint">optional</span><input value={hook.matcher ?? ""} placeholder="bash, write, or leave blank" onInput={(e) => updateHook(index(), { matcher: e.currentTarget.value })} /></label><label>Command<input class="hook-command" value={hook.command} placeholder="e.g. cargo fmt --all --check" onInput={(e) => updateHook(index(), { command: e.currentTarget.value })} /></label><label>Timeout (ms)<input type="number" min="100" max="120000" value={hook.timeout_ms ?? 10000} onInput={(e) => updateHook(index(), { timeout_ms: Number(e.currentTarget.value) || 10000 })} /></label><label>On hook failure<select value={hook.failure_mode ?? "open"} onChange={(e) => updateHook(index(), { failure_mode: e.currentTarget.value as "open" | "closed" })}><option value="open">Continue and report</option><option value="closed">Block the operation</option></select></label></div>}</For></div></Show><div class="settings-actions"><button class="btn" onClick={addHook}><Icon name="add" /> Add hook</button><button class="btn primary" disabled={!hooksDirty() || hooksSaving()} onClick={() => void saveHooks()}>{hooksSaving() ? "Saving…" : "Save hooks"}</button><Show when={hooksDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
                 <Show when={scope() === "workspace" && inheritedHooks().length > 0}>
                   <div class="inherited-capabilities-group">
@@ -1800,7 +1785,7 @@ export default function Settings() {
                 </Show>
                 </Group>
               </Show>
-              <Show when={capabilityTab() === "plugins"}>
+              <Show when={shownCapabilityTab() === "plugins"}>
                 <Group title="Installed plugins">
                   <div class="settings-callout"><Icon name="shield" /><div><strong>Plugins are installed disabled.</strong><span>Each generation is content-addressed and remains inactive until you explicitly enable it. Review the digest, publisher, and capabilities first.</span></div></div>
                   <div class="mcp-fields"><label>Package directory<input class="mono" placeholder="/path/to/plugin" value={pluginPath()} onInput={(e) => setPluginPath(e.currentTarget.value)} /></label><div class="settings-actions"><button type="button" class="btn" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(false)}>Install disabled</button><button type="button" class="btn primary" disabled={!pluginPath().trim() || pluginBusy()} onClick={() => void installPlugin(true)}>Stage update</button><button type="button" class="settings-button" disabled={pluginBusy()} onClick={async () => { const picked = await host.pickWorkspace(); if (typeof picked === "string") setPluginPath(picked); }}>Choose…</button></div></div>
@@ -1852,6 +1837,13 @@ export default function Settings() {
                   </Show>
                 </Group>
               </Show>
+              <Group title="Chat bots">
+                {/* A chat credential belongs to a bot, not to a surface
+                    (AGENTS.md invariant 23), and several bots can share a
+                    transport, so bots are created, credentialed and approved
+                    in the admin console. */}
+                <Row title="Telegram, Discord and Slack" description="Reach your agents from a chat app. Each bot has its own sign-in and rules, set up in the admin console."><button type="button" class="settings-button" onClick={() => host.openAdmin("#/gateway")}>Open admin console</button></Row>
+              </Group>
             </Show>
 
             <Show when={page() === "prompts"}>
@@ -1890,7 +1882,7 @@ export default function Settings() {
                           {/* Prevents the dangerous belief that adding text here
                               sandboxes anything, which would invite relaxing a
                               real permission rule. */}
-                          <div class="settings-callout"><Icon name="shield" /><div><strong>Guardrails instruct the model; they do not enforce anything.</strong><span>A model can misread or be argued out of one. Permissions and the sandbox are the enforcement boundary.</span></div></div>
+                          <div class="settings-callout"><Icon name="shield" /><div><strong>Guardrails instruct the model; they do not enforce anything.</strong><span>A model can misread a guardrail or be talked out of it. Permissions and isolation are what enforce limits.</span></div></div>
                         </Show>
                         <div class="settings-actions">
                           <button class="btn primary" onClick={() => void savePromptBlock(block.id, promptDraft())}>Save to {scope() === "user" ? "Shared" : "this project"}</button>
@@ -1915,18 +1907,15 @@ export default function Settings() {
                 <pre class="prompt-preview prompt-full">{promptEffective()?.text ?? ""}</pre>
               </Group>
               <Group title="Not editable">
-                <div class="settings-callout"><Icon name="shield" /><div><strong>The capability contract, the Surface line, and the skill and MCP lists are code-owned.</strong><span>They describe the callable interface as it actually is. Editing them could only make the model wrong about its own tools.</span></div></div>
+                <div class="settings-callout"><Icon name="shield" /><div><strong>The lists of tools, skills and connections come from Vakyartha itself and cannot be edited here.</strong><span>They describe the callable interface as it actually is. Editing them could only make the model wrong about its own tools.</span></div></div>
               </Group>
               </div>
             </Show>
 
-            <Show when={page() === "advanced"}>
-              <header><h1>Advanced</h1><p>Manage limits, file locations, and backups.</p></header>
-              <Group title="Context">
-                <Row title="Context window" description="Maximum model input budget before compaction."><span class="metric">{fmt(config()?.context_window ?? 0)} tokens</span></Row>
-                <Row title="Maximum output" description="Provider output-token ceiling."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
-              </Group>
+            <Show when={page() === "storage"}>
+              <header><h1>Storage and backup</h1><p>Where Vakyartha keeps its files, and how to back them up.</p></header>
               <Group title="Paths">
+                <Row title="Working directory" description={config()?.paths.cwd ?? backend().cwd ?? ""}><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open config</button></Row>
                 <Row title="Project config" description={config()?.paths.project_config ?? ""}><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Open</button></Row>
                 <Row title="Global config" description={config()?.paths.global_config ?? "Not configured"}><button type="button" class="settings-button" onClick={() => void copySettingText(config()?.paths.global_config ?? "", "Global config path")}>Copy path</button></Row>
                 <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button type="button" class="settings-button" onClick={() => void copySettingText(config()?.paths.sessions_home ?? "", "Session store path")}>Copy path</button></Row>

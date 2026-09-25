@@ -17,6 +17,7 @@ import {
   activeAgentId,
   setActiveAgent,
   setAgentOpening,
+  setOpeningAgentId,
   setReplyTarget,
   setBackend,
   setDockTab,
@@ -50,20 +51,15 @@ import {
   sidebarOpen,
   sidebarWidth,
   setNotice,
-  setBestOfOpen,
   setProviders,
-  setTasksOpen,
-  tasksOpen,
   historyOpen,
   setHistoryOpen,
    receiptsOpen,
-  setReceiptsOpen,
   setWorkOpen,
-  searchOpen,
   setSearchOpen,
   settingsOpen,
+  greetingsShown,
   setSettingsOpen,
-  agentPickerOpen,
   setAgentPickerOpen,
   setAgentPickerTab,
   inboxOpen,
@@ -130,6 +126,7 @@ import InboxPage from "./components/InboxPage";
 import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import OnboardingWelcome from "./components/OnboardingWelcome";
+import ConnectSheet from "./components/ConnectSheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
@@ -461,6 +458,7 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
     await openingAgent;
   }
   setAgentOpening(true);
+  setOpeningAgentId(agentId);
   const source = api.backendUrl();
   const cwd = backend().cwd;
   openingAgent = (async () => {
@@ -478,6 +476,8 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
       setArmedGoal(null);
       setDockTab(null);
       if (await activate(existing) === false) throw new Error("The conversation could not be resumed. Try again.");
+      setAgentOpening(false);
+      setOpeningAgentId(null);
       await refreshSessions();
       return existing;
     }
@@ -491,6 +491,8 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
     setArmedGoal(null);
     setDockTab(null);
     if (await activate(res.session_id) === false) throw new Error("The conversation could not be resumed. Try again.");
+    setAgentOpening(false);
+    setOpeningAgentId(null);
     await refreshSessions();
     return res.session_id;
   } catch (e) {
@@ -499,7 +501,7 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
   }
   })();
   try { return await openingAgent; }
-  finally { openingAgent = null; setAgentOpening(false); }
+  finally { openingAgent = null; setAgentOpening(false); setOpeningAgentId(null); }
 }
 
 export async function newSession() {
@@ -735,7 +737,9 @@ export function stopRun() {
 
 export async function loadHealth() {
   const source = api.backendUrl();
-  if (!source) return;
+  // The web client is same-origin, so its base is always empty; only the
+  // desktop has no backend until it adopts one.
+  if (!source && host.kind !== "web") return;
   try {
     const next = await api.health();
     if (source === api.backendUrl()) {
@@ -1090,6 +1094,8 @@ export default function App() {
         if (resyncingSessions.size === 0) setConnection("live");
       } else if (status === "offline") {
         setConnection("offline");
+      } else if (status === "connecting") {
+        setConnection("connecting");
       } else if (status !== "idle") {
         setConnection("reconnecting");
       }
@@ -1119,16 +1125,10 @@ export default function App() {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) {
         if (e.key === "Escape") {
+          // Every dialog is a Sheet, which closes on Escape and stops it
+          // there; what reaches here is a menu, Settings or a panel.
           if (closeOpenMenus()) return;
-          if (showShortcuts()) setShowShortcuts(false);
-          else if (agentPickerOpen()) setAgentPickerOpen(false);
-          else if (searchOpen()) setSearchOpen(false);
-          else if (settingsOpen()) setSettingsOpen(false);
-          else if (bestOfOpen()) setBestOfOpen(false);
-          else if (tasksOpen()) setTasksOpen(false);
-          else if (historyOpen()) setHistoryOpen(false);
-          else if (receiptsOpen()) setReceiptsOpen(false);
-          else if (transcriptViewId()) setTranscriptViewId(null);
+          if (settingsOpen()) setSettingsOpen(false);
           else if (inboxOpen()) setInboxOpen(false);
           else if (sideOpen()) setSideOpen(false);
           else stopRun();
@@ -1242,16 +1242,13 @@ export default function App() {
     const theme =
       uiPreferences.theme === "system"
         ? systemDark()
-          ? "warm"
+          ? "dark"
           : "light"
         : uiPreferences.theme;
     document.documentElement.dataset.theme = theme;
     // Tells the browser which way to paint its own chrome: form controls,
     // scrollbars, and the space behind the page during load.
-    // Keep native controls and scrollbars aligned with every light palette.
-    // Sage and paper are everyday light themes too; treating them as dark
-    // makes the browser render a dark control chrome over a light canvas.
-    document.documentElement.style.colorScheme = ["light", "sage", "paper", "mist", "dawn"].includes(theme) ? "light" : "dark";
+    document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";
     document.documentElement.dataset.compactSidebar = String(uiPreferences.compactSidebar);
     document.documentElement.dataset.reduceMotion = String(uiPreferences.reduceMotion);
     document.documentElement.style.setProperty("--text-scale", String(uiPreferences.textScale / 100));
@@ -1400,9 +1397,11 @@ export default function App() {
             )}
           </Show>
           <StatusBar />
-          {/* Incomplete setup never blocks the workspace; the banner
-              points at the one wizard rather than being a second one. */}
-          <SetupBanner />
+          {/* Incomplete setup never blocks the workspace. An empty
+              conversation's greeting carries this card instead. */}
+          <Show when={greetingsShown() === 0}>
+            <SetupBanner />
+          </Show>
           <BudgetBanner />
           <Show when={showShortcuts()}>
             <ShortcutsModal />
@@ -1434,6 +1433,7 @@ export default function App() {
           <AgentPickerModal />
           <AgentCreateWizard />
           <OnboardingWelcome />
+          <ConnectSheet />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
             <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>

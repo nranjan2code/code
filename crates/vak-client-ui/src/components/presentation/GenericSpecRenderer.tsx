@@ -1240,7 +1240,7 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
       <div class="card-header">
         <div class="card-title-group">
           <span class="card-badge badge-indigo">UI Preview</span>
-          <strong style="font-size: 12.5px; color: var(--text);">{title()}</strong>
+          <strong style="font-size: 14px; color: var(--text);">{title()}</strong>
 
         </div>
         <div class="card-actions" style="display: flex; gap: 6px; align-items: center;">
@@ -1265,13 +1265,13 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
       </div>
 
       <Show when={loading()}>
-        <div style="padding: 24px; text-align: center; color: var(--muted); font-size: 12px;">
+        <div style="padding: 24px; text-align: center; color: var(--muted); font-size: 13px;">
           Loading sandboxed preview artifact…
         </div>
       </Show>
 
       <Show when={error()}>
-        <div style="padding: 16px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); font-size: 11.5px;">
+        <div style="padding: 16px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); font-size: 13px;">
           Failed to load preview: {error()}
         </div>
       </Show>
@@ -1294,14 +1294,14 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
         <Show when={viewMode() === "source"}>
           <div style="padding: 10px 14px; background: var(--bg); border-top: 1px solid var(--border-soft);">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span style="font-size: 10.5px; color: var(--faint); font-family: var(--mono);">
+              <span style="font-size: 12px; color: var(--faint); font-family: var(--mono);">
                 Quarantined: {path()}
               </span>
               <button type="button" class="pill-action-btn" onClick={handleCopySource}>
                 {copied() ? "✓ Copied" : copyFailed() ? "Copy failed" : "Copy Source"}
               </button>
             </div>
-            <pre style="margin: 0; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 11px; line-height: 1.55; color: var(--text-soft); padding: 8px; border-radius: 6px; background: var(--surface);">
+            <pre style="margin: 0; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: 12px; line-height: 1.55; color: var(--text-soft); padding: 8px; border-radius: 6px; background: var(--surface);">
               <code>{htmlContent()}</code>
             </pre>
           </div>

@@ -3,9 +3,10 @@ import * as api from "../api";
 import { startMicrophone, type MicrophoneCapture } from "../voice-capture";
 import { SpeechDetector } from "../voice-activity";
 import { VoiceSessionSocket, type DiscardReason } from "../voice";
-import { setNotice, setPendingSettingsPage, setPendingSettingsSection, setSettingsOpen } from "../store";
+import { setNotice, setPendingSettingsPage, setSettingsOpen } from "../store";
 import { spokenReplyText } from "../structured";
 import AgentMark, { type CharacterState } from "./AgentMark";
+import Icon from "./Icon";
 
 const SAMPLE_RATE_HZ = 16_000;
 const RECORDING_CHUNK_SAMPLES = 512;
@@ -148,8 +149,7 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
       if (!config.voice?.enabled) {
         setConnecting(false);
         setStatus("Set up voice");
-        setPendingSettingsPage("general");
-        setPendingSettingsSection("voice");
+        setPendingSettingsPage("voice");
         setSettingsOpen(true);
         return;
       }
@@ -337,9 +337,14 @@ export default function VoiceControl(props: { sessionId?: string; character?: st
     if (state() === "speaking") return "acknowledge";
     return "idle";
   };
+  // "Upload a recording" lives in the message box's + menu, which hands the file over here.
+  createEffect(() => {
+    const onRecording = (event: Event) => { const file = (event as CustomEvent<File>).detail; if (file && !active() && !connecting()) void toggle(file); };
+    window.addEventListener("vak:voice-recording", onRecording);
+    onCleanup(() => window.removeEventListener("vak:voice-recording", onRecording));
+  });
   return <span class="voice-control" data-state={state()} role="group" aria-label="Voice conversation controls">
-    <button class="composer-context" classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}><AgentMark character={props.character} motion={props.motion} size={22} state={characterState()} interactive /><span>{connecting() && status() === "Voice" ? "Connecting…" : visibleStatus()}</span></button>
-    {!active() && !connecting() && <label class="composer-context voice-recording-entry">Use recording<input type="file" accept="audio/*" aria-label="Use an audio recording" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void toggle(file); }} /></label>}
+    <button class={state() === "idle" ? "composer-round" : "composer-context voice-pill"} classList={{ active: active() }} disabled={connecting()} title="Start governed voice conversation" aria-label={active() ? "Stop voice conversation" : "Start voice conversation"} aria-pressed={active()} aria-busy={connecting()} onClick={() => void toggle()}>{state() === "idle" ? <Icon name="mic" size={18} /> : <><AgentMark character={props.character} motion={props.motion} size={22} state={characterState()} interactive /><span>{connecting() && status() === "Voice" ? "Connecting…" : visibleStatus()}</span></>}</button>
     {transcript() && <span class="voice-transcript" aria-live="polite">{transcript()}</span>}
     {active() && <><button class="composer-context" disabled={!playing()} aria-label={paused() ? "Resume voice playback" : "Pause voice playback"} onClick={togglePause}>{paused() ? "Resume" : "Pause"}</button><button class="composer-context" disabled={!playing()} aria-label="Stop voice playback" onClick={() => stopPlayback(true)}>Stop audio</button><select class="composer-context" aria-label="Voice output device" value={deviceId()} onFocus={() => void refreshDevices()} onChange={(e) => void selectDevice(e.currentTarget.value)}><option value="">Default output</option>{devices().map((d) => <option value={d.deviceId}>{d.label || "Audio output"}</option>)}</select></>}
     {voiceError() && <button class="composer-context voice-fallback" onClick={() => window.dispatchEvent(new CustomEvent("vak:focus-composer"))}>Type instead</button>}

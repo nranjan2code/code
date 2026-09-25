@@ -144,7 +144,7 @@ function CommitmentRow(props: { commitment: Commitment; onClosed: () => void }) 
           <Show when={canClose()}>
             <div class="commit-close-form">
               <input
-                placeholder="Note for the ledger (optional)"
+                placeholder="Note (optional)"
                 value={note()}
                 onInput={(e) => setNote(e.currentTarget.value)}
               />

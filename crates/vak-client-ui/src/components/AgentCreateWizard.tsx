@@ -1,12 +1,11 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { trapFocus } from "../focusTrap";
 import { agentCreateOpen, setAgentCreateOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
 import { playCharacterCue } from "../characterSound";
 import AgentMark from "./AgentMark";
-import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 type Character = AgentCharacter;
 
@@ -117,30 +116,13 @@ export default function AgentCreateWizard() {
 
   return (
     <Show when={agentCreateOpen()}>
-      <div class="modal-back" onClick={close}>
-        <div
-          class="modal"
-          style="max-width: 560px; width: 92vw;"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="agent-create-title"
-          onClick={(e) => e.stopPropagation()}
-          use:trapFocus
-        >
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
-            <div>
-              <h3 id="agent-create-title" style="margin: 0; font-size: 16px; font-weight: 600;">
-                New Agent
-              </h3>
-              <span style="color: var(--muted); font-size: 12px;">
-                Step {step()} of 3 — {step() === 1 ? "Choose a starting point" : step() === 2 ? "Name it" : "Give it instructions"}
-              </span>
-            </div>
-            <button type="button" class="icon-button subtle" aria-label="Close" onClick={close}>
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-
+      <Sheet
+        class="agent-create"
+        title="New agent"
+        subtitle={`Step ${step()} of 3: ${step() === 1 ? "choose a starting point" : step() === 2 ? "name it" : "give it instructions"}`}
+        onClose={close}
+        busy={creating()}
+      >
           <Show when={error()}><p class="worker-error" role="alert" style="margin-bottom: 10px;">{error()}</p></Show>
 
           {/* STEP 1: TEMPLATE */}
@@ -155,7 +137,7 @@ export default function AgentCreateWizard() {
                     onClick={() => applyTemplate(tmpl)}
                   >
                     <span style="display: inline-flex; align-items: center; gap: 7px;"><AgentMark character={tmpl.character} size={23} /> {tmpl.name}</span>
-                    <span style="font-size: 11.5px; color: var(--muted); font-weight: 400;">{tmpl.description}</span>
+                    <span style="font-size: 13px; color: var(--muted); font-weight: 400;">{tmpl.description}</span>
                   </button>
                 )}
               </For>
@@ -165,8 +147,8 @@ export default function AgentCreateWizard() {
                 style="text-align: left; padding: 10px 12px; height: auto; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; border-style: dashed;"
                 onClick={() => applyTemplate(SCRATCH)}
               >
-                <span style="font-size: 15px;">+ Start from scratch</span>
-                <span style="font-size: 11.5px; color: var(--muted); font-weight: 400;">{SCRATCH.description}</span>
+                <span style="font-size: 16px;">+ Start from scratch</span>
+                <span style="font-size: 13px; color: var(--muted); font-weight: 400;">{SCRATCH.description}</span>
               </button>
             </div>
           </Show>
@@ -175,7 +157,7 @@ export default function AgentCreateWizard() {
           <Show when={step() === 2}>
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">Name</label>
+                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Name</label>
                 <input
                   type="text"
                   required
@@ -188,20 +170,20 @@ export default function AgentCreateWizard() {
               </div>
 
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">Agent ID</label>
+                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Agent ID</label>
                 <input
                   type="text"
                   value={id()}
                   onInput={(e) => { setIdTouched(true); setId(slugify(e.currentTarget.value)); }}
-                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 12.5px;"
+                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 14px;"
                 />
                 <Show when={idInUse()}>
-                  <p style="margin: 4px 0 0; font-size: 11px; color: var(--red);">That ID is already taken — pick another.</p>
+                  <p style="margin: 4px 0 0; font-size: 12px; color: var(--red);">That ID is already taken — pick another.</p>
                 </Show>
               </div>
 
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">Character</label>
+                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Character</label>
                 <div class="agent-companion-picker">
                   <For each={AGENT_CHARACTER_IDS}>
                     {(c) => (
@@ -223,7 +205,7 @@ export default function AgentCreateWizard() {
               </div>
 
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">Personality & Demeanor</label>
+                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Personality & Demeanor</label>
                 <input
                   type="text"
                   placeholder="e.g. Rigorous, cautious, and detail-obsessed."
@@ -244,24 +226,24 @@ export default function AgentCreateWizard() {
           <Show when={step() === 3}>
             <div style="display: flex; flex-direction: column; gap: 12px;">
               <div>
-                <label style="display: block; font-size: 12px; font-weight: 500; margin-bottom: 4px;">Core Instructions / System Prompt</label>
+                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Core Instructions / System Prompt</label>
                 <textarea
                   rows={4}
                   placeholder="Instructions that govern this agent's reasoning, tool use, and tone."
                   value={instructions()}
                   onInput={(e) => setInstructions(e.currentTarget.value)}
-                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--sans); font-size: 12.5px; resize: vertical;"
+                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--sans); font-size: 14px; resize: vertical;"
                 />
-                <p style="margin: 4px 0 0; font-size: 11px; color: var(--muted);">This becomes the agent's system prompt — you can refine it later from its settings.</p>
+                <p style="margin: 4px 0 0; font-size: 12px; color: var(--muted);">This becomes the agent's system prompt — you can refine it later from its settings.</p>
               </div>
 
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);">
-                <span style="font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">Preview</span>
+                <span style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">Preview</span>
                 <div style="display: flex; align-items: center; gap: 8px;">
                   <AgentMark character={character()} size={28} />
                   <div>
-                    <div style="font-weight: 600; font-size: 13.5px;">{name() || "Unnamed agent"}</div>
-                    <div style="font-size: 11.5px; color: var(--muted);">{personality() || "No personality set yet"}</div>
+                    <div style="font-weight: 600; font-size: 15px;">{name() || "Unnamed agent"}</div>
+                    <div style="font-size: 13px; color: var(--muted);">{personality() || "No personality set yet"}</div>
                   </div>
                 </div>
               </div>
@@ -274,8 +256,7 @@ export default function AgentCreateWizard() {
               </div>
             </div>
           </Show>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }

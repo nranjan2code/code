@@ -20,8 +20,6 @@ import type {
   PresentationStreamEvent,
 } from "./types";
 
-export type Density = "outcome" | "balanced" | "audit";
-
 export type Item =
   | { kind: "user"; text: string; entryId?: string; authorId?: string; authorName?: string; files?: api.InboxFile[] }
   | { kind: "assistant"; key: string; text: string; streaming: boolean }
@@ -60,7 +58,7 @@ export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
  * because it means something different to the reader: events were lost and
  * the transcript is being rebuilt, so what is on screen is briefly behind.
  */
-export type Connection = "live" | "reconnecting" | "resyncing" | "offline";
+export type Connection = "connecting" | "live" | "reconnecting" | "resyncing" | "offline";
 export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export type CoworkingParticipant = { principal_id: string; display_name: string };
@@ -80,6 +78,7 @@ export function agentForSession(id: string | null): AgentSummary {
 }
 export const activeAgentId = () => activeAgent()?.id ?? agentForSession(activeId()).id;
 export const [agentOpening, setAgentOpening] = createSignal(false);
+export const [openingAgentId, setOpeningAgentId] = createSignal<string | null>(null);
 export interface ReplyTarget {
   sessionId: string;
   resultId?: string;
@@ -129,12 +128,14 @@ export async function switchModel(newModel: string) {
 // here: it is derived from `GET /onboarding` on every read, so there is no
 // local flag that can disagree with the server about what is configured.
 export const [providers, setProviders] = createSignal<import("./types").ProvidersResponse | null>(null);
-const storedDensity = localStorage.getItem("vak.density");
-const initialDensity: Density = storedDensity === "balanced" || storedDensity === "audit" ? storedDensity : "outcome";
-export const [density, setDensitySignal] = createSignal<Density>(initialDensity);
-export function setDensity(value: Density) {
-  setDensitySignal(value);
-  localStorage.setItem("vak.density", value);
+/** Show technical details (DESIGN.md, docs/design/75 §8): one switch for how
+ * much machinery everyday screens show. Off for new installs. It changes what
+ * is shown, never what an agent may do, and never hides a safety state. */
+const storedTechnical = (() => { try { return localStorage.getItem("vak.technicalDetails"); } catch { return null; } })();
+export const [technicalDetails, setTechnicalDetailsSignal] = createSignal(storedTechnical === "1");
+export function setTechnicalDetails(value: boolean) {
+  setTechnicalDetailsSignal(value);
+  try { localStorage.setItem("vak.technicalDetails", value ? "1" : "0"); } catch { /* the choice still applies to this window */ }
 }
 export type DockTab = "workbench" | "preview" | "diff" | "terminal" | "editor" | "pr" | "agents" | "feeds" | "commitments";
 const storedDockTab = localStorage.getItem("vak.dockTab") as DockTab | null;
@@ -592,6 +593,14 @@ export const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
 export const [agentPickerTab, setAgentPickerTab] = createSignal<"fleet" | "target">("fleet");
 export const [agentCreateOpen, setAgentCreateOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+/** The in-app "Connect an AI service" sheet (docs/design/75 §6.2). */
+export const [connectOpen, setConnectOpen] = createSignal(false);
+/** Bumped by anything that can change setup; every `GET /onboarding`
+ * reader refetches on it, so the banner and the header agree at once. */
+export const [setupEpoch, setSetupEpoch] = createSignal(0);
+/** How many empty-conversation greetings are on screen. While one is, it
+ * carries the setup card and the app-wide banner stands down. */
+export const [greetingsShown, setGreetingsShown] = createSignal(0);
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
 // Defaults to "workspace" (edit the active agent) — that's what someone
@@ -671,7 +680,7 @@ export interface UiPreferences {
   /** "system" follows the OS/browser, which is the only sane default for
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
-  theme: "system" | "light" | "warm" | "dark" | "contrast" | "sage" | "paper" | "mist" | "dawn";
+  theme: "system" | "light" | "dark" | "contrast";
   textScale: number;
   codeScale: number;
   compactSidebar: boolean;
@@ -715,7 +724,10 @@ const defaultUiPreferences: UiPreferences = {
 
 function loadUiPreferences(): UiPreferences {
   try {
-    return { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
+    const stored: UiPreferences = { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
+    // A theme that no longer exists resolves to Match system (DESIGN.md).
+    if (!["system", "light", "dark", "contrast"].includes(stored.theme)) stored.theme = "system";
+    return stored;
   } catch {
     return defaultUiPreferences;
   }
@@ -745,16 +757,18 @@ export const [feedsOpen, setFeedsOpen] = createSignal(false);
 export type SettingsPageId =
   | "general"
   | "appearance"
+  | "voice"
+  | "notifications"
+  | "connections"
+  | "privacy"
   | "agent"
-  | "permissions"
+  | "models"
   | "reliability"
-  | "integrations"
+  | "prompts"
   | "services"
-  | "learning"
-  | "advanced"
+  | "storage"
   | "archived";
 export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
-export const [pendingSettingsSection, setPendingSettingsSection] = createSignal<"voice" | null>(null);
 // Read-only historical transcript viewer (docs/design/29): any session by id,
 // served from disk — no attach, no stream, never touches live view state.
 export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);

@@ -1,4 +1,3 @@
-import { trapFocus } from "../focusTrap";
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   activeId,
@@ -14,6 +13,7 @@ import * as api from "../api";
 import type { TaskDef } from "../types";
 import { relAgo } from "../time";
 import Icon from "./Icon";
+import Sheet from "./Sheet";
 
 function fmtInterval(s: number): string {
   if (s % 3600 === 0) return `${s / 3600}h`;
@@ -180,9 +180,7 @@ export default function TasksModal() {
 
   return (
     <Show when={tasksOpen()}>
-      <div class="modal-back" onClick={() => setTasksOpen(false)}>
-        <div class="modal tasks-modal" role="dialog" aria-modal="true" aria-labelledby="tasks-title" onClick={(e) => e.stopPropagation()} use:trapFocus>
-          <h3 id="tasks-title">Scheduled tasks — recurring runs in isolated worktrees</h3>
+      <Sheet size="wide" class="tasks-modal" title="Scheduled tasks" subtitle="Work that runs on a schedule, each run in its own copy of the project." onClose={() => setTasksOpen(false)}>
           <Show when={error()}>
             <div class="gate-err">{error()}</div>
           </Show>
@@ -346,10 +344,8 @@ export default function TasksModal() {
 
           <div class="bo-foot" style="margin-top:10px">
             <span class="hint">runs fire on the gateway server, not this window · cron uses local time · latest worktree kept for review</span>
-            <button type="button" class="btn primary" onClick={() => setTasksOpen(false)}>Close</button>
           </div>
-        </div>
-      </div>
+      </Sheet>
     </Show>
   );
 }
