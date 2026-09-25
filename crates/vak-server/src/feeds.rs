@@ -652,18 +652,6 @@ pub async fn add_feed_source(
         feeds_config_path(cwd)
     };
 
-    // Read existing config or create default
-    let mut content = if config_path.exists() {
-        tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read config: {e}"),
-            )
-        })?
-    } else {
-        "[general]\ndefault_check_interval = \"30m\"\nmax_items_per_feed = 500\ndedup_window_days = 90\n\n".to_string()
-    };
-
     // Extract fields from payload
     let name = payload
         .get("name")
@@ -699,14 +687,6 @@ pub async fn add_feed_source(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| format!("src-{}", uuid::Uuid::now_v7().simple()));
 
-    let source_id_line = format!("id = \"{}\"", escape_toml(&source_id));
-    if content.lines().any(|line| line.trim() == source_id_line) {
-        return Err((
-            StatusCode::CONFLICT,
-            format!("source id '{}' already exists in {scope} scope", source_id),
-        ));
-    }
-
     // Build the new source block
     let mut source_block = format!(
         "\n[[sources]]\nid = \"{}\"\nname = \"{}\"\ntype = \"{}\"\n",
@@ -733,38 +713,17 @@ pub async fn add_feed_source(
     source_block.push_str(&format!("trust = \"{}\"\n", escape_toml(trust)));
     source_block.push_str("enabled = true\n");
 
-    // Ensure config ends with newline before appending
-    if !content.ends_with('\n') {
-        content.push('\n');
-    }
-    content.push_str(&source_block);
-
-    // Ensure parent directory exists
-    if let Some(parent) = config_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create config dir: {e}"),
-            )
-        })?;
-    }
-
-    // Write config atomically
-    let tmp_path = config_path.with_extension("toml.tmp");
-    tokio::fs::write(&tmp_path, &content).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to write config: {e}"),
-        )
-    })?;
-    tokio::fs::rename(&tmp_path, &config_path)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to rename config: {e}"),
-            )
-        })?;
+    let source_id_line = format!("id = \"{}\"", escape_toml(&source_id));
+    let conflict = format!("source id '{source_id}' already exists in {scope} scope");
+    edit_feeds_config(config_path.clone(), move |current| {
+        let mut content = current.map_or_else(default_feeds_config, ToOwned::to_owned);
+        if content.lines().any(|line| line.trim() == source_id_line) {
+            return Err((StatusCode::CONFLICT, conflict));
+        }
+        append_block(&mut content, &source_block);
+        Ok((Some(content), ()))
+    })
+    .await?;
 
     Ok(Json(json!({
         "status": "ok",
@@ -873,25 +832,44 @@ fn set_field_in_block(
     Some(new_lines.join("\n"))
 }
 
-async fn write_config_atomically(
-    config_path: &std::path::Path,
-    content: &str,
-) -> Result<(), (StatusCode, String)> {
-    let tmp_path = config_path.with_extension("toml.tmp");
-    tokio::fs::write(&tmp_path, content).await.map_err(|e| {
+fn default_feeds_config() -> String {
+    "[general]\ndefault_check_interval = \"30m\"\nmax_items_per_feed = 500\ndedup_window_days = 90\n\n".to_string()
+}
+
+fn append_block(content: &mut String, block: &str) {
+    if !content.is_empty() && !content.ends_with('\n') {
+        content.push('\n');
+    }
+    content.push_str(block);
+}
+
+/// Every edit to a `feeds.toml` goes through here: `edit` sees the current
+/// text (`None` when the file does not exist) and returns the new text, or
+/// `None` to leave it alone. The read, the edit and the atomic replace hold
+/// one lock (`vak_config::file_update`), so concurrent edits never publish a
+/// half-written file or rewrite the file from a stale read.
+async fn edit_feeds_config<T: Send + 'static>(
+    config_path: PathBuf,
+    edit: impl FnOnce(Option<&str>) -> Result<(Option<String>, T), (StatusCode, String)>
+    + Send
+    + 'static,
+) -> Result<T, (StatusCode, String)> {
+    tokio::task::spawn_blocking(move || {
+        vak_config::file_update::update_file(&config_path, edit).map_err(|error| match error {
+            vak_config::file_update::UpdateError::Edit(error) => error,
+            vak_config::file_update::UpdateError::Io { path, source } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to update {}: {source}", path.display()),
+            ),
+        })
+    })
+    .await
+    .map_err(|error| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to write config: {e}"),
+            format!("Feed config update did not finish: {error}"),
         )
-    })?;
-    tokio::fs::rename(&tmp_path, config_path)
-        .await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to rename config: {e}"),
-            )
-        })
+    })?
 }
 
 /// DELETE /feeds/sources/{name} — Remove a feed source from config.
@@ -933,12 +911,13 @@ pub async fn delete_feed_source(
     } else {
         feeds_config_path(cwd)
     };
-    if config_path.exists()
-        && let Ok(content) = tokio::fs::read_to_string(&config_path).await
-        && let Some(new_content) = remove_array_table_block(&content, "sources", &source_id)
-    {
-        let _ = write_config_atomically(&config_path, &new_content).await;
-    }
+    let declared = source_id.clone();
+    let _ = edit_feeds_config(config_path, move |current| {
+        let next =
+            current.and_then(|content| remove_array_table_block(content, "sources", &declared));
+        Ok((next, ()))
+    })
+    .await;
 
     Ok(Json(json!({
         "status": "ok",
@@ -1022,50 +1001,31 @@ pub async fn update_feed_source(
     } else {
         feeds_config_path(cwd)
     };
-    if config_path.exists()
-        && let Ok(mut content) = tokio::fs::read_to_string(&config_path).await
-    {
-        let mut touched = false;
-        if let Some(e) = enabled
-            && let Some(next) = set_field_in_block(
-                &content,
-                "sources",
-                &source_id,
-                "enabled",
-                &format!("enabled = {}", e),
-            )
-        {
-            content = next;
-            touched = true;
-        }
-        if let Some(i) = interval
-            && let Some(next) = set_field_in_block(
-                &content,
-                "sources",
-                &source_id,
-                "interval",
-                &format!("interval = \"{}\"", escape_toml(i)),
-            )
-        {
-            content = next;
-            touched = true;
-        }
-        if let Some(t) = trust
-            && let Some(next) = set_field_in_block(
-                &content,
-                "sources",
-                &source_id,
-                "trust",
-                &format!("trust = \"{}\"", escape_toml(t)),
-            )
-        {
-            content = next;
-            touched = true;
-        }
-        if touched {
-            let _ = write_config_atomically(&config_path, &content).await;
-        }
+    let mut fields = Vec::new();
+    if let Some(e) = enabled {
+        fields.push(("enabled", format!("enabled = {e}")));
     }
+    if let Some(i) = interval {
+        fields.push(("interval", format!("interval = \"{}\"", escape_toml(i))));
+    }
+    if let Some(t) = trust {
+        fields.push(("trust", format!("trust = \"{}\"", escape_toml(t))));
+    }
+    let declared = source_id.clone();
+    let _ = edit_feeds_config(config_path, move |current| {
+        let Some(mut content) = current.map(ToOwned::to_owned) else {
+            return Ok((None, ()));
+        };
+        let mut touched = false;
+        for (field, line) in &fields {
+            if let Some(next) = set_field_in_block(&content, "sources", &declared, field, line) {
+                content = next;
+                touched = true;
+            }
+        }
+        Ok((touched.then_some(content), ()))
+    })
+    .await;
 
     Ok(Json(json!({
         "status": "ok",
@@ -1107,17 +1067,6 @@ pub async fn add_feed_alert(
         global_feeds_config_path()
     } else {
         feeds_config_path(cwd)
-    };
-
-    let mut content = if config_path.exists() {
-        tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read config: {e}"),
-            )
-        })?
-    } else {
-        "[general]\ndefault_check_interval = \"30m\"\nmax_items_per_feed = 500\ndedup_window_days = 90\n\n".to_string()
     };
 
     let name = payload
@@ -1202,21 +1151,12 @@ pub async fn add_feed_alert(
         block.push_str(&format!("sources = [{}]\n", to_toml_array(&sources)));
     }
 
-    if !content.ends_with('\n') {
-        content.push('\n');
-    }
-    content.push_str(&block);
-
-    if let Some(parent) = config_path.parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to create config dir: {e}"),
-            )
-        })?;
-    }
-
-    write_config_atomically(&config_path, &content).await?;
+    edit_feeds_config(config_path.clone(), move |current| {
+        let mut content = current.map_or_else(default_feeds_config, ToOwned::to_owned);
+        append_block(&mut content, &block);
+        Ok((Some(content), ()))
+    })
+    .await?;
     run_feed_script(cwd, "feed_ingest.py", &["--sync-alerts"]).await?;
 
     Ok(Json(json!({
@@ -1243,21 +1183,15 @@ pub async fn delete_feed_alert(
         feeds_config_path(cwd)
     };
 
-    if !config_path.exists() {
-        return Err((StatusCode::NOT_FOUND, "Config file not found".into()));
-    }
-
-    let content = tokio::fs::read_to_string(&config_path).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to read config: {e}"),
-        )
-    })?;
-
-    let new_content = remove_array_table_block(&content, "alerts", &name)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Alert '{}' not found", name)))?;
-
-    write_config_atomically(&config_path, &new_content).await?;
+    let alert = name.clone();
+    edit_feeds_config(config_path.clone(), move |current| {
+        let content =
+            current.ok_or_else(|| (StatusCode::NOT_FOUND, "Config file not found".to_string()))?;
+        let next = remove_array_table_block(content, "alerts", &alert)
+            .ok_or_else(|| (StatusCode::NOT_FOUND, format!("Alert '{alert}' not found")))?;
+        Ok((Some(next), ()))
+    })
+    .await?;
     run_feed_script(cwd, "feed_ingest.py", &["--sync-alerts"]).await?;
 
     Ok(Json(json!({

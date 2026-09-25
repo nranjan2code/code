@@ -2718,38 +2718,55 @@ impl Core {
             }));
         }
         let path = self.inner.cwd.join(PERMISSIONS_LOCAL_FILE);
-        let mut rules = load_permissions_local(&self.inner.cwd);
-        if !rules.iter().any(|r| r == spec) {
-            rules.push(spec.to_string());
-        }
-        self.write_permissions_local(&path, &rules)?;
-        if let Ok(mut extra) = self.inner.extra_allow.lock() {
-            *extra = rules;
-        }
-        Ok(())
-    }
-
-    fn write_permissions_local(
-        &self,
-        path: &std::path::Path,
-        rules: &[String],
-    ) -> Result<(), CoreError> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| CoreError::Session(vak_session::SessionError::Io(e)))?;
-        }
-        let mut body = String::from(
-            "# Learned 'always allow' rules — written when you press [p] on an approval.\nallow = [\n",
-        );
-        for r in rules {
-            body.push_str(&format!("  \"{r}\",\n"));
-        }
-        body.push_str("]\n");
-        let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, body)
-            .and_then(|_| std::fs::rename(&tmp, path))
-            .map_err(|e| CoreError::Session(vak_session::SessionError::Io(e)))?;
-        Ok(())
+        vak_config::file_update::update_file(&path, |current| {
+            let mut document = match current {
+                Some(text) => toml::from_str::<toml::Table>(text).map_err(|source| {
+                    CoreError::Config(vak_config::ConfigError::Parse {
+                        path: path.clone(),
+                        source,
+                    })
+                })?,
+                None => toml::Table::new(),
+            };
+            let allow = document
+                .entry("allow")
+                .or_insert_with(|| toml::Value::Array(Vec::new()));
+            let Some(allow) = allow.as_array_mut() else {
+                return Err(CoreError::Config(vak_config::ConfigError::Read {
+                    path: path.clone(),
+                    source: std::io::Error::other("`allow` is not an array"),
+                }));
+            };
+            if !allow.iter().any(|rule| rule.as_str() == Some(spec)) {
+                allow.push(toml::Value::String(spec.to_string()));
+            }
+            let rules: Vec<String> = allow
+                .iter()
+                .filter_map(|rule| rule.as_str().map(ToOwned::to_owned))
+                .collect();
+            let body = toml::to_string_pretty(&document).map_err(|error| {
+                CoreError::Session(vak_session::SessionError::Io(std::io::Error::other(
+                    error.to_string(),
+                )))
+            })?;
+            // Published while the file lock is held, so the engine inputs
+            // never fall behind a rule another approval just wrote.
+            if let Ok(mut extra) = self.inner.extra_allow.lock() {
+                *extra = rules;
+            }
+            Ok((
+                Some(format!(
+                    "# Learned 'always allow' rules — written when you press [p] on an approval.\n{body}"
+                )),
+                (),
+            ))
+        })
+        .map_err(|error| match error {
+            vak_config::file_update::UpdateError::Io { source, .. } => {
+                CoreError::Session(vak_session::SessionError::Io(source))
+            }
+            vak_config::file_update::UpdateError::Edit(error) => error,
+        })
     }
 
     pub fn extra_allow_snapshot(&self) -> Vec<String> {
