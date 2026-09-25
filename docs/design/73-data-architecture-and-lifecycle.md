@@ -1,7 +1,8 @@
 # 73 — Data architecture: information model, lifecycle, tracing, index and cloud
 
-Status: **proposal, 2026-09-25; decisions locked (§13), plan in
-`docs/plans/data-architecture-plan.md`.** Nothing here is shipped. §2 is an audit of
+Status: **proposal, revision 2 (2026-09-25); decisions locked (§13); plan in
+`docs/plans/data-architecture-plan.md`; review fixes applied from
+`docs/plans/data-architecture-review.md`.** Nothing here is shipped. §2 is an audit of
 what the tree does today, taken from the source and from sizes (never
 contents) of a real development data home; each defect names the file that
 causes it and says whether it was reproduced or read from code.
@@ -97,7 +98,7 @@ site, not by any declared data class.
 
 The durable-state registry (`crates/vak-core/src/state.rs`) is the right idea,
 but it covers only four roots (no project `.vak/`, no temp) and has drifted
-(D6).
+(D10, D17, D24).
 
 ### 2.2 Defects
 
@@ -205,6 +206,49 @@ Measured earlier (`docs/architecture/write-paths-and-growth.html`, v3.5.1:
   - `store.db` re-reads the whole JSONL after every run.
   - The activity log has no compaction.
 
+Found in review (`docs/plans/data-architecture-review.md`), read from code:
+
+- **D15. Plaintext secrets in the project tree.** `PUT /config/bus` writes
+  the NATS JWT and NKey seed to `<project>/.vak/env`
+  (`crates/vak-server/src/lib.rs:13470-13540`). Nothing reads that file
+  back.
+- **D16. "Delete" only hides.** The session id goes into `deleted.json`
+  (`lib.rs:9140-9177`). Only the two session lists consult that map. The
+  model's `session_search`, admin search, `search_all` and the FTS store
+  still return the "deleted" conversation.
+- **D17. Purge leaves data behind.** `purge_state` skips the Logs root
+  (`crates/vak/src/install/mod.rs:1093`), and every undeclared file survives
+  by design. That covers commitments, feeds, the credential index, the
+  archive/deleted sidecars, delivery jobs and sandbox records, and project
+  `.vak/` runtime state is never purged.
+- **D18. A second path resolver.** The Python feeds pipeline resolves the
+  data home itself (`scripts/feeds/feed_utils.py:38`) and ignores
+  `VAK_HOME` and the `VAK_SESSIONS_HOME` it is passed.
+- **D19. Retention is scattered and rewrites ledgers.** There are four
+  hardcoded mechanisms: checkpoints (20 per session), cost-log (5 MB / 90 d
+  rewrite), alerts (1 MB / 2 000 rows rewrite), and memory write debris
+  (24 h). Two of them rewrite files the registry declares as ledgers.
+- **D20. Environments have no backend.** The `EnvironmentBackend` trait
+  (`crates/vak-sandbox/src/lib.rs:59`) has no implementation, so doc 54's
+  task environments cannot yet be used by anything.
+- **D21. Secret scopes are keyed by path.** `scope_key_for`
+  (`crates/vak-config/src/credentials.rs:51`) hashes the canonical path, so
+  moving a project, or keying spaces by id, orphans its stored secrets.
+- **D22. Content copies escape their conversation.** Checkpoint labels
+  embed the prompt text (`vak-core/src/lib.rs:6804`). Inbox bodies, delivery
+  text, outbox payloads and commitment statements hold conversation content
+  in shared ledgers. Memory, entities and skill proposals record no
+  provenance.
+- **D23. Some docs claim behaviour that isn't built:**
+  - doc 64 (layout tree)
+  - doc 65, marked implemented (`AgentSchedule`/`AgentRunRecord`)
+  - doc 72 (`AgentSchedule` automations)
+  - AGENTS.md invariant 38
+  - invariant 37's "revoked" Agents: `AgentLifecycle` has no such state
+- **D24. The registry test barely exercises anything.** The enforcement
+  test (`crates/vak-core/tests/state_registry.rs`) starts one session and
+  records one event, so most of D10 and D17 went unseen.
+
 ## 3. Information model
 
 One object graph, with identity separate from location.
@@ -235,10 +279,12 @@ Tenant ─┬─ Space ─┬─ Agent ─┬─ Conversation ── Session ─
   "Current" is a ref.
 
 **Identifier rules.** Every id is `<prefix>_<full UUIDv7>` (`ten_ spc_ agt_
-cnv_ ses_ trn_ run_ exe_ art_ ver_ sch_ dlv_`), or `sha256:<hex>` for
-objects. Ids are never truncated, never clock-only, and never derived from a
-path or a display name. A provider's tool-call id is data *inside* a Call,
-never a directory name.
+cnv_ ses_ trn_ run_ exe_ art_ ver_ sch_ dlv_`), or `obj_<hex>` for objects.
+An object id is HMAC-SHA256 of the plaintext under a tenant id key (§7.3),
+so dedupe works inside a tenant while a file's presence cannot be confirmed
+across tenants. Ids are never truncated, never clock-only, and never derived
+from a path or a display name. A provider's tool-call id is data *inside* a
+Call, never a directory name.
 
 ## 4. The trace key
 
@@ -279,8 +325,9 @@ locations*, not of file names.
 
 | Class | Examples | Authority | Mutability | Deleted by | Backup | Cloud |
 |---|---|---|---|---|---|---|
-| **Record** | session ledgers, runs, commitments, promotions, audit, cost, deliveries | source of truth | append-only, segmented | crypto-shred only (§7.3) | always | sealed segments |
-| **Object** | file contents, attachments, drafts, checkpoint contents, evidence bodies, stdout/stderr, exports | content-addressed | immutable | GC when unreferenced | always | by hash, deduped |
+| **Record** | session ledgers, runs, commitments, promotions, audit, cost, deliveries | source of truth | append-only, segmented | conversation content: crypto-shred per conversation (§7.3); non-content shared ledgers: expire by sealed segment | always | sealed segments |
+| **Object** | file contents, attachments, drafts, checkpoint contents, evidence bodies, stdout/stderr, exports | content-addressed (keyed id) | immutable | GC when no key grant or ref remains | always | by id, deduped |
+| **Document** | memory notes, entities, skills, skill proposals, prompt layers, presentation packs | named; a person or the runtime edits it | every save is an immutable version; "current" is a ref | forget = tombstone; history by retention; erased with its `derived_from` source | always | versions as objects |
 | **Ref** | artifact current version, session head, schedule cursor, bindings | pointer | CAS-updated | with its owner | always | CAS sync |
 | **Desired** | config layers, Agents, schedules, endpoints, bots, allowlist, prompt layers | operator intent | atomic replace, additive schema | explicit | always | sync (no secrets) |
 | **Secret** | provider keys, bot tokens | credential store | operator only | explicit | opt-in | never plaintext; references only |
@@ -289,8 +336,16 @@ locations*, not of file names.
 | **Ephemeral** | scratch tmp, caches, locks, sockets, gates, browser profiles | none | anything | end of Execution/process, boot sweep | never | never |
 | **Telemetry** | logs, spans, metrics | none (records win) | rotated | size/age | never | optional OTLP export |
 
-Two rules follow:
+Four rules follow:
 
+- **Content is keyed to its conversation wherever it is written.** A content
+  field in a shared ledger (inbox body, delivery text, outbox payload,
+  commitment statement) is encrypted under its conversation's key. Ids,
+  timestamps and states stay readable for audit and scheduling. This is
+  what lets an erasure reach every copy (review R2).
+- **Derived writes record `derived_from`.** Memory, entities, skill
+  proposals, catalog text rows and embeddings name their source
+  conversation and turn.
 - **Ledgers never hold what an object should.** Big tool results, file
   contents and stdout go to the object store, and the ledger holds the hash.
   `EvidenceBodyRecord` already points this way. This is what keeps session
@@ -306,13 +361,17 @@ Two rules follow:
 ```
 <data>/tenants/<ten>/
   catalog.db                          Derived   (§9) — rebuildable
-  objects/sha256/ab/cdef…             Object    zstd, encrypted per tenant
+  objects/ab/cdef…                    Object    keyed-hash id, zstd, per-object key
+  keys/                               key grants (wrapped); conversation/space/artifact keys
   records/
-    spaces/<spc>/agents/<agt>/sessions/<ses>/{HEAD, 000001.jsonl.zst, 000002.jsonl}
-    runs/<yyyy-mm>/<dd>.jsonl         Record    every Run, including skips
-    commitments/…  deliveries/…  promotions/…  finops/…  audit/{security,operations}/…
-  refs/                               Ref       small files or one KV table
-  desired/{agents,schedules,endpoints,bots}.toml, allowlist.json
+    spaces/<spc>/agents/<agt>/sessions/<ses>/{HEAD, 000001.seg, 000002.open}
+    runs/…                            Record    every Run, including skips
+    commitments/…  deliveries/…  promotions/…  finops/…  inbox/…
+    audit/{security,operations,lifecycle,erasure,grants}/…   no content, ever
+  documents/<kind>/<id>               Document  current ref + versions as objects
+  refs/                               Ref       one KV table (CAS)
+  desired/{agents,schedules,endpoints,bots,labels,holds}, allowlist
+  lifecycle/quarantine/…              staged destructive actions (doc 74 §5)
   executions/<exe>/{tmp,…}            Ephemeral; removed when the Execution settles
   environments/<run>/                 Workspace; worktrees & task envs by run id
 <cache>/<ten>/                        Derived   caches (pip/npm per agent), fts, embeddings
@@ -322,11 +381,17 @@ Two rules follow:
 <space root>/.vak/                    project intent only
 ```
 
-- **Segmented ledgers.** A session ledger is a directory of segments. The
-  open segment is plain JSONL; a sealed segment is compressed, hashed, and
-  chained to the previous one's hash in its header. Append-only still holds
-  (invariant 2): sealing only rewrites *encoding*, never an entry, and the
-  seal is a record entry. `derive_messages()` reads through the segments.
+- **Segmented ledgers.**
+  - A session ledger is a directory of segments. Each entry is a frame,
+    encrypted under the conversation key when tenant policy is on.
+  - The open segment only ever grows. A sealed segment is compressed,
+    hashed, and chained to the previous one; the per-entry `prev_hash` chain
+    that ledgers already carry (`vak-session/src/log.rs:225`) continues
+    across segments.
+  - Sealing is copy, verify (count, hashes, chain), atomic swap, then a seal
+    entry. Entries are never rewritten; only their encoding changes, by a
+    verified seal (the invariant 2 amendment).
+  - `derive_messages()` reads through the segments.
 - **One object store for everything.** Checkpoints, attachments, drafts,
   candidates and evidence bodies share it, so the same file captured by a
   checkpoint, saved as an attachment and promoted as a candidate is stored
@@ -346,6 +411,14 @@ Every object in the catalog has a lifecycle state, the policy that governs
 it, and `expires_at`. Transitions are records, so "why is this gone?" always
 has an answer.
 
+**Records expire per conversation, never per entry.** Dropping entries from
+a hash-chained ledger would break `derive_messages()`. A conversation expires
+as a whole (`last_activity + delete_after`) by crypto-shred. Shared ledgers
+without content (cost, routing, activity) expire by whole sealed segment.
+The per-entity state machines (tenant, space, Agent, conversation, run,
+execution, environment, artifact, Document, checkpoint, delivery, endpoint,
+object, key) are in doc 74 §2.
+
 ### 7.2 One reconciler
 
 A single level-triggered `LifecycleReconciler` (invariant 31's pattern),
@@ -362,40 +435,70 @@ per tenant:
 - deletes debris that no class claims, after quarantining it for one cycle
 
 Events (turn closed, run settled, candidate promoted) are hints. The periodic
-tick is the truth. It runs in the server and the desktop shell. A CLI surface
-exposes it:
-`vak data status | gc --dry-run | verify | export | hold`. `doctor --repair`
-calls only its mechanical actions (invariant 19).
+tick is the truth. It runs in the server and the desktop shell. It ships
+observe-only first (it plans and shows, and commits nothing), then commits one
+action class at a time, and every destructive action is staged in quarantine
+before commit. The loop, guards and pacing are in doc 74 §5. A CLI surface
+exposes it: `vak data status | gc --dry-run | verify | export | hold`.
+`doctor --repair` calls only its mechanical actions (invariant 19).
 
-### 7.3 Deletion without rewriting ledgers
+### 7.3 Keys, crypto-shredding and erasure
 
-Append-only and "the customer asked us to delete this" are reconciled by
-**crypto-shredding**:
+Append-only and "delete this" are reconciled by **crypto-shredding**. The
+first draft keyed "exclusively owned objects" per conversation, which cannot
+work: exclusivity is unknown at write time, and per-conversation keys defeat
+dedupe (review R1). The design is:
 
-- Each conversation's records and exclusively-owned objects are encrypted
-  under a per-conversation data key, wrapped by the tenant key.
-- Erasure destroys the data key and appends a tombstone to the audit record.
-- The bytes remain append-only and unreadable. Objects shared with a
-  surviving conversation stay readable through that conversation's key.
-- This is the only deletion path for Record-class data.
+- **Key hierarchy.**
+  - The tenant KEK lives in the credential store
+    (`vak_config::credentials`: OS keychain, or the encrypted-file fallback).
+  - The KEK wraps **scope keys**: one per conversation (spanning its session
+    rotations), one per space (checkpoints, promoted files), and one per
+    artifact (shared versions).
+  - AEAD comes from `ring`, already a workspace dependency.
+- **Records are encrypted per entry** under their conversation key, so
+  appends never rewrite anything.
+- **Content fields in shared ledgers** (inbox body, delivery text, outbox
+  payload, commitment statement) are field-encrypted under the
+  conversation key they came from (§5).
+- **Objects have their own random key.** Each scope that references an
+  object stores that key wrapped under the scope key (a *key grant*). An
+  object stays readable while any grant survives, so the same file in two
+  conversations is stored once and outlives the erasure of either.
+- **Object ids are keyed hashes** (HMAC-SHA256 under a tenant id key):
+  dedupe within the tenant, no cross-tenant confirmation-of-file.
+- **Erasure destroys the scope key**, removes derived plaintext (catalog
+  rows, embeddings, Document versions derived only from the scope), GCs
+  objects left with no grant, and writes a content-free audit tombstone plus
+  a signed receipt. The steps, scopes, approvals and receipt contents are in
+  doc 74 §3.4 and §4.
+- **Derived plaintext is the limit.** The catalog's FTS and embedding
+  stores are plaintext derived copies. Erasure deletes their rows with
+  `secure_delete` and checkpoints the WAL. Locally, their at-rest
+  protection relies on OS disk encryption; the cloud uses managed
+  encryption.
+- **Backups** carry ciphertext and *wrapped* keys, never the KEK unless
+  escrow is requested. Restoring re-applies every erasure tombstone before
+  anything becomes readable.
+- **Transparency and honesty.**
+  - Encryption at rest is a per-tenant policy, on by default because
+    erasure depends on it.
+  - `vak data cat | grep | export --plain` gives people the plain view the
+    product promises.
+  - On a headless host, the encrypted-file store keeps its key beside its
+    data, so at-rest protection there is nominal. Crypto-shred still works,
+    because it destroys the scope key.
 
 ### 7.4 Default policies
 
-| What | Local dev default | Customer default |
-|---|---|---|
-| execution scratch | at Execution settle (+1 h grace) | same |
-| tool caches (pip/npm/pycache) | LRU, 2 GB per tenant | quota by plan |
-| environments / worktrees | 7 days after the run settles, or on promote/reject | 30 days |
-| checkpoints | baseline + last 20 per open session; after seal: baseline + final, 30 days | policy label |
-| candidates | until promoted/rejected + 30 days; receipts forever | policy label |
-| session records | forever | retention label per space/agent (e.g. 1 y, 7 y, legal hold) |
-| runs | forever (small) | same as sessions |
-| telemetry logs | 14 days / 200 MB | exported, 30 days local |
-| derived | rebuilt on demand | same |
-
-Retention labels attach to a Space or Agent and inherit downward, with an
-explicit break point, like SharePoint retention labels. A label may only
-lengthen retention below a hold. It may never make a hold shorter.
+Retention labels (`retain_for`, `delete_after`, `on_expiry` per class)
+attach to the tenant, a space, an Agent or a conversation. They inherit
+downward, with explicit break points, like SharePoint retention labels. The
+minimum keep is the longest `retain_for` in the chain. The maximum keep is
+the shortest `delete_after`, never below the minimum. Holds suspend expiry.
+The default label, holds, quotas and erasure scopes are in doc 74 §3.
+Execution scratch is removed when the Execution settles, and telemetry is
+capped at 14 days or 200 MB.
 
 ## 8. Runs and schedules
 
@@ -410,12 +513,19 @@ lengthen retention below a hold. It may never make a hold shorter.
   "No provider", "not a git repository", "previous run still going" and
   "lease held elsewhere" are all *records*, never `eprintln!` + `return None`
   (fixes D5).
-- **Exactly once per slot.** The idempotency key is `(schedule, slot)`.
-  Catch-up, restarts and a second server all consult the run records rather
-  than an in-memory marker, so a slot can be neither lost nor fired twice.
+- **At most one start per slot.** A run has side effects, so a crash
+  between start and record cannot be made exactly-once (review R4). Instead:
+  - Before any side effect, the slot `(schedule, slot)` is claimed with a
+    CAS on a ref. Catch-up, restarts and a second server all go through the
+    claim, so a slot is never started twice and never silently lost.
+  - A run whose lease expires is recorded `abandoned`.
+  - The schedule's `on_crash = skip | retry_once` decides whether that slot
+    is retried.
 - **Environments are named by the full run id.** A git worktree is used only
-  when the space *is* a git repository. Otherwise the run gets a task
-  environment (doc 54) and never a silent skip.
+  when the space *is* a git repository. Otherwise the run gets a
+  `CopyEnvironment`: the first real `EnvironmentBackend` (D20). It copies
+  the space with ignore rules and size caps, and its changes come back as a
+  candidate for Review. There is never a silent skip.
 - **The ledger names its cause.** `SessionHeader` gains `run: RunId` and
   `cause: Cause`, an additive field (invariant 29). The handle id is the
   ledger id, with no suffix (fixes D6).
@@ -425,9 +535,17 @@ lengthen retention below a hold. It may never make a hold shorter.
 
 ## 9. Catalog, index and search
 
-`catalog.db` is one Derived store per tenant. It replaces `store.db`,
-`workspaces.json`, `workspace-names.json`, `presentations.json` (as a
-projection) and every scanning lookup.
+`catalog.db` is one Derived store per tenant. It replaces `store.db`, the
+recall ledger cache, and every scanning lookup (`find_session_on_disk`,
+`read_historical_header`, `find_session_in_cwd`). `workspaces.json`,
+`workspace-names.json` and `trusted/` become the Spaces store (Desired).
+`presentations.json` is the presentation-pack library and becomes a
+Document store, not a projection (review R9).
+
+Several processes (desktop, server, CLI, gateway) may ingest. Ingest is an
+idempotent upsert keyed by `(chain, seq)`, using WAL with a busy timeout, so
+no single process has to own it. The text and vector stores are plaintext
+derived copies, and erasure removes their rows explicitly (§7.3).
 
 - **`nodes`**: one row per addressable thing (space, agent, conversation,
   session, turn, run, execution, artifact, version, candidate, delivery,
@@ -527,13 +645,36 @@ Resolved with the maintainer, with zero users and no backward compatibility:
   locally and Postgres in the cloud behind one trait; `tracing` with JSON
   logs and optional OTLP; one schedule model (`TaskDef`, with
   `AgentSchedule` deleted).
+- **Added by the review (revision 2):**
+  - The key hierarchy and key grants of §7.3.
+  - Content keyed to its conversation, and `derived_from` on derived
+    writes.
+  - Two-step deletion: trash, then erase.
+  - Data roles (Owner, Steward, Operator, Member, Auditor).
+  - Telemetry that carries no content.
+  - The Document class.
+  - Per-conversation expiry.
 
 ## 14. Phasing
 
-The milestone plan, exit tests, budgets and AGENTS.md changes are in
-`docs/plans/data-architecture-plan.md` (M0–M9). Each milestone ships whole
-(invariant 30), and an early fix is made only when it is the target
-behaviour, never an interim patch.
+The milestone plan (revision 2), exit tests, budgets and AGENTS.md changes
+are in `docs/plans/data-architecture-plan.md`. The order is:
+
+- **M0** fixes on 4.x, then **M1** trace key, then **M2** storage
+  substrate.
+- **M3a** is the Scope refactor with no behaviour change; **M3b** is the
+  5.0.0 layout switch.
+- **M4** runs, then **M6** catalog, then **M7** lifecycle and erasure, then
+  **M8** artifacts and sharing, then **M9** remote.
+- **M5** telemetry runs in parallel from M1.
+
+The catalog comes before lifecycle because erasure needs lineage. Each
+milestone ships whole (invariant 30).
+
+Also in revision 2:
+- The review and its fixes: `docs/plans/data-architecture-review.md`.
+- What each milestone touches: `docs/plans/data-architecture-blast-radius.md`.
+- Lifecycles, policies, screens and API: doc 74.
 
 ## Appendix A — every writer today and its target class
 
@@ -541,9 +682,9 @@ behaviour, never an interim patch.
 |---|---|---|
 | data `agents/<id>/sessions/<cwd-hash>/<ses>.jsonl` | vak-session | Record (segmented, by space id) |
 | data `agents/<id>/checkpoints/<ses>/NNNN.json`, `checkpoints/blobs/` | vak-core | Record manifest + Object |
-| data `agents/<id>/memory/`, `skill-proposals/`, `entities/<cwd-hash>/` | vak-core | Record (+ Derived index) |
+| data `agents/<id>/memory/`, `skill-proposals/`, `entities/<cwd-hash>/` | vak-core | **Document** (rewritten by amend/forget; versions + `derived_from`) (review R9) |
 | data `agents/<id>/sandbox/{records.jsonl,candidates,staging,revisions,previews,executions}` | vak-server / vak-sandbox | Record + Object + Workspace |
-| data `agents/<id>/presentations.json` | vak-server | Derived (catalog) |
+| data `agents/<id>/presentations.json` | vak-store | **Document** (presentation-pack library: definitions + activations) (review R9) |
 | data `agents/<id>/flow-runs/` | vak-flow | Record (runs) |
 | data `agents/<id>/{routing-evidence,intent-evidence,security-events,activity-log}.jsonl` | vak-core | Record (with TraceKey) |
 | data `agents/<id>/coworking/grants.jsonl` | vak-server | Record (grants) |
@@ -553,13 +694,17 @@ behaviour, never an interim patch.
 | data `gateway/deliveries.jsonl`, `delivery/jobs/` | vak-server / vak-delivery | Record |
 | data `operations/{incidents,actions}.jsonl` | vak-server | Record (audit) |
 | data `tasks.json` | vak-core | Desired (schedules) + Run records |
-| data `cost-log.jsonl`, `budget-alerts.jsonl` | vak-core | Record (finops) |
-| data `commitments.jsonl` | vak-commit | Record |
-| data `inbox.jsonl`, `inbox.dedupe.lock` | vak-core | Record + Ephemeral |
+| data `cost-log.jsonl`, `budget-alerts.jsonl` | vak-core | Record (finops) as segment chains; retention drops sealed segments, no compaction rewrite (D19) |
+| data `commitments.jsonl` | vak-commit | Record; statement field keyed to its conversation |
+| data `inbox.jsonl`, `inbox.dedupe.lock` | vak-core | Record (body keyed to its conversation) + Ephemeral |
 | data `trusted/`, `workspaces.json`, `workspace-names.json` | vak-core / vak-server | Desired (space bindings) |
-| data `feeds/feeds.duckdb`, `feeds.toml`, `output.toml`, `flows/`, `skills/` | various | Derived / Desired |
+| data `feeds/feeds.duckdb` (written by Python, D18) | scripts/feeds | Record (external content, retention-bounded; path passed by Rust) |
+| data `feeds.toml`, `output.toml`, `flows/` | various | Desired |
+| data `skills/` | vak-core | Document |
 | data `locks/`, `release/`, `update-check.json`, `install.json`, `desktop.json`, `tray.json` | various | Ephemeral / Desired |
 | data `credential_index.json` | vak-config | Secret (index) |
+| data `archive.json`, `deleted.json` (session archive/"delete" sidecars, D16) | vak-server | Ref (lifecycle state) + erasure requests (doc 74 §2.4) |
+| data `agents/vak/agents/<id>/…` (nested homes, D2) | vak-server | none; the nesting is a defect removed in M0 |
 | cache `store.db*` | vak-store | Derived (catalog) |
 | logs `*.log` | vak-ops / vak-desktop | Telemetry (JSON, rotated) |
 | `~/vak-home/.vak/{config.toml,skills,plugins,.seed-manifest.json}` | vak-config / vak-core / vak-plugin | Desired (Shared layer) |
@@ -568,6 +713,8 @@ behaviour, never an interim patch.
 | project `.vak/worktrees/<run>` | vak-core | Workspace (environment) |
 | project `.vak/agents/<id>/workspace/` | vak-config | Workspace |
 | project `.vak/{agents.json,agents_runs.jsonl}` | vak-server | Desired / Record |
-| project `.vak/{prompts,flows,commands,launch.toml,permissions.local.toml,env}` | various | Desired (project intent) |
+| project `.vak/{flows,commands,launch.toml,permissions.local.toml}` | various | Desired (project intent) |
+| project `.vak/prompts/` | vak-core | Document (prompt layers; project intent) |
+| project `.vak/env` (NATS secrets in plaintext, D15) | vak-server | **removed**; values move to the Secret class |
 | project `inbox/` | vak-server | Object + Artifact |
 | temp `vak-provider-gates/`, browser profiles, `vak-prompt-*.md` | vak-llm / vak-tools / vak | Ephemeral (runtime) |
