@@ -146,13 +146,13 @@ pub async fn spawn_persistent_worker(
                 .map(shell_quote)
                 .collect::<Vec<_>>()
                 .join(" ");
-            request.command = "sh".into();
+            request.command = crate::bash::POSIX_SHELL.into();
             request.args = vec!["-c".into(), value.wrap(&invocation)];
             worker_command
         }
         None => worker_command,
     };
-    let mut process = tokio::process::Command::new("sh");
+    let mut process = tokio::process::Command::new(crate::bash::POSIX_SHELL);
     process
         .arg("-c")
         .arg(effective)
@@ -295,7 +295,7 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
         &mut request_args,
         &worker_command,
     );
-    let mut cmd = tokio::process::Command::new("sh");
+    let mut cmd = tokio::process::Command::new(crate::bash::POSIX_SHELL);
     cmd.arg("-c")
         .arg(effective)
         .current_dir(&ctx.cwd)
@@ -983,7 +983,7 @@ async fn run_task(
         Some(sandbox) => sandbox.wrap(&worker_command),
         None => worker_command,
     };
-    let mut command = tokio::process::Command::new("sh");
+    let mut command = tokio::process::Command::new(crate::bash::POSIX_SHELL);
     command
         .arg("-c")
         .arg(effective)

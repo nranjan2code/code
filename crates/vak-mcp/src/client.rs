@@ -123,7 +123,7 @@ impl McpClient {
                 .map(|part| shell_quote(&part))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let mut cmd = Command::new("sh");
+            let mut cmd = Command::new(vak_tools::bash::POSIX_SHELL);
             cmd.arg("-c").arg(sandbox.wrap(&command));
             cmd
         } else {

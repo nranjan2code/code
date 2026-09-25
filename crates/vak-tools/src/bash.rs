@@ -415,21 +415,26 @@ pub fn scrub_environment(cmd: &mut tokio::process::Command) {
     }
 }
 
+/// The shell a scrubbed command runs through, named by path. After
+/// `scrub_environment` a bare `sh` has to be looked up on the child's PATH,
+/// which std does only by fork+exec; with a path it can posix_spawn.
+#[cfg(unix)]
+pub const POSIX_SHELL: &str = "/bin/sh";
+#[cfg(not(unix))]
+pub const POSIX_SHELL: &str = "sh";
+
+/// Gives the command a process group of its own, which
+/// [`kill_process_group`] signals as a whole. Not a `pre_exec` closure:
+/// that takes `unsafe` and makes std fork+exec instead of posix_spawn.
 pub fn isolate_process_group(cmd: &mut tokio::process::Command) {
     #[cfg(unix)]
-    #[allow(unsafe_code)]
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setpgid(0, 0);
-            Ok(())
-        });
-    }
+    cmd.process_group(0);
 }
 
 fn shell_command(command: &str) -> tokio::process::Command {
     #[cfg(unix)]
     {
-        let mut c = tokio::process::Command::new("sh");
+        let mut c = tokio::process::Command::new(POSIX_SHELL);
         c.arg("-c").arg(command);
         c
     }
@@ -721,7 +726,7 @@ fn detect_installed_packages(cmd: &str) -> Option<Vec<String>> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{executable_available, is_allowed_env_var, scrub_environment};
     use std::sync::Mutex;
@@ -959,6 +964,34 @@ mod tests {
             guess_mime_type(Path::new("unknown.xyz")),
             "application/octet-stream"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn killing_the_group_reaches_a_background_grandchild() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+        let mut cmd = super::shell_command("sleep 30 & echo started; wait");
+        cmd.stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped());
+        super::isolate_process_group(&mut cmd);
+        let mut child = cmd.spawn().unwrap();
+        let mut stdout = BufReader::new(child.stdout.take().unwrap());
+        let mut line = String::new();
+        stdout.read_line(&mut line).await.unwrap();
+        assert_eq!(line, "started\n");
+
+        super::kill_process_group(&child.id());
+        // The background sleep holds stdout open: the pipe closes before
+        // the sleep would end only if the signal reached the whole group.
+        let mut rest = Vec::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            stdout.read_to_end(&mut rest),
+        )
+        .await
+        .expect("the group kill missed the background sleep")
+        .unwrap();
+        child.wait().await.unwrap();
     }
 
     #[test]

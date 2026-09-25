@@ -29,6 +29,10 @@
 - **The digest counts spend again.** The digest read the cost ledger from
   the Agent's folder instead of the shared one it is written to, so it could
   report no spend at all.
+- **A conversation is no longer reported busy when it is not.** Continuing a
+  conversation could fail with "This conversation is currently active in
+  Vakyartha Desktop", or open it read-only, while nothing else had it open,
+  if a tool happened to be starting at that moment.
 - **Docs describe the real layout.** Doc 64 and AGENTS.md now draw where an
   Agent's sessions, memory and workspace actually live in 4.x. This finishes
   M0 of the data architecture plan.

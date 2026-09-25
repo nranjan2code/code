@@ -19695,9 +19695,6 @@ mod sandbox_promotion_tests {
         }
     }
 
-    /// Returns the still-locked ledger so a caller that appends more keeps
-    /// the one handle: releasing the lock and taking it again races any
-    /// fork a parallel test makes, whose child holds the lock until exec.
     fn seed_bound_result(
         core: &Core,
         session_id: &str,

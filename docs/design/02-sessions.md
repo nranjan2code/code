@@ -120,3 +120,13 @@ the handle's lifetime (second process gets `SessionError::Locked`);
 damaged line no longer makes a session unresumable: it is skipped and
 surfaced via `warnings()`. `total_usage` sums the active chain only, so
 abandoned branches stop inflating counts.
+
+## Diff note — the lock ends with the handle
+
+A dropped writable handle releases its lock with an explicit unlock, not
+by closing the descriptor. A lock left to the close lasted as long as any
+duplicate of the descriptor, and a child being spawned holds a duplicate of
+every open descriptor until it execs: reopening a ledger while another
+thread started a tool worker failed with `SessionError::Locked` although
+nothing held it. Spawning with `posix_spawn` shortens that window on macOS
+and Linux but does not close it; the unlock does.

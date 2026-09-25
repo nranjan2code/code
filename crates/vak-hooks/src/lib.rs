@@ -169,15 +169,7 @@ async fn run_one(
         .stderr(Stdio::piped());
 
     #[cfg(unix)]
-    #[allow(unsafe_code)]
-    {
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setpgid(0, 0);
-                Ok(())
-            });
-        }
-    }
+    cmd.process_group(0);
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
