@@ -668,7 +668,7 @@ export default function Composer(props: { cwd: string }) {
             <details class="composer-more" data-menu>
               <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
               <div class="composer-more-menu">
-                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Target: ${props.cwd.split("/").pop() || "root"}`}</span></button>
+                <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Folder: ${props.cwd.split("/").pop() || "root"}`}</span></button>
                 <button type="button" onClick={beginMention}><span class="composer-at">@</span><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><span class="composer-at">/</span><span>Use a skill or command</span></button>
                 <select
@@ -684,9 +684,9 @@ export default function Composer(props: { cwd: string }) {
                   </For>
                 </select>
                 <select class="composer-mode" aria-label="Permission mode" value={health()?.permission_mode ?? ""} onChange={(e) => void changeMode(e.currentTarget.value)}>
-                  <option value="ReadOnly">Read only</option>
-                  <option value="WorkspaceWrite">Workspace write</option>
-                  <option value="FullAccess">Full access</option>
+                  <option value="ReadOnly">Look only</option>
+                  <option value="WorkspaceWrite">Edit files in this folder</option>
+                  <option value="FullAccess">Full access to this computer</option>
                 </select>
               </div>
             </details>

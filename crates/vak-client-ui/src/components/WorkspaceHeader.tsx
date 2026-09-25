@@ -147,7 +147,7 @@ export default function WorkspaceHeader() {
                 setAgentPickerTab("fleet");
                 setAgentPickerOpen(true);
               }}
-              title="Switch Agent Specialist"
+              title="Switch agent"
             >
               <h1 style="margin: 0; font-size: 16px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
                 <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={20} state={characterState()} interactive />
@@ -164,8 +164,8 @@ export default function WorkspaceHeader() {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);
               }}
-              title={`Project Working Directory: ${workspaceCwd() || "default"}`}
-              aria-label={`Project Working Directory: ${workspaceCwd() || "default"}`}
+              title={`Folder: ${workspaceCwd() || "default"}`}
+              aria-label={`Folder: ${workspaceCwd() || "default"}`}
             >
               <Icon name="folder" size={12} />
               <span>{workspaceCwd() ? (workspaceCwd() as string).split("/").pop() || "root" : "workspace"}</span>
@@ -221,7 +221,7 @@ export default function WorkspaceHeader() {
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setBestOfOpen(true); }}><Icon name="layers" />Compare approaches</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity receipts</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity log</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><Icon name="sync" />Background tasks</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>

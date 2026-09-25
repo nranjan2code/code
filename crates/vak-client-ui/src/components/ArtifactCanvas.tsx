@@ -660,7 +660,7 @@ export default function ArtifactCanvas() {
                   title="Desktop (100%)"
                   aria-label="Desktop viewport"
                 >
-                  100%
+                  Desktop
                 </button>
                 <button
                   type="button"
@@ -670,7 +670,7 @@ export default function ArtifactCanvas() {
                   title="Tablet (768px)"
                   aria-label="Tablet viewport"
                 >
-                  768px
+                  Tablet
                 </button>
                 <button
                   type="button"
@@ -680,7 +680,7 @@ export default function ArtifactCanvas() {
                   title="Mobile (375px)"
                   aria-label="Mobile viewport"
                 >
-                  375px
+                  Phone
                 </button>
               </div>
             </Show>
@@ -715,8 +715,8 @@ export default function ArtifactCanvas() {
               <Icon name="preview" size={14} />
             </button>
             <Show when={canvasArtifact()?.candidateId && canvasArtifact()?.executionId}>
-              <button type="button" class="artifact-canvas-btn" onClick={returnToReview} title="Return to candidate review">
-                <Icon name="diff" size={14} /> Review draft
+              <button type="button" class="artifact-canvas-btn" onClick={returnToReview} title="Back to review">
+                <Icon name="diff" size={14} /> Review changes
               </button>
             </Show>
             <button
@@ -917,7 +917,7 @@ export default function ArtifactCanvas() {
               when={activeServerPort() || canvasArtifact()?.serverUrl}
               fallback={
                 <>
-                  Sandboxed · net: {canvasArtifact()?.connectSrc ?? "blocked"}
+                  Safe preview · {canvasArtifact()?.connectSrc ? "network allowed" : "offline"}
                 </>
               }
             >

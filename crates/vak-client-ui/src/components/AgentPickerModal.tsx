@@ -205,10 +205,10 @@ export default function AgentPickerModal() {
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px;">
             <div>
               <h3 id="agent-picker-title" style="margin: 0; font-size: 16px; font-weight: 600;">
-                Agent Fleet & Working Target
+                Your agents
               </h3>
               <span style="color: var(--muted); font-size: 13px;">
-                Select an autonomous persona or point to an execution directory.
+                Choose who to work with, or which folder they use.
               </span>
             </div>
             <button
@@ -231,7 +231,7 @@ export default function AgentPickerModal() {
               onClick={() => setAgentPickerTab("fleet")}
             >
               <Icon name="spark" size={14} />
-              <span>Fleet Roster ({allAgents().length})</span>
+              <span>Agents ({allAgents().length})</span>
             </button>
             <button
               type="button"
@@ -241,7 +241,7 @@ export default function AgentPickerModal() {
               onClick={() => setAgentPickerTab("target")}
             >
               <Icon name="folder" size={14} />
-              <span>Target Directory</span>
+              <span>Folder</span>
             </button>
           </div>
 
@@ -256,7 +256,7 @@ export default function AgentPickerModal() {
             <div style="display: flex; gap: 8px; margin-bottom: 8px;">
               <input
                 type="search"
-                placeholder="Find agent by name, id, or specialty…"
+                placeholder="Find an agent…"
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
                 style="flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px;"
@@ -406,7 +406,7 @@ export default function AgentPickerModal() {
             <div>
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px;">
                 <span style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block;">
-                  {activeAgentId() === "vak" ? "Current Working Directory" : "Isolated Working Directory"}
+                  {activeAgentId() === "vak" ? "Folder" : "This agent's own folder"}
                 </span>
                 <strong style="font-family: var(--mono); font-size: 14px; color: var(--text); word-break: break-all;">
                   {activeWorkspace() || "Default workspace"}

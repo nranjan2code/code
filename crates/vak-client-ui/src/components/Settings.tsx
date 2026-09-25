@@ -66,10 +66,10 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: str
 const pageSection = (id: Page): SettingsSection => pages.find((p) => p.id === id)?.section ?? "app";
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
-  { id: "identity", label: "Identity", help: "Who the agent is. The narrowest layer that sets this wins." },
-  { id: "operating-rules", label: "Operating rules", help: "How it works. The narrowest layer that sets this wins." },
-  { id: "guardrails", label: "Guardrails", help: "Every layer's guardrails apply together. Nothing narrower can remove one." },
-  { id: "surface-note", label: "Surface note", help: "Appended after the generated Surface line — what this deployment knows about where the reply lands. Accumulates across layers." },
+  { id: "identity", label: "Identity", help: "Who the agent is. This agent's version replaces the shared one." },
+  { id: "operating-rules", label: "Operating rules", help: "How it works. This agent's version replaces the shared one." },
+  { id: "guardrails", label: "Guardrails", help: "Shared and agent guardrails all apply; none can be removed here." },
+  { id: "surface-note", label: "Surface note", help: "What Vakyartha should know about where its replies appear. Notes from every level add up." },
 ];
 
 const PROMPT_LAYER_LABELS: Record<api.PromptLayerDescriptor["layer"], string> = {
@@ -577,7 +577,7 @@ export default function Settings() {
       }
       setMcpDirty(false);
     } catch (e) {
-      setNotice({ kind: "error", text: `Could not load MCP servers: ${e instanceof Error ? e.message : String(e)}` });
+      setNotice({ kind: "error", text: `Could not load connections: ${e instanceof Error ? e.message : String(e)}` });
     }
   }
 
@@ -659,7 +659,7 @@ export default function Settings() {
     // egress from the toggle, because the config tier re-evaluates the deny
     // list on every admission.
     if (on && plugin?.network_denied) {
-      setNotice({ kind: "error", text: `${name} is blocked by plugins.network_deny; remove the deny entry to grant sandbox egress.` });
+      setNotice({ kind: "error", text: `${name} is blocked by plugins.network_deny; remove that entry to let it use the network.` });
       return;
     }
     setPluginBusy(true);
@@ -944,7 +944,7 @@ export default function Settings() {
     const task = archivedSessions().find((session) => session.session_id === id);
     setConfirmConfig({
       title: `Permanently delete “${task?.title || "Untitled task"}”?`,
-      description: "This task and its conversation events will be deleted from Vakyartha's ledger. This action cannot be undone.",
+      description: "This task and its conversation events will be deleted. This cannot be undone.",
       confirmLabel: "Delete Task",
       cancelLabel: "Cancel",
       isDanger: true,
@@ -964,7 +964,7 @@ export default function Settings() {
     if (!archivedSessions().length) return;
     setConfirmConfig({
       title: `Delete all ${archivedSessions().length} archived tasks?`,
-      description: "All archived tasks and their events will be permanently removed from Vakyartha's ledger. This action cannot be undone.",
+      description: "All archived tasks and their events will be permanently deleted. This cannot be undone.",
       confirmLabel: "Delete All Archived",
       cancelLabel: "Cancel",
       isDanger: true,
@@ -1297,7 +1297,7 @@ export default function Settings() {
 
             <Show when={page() === "archived"}>
               <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void deleteAllArchived()}><Icon name="trash" size={14} /> Delete all</button></header>
-              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from Vakyartha’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
+              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from Vakyartha’s task history; the saved conversation record is kept.</span></div></div>
               <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
                 <section class="archived-list" aria-label="Archived tasks">
                   <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={() => void deleteTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
@@ -1315,8 +1315,8 @@ export default function Settings() {
                 <Row title="Code size" description="Code blocks, diffs, editor, and terminal labels."><div class="range-control"><input type="range" min="90" max="125" step="5" value={uiPreferences.codeScale} onInput={(event) => updateUiPreference("codeScale", Number(event.currentTarget.value))} /><span>{uiPreferences.codeScale}%</span></div></Row>
                 <Row title="Compact task list" description="Fit more tasks in the sidebar with tighter rows."><Switch label="Compact task list" checked={uiPreferences.compactSidebar} onChange={(value) => updateUiPreference("compactSidebar", value)} /></Row>
                 <Row title="Reduce motion" description="Disable pulsing, smooth scrolling, and animated transitions."><Switch label="Reduce motion" checked={uiPreferences.reduceMotion} onChange={(value) => updateUiPreference("reduceMotion", value)} /></Row>
-                <Row title="Rich output" description="Render link previews, metrics, media, and other typed presentation items."><Switch label="Rich output" checked={uiPreferences.richPreviews} onChange={(value) => updateUiPreference("richPreviews", value)} /></Row>
-                <Row title="External media" description="Allow safe images and media from approved HTTP(S) sources."><Switch label="External media" checked={uiPreferences.externalMedia} onChange={(value) => updateUiPreference("externalMedia", value)} /></Row>
+                <Row title="Cards and previews" description="Show results as cards, charts and link previews."><Switch label="Cards and previews" checked={uiPreferences.richPreviews} onChange={(value) => updateUiPreference("richPreviews", value)} /></Row>
+                <Row title="Images from the web" description="Show images and media from safe web addresses."><Switch label="Images from the web" checked={uiPreferences.externalMedia} onChange={(value) => updateUiPreference("externalMedia", value)} /></Row>
                 <Row title="Autoplay media" description="Never enabled by default; turn on only for trusted media sources."><Switch label="Autoplay media" checked={uiPreferences.autoplayMedia} onChange={(value) => updateUiPreference("autoplayMedia", value)} /></Row>
                 <Row title="Experimental skills" description="Allow sandboxed, not-yet-promoted presentation skills to render with fallback diagnostics."><Switch label="Experimental skills" checked={uiPreferences.experimentalSkills} onChange={(value) => updateUiPreference("experimentalSkills", value)} /></Row>
               </Group>
@@ -1324,8 +1324,8 @@ export default function Settings() {
 
             <Show when={page() === "agent"}>
               <header><h1>Model & Provider</h1><p>Configure the model used when starting new tasks.</p></header>
-              <div class="settings-callout scope-callout"><Icon name="spark" /><div><strong>Editing: {activeAgent()?.name ?? "Vakyartha"}</strong><span>Every page under "This agent" applies to whichever agent is currently active. To manage agents themselves — create, rename, or switch — use Fleet Roster.</span></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Open Fleet Roster</button></div>
-              <div class="settings-callout"><Icon name="spark" /><div><strong>Saved to this agent</strong><span>Applied changes take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
+              <div class="settings-callout scope-callout"><Icon name="spark" /><div><strong>Editing: {activeAgent()?.name ?? "Vakyartha"}</strong><span>These pages change the agent you are working with. To add, rename or switch agents, open your agents.</span></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Open your agents</button></div>
+              <div class="settings-callout"><Icon name="spark" /><div><strong>Saved to this agent</strong><span>Changes apply to new conversations. Conversations already started keep the model they began with.</span></div></div>
               <Group title="Model">
                 <Row title="Provider" description={`${currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."} · saved source: ${config()?.provider_source ?? "unknown"}`}>
                   <select
@@ -1381,8 +1381,8 @@ export default function Settings() {
                   </Show>
                 </Row>
                 <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
-                <Row title="Evidence freshness" description="How long a successful tool receipt remains fresh for outcome verification."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
-                <Row title="Workers" description="Allow the agent to delegate bounded parallel work."><span class="settings-status good">{config()?.workers ? "Enabled" : "Disabled in config"}</span></Row>
+                <Row title="Check freshness" description="How long a successful check still counts as current."><input class="settings-number" type="number" min="0" max="8760" value={evidenceAgeHours()} onInput={(event) => setEvidenceAgeHours(Number(event.currentTarget.value) || 0)} /><span class="settings-status">hours</span></Row>
+                <Row title="Helpers" description="Vakyartha can split big jobs across helpers that work in parallel."><span class="settings-status good">{config()?.workers ? "On" : "Off in configuration"}</span></Row>
               </Group>
               <Group title="Credentials">
                 <Row
@@ -1441,16 +1441,16 @@ export default function Settings() {
 
             <Show when={page() === "permissions"}>
               <header><h1>Permissions</h1><p>Choose what Vakyartha can do and when it should ask first.</p></header>
-              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Look only", text: "Read and search this folder. Makes no changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Edit files in this folder", text: "Asks before anything sensitive.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access to this computer", text: "Runs any command and opens files outside this folder.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               <Group title="Approvals">
                 <p class="settings-group-copy">Choose how often Vakyartha pauses for your approval.</p>
                 <div class="permission-options">
                   <For
                     each={
                       [
-                        { id: "ask", title: "Ask me every time", text: "Pause and wait for you before anything that needs approval.", icon: "shield" as IconName },
-                        { id: "approve-safe", title: "Approve workspace actions", text: "Reading and editing here can continue. Web and outside access still ask.", icon: "check" as IconName },
-                        { id: "auto-approve", title: "Approve automatically", text: "Continue without pausing unless a rule requires approval.", icon: "warning" as IconName },
+                        { id: "ask", title: "Every time", text: "Pause for anything that needs approval.", icon: "shield" as IconName },
+                        { id: "approve-safe", title: "Only outside this folder", text: "Reading and editing here continue. Web and outside access still ask.", icon: "check" as IconName },
+                        { id: "auto-approve", title: "Don't ask", text: "Vakyartha keeps going unless a rule requires your approval.", icon: "warning" as IconName },
                       ] as const
                     }
                   >
@@ -1469,7 +1469,7 @@ export default function Settings() {
                   </For>
                 </div>
               </Group>
-              <Group title="Sandbox">
+              <Group title="Isolation">
                 <Row title="Workspace files" description="Keep file access inside this workspace."><span class="settings-status good">Protected</span></Row>
                 <Row title="Command isolation" description="Keep commands separated from the rest of this device."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
               </Group>
@@ -1847,7 +1847,7 @@ export default function Settings() {
                           {/* Prevents the dangerous belief that adding text here
                               sandboxes anything, which would invite relaxing a
                               real permission rule. */}
-                          <div class="settings-callout"><Icon name="shield" /><div><strong>Guardrails instruct the model; they do not enforce anything.</strong><span>A model can misread or be argued out of one. Permissions and the sandbox are the enforcement boundary.</span></div></div>
+                          <div class="settings-callout"><Icon name="shield" /><div><strong>Guardrails instruct the model; they do not enforce anything.</strong><span>A model can misread a guardrail or be talked out of it. Permissions and isolation are what enforce limits.</span></div></div>
                         </Show>
                         <div class="settings-actions">
                           <button class="btn primary" onClick={() => void savePromptBlock(block.id, promptDraft())}>Save to {scope() === "user" ? "Shared" : "this project"}</button>
@@ -1872,7 +1872,7 @@ export default function Settings() {
                 <pre class="prompt-preview prompt-full">{promptEffective()?.text ?? ""}</pre>
               </Group>
               <Group title="Not editable">
-                <div class="settings-callout"><Icon name="shield" /><div><strong>The capability contract, the Surface line, and the skill and MCP lists are code-owned.</strong><span>They describe the callable interface as it actually is. Editing them could only make the model wrong about its own tools.</span></div></div>
+                <div class="settings-callout"><Icon name="shield" /><div><strong>The lists of tools, skills and connections come from Vakyartha itself and cannot be edited here.</strong><span>They describe the callable interface as it actually is. Editing them could only make the model wrong about its own tools.</span></div></div>
               </Group>
               </div>
             </Show>

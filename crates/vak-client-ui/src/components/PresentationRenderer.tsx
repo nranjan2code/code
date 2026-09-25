@@ -594,8 +594,8 @@ function RenderAudit(props: { document: PresentationDocument }) {
         <Show when={metadata.outcome_revision}><div><dt>Plan revision</dt><dd>{metadata.outcome_revision}</dd></div></Show>
         <Show when={metadata.outcome_requirements}><div><dt>Requirements</dt><dd>{metadata.outcome_requirements}</dd></div></Show>
         <Show when={metadata.outcome_completion}><div><dt>Completion</dt><dd>{metadata.outcome_completion}</dd></div></Show>
-        <Show when={metadata.outcome_status}><div><dt>Execution</dt><dd>{metadata.outcome_status}</dd></div></Show>
-        <Show when={metadata.outcome_evidence_receipts}><div><dt>Evidence receipts</dt><dd>{metadata.outcome_evidence_receipts}</dd></div></Show>
+        <Show when={metadata.outcome_status}><div><dt>Run</dt><dd>{metadata.outcome_status}</dd></div></Show>
+        <Show when={metadata.outcome_evidence_receipts}><div><dt>Evidence</dt><dd>{metadata.outcome_evidence_receipts}</dd></div></Show>
         <Show when={metadata.outcome_evidence_state}><div><dt>Evidence freshness</dt><dd>{metadata.outcome_evidence_state}</dd></div></Show>
         <Show when={metadata.outcome_human_review}><div><dt>Human review</dt><dd>{metadata.outcome_human_review}</dd></div></Show>
         <Show when={metadata.outcome_review_verdict}><div><dt>Review verdict</dt><dd>{metadata.outcome_review_verdict}</dd></div></Show>
@@ -823,9 +823,9 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
           sessionId: props.sessionId,
           resultId: item.outcome?.result_id ?? props.answer.outcome?.result_id ?? undefined,
           executionId: item.provenance?.tool_call_id ?? undefined,
-        })}><Icon name="preview" size={13} />{previews().length === 1 ? "Open working file" : `Open ${item.content.artifact.name}`}</button>;
+        })}><Icon name="preview" size={13} />{previews().length === 1 ? "Open" : `Open ${item.content.artifact.name}`}</button>;
       }}</For>
-      <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id, props.sessionId, action.data.candidate_id)}><Icon name="diff" size={13} />Review draft</button>}</For>
+      <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id, props.sessionId, action.data.candidate_id)}><Icon name="diff" size={13} />Review changes</button>}</For>
       <Show when={props.answer.outcome?.result_id}><button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for a change"}</button></Show>
     </nav>
   </Show>;

@@ -725,12 +725,12 @@ export default function WorkbenchPanel() {
     <div class="workbench-panel">
       <Show when={reviewOpen() && candidate()}>
         {(prepared) => <div class="candidate-review-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setReviewOpen(false); }}>
-          <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review draft files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
+          <section class="candidate-review" role="dialog" aria-modal="true" aria-label="Review changes files" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setReviewOpen(false); }}>
             <header class="candidate-review-header">
               <div><h2>Review before accepting</h2><p>Nothing changes in {destinationLabel()} until you accept the selected files.</p></div>
               <div class="candidate-review-header-actions"><button type="button" class="btn" onClick={() => { setReviewOpen(false); setDockTab(null); }}>Back to conversation</button><button type="button" class="icon-button subtle" aria-label="Close review" onClick={() => setReviewOpen(false)}><Icon name="close" /></button></div>
             </header>
-            <div class="candidate-review-summary" aria-label="Candidate scope and provenance">
+            <div class="candidate-review-summary" aria-label="Draft details">
               <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
                 <label for="candidate-review-version">Draft version</label>
                 <select id="candidate-review-version" onChange={(event) => {
@@ -751,8 +751,8 @@ export default function WorkbenchPanel() {
               <div class="candidate-review-decision-grid">
                 <div><span>Change</span><strong>{prepared().candidate.files.length === 1 ? `${fileState(prepared().candidate.files[0])}: ${prepared().candidate.files[0].path}` : `${prepared().candidate.files.length} files in this draft`}</strong></div>
                 <div><span>Destination</span><strong>{destinationLabel()}</strong><small title={prepared().candidate.destination_root}>{prepared().candidate.destination_root}</small></div>
-                <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>Frozen copy verified: {prepared().verified ? "Yes" : "No"}</small></div>
-                <div><span>Format checks</span><strong>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} passed · ${prepared().draft_checks?.filter((check) => check.status !== "passed").length} failed on draft` : prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "Draft checks inspect saved bytes. The same checks rerun after acceptance in the workspace." : "No registered verifier supports these files."}</small></div>
+                <div><span>Saved version</span><strong>Version {Math.max(candidateVersion(), 1)}</strong><small>{prepared().verified ? "Saved copy is intact" : "Saved copy could not be checked"}</small></div>
+                <div><span>Format checks</span><strong>{prepared().draft_checks?.length ? `${prepared().draft_checks?.filter((check) => check.status === "passed").length} passed · ${prepared().draft_checks?.filter((check) => check.status !== "passed").length} failed on draft` : prepared().candidate.target_checks?.length ? `${prepared().candidate.target_checks?.length} planned` : "Unavailable"}</strong><small>{prepared().candidate.target_checks?.length ? "Draft checks inspect saved bytes. The same checks rerun after acceptance in the workspace." : "Vakyartha can't check this type of file automatically yet."}</small></div>
               </div>
               <Show when={(prepared().draft_checks?.length ?? 0) > 0}>
                 <div class="candidate-review-checks" aria-label="Saved draft format checks">
@@ -780,9 +780,9 @@ export default function WorkbenchPanel() {
                 </div>
               }</Show>
               <details class="candidate-review-provenance">
-                <summary>Technical provenance</summary>
-                <p><strong>Agent execution</strong> <span>{prepared().execution_id}</span></p>
-                <p><strong>Candidate</strong> <span>{prepared().candidate.candidate_id}</span></p>
+                <summary>Technical details</summary>
+                <p><strong>Run</strong> <span>{prepared().execution_id}</span></p>
+                <p><strong>Draft</strong> <span>{prepared().candidate.candidate_id}</span></p>
                 <p><strong>Result</strong> <span>{prepared().result_id}</span></p>
                 <p><strong>Digest</strong> <span>{prepared().candidate_digest}</span></p>
               </details>
@@ -914,7 +914,7 @@ export default function WorkbenchPanel() {
             <button
               class="workbench-clear-btn"
               onClick={clearExecutions}
-              title="Clear execution history"
+              title="Clear activity history"
             >
               <Icon name="trash" size={14} />
             </button>
@@ -959,7 +959,7 @@ export default function WorkbenchPanel() {
                     <button
                       class="workbench-run-item"
                       aria-pressed={isSelected()}
-                      aria-label={`Execution ${item().timestamp}, ${item().status}${item().exitCode !== undefined ? `, exit code ${item().exitCode}` : ""}`}
+                      aria-label={`Run ${item().timestamp}, ${item().status}${item().exitCode !== undefined ? `, exit code ${item().exitCode}` : ""}`}
                       classList={{
                         selected: isSelected(),
                         failed: item().status === "failed",
@@ -1068,7 +1068,7 @@ export default function WorkbenchPanel() {
                           {(applied) => <div class="promotion-verification">
                             <Show when={applied().receipt.integration}>{(integration) => <>
                               <div class="artifact-meta"><strong>Workspace state verified</strong> · {integration().applied_state_digest.slice(0, 19)}</div>
-                              <div class="artifact-meta">Target checks: {integration().target_checks_status}. {integration().target_checks_status === "unavailable" ? "No registered verifier ran in the applied workspace." : integration().evidence}</div>
+                              <div class="artifact-meta">Target checks: {integration().target_checks_status}. {integration().target_checks_status === "unavailable" ? "Vakyartha had no check for these files in your folder." : integration().evidence}</div>
                               <For each={integration().target_checks ?? []}>{(check) => <div class="artifact-meta"><strong>{check.status === "passed" ? "Passed" : "Failed"}</strong> · {check.path} · {check.evidence}</div>}</For>
                             </>}</Show>
                             <For each={applied().workspace_checks ?? []}>{(check) => {
@@ -1349,7 +1349,7 @@ export default function WorkbenchPanel() {
                           background: "#ffffff",
                           "border-radius": "6px",
                         }}
-                        title="Sandbox HTML Preview"
+                        title="Draft page preview"
                       />
                     </div>
                   </Show>

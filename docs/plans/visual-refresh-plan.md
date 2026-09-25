@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-to V2.4 done. V2.5 onward, V3 and V4.2 to V4.5 remain unstarted.**
+to V2.5 done. V2.6 onward, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -194,7 +194,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   the text-size preference still scales everything.
   Done when: exit criterion 1 holds and the conversation screen's measured
   size distribution is saved in the progress log.
-- [ ] **V2.5 Plain words.** Apply the glossary (doc 75 §7) and the voice
+- [x] **V2.5 Plain words.** Apply the glossary (doc 75 §7) and the voice
   rules (doc 75 §5.7) to every user-facing string; add a check to the client
   tests that fails on banned terms (sandbox, ledger, receipt, frozen,
   candidate, execution, provenance, manifest, verifier, persona, fleet,
@@ -384,3 +384,20 @@ what was not.
   12px, also on Settings and at 390px dark (no sideways scroll). Before:
   44% under 13px and nothing over 15px. Known regression for V3.1: long
   agent names now truncate in the sidebar. Evidence: `after/V2.4-*`.
+- 2026-09-25: V2.5 done. Everyday strings follow doc 75 §7: the agent
+  picker ("Your agents", "Agents", "Folder"), result cards ("Draft · N
+  bytes", from `vak-server` so every surface gets it; "Open", "Review
+  changes"), the message box ("Upload a recording", "Folder:", permission
+  names), Canvas ("Desktop", "Tablet", "Phone", "Safe preview"), Review
+  ("Saved copy is intact", plain check messages, "Technical details"),
+  Settings (permissions and approvals as outcomes, "Cards and previews",
+  "Images from the web", "Check freshness", "Helpers", prompt-layer help),
+  Services ("System health", "Where Vakyartha runs") and the Activity log
+  menu item. `tests/plain-words.mjs` fails on sandbox, ledger, receipt,
+  frozen, candidate, execution, provenance, manifest, verifier, persona,
+  fleet, daemon or MCP in a user-facing string outside technical views
+  (only Activity receipts today; search keywords are skipped). CI now runs
+  every client node test, which it did not before. Checked live: each
+  rewritten string on its screen; the message box menu's strings are
+  checked in source (the menu was closed). `cargo test -p vak-server`: 460
+  pass. Not done: the Settings navigation names wait for V3.5's structure.

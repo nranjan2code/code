@@ -134,7 +134,7 @@ export default function BestOfNDialog() {
             <div class="bo-config">
               <textarea
                 rows={4}
-                placeholder="The prompt every candidate will run…"
+                placeholder="The request each approach will try…"
                 value={prompt()}
                 onInput={(e) => setPrompt(e.currentTarget.value)}
               />

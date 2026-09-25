@@ -406,7 +406,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
             onClick={() => {
               openWorkbenchExecution();
             }}
-            title="Inspect execution in Workbench Sandbox"
+            title="View activity in Workbench"
           >
             <Icon name="terminal" size={12} /> Inspect in Workbench
           </button>
@@ -753,7 +753,7 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
                       <Icon name="preview" size={12} /> Open Canvas
                     </button>
                     <Show when={index() === 0 && art.execId}>
-                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!, props.sessionId ?? undefined)}><Icon name="diff" size={12} /> Review draft</button>
+                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!, props.sessionId ?? undefined)}><Icon name="diff" size={12} /> Review changes</button>
                     </Show>
                   </div>
                 )}
