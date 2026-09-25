@@ -125,7 +125,6 @@ import TranscriptModal from "./components/TranscriptModal";
 import InboxPage from "./components/InboxPage";
 import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
-import OnboardingWelcome from "./components/OnboardingWelcome";
 import ConnectSheet from "./components/ConnectSheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 
@@ -1432,7 +1431,6 @@ export default function App() {
           <FeedsModal />
           <AgentPickerModal />
           <AgentCreateWizard />
-          <OnboardingWelcome />
           <ConnectSheet />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>

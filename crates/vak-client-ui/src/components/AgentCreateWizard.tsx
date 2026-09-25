@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { agentCreateOpen, setAgentCreateOpen } from "../store";
+import { agentCreateOpen, setAgentCreateOpen, technicalDetails } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
@@ -8,6 +8,10 @@ import AgentMark from "./AgentMark";
 import Sheet from "./Sheet";
 
 type Character = AgentCharacter;
+
+/** The mascot is the product's own character (docs/design/71); agents a
+ * person creates choose among the companions. */
+const COMPANIONS = AGENT_CHARACTER_IDS.filter((id) => id !== "vak");
 
 const SCRATCH: api.AgentTemplate = {
   template_id: "__scratch__",
@@ -27,6 +31,9 @@ export default function AgentCreateWizard() {
   const [step, setStep] = createSignal<1 | 2 | 3>(1);
   const [templates, setTemplates] = createSignal<api.AgentTemplate[]>([]);
   const [agents, setAgents] = createSignal<api.Agent[]>([]);
+  // Every agent in reach, not just the Shared layer this wizard writes:
+  // the new agent's default character is one none of them wears yet.
+  const [everyAgent, setEveryAgent] = createSignal<api.Agent[]>([]);
   const [chosen, setChosen] = createSignal<api.AgentTemplate>(SCRATCH);
   const [error, setError] = createSignal("");
   const [creating, setCreating] = createSignal(false);
@@ -34,7 +41,7 @@ export default function AgentCreateWizard() {
   const [id, setId] = createSignal("");
   const [idTouched, setIdTouched] = createSignal(false);
   const [name, setName] = createSignal("");
-  const [character, setCharacter] = createSignal<Character>("mira");
+  const [character, setCharacter] = createSignal<Character>(COMPANIONS[0]);
   const [personality, setPersonality] = createSignal("");
   const [instructions, setInstructions] = createSignal("");
 
@@ -50,7 +57,7 @@ export default function AgentCreateWizard() {
     setId("");
     setIdTouched(false);
     setName("");
-    setCharacter("mira");
+    setCharacter(COMPANIONS[0]);
     setPersonality("");
     setInstructions("");
     setError("");
@@ -63,20 +70,29 @@ export default function AgentCreateWizard() {
       // This wizard writes the Shared layer, so seed the replacement from
       // that exact layer rather than copying workspace overrides into it.
       void api.listAgents("user").then((r) => setAgents(r.agents)).catch(() => setAgents([]));
+      void api.listAgents().then((r) => setEveryAgent(r.agents)).catch(() => setEveryAgent([]));
     }
   });
+
+  // A template's own character when it is free, otherwise the first
+  // companion no agent wears; every character is taken only past seven.
+  const freeCharacter = (preferred: string): Character => {
+    const taken = new Set<string>(everyAgent().map((agent) => agent.character));
+    if ((COMPANIONS as string[]).includes(preferred) && !taken.has(preferred)) return preferred as Character;
+    return COMPANIONS.find((id) => !taken.has(id)) ?? ((COMPANIONS as string[]).includes(preferred) ? preferred as Character : COMPANIONS[0]);
+  };
 
   const applyTemplate = (tmpl: api.AgentTemplate) => {
     setChosen(tmpl);
     setName(tmpl.name);
     setIdTouched(false);
-    setCharacter(tmpl.character);
+    setCharacter(freeCharacter(tmpl.character));
     setPersonality(tmpl.personality);
     setInstructions(tmpl.instructions);
     setStep(2);
   };
 
-  const idInUse = createMemo(() => id() === "vak" || agents().some((a) => a.id === id()));
+  const idInUse = createMemo(() => id() === "vak" || everyAgent().some((a) => a.id === id()) || agents().some((a) => a.id === id()));
 
   const canAdvanceStep2 = createMemo(() => name().trim().length > 0 && id().trim().length > 0 && !idInUse());
 
@@ -119,143 +135,87 @@ export default function AgentCreateWizard() {
       <Sheet
         class="agent-create"
         title="New agent"
-        subtitle={`Step ${step()} of 3: ${step() === 1 ? "choose a starting point" : step() === 2 ? "name it" : "give it instructions"}`}
+        subtitle={`Step ${step()} of 3: ${step() === 1 ? "choose a starting point" : step() === 2 ? "name it and pick a character" : "say how it should work"}`}
         onClose={close}
         busy={creating()}
+        footer={step() === 1 ? undefined : <>
+          <button type="button" class="btn" disabled={creating()} onClick={() => setStep(step() === 3 ? 2 : 1)}>Back</button>
+          <Show when={step() === 2} fallback={<button type="button" class="btn primary" disabled={creating()} onClick={() => void create()}>{creating() ? "Creating…" : "Create agent"}</button>}>
+            <button type="button" class="btn primary" disabled={!canAdvanceStep2()} onClick={() => setStep(3)}>Next</button>
+          </Show>
+        </>}
       >
-          <Show when={error()}><p class="worker-error" role="alert" style="margin-bottom: 10px;">{error()}</p></Show>
+        <Show when={error()}><p class="worker-error" role="alert">{error()}</p></Show>
 
-          {/* STEP 1: TEMPLATE */}
-          <Show when={step() === 1}>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-              <For each={templates()}>
-                {(tmpl) => (
-                  <button
-                    type="button"
-                    class="btn"
-                    style="text-align: left; padding: 10px 12px; height: auto; display: flex; flex-direction: column; gap: 4px; align-items: flex-start;"
-                    onClick={() => applyTemplate(tmpl)}
-                  >
-                    <span style="display: inline-flex; align-items: center; gap: 7px;"><AgentMark character={tmpl.character} size={23} /> {tmpl.name}</span>
-                    <span style="font-size: 13px; color: var(--muted); font-weight: 400;">{tmpl.description}</span>
-                  </button>
-                )}
-              </For>
-              <button
-                type="button"
-                class="btn"
-                style="text-align: left; padding: 10px 12px; height: auto; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; border-style: dashed;"
-                onClick={() => applyTemplate(SCRATCH)}
-              >
-                <span style="font-size: 16px;">+ Start from scratch</span>
-                <span style="font-size: 13px; color: var(--muted); font-weight: 400;">{SCRATCH.description}</span>
-              </button>
-            </div>
-          </Show>
-
-          {/* STEP 2: IDENTITY */}
-          <Show when={step() === 2}>
-            <div style="display: flex; flex-direction: column; gap: 12px;">
-              <div>
-                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Name</label>
-                <input
-                  type="text"
-                  required
-                  autofocus
-                  placeholder="e.g. Security Reviewer"
-                  value={name()}
-                  onInput={(e) => setName(e.currentTarget.value)}
-                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text);"
-                />
-              </div>
-
-              <div>
-                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Agent ID</label>
-                <input
-                  type="text"
-                  value={id()}
-                  onInput={(e) => { setIdTouched(true); setId(slugify(e.currentTarget.value)); }}
-                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--mono); font-size: 14px;"
-                />
-                <Show when={idInUse()}>
-                  <p style="margin: 4px 0 0; font-size: 12px; color: var(--red);">That ID is already taken — pick another.</p>
-                </Show>
-              </div>
-
-              <div>
-                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Character</label>
-                <div class="agent-companion-picker">
-                  <For each={AGENT_CHARACTER_IDS}>
-                    {(c) => (
-                      <button
-                        type="button"
-                        class="agent-companion-choice"
-                        classList={{ active: character() === c }}
-                        aria-label={`Choose ${AGENT_CHARACTERS[c].name}, ${AGENT_CHARACTERS[c].kind}`}
-                        onClick={() => { setCharacter(c); playCharacterCue(c); }}
-                      >
-                        <AgentMark character={c} size={56} state={character() === c ? "listening" : "idle"} interactive />
-                        <strong>{AGENT_CHARACTERS[c].name}</strong>
-                        <small>{AGENT_CHARACTERS[c].kind}</small>
-                      </button>
-                    )}
-                  </For>
-                </div>
-                <p class="agent-companion-note">Choose a companion to preview its movement and sound. Sounds follow your app setting.</p>
-              </div>
-
-              <div>
-                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Personality & Demeanor</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Rigorous, cautious, and detail-obsessed."
-                  value={personality()}
-                  onInput={(e) => setPersonality(e.currentTarget.value)}
-                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text);"
-                />
-              </div>
-
-              <div style="display: flex; justify-content: space-between; margin-top: 4px;">
-                <button type="button" class="btn" onClick={() => setStep(1)}>Back</button>
-                <button type="button" class="btn primary" disabled={!canAdvanceStep2()} onClick={() => setStep(3)}>Next</button>
-              </div>
-            </div>
-          </Show>
-
-          {/* STEP 3: INSTRUCTIONS + PREVIEW */}
-          <Show when={step() === 3}>
-            <div style="display: flex; flex-direction: column; gap: 12px;">
-              <div>
-                <label style="display: block; font-size: 13px; font-weight: 500; margin-bottom: 4px;">Core Instructions / System Prompt</label>
-                <textarea
-                  rows={4}
-                  placeholder="Instructions that govern this agent's reasoning, tool use, and tone."
-                  value={instructions()}
-                  onInput={(e) => setInstructions(e.currentTarget.value)}
-                  style="width: 100%; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-family: var(--sans); font-size: 14px; resize: vertical;"
-                />
-                <p style="margin: 4px 0 0; font-size: 12px; color: var(--muted);">This becomes the agent's system prompt — you can refine it later from its settings.</p>
-              </div>
-
-              <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);">
-                <span style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block; margin-bottom: 4px;">Preview</span>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <AgentMark character={character()} size={28} />
-                  <div>
-                    <div style="font-weight: 600; font-size: 15px;">{name() || "Unnamed agent"}</div>
-                    <div style="font-size: 13px; color: var(--muted);">{personality() || "No personality set yet"}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div style="display: flex; justify-content: space-between; margin-top: 4px;">
-                <button type="button" class="btn" onClick={() => setStep(2)}>Back</button>
-                <button type="button" class="btn primary" disabled={creating()} onClick={() => void create()}>
-                  {creating() ? "Creating…" : "Create & Launch"}
+        <Show when={step() === 1}>
+          <div class="agent-create-starts">
+            <For each={templates()}>
+              {(tmpl) => (
+                <button type="button" class="agent-create-start" onClick={() => applyTemplate(tmpl)}>
+                  <span class="agent-create-start-name"><AgentMark character={freeCharacter(tmpl.character)} size={28} /> {tmpl.name}</span>
+                  <span class="agent-create-start-text">{tmpl.description}</span>
                 </button>
+              )}
+            </For>
+            <button type="button" class="agent-create-start blank" onClick={() => applyTemplate(SCRATCH)}>
+              <span class="agent-create-start-name">Start from scratch</span>
+              <span class="agent-create-start-text">A blank agent you shape yourself.</span>
+            </button>
+          </div>
+        </Show>
+
+        <Show when={step() === 2}>
+          <div class="agent-create-form">
+            <label class="agent-identity-field"><span>Name</span>
+              <input type="text" required autofocus placeholder="e.g. Trip Planner" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
+            </label>
+            <Show when={technicalDetails()}>
+              <label class="agent-identity-field"><span>Agent ID</span>
+                <input type="text" class="mono" value={id()} onInput={(e) => { setIdTouched(true); setId(slugify(e.currentTarget.value)); }} />
+              </label>
+            </Show>
+            <Show when={idInUse()}>
+              <p class="agent-create-error" role="alert">{technicalDetails() ? "That ID is already taken. Pick another." : "You already have an agent with this name. Pick another name."}</p>
+            </Show>
+            <fieldset class="agent-identity-characters">
+              <legend>Character</legend>
+              <div class="agent-companion-picker">
+                <For each={COMPANIONS}>
+                  {(c) => (
+                    <button
+                      type="button"
+                      class="agent-companion-choice"
+                      classList={{ active: character() === c }}
+                      aria-label={`Choose ${AGENT_CHARACTERS[c].name}, ${AGENT_CHARACTERS[c].kind}`}
+                      aria-pressed={character() === c}
+                      onClick={() => { setCharacter(c); playCharacterCue(c); }}
+                    >
+                      <AgentMark character={c} size={56} state={character() === c ? "listening" : "idle"} interactive />
+                      <strong>{AGENT_CHARACTERS[c].name}</strong>
+                      <small>{AGENT_CHARACTERS[c].kind}</small>
+                    </button>
+                  )}
+                </For>
               </div>
+            </fieldset>
+            <label class="agent-identity-field"><span>Personality</span>
+              <input type="text" placeholder="e.g. Friendly, careful and to the point." value={personality()} onInput={(e) => setPersonality(e.currentTarget.value)} />
+            </label>
+          </div>
+        </Show>
+
+        <Show when={step() === 3}>
+          <div class="agent-create-form">
+            <label class="agent-identity-field"><span>How it should work</span>
+              <textarea rows={5} placeholder="What it helps with, what it should always or never do, and how it should sound." value={instructions()} onInput={(e) => setInstructions(e.currentTarget.value)} />
+            </label>
+            <p class="agent-create-hint">You can change this later in the agent's settings.</p>
+            <div class="agent-create-preview">
+              <AgentMark character={character()} size={40} />
+              <div><strong>{name() || "Unnamed agent"}</strong><span>{personality() || AGENT_CHARACTERS[character()].personality}</span></div>
             </div>
-          </Show>
+          </div>
+        </Show>
       </Sheet>
     </Show>
   );

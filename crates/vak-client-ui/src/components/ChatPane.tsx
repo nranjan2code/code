@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, activeAgentId, backend, setAgentCreateOpen, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -86,6 +86,9 @@ function EmptyChat(props: { hasSession: boolean }) {
       </p>
       <SetupBanner inGreeting />
       <Show when={!props.hasSession}>
+        <MeetNote />
+      </Show>
+      <Show when={!props.hasSession}>
         <Show when={ongoing().length > 0}>
           <div class="home-ongoing" aria-label="Ongoing work" aria-live="polite">
             <div class="home-ongoing-heading"><span>Ongoing</span><small>Vakyartha is working in the background</small></div>
@@ -114,6 +117,37 @@ function EmptyChat(props: { hasSession: boolean }) {
         </For>
       </div>
     </div>
+  );
+}
+
+const MEET_SEEN_KEY = "vak.onboarded";
+
+/** The one-time introduction on a fresh home: that people can make their own
+ * agents, and whether to show technical details. It sits in the greeting
+ * instead of covering it, and goes for good once answered. */
+function MeetNote() {
+  const seen = () => { try { return localStorage.getItem(MEET_SEEN_KEY) === "1"; } catch { return false; } };
+  const [dismissed, setDismissed] = createSignal(seen());
+  const [ownAgents, setOwnAgents] = createSignal<number | null>(null);
+  createEffect(() => {
+    if (dismissed() || !backend().ready || ownAgents() !== null) return;
+    void api.listAgents().then((r) => setOwnAgents(r.agents.filter((agent) => agent.id !== "vak").length)).catch(() => setOwnAgents(1));
+  });
+  const dismiss = () => {
+    try { localStorage.setItem(MEET_SEEN_KEY, "1"); } catch { /* the note still closes for this window */ }
+    setDismissed(true);
+  };
+  return (
+    <Show when={!dismissed() && ownAgents() === 0 && activeAgentId() === "vak"}>
+      <section class="meet-note" aria-label="Getting started">
+        <p>You can also make your own agents for the things you do often, each with its own name, character and way of working.</p>
+        <label class="onboarding-technical"><input type="checkbox" checked={technicalDetails()} onChange={(event) => setTechnicalDetails(event.currentTarget.checked)} /> I build software: show technical details</label>
+        <div class="meet-note-actions">
+          <button type="button" class="btn primary sm" onClick={() => { dismiss(); setAgentCreateOpen(true); }}><Icon name="add" size={14} /> Create an agent</button>
+          <button type="button" class="btn sm" onClick={dismiss}>Not now</button>
+        </div>
+      </section>
+    </Show>
   );
 }
 

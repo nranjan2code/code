@@ -401,8 +401,10 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .workspace-more-menu button:disabled { opacity: .45; }
 .menu-group-label { margin: 5px 9px 2px; padding-top: 5px; border-top: 1px solid var(--border-soft); color: var(--faint, var(--muted)); font-size: var(--fs-caption); font-weight: 600; }
 .agent-current { display: inline-flex; align-items: center; color: var(--accent); }
-.onboarding-mark { margin-bottom: 12px; }
-.onboarding-copy { margin: 0 0 16px; color: var(--muted); font-size: var(--fs-ui); line-height: 1.5; }
+.meet-note { display: grid; gap: var(--space-3); width: min(560px, 100%); margin: var(--space-4) auto 0; padding: var(--space-4); border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface); text-align: left; }
+.meet-note p { margin: 0; color: var(--text-soft); font-size: var(--fs-ui); line-height: 1.5; }
+.meet-note-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.meet-note .onboarding-technical { margin: 0; }
 .onboarding-technical { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-4); color: var(--text-soft); font-size: var(--fs-meta); }
 .workspace-actions::-webkit-scrollbar { display: none; }
 .workspace-action-group { display: flex; align-items: center; gap: 2px; padding: 2px; border: 1px solid transparent; border-radius: 9px; }
@@ -2034,7 +2036,21 @@ body.is-resizing iframe { pointer-events: none; }
 @media (prefers-reduced-motion: reduce) { .sheet { animation: none; } }
 .modal h3 { margin: 0 0 14px; font-size: var(--fs-reading); font-weight: 600; }
 .agent-picker { width: min(680px, 100%); }
-.agent-create { width: min(560px, 100%); }
+.agent-create { width: min(600px, 100%); }
+.agent-create-starts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+.agent-create-start { display: grid; align-content: start; gap: var(--space-1); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); color: var(--text); text-align: left; transition: background var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease); }
+.agent-create-start:hover { border-color: var(--border-strong); background: var(--surface-hover); }
+.agent-create-start.blank { border-style: dashed; }
+.agent-create-start-name { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--fs-ui); font-weight: 600; }
+.agent-create-start-text { color: var(--muted); font-size: var(--fs-meta); line-height: 1.45; }
+.agent-create-form { display: grid; gap: var(--space-1); }
+.agent-create-error { margin: 0 0 var(--space-3); color: var(--red); font-size: var(--fs-meta); }
+.agent-create-hint { margin: -6px 0 var(--space-4); color: var(--muted); font-size: var(--fs-meta); }
+.agent-create-preview { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--surface); }
+.agent-create-preview div { display: grid; gap: 2px; min-width: 0; }
+.agent-create-preview strong { font-family: var(--display); font-size: var(--fs-section); font-weight: 600; }
+.agent-create-preview span { color: var(--muted); font-size: var(--fs-meta); }
+@media (max-width: 600px) { .agent-create-starts { grid-template-columns: 1fr; } }
 .agent-identity-editor { width: min(660px, 94vw); max-height: min(820px, 92vh); overflow-y: auto; }
 .agent-identity-layer { margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: 1.45; }
 .agent-identity-field { display: grid; gap: 6px; margin-bottom: 14px; color: var(--text-soft); font-size: var(--fs-meta); font-weight: 600; }
@@ -4130,7 +4146,6 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .agent-companion-choice.active { border-color: var(--accent); background: var(--accent-wash); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
 .agent-companion-choice strong { font-size: var(--fs-meta); }
 .agent-companion-choice small { color: var(--muted); font-size: var(--fs-caption); }
-.agent-companion-note { margin: 6px 0 0; color: var(--muted); font-size: var(--fs-caption); }
 @media (max-width: 520px) { .agent-companion-picker { grid-template-columns: repeat(3, minmax(70px, 1fr)); } }
 .agent-inline-fields { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
 .agent-profile-note { margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: 1.4; }

@@ -11,6 +11,7 @@ import {
   setAgentPickerOpen,
   setAgentPickerTab,
   workspaceSwitching,
+  technicalDetails,
 } from "../store";
 import { openAgentChat, refreshBackend, refreshSessions, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -259,12 +260,12 @@ export default function AgentPickerModal() {
             <div style="max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
               <Show when={loading()}>
                 <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 14px;">
-                  Loading agent fleet…
+                  Loading your agents…
                 </div>
               </Show>
               <Show when={!loading() && filteredAgents().length === 0}>
                 <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 14px;">
-                  No matching agents found.
+                  No agents match.
                 </div>
               </Show>
 
@@ -297,7 +298,7 @@ export default function AgentPickerModal() {
                             </Show>
                           </div>
                           <p style="margin: 3px 0 0; font-size: 13px; color: var(--muted); line-height: 1.3;">
-                            {agent.personality || "Persistent autonomous specialist."}
+                            {agent.personality || "Your own agent."}
                           </p>
                         </div>
                       </div>
@@ -307,7 +308,7 @@ export default function AgentPickerModal() {
                           <button
                             type="button"
                             class="icon-button subtle has-tooltip"
-                            data-tooltip="Edit identity"
+                            data-tooltip="Change name and character"
                             aria-label={`Edit ${agent.name}`}
                             onClick={(e) => { e.stopPropagation(); beginEdit(agent); }}
                           >
@@ -317,7 +318,7 @@ export default function AgentPickerModal() {
                             <button
                               type="button"
                               class="icon-button subtle has-tooltip"
-                              data-tooltip="Pause — hide from the everyday switcher without deleting it"
+                              data-tooltip="Pause: hide it from your agents without deleting it"
                               aria-label={`Pause ${agent.name}`}
                               disabled={lifecycleBusy() === agent.id}
                               onClick={(e) => { e.stopPropagation(); void setLifecycle(agent, "paused"); }}
@@ -363,7 +364,7 @@ export default function AgentPickerModal() {
                           class="btn sm"
                           disabled={switching() || isActive()}
                         >
-                          {isActive() ? "Active" : "Switch"}
+                          {isActive() ? "Current" : "Open"}
                         </button>
                       </div>
                     </div>
@@ -377,16 +378,16 @@ export default function AgentPickerModal() {
           <Show when={agentPickerTab() === "target"}>
             <div>
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px;">
-                <span style="font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; display: block;">
+                <span style="font-size: 13px; color: var(--muted); display: block;">
                   {activeAgentId() === "vak" ? "Folder" : "This agent's own folder"}
                 </span>
                 <strong style="font-family: var(--mono); font-size: 14px; color: var(--text); word-break: break-all;">
-                  {activeWorkspace() || "Default workspace"}
+                  {activeWorkspace() || "Your home folder"}
                 </strong>
                 <p style="margin: 4px 0 0; font-size: 13px; color: var(--muted);">
                   {activeAgentId() === "vak"
-                    ? "The active agent will run tools, inspect files, and execute commands within this directory."
-                    : "Nested under the project workspace so this agent never sees another agent's files. Change the project workspace below to move it."}
+                    ? "Vakyartha reads, changes and runs things only inside this folder."
+                    : "This agent has its own folder inside the project folder, so it never sees another agent's files. Choose a different project folder below to move it."}
                 </p>
               </div>
 
@@ -406,7 +407,7 @@ export default function AgentPickerModal() {
               <fieldset class="agent-identity-characters">
                 <legend>Character</legend>
                 <div class="agent-companion-picker">
-                  <For each={AGENT_CHARACTER_IDS}>{(character) =>
+                  <For each={AGENT_CHARACTER_IDS.filter((id) => id !== "vak" || agent.id === "vak")}>{(character) =>
                     <button type="button" class="agent-companion-choice" classList={{ active: editCharacter() === character }} aria-label={`Choose ${AGENT_CHARACTERS[character].name}, ${AGENT_CHARACTERS[character].kind}`} aria-pressed={editCharacter() === character} onClick={() => { setEditCharacter(character); playCharacterCue(character); }}>
                       <AgentMark character={character} motion={editAnimation()} size={52} state={editCharacter() === character ? "listening" : "idle"} interactive />
                       <strong>{AGENT_CHARACTERS[character].name}</strong><small>{AGENT_CHARACTERS[character].kind}</small>
@@ -419,7 +420,7 @@ export default function AgentPickerModal() {
                 <label class="agent-identity-field"><span>Movement</span><select value={editAnimation()} onChange={(event) => setEditAnimation(event.currentTarget.value as api.Agent["animation"])}><option value="subtle">Subtle</option><option value="expressive">Expressive</option><option value="off">Still</option></select></label>
                 <label class="agent-identity-field"><span>Voice style</span><select value={editVoice()} onChange={(event) => setEditVoice(event.currentTarget.value)}><option value="default">Default</option><option value="calm">Calm</option><option value="bright">Bright</option><option value="quiet">Quiet</option></select></label>
               </div>
-              <p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p>
+              <Show when={technicalDetails()}><p class="agent-identity-layer">Saved to the {workspaceAgents().some((candidate) => candidate.id === agent.id) ? "workspace" : "Shared"} Agent layer.</p></Show>
           </Sheet>
         }</Show>
       </>
