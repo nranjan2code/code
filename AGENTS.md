@@ -79,7 +79,10 @@ Read before changing behaviour in these areas:
   `63-agent-first-conversations.md` (by 64).
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
   `72-openxml-documents.md` (Office documents: the file-in, cite, redline,
-  review, file-out loop and its ledger; P0 and part of P1 are built).
+  review, file-out loop and its ledger; P0 and part of P1 are built),
+  `73-data-architecture-and-lifecycle.md` and
+  `74-lifecycle-and-data-administration.md` (the pending data architecture
+  refactor; see "Pending" below).
 
 ### What is authoritative
 
@@ -95,6 +98,80 @@ Invariant 37 states the enforceable half of this.
 Parked, and not to be assumed shipped: release supply-chain hardening
 (SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
 completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
+
+### Pending: the data architecture refactor (planned 2026-09-25, not started)
+
+The maintainer has decided this refactor will happen and will say when it
+starts. Until then nothing in it is behaviour, and no session starts it
+unasked.
+
+**What it is.** One architecture for everything Vak writes:
+- typed ids and a trace key on every record;
+- a content-addressed, encrypted storage substrate;
+- a tenant/space layout, cut as a new **5.0.0** baseline;
+- a Run record for every trigger;
+- structured telemetry that carries no content;
+- one catalog for search and lineage;
+- a lifecycle reconciler with retention labels, legal hold and
+  crypto-shred erasure;
+- versioned artifacts with inherited sharing;
+- admin and user screens for all of it;
+- a cloud remote.
+
+**Read, in this order:**
+1. `docs/plans/data-architecture-plan.md`: the locked decisions L1–L5,
+   milestones M0–M9, exit tests, and the AGENTS.md changes each milestone
+   makes.
+2. `docs/design/73-data-architecture-and-lifecycle.md`: the model, and the
+   audit of today (defects D1–D24).
+3. `docs/design/74-lifecycle-and-data-administration.md`: lifecycles,
+   policies, erasure, screens, API.
+4. `docs/plans/data-architecture-review.md`: why revision 2 differs from
+   the first draft.
+5. `docs/plans/data-architecture-blast-radius.md`: what each milestone
+   touches.
+
+**How to pick it up:**
+1. Confirm the maintainer has said to start, and with which milestone.
+2. Re-run the blast-radius scans (§0 of that doc). Its counts and file
+   locations were taken at `767db1d0` and will have drifted.
+3. Follow the order M0 → M1 → M2 → M3a → M3b (5.0.0) → M4 → M6 → M7 → M8 →
+   M9, with M5 in parallel after M1.
+   - M3b never starts before the M3a refactor (no behaviour change) has
+     merged.
+   - Erasure (M7) never starts before the catalog (M6), because it needs
+     lineage.
+4. Each milestone ships whole: code, tests, docs, its AGENTS.md changes and
+   its screens. The replaced path goes in the same change (invariant 30).
+   There is no compatibility code, because there are no users.
+5. A milestone is done when its named exit tests pass and its blast-radius
+   section names nothing left unchanged. Then update this section and the
+   plan's status line.
+
+**Live defects M0 fixes.** Know them before touching these areas. They
+were read from code (doc 73 §2.2), and not all have been reproduced live:
+- `PUT /config/bus` writes NATS secrets in plaintext to the project's
+  `.vak/env`, and nothing reads them back.
+- A "deleted" session is only hidden from the session lists; the model's
+  `session_search`, admin search and the FTS store still return it.
+- `vak self uninstall --purge` skips the logs root and every undeclared file.
+- A scheduled run in a non-git space is silently dropped, and two runs due in
+  one tick can collide.
+- `AgentSchedule` is stored but never runs.
+- The Python feeds pipeline ignores `VAK_HOME`.
+- The paths in "What is authoritative" above describe neither today's
+  layout nor the planned one. Today an Agent's home is
+  `<data home>/agents/<agent_id>/` (`vak_config::paths::agent_home`), and a
+  non-built-in Agent's workspace is
+  `<workspace>/.vak/agents/<agent_id>/workspace/`.
+
+**Until it starts, don't deepen the debt:**
+- Build nothing on `AgentSchedule` or `agents_runs.jsonl`.
+- Declare every new durable file in `vak_core::state::REGISTRY`.
+- Resolve every new path through `vak_config::paths` and the `Core` home
+  accessors.
+- Give new records full UUIDv7 ids, never clock-derived or truncated ones.
+- Keep conversation content out of logs.
 
 ## Non-negotiable invariants
 

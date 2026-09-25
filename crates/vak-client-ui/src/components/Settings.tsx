@@ -148,6 +148,7 @@ async function copySettingText(value: string, label: string): Promise<void> {
 }
 
 export default function Settings() {
+  let settingsMain: HTMLElement | undefined;
   let settingsRoot!: HTMLDivElement;
   const scope = () => settingsScope();
   const capabilityScope = () => scope() === "user" ? "user" as const : "workspace" as const;
@@ -384,6 +385,15 @@ export default function Settings() {
   }
   const [page, setPage] = createSignal<Page>(pendingSettingsPage() ?? "general");
   const [query, setQuery] = createSignal("");
+
+  const selectPage = (next: Page) => {
+    setPage(next);
+    setQuery("");
+    // Every settings destination is a new document. Retaining the previous
+    // page's scroll position made headings disappear above the viewport and
+    // made the first visible card look clipped or unstyled.
+    queueMicrotask(() => settingsMain?.scrollTo({ top: 0, behavior: "auto" }));
+  };
   let focusVoiceWhenLoaded = pendingSettingsSection() === "voice";
   setPendingSettingsSection(null);
   onMount(() => {
@@ -1139,7 +1149,7 @@ export default function Settings() {
         <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
-          {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => { setPage(item.id); setQuery(""); }}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
+          {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
         </For>
         {/* Editing a specific agent is the default and needs no toggle at
             all; switching to the shared platform default is the deliberate,
@@ -1156,13 +1166,13 @@ export default function Settings() {
         <Show when={showArchivedPage()}>
           <div class="settings-nav-label archived-nav-label">Archived</div>
           <nav>
-            <button type="button" classList={{ active: page() === "archived" }} onClick={() => { setPage("archived"); setQuery(""); }}><Icon name="archive" /><span>Archived tasks</span></button>
+            <button type="button" classList={{ active: page() === "archived" }} onClick={() => selectPage("archived")}><Icon name="archive" /><span>Archived tasks</span></button>
           </nav>
         </Show>
         <div class="settings-nav-foot"><div class="settings-app-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div><div><strong>Vak</strong><span>{backend().version ? `Version ${backend().version}` : "Version unavailable"}</span></div></div>
       </aside>
 
-      <main class="settings-main">
+      <main ref={settingsMain} class="settings-main">
         <div class="settings-content">
           <Show when={voiceProviders.error || presentationLibrary.error || promptLayer.error || promptEffective.error}>
             <div class="settings-load-error" role="alert">
@@ -1203,10 +1213,12 @@ export default function Settings() {
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
-                <Row title="Reusable presentations" description="Validated experience-pack cards that Vak can use when rendering work. Choose only the families you want available to this scope."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} packs`}</span></Row>
-                <Row title="Presentation packs" description="Share validated definitions without sharing task results. Imported packs stay disabled until you activate them."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
+                <Row title="Presentation styles" description="Choose how Vak presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>
+                <Row title="Share presentation styles" description="Export your styles or import a collection."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
                 <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>
-                  <section class="presentation-library" aria-label="Reusable presentations">
+                  <details class="presentation-library-disclosure">
+                    <summary>Manage presentation styles</summary>
+                  <section class="presentation-library" aria-label="Presentation styles">
                     <div class="presentation-toolbar">
                       <label class="presentation-search"><Icon name="search" size={14} /><input aria-label="Search presentations" placeholder="Search by name or capability…" value={presentationQuery()} onInput={(event) => setPresentationQuery(event.currentTarget.value)} /></label>
                       <div class="presentation-filters" role="group" aria-label="Presentation filter">
@@ -1259,22 +1271,23 @@ export default function Settings() {
                       </div>
                     </Show>
                   </section>
+                  </details>
                 </Show>
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
               <Group id="voice-settings" title="Voice">
-                <Row title="Enable voice conversations" description="Allow microphone sessions and governed speech input/output."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
-                <Row title="Speak agent actions out loud" description="Narrate turn completions and permission prompts through the voice pipeline."><Switch label="Speak agent actions out loud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
-                <Row title="Session limit" description="Maximum duration for one voice session, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
-                <Row title="Concurrent sessions" description="Maximum simultaneous voice sessions for this scope."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
-                <Row title="Inbound audio budget" description="Maximum audio bytes accepted per session."><input type="number" min="1" max={256 * 1024 * 1024} value={config()?.voice?.max_audio_bytes ?? 16 * 1024 * 1024} onChange={(e) => void updateVoice({ voice_max_audio_bytes: Number(e.currentTarget.value) })} /></Row>
-                <Row title="Voice providers" description="Credential and engine readiness for each provider this server supports."><span class="settings-value">{voiceProviders.loading ? "Checking…" : (voiceProviders()?.providers.map((provider) => `${provider.name} · ${provider.readiness ? (provider.readiness.ready ? "ready" : provider.readiness.detail) : provider.configured ? "credential available" : "credential needed"}`).join(", ") || "None available")}</span></Row>
-                <Row title="Voice provider" description="Used for listening and speaking. Unset inherits from the shared settings; voice needs one somewhere."><select value={config()?.voice?.provider ?? ""} onChange={(e) => void updateVoice({ voice_provider: e.currentTarget.value || null })}><option value="">Inherit</option><For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For></select></Row>
-                <Row title="Transcription model" description="Speech-to-text model id from your provider's catalogue. Required for hosted providers."><input type="text" value={config()?.voice?.transcription_model ?? ""} placeholder="Inherit" onChange={(e) => void updateVoice({ voice_transcription_model: e.currentTarget.value.trim() || null })} /></Row>
-                <Row title="Synthesis model" description="Text-to-speech model id from your provider's catalogue. Required for hosted providers."><input type="text" value={config()?.voice?.synthesis_model ?? ""} placeholder="Inherit" onChange={(e) => void updateVoice({ voice_synthesis_model: e.currentTarget.value.trim() || null })} /></Row>
+                <Row title="Enable voice conversations" description="Talk with Vak using your microphone."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
+                <Row title="Speak updates aloud" description="Read task updates and approval requests aloud."><Switch label="Speak updates aloud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
+                <Row title="Session limit" description="Longest voice conversation, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Simultaneous conversations" description="How many voice conversations can run at once."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Audio size limit" description="Largest recording accepted in one conversation, in bytes."><input type="number" min="1" max={256 * 1024 * 1024} value={config()?.voice?.max_audio_bytes ?? 16 * 1024 * 1024} onChange={(e) => void updateVoice({ voice_max_audio_bytes: Number(e.currentTarget.value) })} /></Row>
+                <Row title="Available voice services" description="Shows which services are ready to use."><span class="settings-value">{voiceProviders.loading ? "Checking…" : (voiceProviders()?.providers.map((provider) => `${provider.name} · ${provider.readiness ? (provider.readiness.ready ? "ready" : provider.readiness.detail) : provider.configured ? "ready" : "setup needed"}`).join(", ") || "None available")}</span></Row>
+                <Row title="Voice service" description="Used for listening and speaking."><select value={config()?.voice?.provider ?? ""} onChange={(e) => void updateVoice({ voice_provider: e.currentTarget.value || null })}><option value="">Use shared setting</option><For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For></select></Row>
+                <Row title="Listening model" description="Converts speech to text."><input type="text" value={config()?.voice?.transcription_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_transcription_model: e.currentTarget.value.trim() || null })} /></Row>
+                <Row title="Speaking model" description="Converts text to speech."><input type="text" value={config()?.voice?.synthesis_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_synthesis_model: e.currentTarget.value.trim() || null })} /></Row>
                 <Show when={uiPreferences.voiceEnabled}>
                   <Row title="Voice" description="Exact voice id from your provider; blank uses the provider's default."><input value={uiPreferences.voiceName} placeholder="Provider default" onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value.trim())} /></Row>
-                  <Row title="Persona" description="Optional style directive for how narration sounds."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
+                  <Row title="Speaking style" description="Describe how Vak should sound."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
                 </Show>
               </Group>
               <Group title="Desktop">
@@ -1427,20 +1440,17 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "permissions"}>
-              <header><h1>Permissions</h1><p>Set the trust boundary for this agent's tool calls.</p></header>
+              <header><h1>Permissions</h1><p>Choose what Vak can do and when it should ask first.</p></header>
               <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               <Group title="Approvals">
-                <p class="settings-group-copy">
-                  When something needs your say-so, this decides who answers. It cannot widen the
-                  boundary above or switch off the sandbox — anything refused there stays refused.
-                </p>
+                <p class="settings-group-copy">Choose how often Vak pauses for your approval.</p>
                 <div class="permission-options">
                   <For
                     each={
                       [
                         { id: "ask", title: "Ask me every time", text: "Pause and wait for you before anything that needs approval.", icon: "shield" as IconName },
-                        { id: "approve-safe", title: "Approve safe actions", text: "Reads and edits inside this workspace go ahead; the web and outside access still ask.", icon: "check" as IconName },
-                        { id: "auto-approve", title: "Approve automatically", text: "Ordinary requests go ahead. Your own rules and the circuit breaker still stop and ask.", icon: "code" as IconName },
+                        { id: "approve-safe", title: "Approve workspace actions", text: "Reading and editing here can continue. Web and outside access still ask.", icon: "check" as IconName },
+                        { id: "auto-approve", title: "Approve automatically", text: "Continue without pausing unless a rule requires approval.", icon: "code" as IconName },
                       ] as const
                     }
                   >
@@ -1460,13 +1470,11 @@ export default function Settings() {
                 </div>
               </Group>
               <Group title="Sandbox">
-                <Row title="Workspace boundary" description="File tools are confined to the selected workspace and symlinks are resolved before access."><span class="settings-status good">Protected</span></Row>
-                <Row title="Containment" description="How tool processes are confined on this machine."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
+                <Row title="Workspace files" description="Keep file access inside this workspace."><span class="settings-status good">Protected</span></Row>
+                <Row title="Command isolation" description="Keep commands separated from the rest of this device."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
               </Group>
               <Group title="Rules">
-                <p class="settings-group-copy">
-                  These decide specific calls before the setting above applies. “Never” always wins.
-                </p>
+                <p class="settings-group-copy">Specific rules take priority over the approval choice above.</p>
                 <For
                   each={
                     [
@@ -1486,7 +1494,7 @@ export default function Settings() {
                     </Row>
                   )}
                 </For>
-                <Row title="Permission rules" description="Add or remove allow, ask, and deny patterns in the workspace configuration."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row>
+                <Row title="Permission rules" description="Choose which actions are allowed, blocked, or require approval."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row>
               </Group>
             </Show>
 
@@ -1523,11 +1531,11 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "learning"}>
-              <header><h1>Learning</h1><p>What the agent has remembered across sessions, and skill drafts waiting for your approval.</p></header>
+              <header><h1>Learning</h1><p>Review what Vak remembers and the skills it has suggested.</p></header>
               <Group title={`Skill proposals (${proposals().length})`}>
                 <Show
                   when={proposals().length > 0}
-                  fallback={<Row title="Queue is empty" description="Reflection and /propose_skill add drafts here; nothing reaches the agent until you promote it."><span class="settings-status good">Clean</span></Row>}
+                  fallback={<Row title="No suggestions yet" description="New skill suggestions will wait here for your review."><span class="settings-status good">Up to date</span></Row>}
                 >
                   <For each={proposals()}>
                     {(p) => (
@@ -1572,7 +1580,7 @@ export default function Settings() {
                 <button classList={{ active: tier() === "workspace" }} onClick={() => setTier("workspace")}><Icon name="folder" /><span>Workspace</span><em>{notes().filter((n) => (n.scope ?? "workspace") === "workspace").length}</em></button>
                 <button classList={{ active: tier() === "profile" }} onClick={() => setTier("profile")}><Icon name="spark" /><span>Profile</span><em>{notes().filter((n) => n.scope === "profile").length}</em></button>
               </nav>
-              <Group title={tier() === "profile" ? "Profile memories (USER.md)" : "Workspace memories (MEMORY.md)"}>
+              <Group title={tier() === "profile" ? "Profile memories" : "Workspace memories"}>
                 <Show when={tier() === "profile"}>
                   <p class="settings-hint memory-hint">Global tier — these notes are recalled by every agent.</p>
                 </Show>
@@ -1596,7 +1604,7 @@ export default function Settings() {
                 </Show>
                 <Show
                   when={tierNotes().length > 0}
-                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every agent benefits." : "Chat with reflection enabled — durable decisions land here as plain markdown you can edit in ~/.vak/memory/."}><span class="settings-status good">{tier() === "profile" ? "Ready" : "Ready"}</span></Row>}
+                  fallback={<Row title={tier() === "profile" ? "No profile notes yet" : "No notes yet"} description={tier() === "profile" ? "Add a preference once and every agent can use it." : "Important decisions and preferences will appear here."}><span class="settings-status good">Ready</span></Row>}
                 >
                   <div class="archived-list" aria-label="Memory notes">
                     <For each={tierNotes().slice().reverse()}>
@@ -1642,34 +1650,34 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Shared capabilities are available to every agent. An agent may add its own capability or override a same-named MCP server." : "Edit only this agent’s capabilities. Shared capabilities remain available unless this agent deliberately replaces a same-named MCP server."}</p></header>
-              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared defaults apply everywhere." : "You are changing this agent only."}</strong><span>{scope() === "user" ? "Per-agent changes never rewrite these shared settings." : "Use Shared above to change your defaults for every agent."}</span></div></div>
+              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Choose the tools available to every agent." : "Choose the tools available to this agent."}</p></header>
+              <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared tools" : `Tools for ${activeAgent()?.name ?? "this agent"}`}</strong><span>{scope() === "user" ? "Available to every agent." : "Changes here do not affect your other agents."}</span></div></div>
               <nav class="capability-tabs" aria-label="Capability types">
-                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>MCP servers</span><em>{totalMcpCount()}</em></button>
+                <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>Connections</span><em>{totalMcpCount()}</em></button>
                 <button classList={{ active: capabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
-                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Hooks</span><em>{totalHooksCount()}</em></button>
-                <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Plugins</span><em>{totalPluginsCount()}</em></button>
+                <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Automations</span><em>{totalHooksCount()}</em></button>
+                <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Add-ons</span><em>{totalPluginsCount()}</em></button>
               </nav>
               <Show when={capabilityTab() === "mcp"}>
-                <Group title="Tool servers"><Show when={mcpServers()} fallback={<Row title="Loading servers…" description="Reading the effective MCP configuration."><span /></Row>}>
+                <Group title="Connections"><Show when={mcpServers()} fallback={<Row title="Loading connections…" description="Checking your connected tools."><span /></Row>}>
                   <div class="mcp-editor">
                     <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon mcp"><Icon name="plug" /></span><strong>{scope() === "user" ? "No shared MCP servers connected" : (Object.keys(inheritedMcpServers()).length > 0 ? "No project-specific MCP overrides" : "No MCP servers connected")}</strong><span>{scope() === "user" ? "Add a shared server to make it available across all your projects." : (Object.keys(inheritedMcpServers()).length > 0 ? "This project is using the shared MCP servers listed below. Add a server here to create a project-specific override or tool." : "Add a local server to give the agent tools such as search, browser, or data access.")}</span></div>}>
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
                         <div class="mcp-row-head"><div><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state ready">Configured</span></div><button class="settings-button danger" onClick={() => removeServer(name)}><Icon name="trash" /> Remove</button></div>
                         <div class="mcp-fields"><label>Server name<input value={name} aria-label="Server name" onChange={(e) => renameServer(name, e.currentTarget.value.trim())} /></label><label>Command<input placeholder="/path/to/command" value={def.command} aria-label="Command" onInput={(e) => updateServer(name, { command: e.currentTarget.value })} /></label><label>Arguments<input placeholder="Space-separated arguments" value={def.args.join(" ")} aria-label="Arguments" onInput={(e) => updateServer(name, { args: e.currentTarget.value.split(" ").filter(Boolean) })} /></label></div>
-                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow outbound network</span></label><span class="settings-hint">Health check runs automatically when this server is first used in a task.</span></div>
+                        <div class="mcp-controls"><label class="mcp-network"><Switch checked={def.network} label={`Allow network for ${name}`} onChange={(v) => updateServer(name, { network: v })} /><span>Allow internet access</span></label></div>
                       </div>}</For>
                     </Show>
                     <div class="settings-actions"><button class="btn" onClick={addServer}><Icon name="add" /> Add server</button><button class="btn primary" disabled={!mcpDirty() || mcpSaving()} onClick={() => void saveMcp()}>{mcpSaving() ? "Saving…" : "Save & apply"}</button><Show when={mcpDirty()}><span class="mcp-dirty">Unsaved changes</span></Show></div>
-                    <p class="settings-hint">{scope() === "user" ? "These are your shared server definitions. Projects inherit them. Secrets are referenced by name and never shown here." : "A same-named project server replaces the shared one for this folder only. Network is off until you turn it on; secrets stay user-owned."}</p>
+                    <p class="settings-hint">{scope() === "user" ? "These servers are available to every agent. Saved secrets are never shown here." : "Settings here apply only to this agent. Internet access stays off until you enable it."}</p>
 
                     <Show when={scope() === "workspace" && Object.keys(inheritedMcpServers()).length > 0}>
                       <div class="inherited-capabilities-group">
                         <div class="inherited-capabilities-head">
                           <Icon name="layers" />
                           <div>
-                            <strong>Shared MCP servers ({Object.keys(inheritedMcpServers()).length})</strong>
-                            <span>Inherited from your global settings. Available in every task for this agent unless replaced by a same-named server above.</span>
+                            <strong>Shared connections ({Object.keys(inheritedMcpServers()).length})</strong>
+                            <span>Available from your shared settings.</span>
                           </div>
                         </div>
                         <div class="capability-list">
@@ -1870,7 +1878,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "advanced"}>
-              <header><h1>Advanced</h1><p>Inspect effective limits, paths, and configuration diagnostics.</p></header>
+              <header><h1>Advanced</h1><p>Manage limits, file locations, and backups.</p></header>
               <Group title="Context">
                 <Row title="Context window" description="Maximum model input budget before compaction."><span class="metric">{fmt(config()?.context_window ?? 0)} tokens</span></Row>
                 <Row title="Maximum output" description="Provider output-token ceiling."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
@@ -1881,7 +1889,7 @@ export default function Settings() {
                 <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button type="button" class="settings-button" onClick={() => void copySettingText(config()?.paths.sessions_home ?? "", "Session store path")}>Copy path</button></Row>
               </Group>
               <Group title="Data & backup">
-                <div class="settings-callout"><Icon name="shield" /><div><strong>Backups copy your Vak home.</strong><span>Sessions, memory, config, and checkpoints go to a plain folder you choose. Secrets are excluded unless you explicitly opt in below.</span></div></div>
+                <div class="settings-callout"><Icon name="shield" /><div><strong>Your backup includes Vak data and settings.</strong><span>Passwords and API keys stay excluded unless you include them below.</span></div></div>
                 <Row
                   title="Export backup"
                   description="Pick a destination folder (or type a path), then export."
@@ -1899,7 +1907,7 @@ export default function Settings() {
                 </Row>
                 <Row
                   title="Include secrets"
-                  description="Adds your provider API keys (from the encrypted credential store; nothing is added if this device uses the OS keychain instead). Anyone with this folder can spend your credits — keep it offline and delete it when restored."
+                  description="Include saved API keys when available. Keep this backup private."
                   danger
                 >
                   <Switch label="Include secrets in export" checked={includeSecrets()} onChange={setIncludeSecrets} />
@@ -1912,7 +1920,7 @@ export default function Settings() {
                 </div>
                 <Row
                   title="Import backup"
-                  description={`Restore a previously exported folder. Conflicts are ${conflict() === "skip" ? "skipped" : "renamed"} — the running home is never overwritten silently.`}
+                  description={`Restore a previous backup. Existing items are ${conflict() === "skip" ? "kept" : "renamed"}.`}
                 >
                   <span class="key-edit">
                     <input

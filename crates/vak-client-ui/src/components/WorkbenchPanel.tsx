@@ -871,7 +871,7 @@ export default function WorkbenchPanel() {
       <div class="workbench-header">
         <div class="workbench-header-left">
           <Icon name="terminal" size={16} />
-          <span class="workbench-title">Your result</span>
+          <span class="workbench-title">Result</span>
           <Show when={isAnyRunning()}>
             <span class="workbench-status-badge running">
               <span class="pulse-dot" /> Running
@@ -895,7 +895,7 @@ export default function WorkbenchPanel() {
               classList={{ active: tab() === "execution" }}
               onClick={() => setTab("execution")}
             >
-              Build activity
+              Activity
             </button>
             <button
               class="workbench-nav-btn"
@@ -1243,8 +1243,8 @@ export default function WorkbenchPanel() {
             <div class="result-intro">
               <div class="result-intro-icon"><Icon name="preview" size={18} /></div>
               <div>
-                <h2>What Vak made</h2>
-                <p>Open a live preview, review the file, or continue refining it in chat.</p>
+                <h2>Files</h2>
+                <p>Preview a file or keep refining it in chat.</p>
               </div>
             </div>
             <div class="result-workspace">
@@ -1324,10 +1324,10 @@ export default function WorkbenchPanel() {
                         });
                       }
                     }}
-                    title="Open in full/split Artifact Canvas"
+                    title="Open a larger preview"
                     style={{ "margin-left": "auto" }}
                   >
-                    <Icon name="preview" size={12} /> Open in Canvas
+                    <Icon name="preview" size={12} /> Open preview
                   </button>
                 </div>
                 <div class="viewer-content">
