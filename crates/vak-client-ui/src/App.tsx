@@ -741,7 +741,9 @@ export function stopRun() {
 
 export async function loadHealth() {
   const source = api.backendUrl();
-  if (!source) return;
+  // The web client is same-origin, so its base is always empty; only the
+  // desktop has no backend until it adopts one.
+  if (!source && host.kind !== "web") return;
   try {
     const next = await api.health();
     if (source === api.backendUrl()) {

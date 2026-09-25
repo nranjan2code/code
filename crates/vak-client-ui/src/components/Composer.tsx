@@ -19,6 +19,8 @@ import {
   agentForSession,
   agentOpening,
   technicalDetails,
+  setPendingSettingsPage,
+  setSettingsOpen,
 } from "../store";
 import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
@@ -667,8 +669,10 @@ export default function Composer(props: { cwd: string }) {
         <div class="composer-toolbar">
           <div class="composer-lead">
             <details class="composer-more" data-menu>
-              <summary class="composer-context" aria-label="More ways to work"><Icon name="more" size={14} /><span>More</span></summary>
+              <summary class="composer-round" aria-label="Add files, mentions and more"><Icon name="add" size={16} /></summary>
               <div class="composer-more-menu">
+                <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; fileInput.click(); }}><Icon name="file" size={14} /><span>Attach files</span></button>
+                <label class="voice-recording-entry"><Icon name="mic" size={14} /><span>Upload a recording</span><input type="file" accept="audio/*" aria-label="Upload a recording" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; if (file) window.dispatchEvent(new CustomEvent("vak:voice-recording", { detail: file })); }} /></label>
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Folder: ${props.cwd.split("/").pop() || "root"}`}</span></button>
                 <button type="button" onClick={beginMention}><Icon name="at" size={14} /><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><Icon name="slash" size={14} /><span>Use a skill or command</span></button>
@@ -693,7 +697,9 @@ export default function Composer(props: { cwd: string }) {
                 </Show>
               </div>
             </details>
-            <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} motion={agentForSession(activeId()).animation} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
+            <Show when={health()?.permission_mode === "FullAccess"}>
+              <button type="button" class="composer-safety" title="Vak can run any command and open files outside this folder. Change it in Settings." onClick={() => { setPendingSettingsPage("permissions"); setSettingsOpen(true); }}><Icon name="warning" size={14} /><span>Full access</span></button>
+            </Show>
             <input
               ref={fileInput}
               type="file"
@@ -704,15 +710,6 @@ export default function Composer(props: { cwd: string }) {
                 e.currentTarget.value = "";
               }}
             />
-            <button
-              class="composer-context composer-attach"
-              title="Attach files (or paste / drop them here)"
-              aria-label="Attach files"
-              onClick={() => fileInput.click()}
-            >
-              <Icon name="add" size={13} />
-              <span>Attach</span>
-            </button>
           </div>
 
           <Show when={armedGoal()}>
@@ -731,6 +728,7 @@ export default function Composer(props: { cwd: string }) {
             </div>
           </Show>
           <div class="composer-actions">
+            <VoiceControl sessionId={activeId() ?? undefined} character={agentForSession(activeId()).character} motion={agentForSession(activeId()).animation} running={Boolean(activeId() && isRunning(activeId()!))} ensureSession={() => openAgentChat(activeAgentId())} onFinal={submitVoice} />
             <Show
               when={isRunning(activeId())}
               fallback={
