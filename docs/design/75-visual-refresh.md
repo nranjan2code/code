@@ -201,16 +201,18 @@ Every text pair passes WCAG AA. The ratios were computed, not estimated.
 | paper | `#F6F5F1` | `#0F1120` | Window background | ground |
 | surface | `#FFFFFF` | `#171A2B` | Cards, message box, sheets | ground |
 | sidebar | `#EFEEE8` | `#13162A` | Sidebar, settings navigation | ground |
-| line | `#E3E1DA` | `#2A2E47` | Dividers where spacing cannot separate | non-text |
+| line | `#E3E1DA` | `#2E3350` | Dividers where spacing cannot separate | non-text |
 | ink | `#1B1E36` | `#ECEBF5` | Text | 15.0 / 15.9 |
 | ink-2 | `#474B66` | `#BDBFD3` | Secondary text | 7.8 / 9.5 |
-| ink-3 | `#5F6380` | `#9295AE` | Captions, hints, placeholders | 5.4 / 5.9 |
+| muted | `#5A5E7A` | `#A8ABC2` | Labels and metadata beside secondary text | 6.3 / 7.6 |
+| ink-3 | `#5F6380` | `#A2A5BD` | Captions, hints, placeholders | 5.4 / 7.1 |
 | primary | `#2F3C94` | `#A3ADF7` | Buttons, links, selection; white text on it in light, dark ink in dark | 9.6 / 8.8 |
 | link | `#2F3C94` | `#A3ADF7` | Links, text buttons | 8.8 / 8.1 |
 | saffron | `#F5A400` | `#F5A400` | The one accent: listening, speaking, working, needs you. A fill, never text on light. | ink on it 7.9 |
 | saffron-ink | `#8A5300` | `#F5B04A` | Text that must carry the accent | 6.3 on white |
 | success | `#2E6B4A` | `#7CC39A` | Passed checks, applied changes, with icon and word | 6.3 / 8.3 |
 | danger | `#A33A3A` | `#F08A8A` | Failures, destructive actions | 6.5 / 7.1 |
+| info | `#2F5580` | `#8FB3E0` | Neutral notices, with icon and word | 7.7 / 8.0 |
 
 Rules:
 

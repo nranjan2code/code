@@ -211,6 +211,12 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   rules, every duplicate selector (exit criterion 3), the `!important` rules
   that only existed to win against a later override, and unused hex
   literals.
+- [x] **V2.9 One palette, used.** The admin console's `:root` and theme
+  blocks become Ink and Saffron (the client's values, token for token) with
+  the client's four theme choices; DESIGN.md records every shipped light and
+  dark ground and text colour; rules use the type, spacing, motion and
+  float-shadow tokens V2.2 defined. Done when: `cargo test -p vak-config
+  --test design_tokens` passes 7 of 7 and both surfaces are checked live.
 
 #### Handoff for V2.5 to V2.8 (written 2026-09-25, at `9d945101`)
 
@@ -602,3 +608,23 @@ what was not.
   `--dur*`, `--fs-section` and `--shadow-float` tokens) at `cd1a45a1` as
   well, before this change; V3.5 touches none of those tokens. Every other
   workspace test passed.
+- 2026-09-26: V2.9 done, by maintainer decision. The three `design_tokens`
+  failures began at V2.2 (`1ef0f8c3`), not `cd1a45a1`. (1) The admin console
+  still carried the pre-refresh warm-dark palette although DESIGN.md says it
+  uses the same colours: its token layer is now the client's, its themes are
+  Match system, Light, Dark and High contrast (a stored retired id resolves
+  to Match system), its old-palette rgba literals are token mixes, and text
+  on accent and approve fills uses `--on-accent`. (2) CSS now follows the
+  spec: `--surface` `#ffffff`, `--border` `#e3e1da`; DESIGN.md and doc 75
+  gain `muted` and `info` and the shipped dark line and ink-3; the test reads
+  DESIGN.md's role names and now checks dark as well as light. (3) 565 font
+  sizes, 616 spacing values and 57 transitions moved onto the tokens
+  (values unchanged apart from snapping transitions to 120/200ms and one
+  curve); the message box carries `--shadow-float`, and the two later
+  `.composer-box` overrides that removed it were folded into the one rule.
+  Also fixed while checking: leftover warm-dark literals on `.gate-card`,
+  `.gate-features` and `.tool`/`.worker`. Checked live against the
+  installed config: client at 1440 light/dark and 390 light, admin at 1440
+  light/dark, no sideways scroll. Not checked: 390 dark, the admin at 390,
+  High contrast in the admin, and every settings page after the spacing
+  sweep.

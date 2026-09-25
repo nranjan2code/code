@@ -161,31 +161,54 @@ fn collect_sources(dir: &Path, out: &mut String) {
 }
 
 /// DESIGN.md is the written spec; if the code and the document disagree, one
-/// of them is lying to whoever reads it next.
+/// of them is lying to whoever reads it next. Its front matter names colours
+/// by what they are for (paper, ink, success), not by token, and records the
+/// dark theme under a `dark-` prefix; both are checked.
 #[test]
 fn design_md_matches_the_shipped_palette() {
-    let design = std::fs::read_to_string(root().join("DESIGN.md")).expect("DESIGN.md");
-    let desktop = read(DESKTOP);
-    // DESIGN.md names the accent by its colour rather than its role.
-    let documented = [
-        ("bg", "bg"),
-        ("surface", "surface"),
-        ("surface-raised", "surface-raised"),
-        ("text", "text"),
+    let design = std::fs::read_to_string(root().join("DESIGN.md"))
+        .expect("DESIGN.md")
+        .to_ascii_lowercase();
+    let css = std::fs::read_to_string(root().join(DESKTOP)).expect(DESKTOP);
+    let light = base_tokens(&css);
+    let dark = theme_tokens(&css, "dark");
+    let light_only = [
+        ("surface", "surface-raised"),
         ("muted", "muted"),
-        ("faint", "faint"),
-        ("green", "green"),
-        ("yellow", "yellow"),
-        ("red", "red"),
-        ("blue", "blue"),
+        ("saffron-ink", "yellow"),
+        ("success", "green"),
+        ("danger", "red"),
+        ("info", "blue"),
     ];
+    let both = [
+        ("paper", "bg"),
+        ("surface", "surface"),
+        ("sidebar", "sidebar"),
+        ("line", "border"),
+        ("ink", "text"),
+        ("ink-2", "text-soft"),
+        ("ink-3", "faint"),
+        ("primary", "accent"),
+    ];
+    let dark_only = [("muted", "muted")];
     let mut wrong = Vec::new();
-    for (doc_key, token) in documented {
-        let shipped = desktop.get(token).expect(token);
-        let needle = format!("{doc_key}: \"{shipped}\"");
+    let mut check = |doc_key: String, shipped: &String, token: &str| {
+        let needle = format!("{doc_key}: \"{}\"", shipped.to_ascii_lowercase());
         if !design.contains(&needle) {
-            wrong.push(format!("DESIGN.md does not record {doc_key} as {shipped}"));
+            wrong.push(format!(
+                "DESIGN.md does not record {doc_key} as {shipped} (--{token})"
+            ));
         }
+    };
+    for (doc_key, token) in both.iter().chain(&light_only) {
+        check(doc_key.to_string(), light.get(*token).expect(token), token);
+    }
+    for (doc_key, token) in both.iter().chain(&dark_only) {
+        check(
+            format!("dark-{doc_key}"),
+            dark.get(*token).expect(token),
+            token,
+        );
     }
     assert!(wrong.is_empty(), "{}", wrong.join("\n  "));
 }
