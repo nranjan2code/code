@@ -82,7 +82,10 @@ Read before changing behaviour in these areas:
   review, file-out loop and its ledger; P0 and part of P1 are built),
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture
-  refactor; see "Pending" below).
+  refactor; see "Pending" below),
+  `75-visual-refresh.md` (the pending visual refresh: readable type, plain
+  words, technical detail on request and the Ink and Saffron brand; see
+  "Pending: the visual refresh" below).
 
 ### What is authoritative
 
@@ -172,6 +175,54 @@ were read from code (doc 73 §2.2), and not all have been reproduced live:
   accessors.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
 - Keep conversation content out of logs.
+
+### Pending: the visual refresh (planned 2026-09-25, not started)
+
+The maintainer approved the direction and locked all five of its decisions
+on 2026-09-25. No stage is built yet, and no session starts one unasked.
+
+**What it is.** One visual system for the shared client
+(`crates/vak-client-ui`), so for both the desktop and the web app:
+- readable type: 16px conversation text, 14px controls, nothing under 12px,
+  Newsreader for names and titles;
+- plain words in place of engineering terms in every everyday string;
+- one Show technical details setting, off for new installs, which replaces
+  Transcript detail and hides detail, never capability or safety state;
+- the **Ink and Saffron** brand: indigo ink, the mark's saffron as the one
+  accent for live states, a lighter paper, an indigo-night dark theme, and
+  four theme choices;
+- fixes for fifteen visible defects found in the 4.0.2 review.
+
+**Read, in this order:**
+1. `docs/plans/visual-refresh-plan.md`: the decisions, stages V0 to V4, and
+   the checklist with each item's "done when". It is the tracker: tick items
+   there and add a progress-log line as they land.
+2. `docs/design/75-visual-refresh.md`: the findings, the system, the glossary
+   and the disclosure table.
+3. `docs/assets/visual-refresh-2026/visual-refresh.html`: before-and-after
+   mockups and the review screenshots.
+
+**How to pick it up:**
+1. Confirm the maintainer has said to start, and with which stage or item.
+2. Re-find each defect in the current tree first. The review was taken at
+   `acca0c88`, and its line numbers will drift.
+3. Follow V1, then V2, then V3, then V4. V1 items are independent and may
+   ship one at a time; no V3 screen starts before the V2 tokens have merged.
+4. Each change replaces what it supersedes in the same commit (invariant
+   30): old tokens, CSS overrides, strings and components go with it.
+5. An item is done when its "done when" holds in the running app in a
+   browser at 1440 × 900 and 390 × 844, light and dark, with screenshots
+   saved as the plan says. A build or typecheck alone is not done.
+
+**Until it starts, don't deepen the debt:**
+- `DESIGN.md` still describes the shipped look; the refresh replaces it in
+  V2. Don't extend its dense type scale or its terracotta accent.
+- Name things in user-facing strings by what people recognise (doc 75 §7).
+- Add no font size under 12px and no hex literal outside a theme block.
+- Edit a selector's existing rule instead of adding an override later in
+  `styles.css`.
+- Keep IDs, paths, byte counts and hashes out of everyday screens.
+- Never extract, recolour or theme the mark (`docs/brand/README.md`).
 
 ## Non-negotiable invariants
 
