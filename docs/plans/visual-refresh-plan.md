@@ -212,34 +212,30 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   that only existed to win against a later override, and unused hex
   literals.
 
-#### Handoff for V2.2 (written 2026-09-25, at `c060f202`)
+#### Handoff for V2.5 to V2.8 (written 2026-09-25, at `9d945101`)
 
-Start here in a fresh session; re-find each line first.
+V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 
-1. **Keep the token names, change the values.** `--accent` stays the action
-   colour (194 uses) and becomes indigo; add `--live` / `--live-wash` /
-   `--live-ink` for saffron. Map: `--bg`→paper, `--surface`/`--surface-raised`
-   →surface, `--sidebar`→sidebar, `--border`/`--border-soft`→line,
-   `--text`→ink, `--text-soft`→ink-2, `--muted`/`--faint`→ink-3,
-   `--accent`/`--accent-bright`→primary, `--on-accent`→white. Values:
-   `DESIGN.md` front matter and doc 75 §5.1.
-2. **Blocks to replace** in `crates/vak-client-ui/src/styles.css`: `:root`
-   (line 1, today warm dark), `light` (74), `dark` (113), `sage` (123),
-   `paper` (133), `mist` (143), `dawn` (153), `contrast` (163), plus the
-   per-theme `.artifact-canvas-body` selectors near line 5723. Result:
-   `:root` = Light, `dark` = indigo night, `contrast`; delete `warm`, `sage`,
-   `paper`, `mist`, `dawn`.
-3. **Theme ids in code:** `store.ts` (the `theme` union, line ~675),
-   `App.tsx` (system resolution ~1253 and the light list ~1262),
-   `components/Settings.tsx` theme grid (~1311) and its previews. A stored
-   retired id resolves to `system`.
-4. **Move live states to saffron:** `.dot.run` (~307, green today), the
-   listening voice control (~857), the approval / needs-you badge, and the
-   header status dot. Nothing else uses `--live`.
-5. **Verify:** contrast of every text token pair (script in doc 75 §5.1),
-   then the live checks in §2 rule 3 for all three themes.
-
-V2.3 is done: `--display` exists and the wordmark and greeting use it.
+1. **V2.5 words.** Apply doc 75 §7 string by string (grep each "Today"
+   text in `crates/vak-client-ui/src`). The setup banner already has plain
+   words (V1.10). For the CI check, add a node test in
+   `crates/vak-client-ui/tests/` that scans JSX text and label/title/
+   aria-label/placeholder strings for the banned terms, with an explicit
+   allowlist of technical files (Workbench, Operations, Terminal, Diff,
+   Receipts, Workers panels) and of individual strings that stay technical.
+2. **V2.6 disclosure.** Replace `Density` (`store.ts`, key `vak.density`,
+   used in `ChatPane.tsx` and the Settings "Transcript detail" row) with one
+   boolean `technicalDetails` (new key, default off). Gate, per doc 75 §8:
+   the header folder chip (`WorkspaceHeader.tsx`), the … menu Developer
+   group, result card byte counts and paths, Review hashes and provenance,
+   the message-box model and permission selects (`Composer.tsx`), and the
+   technical Settings pages. Pending approvals and failures never hide.
+3. **V2.7 icons.** Ask before downloading an icon set (Lucide ISC or
+   Phosphor MIT); `components/Icon.tsx` holds about 45 hand-drawn paths.
+4. **V2.8 cleanup.** Dead rules first (`.everyday-rail`, 21), then the
+   duplicate selectors (the handoff baseline was 144), then `!important`.
+   Known open item: long agent names truncate in the sidebar since V2.4
+   (V3.1 fixes the row).
 
 ### V3 — Surfaces (after V2 merges)
 
