@@ -242,7 +242,7 @@ export default function CardHarness() {
       <section>
         <h2>Agent character package</h2>
         <p class="harness-section-note">
-          Canonical Vak mascot and all seven built-in companions at compact, conversation, and promotional sizes.
+          Canonical Vakyartha mascot and all seven built-in companions at compact, conversation, and promotional sizes.
           The final portrait in each row exercises the working-state motion.
         </p>
         <div class="harness-character-grid">

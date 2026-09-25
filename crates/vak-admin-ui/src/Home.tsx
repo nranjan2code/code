@@ -1106,7 +1106,7 @@ export function Home() {
       items.push({
         id: "inbox", severity: "info",
         title: `${unreadInbox} unread in the inbox`,
-        detail: (inbox()?.entries ?? []).slice(0, 2).map((e) => e.title).join(" · ") || "Proactive check-ins and alerts vak raised on its own.",
+        detail: (inbox()?.entries ?? []).slice(0, 2).map((e) => e.title).join(" · ") || "Proactive check-ins and alerts Vakyartha raised on its own.",
         action: "Read them", href: "#/inbox",
       });
     }
@@ -1261,7 +1261,7 @@ export function Home() {
           <div class="home-deck-tags">
             <div class="deck-tag">
               <span class="deck-tag-k">Active Agent</span>
-              <span class="font-semibold">✦ {snapshot()!.agents?.find(a => a.id === "vak")?.name || "Vak"}{snapshot()!.agents && snapshot()!.agents!.length > 1 ? ` (+${snapshot()!.agents!.length - 1} specialist)` : ""}</span>
+              <span class="font-semibold">✦ {snapshot()!.agents?.find(a => a.id === "vak")?.name || "Vakyartha"}{snapshot()!.agents && snapshot()!.agents!.length > 1 ? ` (+${snapshot()!.agents!.length - 1} specialist)` : ""}</span>
             </div>
             <div class="deck-tag">
               <span class="deck-tag-k">Target Dir</span>

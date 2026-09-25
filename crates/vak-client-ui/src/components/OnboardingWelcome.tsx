@@ -17,7 +17,7 @@ function alreadySeen(): boolean {
 /**
  * A one-time welcome for a fresh install: nothing steers a first-time user
  * toward making an agent otherwise, so they'd land straight on an empty chat
- * with Vak and never notice the sidebar's "+ Agent" entry.
+ * with Vakyartha and never notice the sidebar's "+ Agent" entry.
  */
 export default function OnboardingWelcome() {
   const [dismissed, setDismissed] = createSignal(alreadySeen());
@@ -39,16 +39,16 @@ export default function OnboardingWelcome() {
       <div class="modal-back" onClick={dismiss}>
         <div class="modal" style="max-width: 420px;" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" onClick={(e) => e.stopPropagation()}>
           <div style="margin-bottom: 12px;"><AgentMark character="vak" size={44} /></div>
-          <h2 id="onboarding-title" style="margin: 0 0 6px;">Meet Vak</h2>
+          <h2 id="onboarding-title" style="margin: 0 0 6px;">Meet Vakyartha</h2>
           <p style="margin: 0 0 18px; color: var(--muted); font-size: 13.5px; line-height: 1.5;">
-            Vak is ready to help out of the box. You can also build your own specialists — an agent with its own
+            Vakyartha is ready to help out of the box. You can also build your own specialists — an agent with its own
             personality, instructions, and workspace — for the things you do often.
           </p>
           <div style="display: flex; gap: 8px;">
             <button type="button" class="btn primary" onClick={() => { dismiss(); setAgentCreateOpen(true); }}>
               <Icon name="add" size={14} /> Create your first agent
             </button>
-            <button type="button" class="btn" onClick={dismiss}>Start with Vak</button>
+            <button type="button" class="btn" onClick={dismiss}>Start with Vakyartha</button>
           </div>
         </div>
       </div>

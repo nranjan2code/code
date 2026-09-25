@@ -338,7 +338,7 @@ function Login() {
     <div class="login-wrap">
       <form class="login-card" onSubmit={submit}>
         <div class="login-logo"><img src="/admin/vak-icon.png" alt="" /></div>
-        <h1>vak admin</h1>
+        <h1>Vakyartha admin</h1>
         <p class="hint">Paste the token printed by <code>vak serve</code></p>
         <input
           type="password"
@@ -539,7 +539,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
   };
 
   const removeServer = async (name: string) => {
-    if (!confirmDestructive(`Disconnect “${name}”? Vak stops using its tools.`)) return;
+    if (!confirmDestructive(`Disconnect “${name}”? Vakyartha stops using its tools.`)) return;
     const next = { ...props.ctx.mcp() };
     delete next[name];
     try {
@@ -691,7 +691,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
           <div>
             <h2>Connected apps</h2>
             <p class="dim">
-              Each row is a program vak starts when it needs the tools that app provides. What it is
+              Each row is a program Vakyartha starts when it needs the tools that app provides. What it is
               then allowed to do comes from the rules under{" "}
               <a href="#/settings">Settings</a>, and where no rule reaches it, from the setting that
               decides everything else.
@@ -718,7 +718,7 @@ function McpServersView(props: { ctx: ExtensionsCtx }) {
             <div class="empty empty-teach">
               <strong>No apps are connected yet.</strong>
               <p>
-A connected app hands vak extra tools — a GitHub client, a database, a browser. Connect one
+A connected app hands Vakyartha extra tools — a GitHub client, a database, a browser. Connect one
                 below and it starts up the first time something actually uses it; until then it costs
                 you nothing.
               </p>
@@ -1269,7 +1269,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
             <p class="dim">
               An automation runs one of your own scripts at a point in the turn. Treat these as
               powerful: a script that runs before a tool can stop that tool outright, and every one
-              of them runs as vak itself — outside the sandbox, and outside every permission rule on
+              of them runs as Vakyartha itself — outside the sandbox, and outside every permission rule on
               this page. Only what you choose under “Runs on” narrows when one fires.
             </p>
             <p class="dim">
@@ -1296,7 +1296,7 @@ function HooksView(props: { ctx: ExtensionsCtx }) {
             <div class="empty empty-teach">
               <strong>No automations are set up.</strong>
               <p>
-Nothing runs alongside your turns. Add one to keep a record of what vak does, to stop a
+Nothing runs alongside your turns. Add one to keep a record of what Vakyartha does, to stop a
                 particular command before it runs, or to give every new session some standing context.
               </p>
             </div>
@@ -1345,7 +1345,7 @@ Nothing runs alongside your turns. Add one to keep a record of what vak does, to
                               <span class="chip chip-phrase" title={hook.matcher ?? ""}>{describeMatcher(hook.matcher)}</span>
                             </Match>
                             <Match when={!scope()}>
-                              <span class="chip chip-tone-danger mono" title="Vak cannot read this pattern, so this automation will not run. Edit it to fix.">
+                              <span class="chip chip-tone-danger mono" title="Vakyartha cannot read this pattern, so this automation will not run. Edit it to fix.">
                                 {hook.matcher} · not valid
                               </span>
                             </Match>
@@ -1549,7 +1549,7 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
           <div>
             <h2>Scheduled tasks</h2>
             <p class="dim">
-              Runs vak starts on its own, with nobody watching. Each one runs under the same
+              Runs Vakyartha starts on its own, with nobody watching. Each one runs under the same
               permission mode as any other turn — <strong>{props.ctx.mode()}</strong> — so a task
               that needs an approval simply waits for one.
             </p>
@@ -1568,7 +1568,7 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
             <div class="empty empty-teach">
               <strong>Nothing is scheduled.</strong>
               <p>
-A scheduled task is something you ask vak to do on a repeating schedule — a nightly
+A scheduled task is something you ask Vakyartha to do on a repeating schedule — a nightly
                 digest, a weekly check — with the result filed in your Inbox.
               </p>
             </div>
@@ -1672,7 +1672,7 @@ A scheduled task is something you ask vak to do on a repeating schedule — a ni
           </div>
           <div class="form-row">
             <label>What to do</label>
-            <textarea rows={3} placeholder="What should vak do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
+            <textarea rows={3} placeholder="What should Vakyartha do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
           </div>
           <ScheduleBuilder value={schedule()} onChange={setSchedule} />
           <div class="form-row">
@@ -1757,10 +1757,10 @@ function ExtensionsSection() {
     <div class="view extension-shell">
       <PageHeader
         title="Extensions"
-        description="Give vak better ways to work — with clear boundaries, visible provenance, and one place to manage every capability."
+        description="Give Vakyartha better ways to work — with clear boundaries, visible provenance, and one place to manage every capability."
       />
       <div class="extension-overview" aria-label="Extension summary">
-        <div><span class="extension-overline">CAPABILITY HUB</span><strong>Everything vak can reach</strong><span>Connected apps, instructions, automations, and background work.</span></div>
+        <div><span class="extension-overline">CAPABILITY HUB</span><strong>Everything Vakyartha can reach</strong><span>Connected apps, instructions, automations, and background work.</span></div>
         <div class="extension-stat"><strong>{Object.keys(ctx.mcp()).length}</strong><span>connected apps</span></div>
         <div class="extension-stat"><strong>{ctx.skills().length}</strong><span>loaded skills</span></div>
         <div class="extension-stat"><strong>{ctx.hooks().length + ctx.tasks().length}</strong><span>automations</span></div>
@@ -1819,7 +1819,7 @@ function ExtensionsSection() {
 
 /// Age → lifecycle bucket for the freshness dot on each note card. Memory
 /// notes never expire on their own (docs/design/23-memory.md), so this is
-/// purely a "how long has vak been carrying this" signal, not a TTL.
+/// purely a "how long has Vakyartha been carrying this" signal, not a TTL.
 function noteAgeBucket(ts: string): "fresh" | "aging" | "stale" {
   const days = (Date.now() - new Date(ts).getTime()) / 86_400_000;
   if (days < 7) return "fresh";
@@ -1960,7 +1960,7 @@ function MemoryView() {
     try {
       await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined, selectedAgentIdOrUndefined());
       await refetch();
-      pushToast("info", "Vak will remember that");
+      pushToast("info", "Vakyartha will remember that");
       setNoteText("");
       setTag("");
     } catch (err) {
@@ -1971,7 +1971,7 @@ function MemoryView() {
   };
 
   const forget = async (id: string) => {
-    if (!confirmDestructive("Forget this note? Vak stops taking it into account.")) return;
+    if (!confirmDestructive("Forget this note? Vakyartha stops taking it into account.")) return;
     try {
       const note = memoryData()?.notes?.find((m) => m.id === id);
       await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace", selectedAgentIdOrUndefined());
@@ -1989,8 +1989,8 @@ function MemoryView() {
     title: string;
     desc: string;
   }> = [
-    { key: "memory_search_enabled", on: () => configData()?.memory?.search_enabled ?? false, setHere: () => layer()?.memory?.search_enabled === true, title: "Search past sessions", desc: "Lets vak look up earlier conversations mid-run." },
-    { key: "memory_write_enabled", on: () => configData()?.memory?.write_enabled ?? false, setHere: () => layer()?.memory?.write_enabled === true, title: "Write notes", desc: "Lets vak save what it learns mid-run, not just what you add here." },
+    { key: "memory_search_enabled", on: () => configData()?.memory?.search_enabled ?? false, setHere: () => layer()?.memory?.search_enabled === true, title: "Search past sessions", desc: "Lets Vakyartha look up earlier conversations mid-run." },
+    { key: "memory_write_enabled", on: () => configData()?.memory?.write_enabled ?? false, setHere: () => layer()?.memory?.write_enabled === true, title: "Write notes", desc: "Lets Vakyartha save what it learns mid-run, not just what you add here." },
     { key: "memory_reflection", on: () => configData()?.memory?.reflection ?? false, setHere: () => layer()?.memory?.reflection === true, title: "Reflect after each run", desc: "A short pass proposing notes/skills from what just happened." },
     { key: "memory_skill_proposals", on: () => configData()?.memory?.skill_proposals ?? false, setHere: () => layer()?.memory?.skill_proposals === true, title: "Propose skills", desc: "Lets reflection suggest new skills for you to review." },
   ];
@@ -2000,7 +2000,7 @@ function MemoryView() {
       <KnowledgeSubNav active="#/memory" />
       <PageHeader
         title="Memory"
-        description="Things vak should keep in mind between sessions — about you, or about this workspace."
+        description="Things Vakyartha should keep in mind between sessions — about you, or about this workspace."
         actions={<button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
       />
 
@@ -2015,7 +2015,7 @@ function MemoryView() {
         <div class="panel-title-row">
           <div>
             <h2>Governance</h2>
-            <p class="dim" style="margin-top:-4px">What vak is allowed to do with memory, live — no restart needed. Writing here affects <strong>{configScope() === "user" ? "Global" : "Workspace"}</strong> scope.</p>
+            <p class="dim" style="margin-top:-4px">What Vakyartha is allowed to do with memory, live — no restart needed. Writing here affects <strong>{configScope() === "user" ? "Global" : "Workspace"}</strong> scope.</p>
           </div>
         </div>
         <div class="toggle-card-grid" style="margin-top:10px">
@@ -2049,7 +2049,7 @@ function MemoryView() {
 
       <div class="two-col">
         <section class="panel">
-          <h2>What vak remembers ({notes().length})</h2>
+          <h2>What Vakyartha remembers ({notes().length})</h2>
           <div class="memory-toolbar">
             <input class="search-input" placeholder="Filter by text or label…" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} />
             <div class="scope-tabs">
@@ -2115,7 +2115,7 @@ function MemoryView() {
           <div class="panel-title-row">
             <div>
               <h2>Add a note</h2>
-              <p class="dim">Vak reads these at the start of every session.</p>
+              <p class="dim">Vakyartha reads these at the start of every session.</p>
             </div>
           </div>
           <div class="form-row">
@@ -2131,7 +2131,7 @@ function MemoryView() {
           </div>
           <div class="form-row">
             <label>Note</label>
-            <textarea rows={4} placeholder="What should vak remember?" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
+            <textarea rows={4} placeholder="What should Vakyartha remember?" value={noteText()} onInput={(e) => setNoteText(e.currentTarget.value)} />
           </div>
 
           {/* Quick Preset Templates */}
@@ -2803,7 +2803,7 @@ function SearchView() {
   return (
     <div class="view">
       <KnowledgeSubNav active="#/search" />
-      <PageHeader title="Search" description="Look through every conversation vak has had, and jump straight to where something was said." />
+      <PageHeader title="Search" description="Look through every conversation Vakyartha has had, and jump straight to where something was said." />
       <div class="search-hero-deck">
         <div class="search-hero">
           <input
@@ -2909,7 +2909,7 @@ function SurfaceBadge(props: { channelKey: string }) {
 
 const CUSTOM_WORKSPACE = "__custom__";
 
-/// Workspace picker: known workspaces first (paths vak has actually run
+/// Workspace picker: known workspaces first (paths Vakyartha has actually run
 /// in), with a custom-path fallback that says plainly it is unverified
 /// until a Core starts there — docs/design/34 open question 4. A typo'd
 /// path is what put a channel in the wrong workspace in the first place.
@@ -3585,9 +3585,9 @@ function ChannelAccessEditor(props: {
         Target Agent
         <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
           <option value="">
-            ✦ Follow Bot {selectedBot() ? `(${botDefaultAgent()})` : "(vak)"}
+            ✦ Follow Bot {selectedBot() ? `(${botDefaultAgent()})` : "(Vakyartha)"}
           </option>
-          <option value="vak">✦ Vak (Default Assistant)</option>
+          <option value="vak">✦ Vakyartha (Default Assistant)</option>
           <For each={adminAgents().filter((a) => a.id !== "vak")}>
             {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
           </For>
@@ -3763,7 +3763,7 @@ function PendingChannelCard(props: {
       <label class="inherit-toggle">
         Target Agent
         <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
-          <option value="vak">✦ Vak (Default Assistant)</option>
+          <option value="vak">✦ Vakyartha (Default Assistant)</option>
           <For each={adminAgents().filter((a) => a.id !== "vak")}>
             {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
           </For>
@@ -3900,7 +3900,7 @@ function BotAccessEditor(props: {
       <label class="inherit-toggle">
         Target Agent
         <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
-          <option value="vak">✦ Vak (Default Assistant)</option>
+          <option value="vak">✦ Vakyartha (Default Assistant)</option>
           <For each={adminAgents().filter((a) => a.id !== "vak")}>
             {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
           </For>
@@ -4147,7 +4147,7 @@ function ExtraBotsList(props: { ctx: GatewayCtx }) {
             onInput={(e) => setLabel(e.currentTarget.value)}
           />
           <select value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)} aria-label="Target Agent">
-            <option value="vak">✦ Vak (Default)</option>
+            <option value="vak">✦ Vakyartha (Default)</option>
             <For each={adminAgents().filter((a) => a.id !== "vak")}>
               {(a) => <option value={a.id}>✦ {a.name} ({a.id})</option>}
             </For>
@@ -4364,7 +4364,7 @@ One row per approved chat: which workspace it works in, which model answers, and
               <strong>No chats are connected yet.</strong>
               <p>
 A connected chat — a Telegram group, a Discord channel, a Slack conversation — lets people
-                talk to vak from where they already are. It takes three steps: add the bot token,
+                talk to Vakyartha from where they already are. It takes three steps: add the bot token,
                 message the bot from that chat, then approve it here.
               </p>
               <button onClick={() => navigate("#/gateway/connect")}>Connect a chat</button>
@@ -4554,7 +4554,7 @@ function ConnectView(props: { ctx: GatewayCtx }) {
           <div class="step-body">
             <h3>Message the bot from the chat you want to connect</h3>
             <p class="dim">
-The first message is turned away on purpose. Vak notes the chat down instead of letting it
+The first message is turned away on purpose. Vakyartha notes the chat down instead of letting it
               in, and that is what puts it in front of you in step 3.
             </p>
             <Show
@@ -4650,7 +4650,7 @@ function CredentialsView(props: { ctx: GatewayCtx }) {
           <div>
             <h2>Bot tokens</h2>
             <p class="dim">
-              One token per app — how vak signs in to Telegram, Discord, or Slack. Tokens are saved to
+              One token per app — how Vakyartha signs in to Telegram, Discord, or Slack. Tokens are saved to
               your private <code>.env</code>; this page can set or clear one, but never shows it again.
               A chat id (like <code>telegram:12345</code>) is a different thing entirely and lives
               under Chats.
@@ -4936,7 +4936,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
                 onClick={() => {
                   // Unrestricted is a deliberate human decision and is
                   // never selected on someone's behalf (invariant 13).
-                  if (p.danger && !window.confirm("Unrestricted means vak can reach anything on this machine, unsandboxed. Continue?")) return;
+                  if (p.danger && !window.confirm("Unrestricted means Vakyartha can reach anything on this machine, unsandboxed. Continue?")) return;
                   void run(`Set to ${p.title}`, () => api.setMode(p.mode, selectedAgentIdOrUndefined()));
                 }}
               >
@@ -5596,7 +5596,7 @@ function ApprovalForwarding() {
         <div>
           <h2>Can a chat ask you first?</h2>
           <p class="dim">
-            When vak running in a chat hits something that needs approval, it either refuses on
+            When Vakyartha running in a chat hits something that needs approval, it either refuses on
             the spot or asks you in a chat you choose.
           </p>
         </div>
@@ -5634,7 +5634,7 @@ function ApprovalForwarding() {
                 </span>
                 <span class="mode-desc">
                   Safest, and it means the web, the browser, and connected apps are unavailable in
-                  chat — vak will say so instead of trying.
+                  chat — Vakyartha will say so instead of trying.
                 </span>
               </button>
               <button
@@ -5668,7 +5668,7 @@ function ApprovalForwarding() {
                 fallback={
                   <p class="dim">
                     No chats are approved yet. Add one under <a href="#/gateway">Chats</a> first —
-                    a request can only be sent somewhere vak is already allowed to talk.
+                    a request can only be sent somewhere Vakyartha is already allowed to talk.
                   </p>
                 }
               >
@@ -7054,7 +7054,7 @@ function FeedsSection() {
       <KnowledgeSubNav active="#/feeds" />
       <PageHeader
         title="Feeds"
-        description="Sources vak reads on a schedule — blogs, YouTube channels, Reddit, Hacker News — so it can answer from them."
+        description="Sources Vakyartha reads on a schedule — blogs, YouTube channels, Reddit, Hacker News — so it can answer from them."
         actions={
           <button class="small" onClick={triggerIngest}>Check for new items</button>
         }
@@ -7166,7 +7166,7 @@ function FeedsSection() {
       <Show when={tab() === "sources"}>
         <section class="panel">
           <div class="panel-title-row">
-            <div><h2>Your sources</h2><p class="dim">What vak is currently checking, grouped by tag.</p></div>
+            <div><h2>Your sources</h2><p class="dim">What Vakyartha is currently checking, grouped by tag.</p></div>
             <button class="small" onClick={() => setWizardOpen(true)}>Add a source</button>
           </div>
           <Show when={!configuredSources.error} fallback={<LoadError message={`${configuredSources.error}`} onRetry={() => refetchConfigured()} />}>
@@ -7264,7 +7264,7 @@ function FeedsSection() {
       <Show when={tab() === "alerts"}>
         <section class="panel">
           <div class="panel-title-row">
-            <div><h2>Alerts</h2><p class="dim">Tell vak to flag an item when it mentions something you care about.</p></div>
+            <div><h2>Alerts</h2><p class="dim">Tell Vakyartha to flag an item when it mentions something you care about.</p></div>
             <button class="small" onClick={() => setAlertFormOpen(true)}>New alert</button>
           </div>
           <Show when={alertFormOpen()}>
@@ -7306,7 +7306,7 @@ function FeedsSection() {
 
       <Show when={tab() === "workbench"}>
         <section class="panel">
-          <div class="panel-title-row"><div><h2>Workbench</h2><p class="dim">Run a search and see the raw result vak works from — useful for checking why something did or didn’t come back.</p></div></div>
+          <div class="panel-title-row"><div><h2>Workbench</h2><p class="dim">Run a search and see the raw result Vakyartha works from — useful for checking why something did or didn’t come back.</p></div></div>
           <div class="form-row">
             <label>Try a search</label>
             <div class="toolbar">
@@ -7693,7 +7693,7 @@ export default function App() {
       <Match when={authed() === true}>
         <div class="shell">
           <aside class="sidebar">
-            <div class="brand"><span class="brand-mark"><img src="/admin/vak-icon.png" alt="" /></span> vak</div>
+            <div class="brand"><span class="brand-mark"><img src="/admin/vak-icon.png" alt="" /></span> Vakyartha</div>
             <div class="sidebar-scope">
               <ScopeControl />
             </div>

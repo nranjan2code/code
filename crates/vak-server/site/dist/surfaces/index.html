@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Surfaces — vak</title>
+<title>Surfaces — Vakyartha</title>
 <meta name="description" content="One auditable core behind a CLI, a desktop app, a browser client, an HTTP/SSE server and chat gateways. The same session contract, the same policy gate, the same ledger, whichever way you come in." />
-<meta property="og:title" content="Surfaces — vak" />
+<meta property="og:title" content="Surfaces — Vakyartha" />
 <meta property="og:description" content="One auditable core behind a CLI, a desktop app, a browser client, an HTTP/SSE server and chat gateways. The same session contract, the same policy gate, the same ledger, whichever way you come in." />
 <meta property="og:type" content="website" />
 <meta name="color-scheme" content="dark light" />
@@ -142,9 +142,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; margin-right: auto; }
 .brand-mark {
   display: grid; place-items: center; width: 27px; height: 27px;
-  border-radius: var(--radius-sm); background: var(--accent-wash); overflow: hidden; flex: none;
+  flex: none;
 }
-.brand-mark img { width: 18px; height: 18px; }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .brand-name { font-size: 15px; font-weight: 620; letter-spacing: -.015em; }
 
 .rail-nav { display: flex; align-items: center; gap: 2px; }
@@ -1501,12 +1501,12 @@ html.js .reveal.in {
   <div class="wrap">
     <a class="brand" href="/">
       <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
-      <span class="brand-name">vak</span>
+      <span class="brand-name">Vakyartha</span>
     </a>
     <nav class="rail-nav" id="railnav" aria-label="Pages">
       <a href="/">Home</a>
       <a href="/outcomes">Outcomes</a>
-      <a href="/vak">Vāk</a>
+      <a href="/vak">Meaning</a>
       <a href="/surfaces" class="on" aria-current="page">Surfaces</a>
       <a href="/tour">3D Tour</a>
       <a href="/security">Security</a>
@@ -1532,7 +1532,7 @@ html.js .reveal.in {
   <div class="wrap">
     <h1>One session, whichever way you came in</h1>
     <p class="lead">
-      vak is one auditable core with several front doors. The core owns the
+      Vakyartha is one auditable core with several front doors. The core owns the
       ledger, the policy gate, the receipts and the intent reading; a surface
       owns nothing but the rendering. So the same run looks different and
       <em>behaves</em> identically, and the record it leaves is the same record.
@@ -1629,7 +1629,7 @@ html.js .reveal.in {
               fix the failing parser test
             </div>
             <div class="bubble them">
-              <span class="who">vak · s_01K7Q4WCE2</span>
+              <span class="who">Vakyartha · s_01K7Q4WCE2</span>
               Edited <code>crates/vak-parser/src/lib.rs</code> (+6 −2). To verify it I need
               to run <code>cargo test -p vak-parser</code>.
               <span class="gate-facts" style="margin-top:9px">
@@ -1643,7 +1643,7 @@ html.js .reveal.in {
               </span>
             </div>
             <div class="bubble them">
-              <span class="who">vak</span>
+              <span class="who">Vakyartha</span>
               27 passed. Receipt: anthropic · settled · 6 118 in / 412 out.
               12 entries appended to the ledger.
             </div>
@@ -1905,8 +1905,9 @@ html.js .reveal.in {
 
 <footer>
   <div class="wrap foot">
-    <span class="stamp" id="stamp">vak</span>
+    <span class="stamp" id="stamp">Vakyartha</span>
     <nav aria-label="Elsewhere">
+      <a href="https://vakyartha.com">vakyartha.com</a>
       <a href="/app">Workspace</a>
       <a href="/admin">Operations</a>
       <a href="/health">Health</a>
@@ -1956,7 +1957,7 @@ html.js .reveal.in {
         if (!v || !v.version) return;
         var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
         var stamp = $("stamp");
-        if (stamp) stamp.textContent = "vak " + v.version + (sha ? " · " + sha : "");
+        if (stamp) stamp.textContent = "Vakyartha " + v.version + (sha ? " · " + sha : "");
         if ($("bv")) {
           $("bv").textContent = v.version;
           $("bc").textContent = sha || "—";
@@ -2933,7 +2934,7 @@ html.js .reveal.in {
   }
 
   // =========================================================================
-  // 3D Virtual World Tour Game Engine: The Vak Citadel
+  // 3D Virtual World Tour Game Engine: The Vakyartha Citadel
   // =========================================================================
   function tour3D(M, reduce) {
     var root = $("world-viewport");
@@ -3212,7 +3213,7 @@ html.js .reveal.in {
       });
     });
 
-    // 10 Sector Megastructures of the Vak Citadel
+    // 10 Sector Megastructures of the Vakyartha Citadel
     var SECTORS = [
       {
         id: "surface",

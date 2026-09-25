@@ -1,6 +1,6 @@
 // A cell's shown value as the Office reader writes it (docs/design/72, P4):
 // a plain value, or a formula with the value cached in the file, which may
-// be stale because Vak never calculates (`fullCalcOnLoad` recalculates when
+// be stale because Vakyartha never calculates (`fullCalcOnLoad` recalculates when
 // the file is opened in Excel).
 
 export type Cell = {

@@ -758,7 +758,7 @@ export default function Composer(props: { cwd: string }) {
         <div class="composer-error" role="alert">{composerError()}</div>
       </Show>
       <div class="composer-note">
-        Vak can make mistakes. Check important information and review consequential actions.
+        Vakyartha can make mistakes. Check important information and review consequential actions.
       </div>
     </div>
   );

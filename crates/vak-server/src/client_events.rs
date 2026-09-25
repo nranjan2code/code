@@ -64,7 +64,7 @@ pub(crate) fn run_outcome_message(outcome: RunOutcome) -> &'static str {
         RunOutcome::Completed => "Completed.",
         RunOutcome::Stopped => "Stopped.",
         RunOutcome::MaxTurns => {
-            "Vak reached this run's step limit. Saved work is available; choose Continue to finish this task."
+            "Vakyartha reached this run's step limit. Saved work is available; choose Continue to finish this task."
         }
         RunOutcome::Failed => "This run failed. Check the transcript for details.",
     }

@@ -37,7 +37,7 @@ pub fn maybe_check_update(config: &Config) {
         && version_newer(latest, env!("CARGO_PKG_VERSION"))
     {
         eprintln!(
-            "note: Vak {} is available (installed {}) — install manually; nothing is auto-updated",
+            "note: Vakyartha {} is available (installed {}) — install manually; nothing is auto-updated",
             format_version(latest),
             env!("CARGO_PKG_VERSION")
         );

@@ -1284,7 +1284,7 @@ export function SessionsList() {
             style={{ "min-height": "32px", padding: "4px 8px", background: "var(--surface)", border: "1px solid var(--border)", "border-radius": "var(--radius-sm)", color: "var(--text)", font: "inherit" }}
           >
             <option value="all">🌐 All Agents</option>
-            <option value="vak">✦ Vak (Assistant)</option>
+            <option value="vak">✦ Vakyartha (Assistant)</option>
             <For each={agentsRes() ?? []}>
               {(ag) => ag.id !== "vak" ? <option value={ag.id}>✦ {ag.name}</option> : null}
             </For>
@@ -1351,7 +1351,7 @@ export function SessionsList() {
                       <td>
                         <Show
                           when={s.agent || s.agent_name || s.agent_id}
-                          fallback={<span class="chip chip-tone-info">✦ Vak</span>}
+                          fallback={<span class="chip chip-tone-info">✦ Vakyartha</span>}
                         >
                           <span class="chip chip-tone-info" title={s.agent?.personality || ""}>
                             ✦ {s.agent_name || s.agent?.name || s.agent_id}
@@ -2447,7 +2447,7 @@ export function SessionForensics(props: { sessionId: string }) {
           </select>
           <textarea
             rows={2}
-            placeholder={running() ? "Steer the run in progress…" : "Ask vak to run the next turn…"}
+            placeholder={running() ? "Steer the run in progress…" : "Ask Vakyartha to run the next turn…"}
             value={draft()}
             onInput={(e) => setDraft(e.currentTarget.value)}
             onKeyDown={(e) => {

@@ -173,7 +173,7 @@ function OperationsContextBar(props: {
       }}>
         <option value="all">🌐 Global Platform</option>
         <optgroup label="Specialist Agents">
-          <For each={props.data.agents ?? [{ id: "vak", name: "Vak" }]}>
+          <For each={props.data.agents ?? [{ id: "vak", name: "Vakyartha" }]}>
             {(agent) => <option value={`agent:${agent.id}`}>✦ {agent.name} ({agent.id})</option>}
           </For>
         </optgroup>
@@ -253,7 +253,7 @@ function WorkView(props: { data: OperationsSnapshot }) {
       <Show when={props.data.runs.length > 0} fallback={<div class="empty">No active runs or pending approvals.</div>}>
         <div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Session</th><th>Agent</th><th>State</th><th>Workspace</th><th>Approvals</th><th /></tr></thead><tbody><For each={props.data.runs}>{(run) => <tr>
           <td><button class="link-button mono" onClick={() => navigate(operationHref(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`))}>{run.session_id.slice(0, 12)}</button></td>
-          <td><span class="chip chip-tone-info">✦ {run.agent_name || run.agent_id || "Vak"}</span></td>
+          <td><span class="chip chip-tone-info">✦ {run.agent_name || run.agent_id || "Vakyartha"}</span></td>
           <td><StatusMark value={run.state} /></td><td class="mono">{run.workspace}</td><td>{run.pending_approvals.length || "—"}</td>
           <td><button type="button" class="ghost small" onClick={() => navigate(operationHref(`#/operations/work/runs/${encodeURIComponent(run.session_id)}`))}>Open trail</button></td>
         </tr>}</For></tbody></table></div>

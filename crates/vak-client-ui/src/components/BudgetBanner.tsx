@@ -60,7 +60,7 @@ export default function BudgetBanner() {
       void import("../App").then((m) =>
         m.notifyOnce(
           "budget-red",
-          "Vak day budget exceeded",
+          "Vakyartha day budget exceeded",
           `$${spent().toFixed(2)} of $${cap().toFixed(2)} — new runs may be denied.`,
         ),
       );

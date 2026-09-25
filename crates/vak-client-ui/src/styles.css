@@ -316,8 +316,8 @@ code, pre, kbd { font-family: var(--mono); }
 .sb-head { height: 58px; display: flex; align-items: center; justify-content: space-between; padding: 10px 10px 8px 15px; }
 .sb-head-actions { display: flex; align-items: center; gap: 1px; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 650; letter-spacing: -.01em; color: var(--text); }
-.brand-mark { display: grid; place-items: center; width: 25px; height: 25px; overflow: hidden; background: var(--accent-wash); border-radius: 8px; }
-.brand-mark img { display: block; width: 100%; height: 100%; }
+.brand-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: none; }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .sb-nav { display: flex; flex-direction: column; gap: 2px; padding: 2px 8px 16px; }
 .sb-nav-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 34px; padding: 6px 9px; border-radius: 8px; color: var(--text-soft); text-align: left; transition: color 120ms ease, background 120ms ease; }
 .sb-nav-item:hover { color: var(--text); background: var(--surface-hover); }
@@ -2330,8 +2330,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-nav nav button.active .icon { color: var(--accent-bright); }
 .settings-no-results { padding: 16px 12px; color: var(--faint); font-size: 11px; }
 .settings-nav-foot { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 11px 9px 2px; border-top: 1px solid var(--border-soft); }
-.settings-app-mark { display: grid; place-items: center; width: 30px; height: 30px; overflow: hidden; border-radius: 9px; background: #171a2b; }
-.settings-app-mark img { width: 100%; height: 100%; object-fit: cover; }
+.settings-app-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: none; }
+.settings-app-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .settings-nav-foot > div:last-child { display: flex; flex-direction: column; }
 .settings-nav-foot strong { font-size: 11.5px; }
 .settings-nav-foot span { color: var(--faint); font-size: 9.5px; }
@@ -2609,8 +2609,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 /* Project gate */
 .gate { height: 100%; display: grid; place-items: center; overflow: auto; background: radial-gradient(800px 450px at 50% 25%, rgba(223,121,95,.1), transparent 70%), var(--bg); }
 .gate-card { width: min(500px, calc(100vw - 40px)); padding: 42px 36px; border: 1px solid var(--border-soft); border-radius: 20px; text-align: center; background: rgba(31,31,28,.72); box-shadow: 0 30px 90px rgba(0,0,0,.25); }
-.gate-mark { display: grid; place-items: center; width: 68px; height: 68px; overflow: hidden; margin: 0 auto 18px; border: 1px solid color-mix(in srgb, var(--blue) 26%, transparent); border-radius: 19px; background: var(--surface-raised); box-shadow: 0 10px 26px rgba(8, 10, 24, .2); }
-.gate-mark img { width: 100%; height: 100%; object-fit: cover; }
+.gate-mark { display: grid; place-items: center; width: 68px; height: 68px; margin: 0 auto 18px; }
+.gate-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .gate-card h1 { margin: 0; font-size: 25px; font-weight: 650; letter-spacing: -.03em; }
 .gate-lead { margin: 5px 0 23px; color: var(--muted); font-size: 13.5px; }
 .gate-features { display: flex; flex-direction: column; gap: 9px; margin-bottom: 24px; padding: 14px 15px; border: 1px solid var(--border-soft); border-radius: 11px; background: rgba(23,23,20,.55); text-align: left; }
@@ -5325,7 +5325,6 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   border-right-color: color-mix(in srgb, var(--border) 42%, transparent);
 }
 .sb-head { height: 68px; padding-inline: 16px; }
-.brand-mark { width: 30px; height: 30px; border-radius: 11px; }
 .sb-nav { gap: 4px; padding: 8px 12px 12px; }
 .sb-nav-item { min-height: 39px; padding: 8px 11px; border: 1px solid transparent; border-radius: 12px; color: color-mix(in srgb, var(--text-muted) 88%, var(--text)); transition: background .18s ease, color .18s ease, transform .18s ease; }
 .sb-nav-item:hover { background: color-mix(in srgb, var(--surface-hover) 72%, transparent); color: var(--text); transform: translateX(1px); }

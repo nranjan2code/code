@@ -4,6 +4,10 @@ Rules for every AI agent (and human) working in this repository.
 
 ## Identity
 
+The public product name is **Vakyartha** (https://vakyartha.com), approved on
+2026-09-25. The `vak` command, crates, identifiers and data paths keep their
+internal names. Brand assets and platform exceptions are in `docs/brand/README.md`.
+
 vak is a Rust general-purpose agent harness. Thesis: Codex-grade safety, pi-grade
 transparency, Claude Code-grade extensibility, opencode-grade simplicity.
 When a feature request conflicts with simplicity, resolve it as an extension,
@@ -188,10 +192,12 @@ behaviour yet, and no session starts a later milestone unasked.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
 - Keep conversation content out of logs.
 
-### Pending: the visual refresh (planned 2026-09-25, not started)
+### Pending: the visual refresh (planned 2026-09-25; brand correction started)
 
 The maintainer approved the direction and locked all five of its decisions
-on 2026-09-25. No stage is built yet, and no session starts one unasked.
+on 2026-09-25. The maintainer separately requested the logo and platform-icon
+correction (V4.1 scope) on that date. The other stages remain unstarted; no
+session starts one unasked.
 
 **What it is.** One visual system for the shared client
 (`crates/vak-client-ui`), so for both the desktop and the web app:
@@ -234,7 +240,9 @@ on 2026-09-25. No stage is built yet, and no session starts one unasked.
 - Edit a selector's existing rule instead of adding an override later in
   `styles.css`.
 - Keep IDs, paths, byte counts and hashes out of everyday screens.
-- Never extract, recolour or theme the mark (`docs/brand/README.md`).
+- Follow the generated platform exports in `docs/brand/README.md`. The complete
+  tile stays unchanged across themes; only the macOS menu-bar template uses
+  the approved monochrome, tile-free geometry.
 
 ## Non-negotiable invariants
 

@@ -1003,7 +1003,7 @@ function IntentSimulator() {
                     }
                   >
                     <>
-                      Because horizon is <strong>{exp().reading.horizon}</strong> (≥ session), vak promotes this work
+                      Because horizon is <strong>{exp().reading.horizon}</strong> (≥ session), Vakyartha promotes this work
                       into a durable, tracked <strong>Commitment</strong> with independent audit lineage. Work cannot
                       close as fulfilled until satisfaction criteria achieve at least{" "}
                       <span class="chip chip-phrase">{exp().engagement.limits.min_satisfaction}</span> evidence.
@@ -1484,7 +1484,7 @@ export function Commitments() {
               <div class="teach-header">
                 <strong>No commitments currently tracked in portfolio</strong>
                 <p>
-                  vak opens a durable commitment when a request reads as lasting beyond the current session —
+                  Vakyartha opens a durable commitment when a request reads as lasting beyond the current session —
                   such as recurring crons, complex migrations, or work with an explicit done-condition to verify later.
                   Short interactive tasks resolve ephemerally without creating persistent ledger debt.
                 </p>

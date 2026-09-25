@@ -61,8 +61,8 @@ PAGES = [
         "index.html",
         "/",
         "Home",
-        "vak — an agent you can inspect, constrain, and extend",
-        "vak is a local-first Rust harness for running serious general-purpose "
+        "Vakyartha — an agent you can inspect, constrain, and extend",
+        "Vakyartha is a local-first Rust harness for running serious general-purpose "
         "agents without giving up the receipts. Append-only ledgers, permission "
         "before every effect, a receipt for every dispatch.",
     ),
@@ -70,21 +70,21 @@ PAGES = [
         "outcomes.html",
         "/outcomes",
         "Outcomes",
-        "Outcomes — vak",
-        "How vak turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface.",
+        "Outcomes — Vakyartha",
+        "How Vakyartha turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface.",
     ),
     (
         "vak.html",
         "/vak",
-        "Vāk",
-        "Vāk — vak",
-        "The philosophy behind vak: meaningful expression made durable, intelligible, and accountable before it becomes action.",
+        "Meaning",
+        "Meaning — Vakyartha",
+        "The philosophy behind Vakyartha: meaningful expression made durable, intelligible, and accountable before it becomes action.",
     ),
     (
         "surfaces.html",
         "/surfaces",
         "Surfaces",
-        "Surfaces — vak",
+        "Surfaces — Vakyartha",
         "One auditable core behind a CLI, a desktop app, a browser client, an "
         "HTTP/SSE server and chat gateways. The same session contract, the same "
         "policy gate, the same ledger, whichever way you come in.",
@@ -93,14 +93,14 @@ PAGES = [
         "tour.html",
         "/tour",
         "3D Tour",
-        "3D World Tour — vak",
-        "An interactive 3D virtual world tour of the vak harness. Walk through the 10 sectors of execution from inbound surface to settled receipt.",
+        "3D World Tour — Vakyartha",
+        "An interactive 3D virtual world tour of the Vakyartha harness. Walk through the 10 sectors of execution from inbound surface to settled receipt.",
     ),
     (
         "security.html",
         "/security",
         "Security",
-        "Security — vak",
+        "Security — Vakyartha",
         "Permission before dispatch, three permission modes, OS-level sandboxing, "
         "a broker boundary for restricted tools, and secrets that never enter the "
         "agent's ambient environment.",
@@ -109,8 +109,8 @@ PAGES = [
         "install.html",
         "/install",
         "Install",
-        "Install — vak",
-        "Install vak on macOS or Linux, run it headless behind a browser, or in "
+        "Install — Vakyartha",
+        "Install Vakyartha on macOS or Linux, run it headless behind a browser, or in "
         "Docker. Configuration, secrets, services, updating and uninstalling.",
     ),
 ]

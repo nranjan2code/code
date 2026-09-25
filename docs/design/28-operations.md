@@ -129,6 +129,16 @@ ordinary LaunchServices registration; the bundle-wide `LSUIElement` that
 made the old tray invisible to all of this is still forbidden
 (`install::bundle`).
 
+### Menu-bar artwork
+
+The desktop tray uses `crates/vak-desktop/icons/tray-template.png`, a 36px
+monochrome alpha mask rendered at 18pt by AppKit with template mode enabled.
+The OS handles light, dark and selected states. The menu and tooltip retain
+service status in words. Other desktop platforms use `tray-color.png`.
+The standalone `vak-tray` target uses the same template, with no runtime
+resizing of the Dock artwork. All exports come from the approved raster master and
+`scripts/brand/generate.mjs`; see `docs/brand/README.md`.
+
 ### `--tray`
 
 `vak-desktop --tray` starts with the menu-bar icon and no window. The

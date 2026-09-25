@@ -200,7 +200,7 @@ export default function OfficeView(props: {
       <Show when={selected()}>{(anchor) => (
         <div class="office-view-selection" role="toolbar" aria-label="Selected place">
           <code>{anchor()}</code>
-          <button type="button" class="btn primary sm" onClick={() => ask(anchor())}>Ask Vak about this</button>
+          <button type="button" class="btn primary sm" onClick={() => ask(anchor())}>Ask Vakyartha about this</button>
           <button type="button" class="btn sm" onClick={() => void copy(anchor())}>{copied() ? "Copied" : "Copy anchor"}</button>
           <button type="button" class="btn sm" aria-label="Clear selection" onClick={() => select(null)}>Clear</button>
         </div>

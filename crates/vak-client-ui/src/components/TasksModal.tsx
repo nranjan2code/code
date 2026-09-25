@@ -325,7 +325,7 @@ export default function TasksModal() {
                   />
                   <Show when={agents().length > 0}>
                     <select class="model-pin-input" aria-label="Agent for this task" value={agentId()} onChange={(e) => setAgentId(e.currentTarget.value)}>
-                    <option value="">Agent: Vak decides</option>
+                    <option value="">Agent: Vakyartha decides</option>
                       <For each={agents()}>{(agent) => <option value={agent.id}>{agent.name}{agents().filter((candidate) => candidate.name.toLowerCase() === agent.name.toLowerCase()).length > 1 ? ` · ${agent.id.slice(0, 6)}` : ""}</option>}</For>
                     </select>
                   </Show>

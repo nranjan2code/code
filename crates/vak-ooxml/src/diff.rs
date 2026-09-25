@@ -3,7 +3,7 @@
 //! The diff compares what a reader sees, anchor by anchor, so it describes
 //! changes the way a person thinks about them ("Budget: B4 100 → 150",
 //! "Slide 2 added", "§ Outlook: paragraph rewritten") and works the same
-//! for an Agent's edit and for a file changed outside Vak. It is computed
+//! for an Agent's edit and for a file changed outside Vakyartha. It is computed
 //! from two re-reads, never from anyone's description of the change.
 
 use std::collections::{BTreeMap, HashMap};
@@ -432,13 +432,13 @@ pub fn impact(before: Option<&Document>, after: &Document) -> Vec<Impact> {
     } else if signed && before.is_some_and(|before| !diff(Some(before), after).is_empty()) {
         impacts.push(Impact {
             kind: ImpactKind::Signature,
-            message: "The draft still carries a signature, but its content differs from the file that was signed, so the signature no longer holds. Vak does not verify signatures.".into(),
+            message: "The draft still carries a signature, but its content differs from the file that was signed, so the signature no longer holds. Vakyartha does not verify signatures.".into(),
             warning: true,
         });
     } else if signed && before.is_none() {
         impacts.push(Impact {
             kind: ImpactKind::Signature,
-            message: "The new file carries a digital signature Vak has not verified.".into(),
+            message: "The new file carries a digital signature Vakyartha has not verified.".into(),
             warning: false,
         });
     }

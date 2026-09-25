@@ -162,7 +162,7 @@ export function ApprovalForwarding() {
         <div>
           <h2>Can a chat ask you first?</h2>
           <p class="dim">
-            When vak running in a chat hits something that needs approval, it either refuses on
+            When Vakyartha running in a chat hits something that needs approval, it either refuses on
             the spot or asks you in a chat you choose.
           </p>
         </div>
@@ -200,7 +200,7 @@ export function ApprovalForwarding() {
                 </span>
                 <span class="mode-desc">
                   Safest, and it means the web, the browser, and connected apps are unavailable in
-                  chat — vak will say so instead of trying.
+                  chat — Vakyartha will say so instead of trying.
                 </span>
               </button>
               <button
@@ -229,7 +229,7 @@ export function ApprovalForwarding() {
                 fallback={
                   <p class="dim">
                     No chats are approved yet. Add one under <a href="#/gateway">Chats</a> first —
-                    a request can only be sent somewhere vak is already allowed to talk.
+                    a request can only be sent somewhere Vakyartha is already allowed to talk.
                   </p>
                 }
               >

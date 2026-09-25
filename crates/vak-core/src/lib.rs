@@ -594,7 +594,7 @@ pub fn vak_agent_identity() -> vak_session::types::AgentIdentity {
     vak_session::types::AgentIdentity {
         id: "vak".into(),
         revision: 1,
-        name: "Vak".into(),
+        name: "Vakyartha".into(),
         character: "vak".into(),
         personality: String::new(),
         animation: "subtle".into(),

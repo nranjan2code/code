@@ -152,7 +152,7 @@ export async function refreshSessions() {
         }
         return res.sessions;
       });
-      // Startup opens the canonical Vak conversation through agent admission.
+      // Startup opens the canonical Vakyartha conversation through agent admission.
       // Session refresh itself never chooses an arbitrary recent task.
       // The other pane's session was deleted elsewhere — collapse the split
       // rather than showing a ghost.
@@ -382,7 +382,7 @@ function onApprovalRequested(id: string, requestId: string, tool: string) {
   const session = sessions().find((s) => s.session_id === id);
   void notifyOnce(
     `approval:${requestId}`,
-    "Vak needs your approval",
+    "Vakyartha needs your approval",
     `${session?.title ?? "A task"} wants to run ${tool}.`,
     `#/s/${id}?approval=${encodeURIComponent(requestId)}`,
   );
@@ -403,7 +403,7 @@ function onFinished(id: string, summary: string) {
   });
   if (document.hidden && id === activeId()) {
     const s = sessions().find((x) => x.session_id === id);
-    void notify("Vak run finished", `${s?.title ?? "Session"} — ${summary}`);
+    void notify("Vakyartha run finished", `${s?.title ?? "Session"} — ${summary}`);
   }
 }
 

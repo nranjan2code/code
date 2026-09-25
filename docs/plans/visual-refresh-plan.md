@@ -1,7 +1,7 @@
 # Plan — visual refresh (Ink and Saffron)
 
-Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V1 to V4
-not started.**
+Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
+completed by explicit request; V1 to V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -229,12 +229,15 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
 
 ### V4 — Brand assets and desktop chrome
 
-- [ ] **V4.1 Master export.** A transparent-background export of
-  `docs/brand/mark/vak-logo-master.png` (same artwork, no recolour), then
-  regenerated desktop icons (`crates/vak-desktop/icons/`), `app-icon.png`,
-  the client's `public/vak-icon.png` and the web manifest icon.
-  Done when: the Dock icon matches its neighbours' size and has no square
-  background.
+- [x] **V4.1 Master export (approved logo correction).** Use the exact supplied
+  `docs/brand/mark/vak-logo-master.png`; regenerate the desktop, Dock, browser,
+  iOS, Android, tray, client, admin, favicon and website exports. Preserve the
+  paper tile and navy/saffron artwork. The sole theme-aware exception is the
+  macOS menu-bar alpha template.
+  Done when: generated exports match the master; the Dock export has native
+  padding; tray variants render correctly; and client, admin and website checks
+  pass at 1440 × 900 and 390 × 844 in light and dark. Evidence: `after/` files
+  named `V4.1-*`.
 - [ ] **V4.2 Character glyphs.** A flat two-colour glyph per character for 32px
   and below, plus 64 and 128px WebP copies of the portraits; doc 71 updated.
 - [ ] **V4.3 Desktop chrome.** Overlay title bar in
@@ -268,3 +271,10 @@ what was not.
 - 2026-09-25: Review of the 4.0.2 dev build (`acca0c88`) with real
   configuration and a fresh home; doc 75, the visual reference and this plan
   written. D1 to D5 locked by the maintainer. Nothing in the client changed.
+- 2026-09-25: V4.1 completed by explicit maintainer request. Exact supplied
+  raster kept unchanged; 63 platform exports regenerated; public app, admin and
+  site branding set to Vakyartha while internal `vak` names remain. Screenshots
+  cover client, admin and website at desktop/mobile sizes in light/dark; native
+  macOS AppKit, Dock ICNS, and tray-template renders checked. Color/trademark
+  uniqueness scan was a limited visual web search; no registry search or legal
+  conclusion. Remaining V4 work was not started.

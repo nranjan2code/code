@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Vak",
+  "productName": "Vakyartha",
   "identifier": "dev.vak.desktop",
   "build": {
     "frontendDist": "../vak-client-ui/dist"
@@ -8,7 +8,7 @@
   "app": {
     "windows": [
       {
-        "title": "Vak",
+        "title": "Vakyartha",
         "visible": false,
         "width": 1440,
         "height": 900,

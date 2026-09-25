@@ -1,6 +1,6 @@
 {
-  "name": "Vak",
-  "short_name": "Vak",
+  "name": "Vakyartha",
+  "short_name": "Vakyartha",
   "description": "An agent you can inspect, constrain, and extend.",
   "start_url": "/app/",
   "scope": "/app/",
@@ -9,7 +9,8 @@
   "background_color": "#171714",
   "theme_color": "#171714",
   "icons": [
-    { "src": "/app/vak-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/app/vak-icon.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/app/assets/brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/app/assets/brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/app/assets/brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

@@ -38,7 +38,7 @@ export default function SharedConversation() {
   const [fileError, setFileError] = createSignal<string | null>(null);
   const [participantName, setParticipantName] = createSignal("");
   const [participantId, setParticipantId] = createSignal("");
-  const [agent, setAgent] = createSignal<{ name: string; character: string; animation: "subtle" | "expressive" | "off" }>({ name: "Vak", character: "vak", animation: "subtle" });
+  const [agent, setAgent] = createSignal<{ name: string; character: string; animation: "subtle" | "expressive" | "off" }>({ name: "Vakyartha", character: "vak", animation: "subtle" });
   const [canComment, setCanComment] = createSignal(false);
   const [canMessage, setCanMessage] = createSignal(false);
   const [messageText, setMessageText] = createSignal("");
@@ -69,7 +69,7 @@ export default function SharedConversation() {
     setFileError(null);
     setParticipantName("");
     setParticipantId("");
-    setAgent({ name: "Vak", character: "vak", animation: "subtle" });
+    setAgent({ name: "Vakyartha", character: "vak", animation: "subtle" });
     setCanComment(false);
     setCanMessage(false);
     setMessageText("");
@@ -340,7 +340,7 @@ export default function SharedConversation() {
   };
 
   return <main class="shared-conversation">
-    <header class="shared-conversation-head"><span class="shared-brand">vak</span><span>Shared conversation</span><Show when={credential()}><span class="shared-agent-identity"><AgentMark character={agent().character} motion={agent().animation} size={22} /><span>{agent().name}</span></span><Show when={presentParticipants().filter((person) => person.principal_id !== participantId())} keyed>{(people) => <Show when={people.length > 0}><span class="shared-presence">{people.map((person) => person.display_name).join(", ")} {people.length === 1 ? "is" : "are"} here</span></Show>}</Show><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
+    <header class="shared-conversation-head"><span class="shared-brand">Vakyartha</span><span>Shared conversation</span><Show when={credential()}><span class="shared-agent-identity"><AgentMark character={agent().character} motion={agent().animation} size={22} /><span>{agent().name}</span></span><Show when={presentParticipants().filter((person) => person.principal_id !== participantId())} keyed>{(people) => <Show when={people.length > 0}><span class="shared-presence">{people.map((person) => person.display_name).join(", ")} {people.length === 1 ? "is" : "are"} here</span></Show>}</Show><button type="button" class="btn" onClick={stop}>Leave</button></Show></header>
     <Show when={!credential()} fallback={<div class="shared-conversation-content">
       <div class="shared-conversation-intro"><h1>Conversation and drafts</h1><p>{participantName() ? `${participantName()}, you can` : "You can"} follow this conversation{canMessage() ? ", add messages" : ""}, and review its saved drafts{canComment() ? " with comments" : ""}. The owner decides when the Agent works.</p><Show when={updatedAt()}>{(time) => <span>Updated {time().toLocaleTimeString()}</span>}</Show></div>
       <Show when={error()}>{(message) => <p class="shared-conversation-error" role="alert">{message()}</p>}</Show>

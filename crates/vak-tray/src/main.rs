@@ -2,17 +2,9 @@
 //! `CFBundleExecutable`), so double-clicking Vak.app or clicking it
 //! in Spotlight runs this binary, not `vak-desktop`.
 //!
-//! The icon is the same brand mark as the desktop app (`brand_icon`,
-//! downsampled from `crates/vak-desktop/icons/icon.png`) — a menu-bar
-//! controller with no window of its own was otherwise the one surface a
-//! user could not visually tie back to "Vak" at a glance. "One
-//! glance answers is my agent alive?" now lives in the tooltip
-//! (`status_tooltip`) instead of an icon-color swap: gateway/bridges
-//! status in words on hover, not a color the user has to remember the
-//! meaning of. The menu starts/stops/restarts, installs/uninstalls,
-//! opens logs, and toggles a watchdog that reports a crashed service
-//! automatically and posts a system notification when it does. See
-//! docs/design/28-operations.md.
+//! The menu bar uses the generated monochrome Vakyartha template, shared with
+//! vak-desktop. AppKit supplies the colour for light, dark and selected
+//! menu-bar states. Service status stays in the tooltip and menu.
 //!
 //! It also opens the chat window and the admin console. `vak-desktop` —
 //! the actual product surface — is a sibling binary this process spawns;
@@ -22,7 +14,7 @@
 //! `vak-desktop` guards itself with `tauri_plugin_single_instance`, so
 //! spawning it when a window is already open just refocuses that window
 //! rather than duplicating it — both the automatic launch below and the
-//! always-present "Open Vak" menu item rely on that guarantee.
+//! always-present "Open Vakyartha" menu item rely on that guarantee.
 //! "Open Admin Console" opens a pre-authenticated link built from the
 //! gateway token `self install` pins into the canonical secret scope
 //! (`ensure_gateway_token`, crates/vak/src/install/mod.rs) — see
@@ -62,14 +54,14 @@ fn service(idx: usize) -> vak_ops::Service {
     }
 }
 
-/// 32x32 RGBA dot: the fallback glyph on the rare path where the
+/// 36x36 RGBA dot: the fallback glyph on the rare path where the
 /// embedded brand icon fails to decode. No longer the everyday icon —
 /// see `brand_icon` for why the tray now shows the same mark as the
 /// desktop app. Sized to match `brand_icon`'s output so a decode failure
 /// swaps the glyph, not also the icon's apparent size in the menu bar.
 #[allow(clippy::expect_used)] // infallible: fixed non-zero dimensions
 fn icon_dot(rgb: [u8; 3]) -> Icon {
-    const S: usize = 32;
+    const S: usize = 36;
     let mut rgba = Vec::with_capacity(S * S * 4);
     let c = (S as f32 - 1.0) / 2.0;
     for y in 0..S {
@@ -90,98 +82,30 @@ fn icon_dot(rgb: [u8; 3]) -> Icon {
     Icon::from_rgba(rgba, S as u32, S as u32).expect("static icon")
 }
 
-/// The desktop app's own icon (`crates/vak-desktop/icons/icon.png`),
-/// embedded so the tray never depends on a runtime asset path -- it is
-/// not shipped into the bundle's Resources by anything else, only the
-/// desktop frontend's `dist/` is. Compiled in once via
-/// `CARGO_MANIFEST_DIR`, so the same 512x512 PNG both crates already
-/// ship from stays the single source of truth for this artwork.
+/// A dedicated 2x alpha mask for AppKit's 18pt status item.
 const BRAND_ICON_PNG: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/../vak-desktop/icons/icon.png"
+    "/../vak-desktop/icons/tray-template.png"
 ));
 
-/// The tray's glyph, downsampled from the real brand icon rather than a
-/// plain colour dot: a menu-bar controller with no other window is
-/// otherwise the one surface a user cannot visually tie back to
-/// "Vak" at a glance. 512 -> 32 is an exact 16:1 block average
-/// (not a naive nearest-neighbour point sample), which is close to an
-/// ideal filter at this ratio and keeps the downsized glyph legible
-/// rather than aliased. 16x16 was tried first and rejected by actually
-/// looking at the result: the glyph's letterform collapsed into
-/// illegible grey mush at that size, confirmed by rendering the real
-/// downsample output rather than trusting the resampling math alone.
-///
-/// Status used to be color-coded here (green/amber/red/grey). That
-/// signal moves to the tooltip instead of a badge composited onto an
-/// already-detailed glyph: the icon has three-tone content (navy glyph,
-/// orange bar, blue accent) inside a rounded white square, and a second
-/// small colored dot layered on top of that was judged more likely to
-/// read as noise than as a clear status signal -- a tooltip that says so
-/// in words has no such risk.
 fn brand_icon() -> Option<Icon> {
-    let (rgba, w, h) = decode_and_downsample(BRAND_ICON_PNG, 32)?;
+    let (rgba, w, h) = decode_template(BRAND_ICON_PNG)?;
     Icon::from_rgba(rgba, w, h).ok()
 }
 
-/// Decode an RGBA8 PNG and box-average it down to `out x out`, returning
-/// `(pixels, out, out)`. Pure and allocation-only — no `Icon`, no FFI —
-/// so the actual resampling math is unit-testable without a live tray or
-/// a platform icon backend.
-///
-/// Requires `out` to evenly divide both source dimensions, matching
-/// `brand_icon`'s use against a known 512x512 asset with `out = 32`
-/// (an exact 16:1 block average); returns `None` rather than guess at a
-/// fractional-box filter for a source this function was not written to
-/// handle.
-fn decode_and_downsample(png_bytes: &[u8], out: usize) -> Option<(Vec<u8>, u32, u32)> {
+fn decode_template(png_bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
     let decoder = png::Decoder::new(png_bytes);
     let mut reader = decoder.read_info().ok()?;
-    let mut buf = vec![0u8; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buf).ok()?;
-    if info.bit_depth != png::BitDepth::Eight {
-        // Fail soft to the fallback rather than guess at a pixel layout
-        // this function was not written to handle.
+    let mut pixels = vec![0; reader.output_buffer_size()];
+    let info = reader.next_frame(&mut pixels).ok()?;
+    if info.bit_depth != png::BitDepth::Eight
+        || info.color_type != png::ColorType::Rgba
+        || (info.width, info.height) != (36, 36)
+    {
         return None;
     }
-    // An opaque RGB asset gets a full alpha channel. The shipped icon became
-    // RGB when the branding was updated, and requiring RGBA had quietly
-    // turned the tray glyph into the grey fallback dot.
-    let buf = match info.color_type {
-        png::ColorType::Rgba => buf,
-        png::ColorType::Rgb => buf[..info.buffer_size()]
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .flat_map(|&[r, g, b]| [r, g, b, u8::MAX])
-            .collect(),
-        _ => return None,
-    };
-    let (src_w, src_h) = (info.width as usize, info.height as usize);
-    if out == 0 || src_w % out != 0 || src_h % out != 0 {
-        return None;
-    }
-    let (bx, by) = (src_w / out, src_h / out);
-    let mut result = vec![0u8; out * out * 4];
-    for oy in 0..out {
-        for ox in 0..out {
-            let mut sum = [0u32; 4];
-            for sy in 0..by {
-                for sx in 0..bx {
-                    let px = (oy * by + sy) * src_w + (ox * bx + sx);
-                    for c in 0..4 {
-                        sum[c] += u32::from(buf[px * 4 + c]);
-                    }
-                }
-            }
-            let n = (bx * by) as u32;
-            let out_px = (oy * out + ox) * 4;
-            for c in 0..4 {
-                result[out_px + c] = (sum[c] / n) as u8;
-            }
-        }
-    }
-    Some((result, out as u32, out as u32))
+    pixels.truncate(info.buffer_size());
+    Some((pixels, info.width, info.height))
 }
 
 /// `brand_icon`, falling back to the plain grey dot if the embedded PNG
@@ -256,7 +180,7 @@ impl Ui {
             }
             ACT_INSTALL => {
                 if let Err(e) = vak_ops::install(service(slot), &cfg) {
-                    notify("vak", &e);
+                    notify("Vakyartha", &e);
                 }
             }
             ACT_UNINSTALL => {
@@ -386,7 +310,10 @@ fn pinned_gateway_token() -> Option<String> {
 fn open_admin_path(route: &str) {
     let cfg = ops_config();
     if vak_ops::status(vak_ops::Service::Gateway, &cfg) != vak_ops::State::Running {
-        notify("vak", "start the gateway service first (Gateway → Start)");
+        notify(
+            "Vakyartha",
+            "start the gateway service first (Gateway → Start)",
+        );
         return;
     }
     let url = match pinned_gateway_token() {
@@ -396,14 +323,14 @@ fn open_admin_path(route: &str) {
             // with. The console still works -- open it to the manual
             // login form rather than not opening it at all.
             notify(
-                "vak",
+                "Vakyartha",
                 "no pinned token found — reinstall to enable one-click login; opening manual login",
             );
             format!("http://127.0.0.1:{}/admin{route}", cfg.port)
         }
     };
     if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
-        notify("vak", &format!("could not open admin console: {e}"));
+        notify("Vakyartha", &format!("could not open admin console: {e}"));
     }
 }
 
@@ -417,11 +344,14 @@ fn open_operations_center() {
 
 fn open_desktop() {
     let Some(bin) = desktop_binary() else {
-        notify("vak", "Vak desktop app not found next to the tray binary");
+        notify(
+            "Vakyartha",
+            "Vakyartha desktop app not found next to the tray binary",
+        );
         return;
     };
     if let Err(e) = std::process::Command::new(bin).spawn() {
-        notify("vak", &format!("could not open Vak: {e}"));
+        notify("Vakyartha", &format!("could not open Vakyartha: {e}"));
     }
 }
 
@@ -431,7 +361,7 @@ fn open_desktop() {
 /// The bundle's `CFBundleExecutable` is this binary, and
 /// `com.vak.tray` also runs it as a launchd service with
 /// `RunAtLoad`. So the ordinary path -- install, `services-sync`, then
-/// open Vak from Finder, Spotlight, or the Dock -- started a
+/// open Vakyartha from Finder, Spotlight, or the Dock -- started a
 /// *second* tray and put two identical icons in the menu bar, with no
 /// guard anywhere against it.
 ///
@@ -549,7 +479,7 @@ fn main() {
                         && last_down_notify.elapsed() > Duration::from_secs(60)
                     {
                         notify(
-                            "vak watchdog",
+                            "Vakyartha watchdog",
                             &format!(
                                 "{} is down — the service manager will recover it",
                                 service(i).label()
@@ -571,6 +501,7 @@ fn main() {
         .with_menu(Box::new(menu))
         .with_tooltip(status_tooltip(&states_now()))
         .with_icon(startup_icon())
+        .with_icon_as_template(true)
         .build()
         .expect("tray built");
 
@@ -578,7 +509,7 @@ fn main() {
     // background service (com.vak.tray, RunAtLoad), so doing so
     // would throw a window in the user's face at every login. Opening
     // the app is now the bundle's job -- its CFBundleExecutable is
-    // vak-desktop -- and "Open Vak" in the menu covers the rest.
+    // vak-desktop -- and "Open Vakyartha" in the menu covers the rest.
 
     let mut ui = Ui {
         tray,
@@ -619,7 +550,7 @@ fn states_now() -> [vak_ops::State; 2] {
 fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
     // State's Display already renders lowercase ("running", "stopped", …).
     format!(
-        "vak — gateway {}, chat bridges {}",
+        "Vakyartha — gateway {}, chat bridges {}",
         states[GATEWAY], states[BRIDGES]
     )
 }
@@ -628,7 +559,7 @@ fn build_menu(states: &[vak_ops::State; 2], watchdog_on: bool) -> Menu {
     let menu = Menu::new();
     // Top of the menu, always present: the three actions a user is
     // actually looking for. Everything below is service plumbing.
-    let open = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open Vak", true, None);
+    let open = MenuItem::with_id(ACT_OPEN_DESKTOP.to_string(), "Open Vakyartha", true, None);
     let _ = menu.append(&open);
     let admin = MenuItem::with_id(ACT_OPEN_ADMIN.to_string(), "Open Admin Console", true, None);
     let _ = menu.append(&admin);
@@ -709,100 +640,28 @@ mod brand_icon_tests {
     use super::*;
 
     #[test]
-    fn embedded_asset_is_a_decodable_512_square_and_downsamples_to_32() {
-        // Guards the two assumptions decode_and_downsample's early
-        // returns are silently tolerant of: that the checked-in asset is
-        // still RGBA8, and that 512 is still evenly divisible by 32. A
-        // change to icon.png that broke either would otherwise degrade
-        // silently to the grey-dot fallback with no build-time signal.
-        let (rgba, w, h) = decode_and_downsample(BRAND_ICON_PNG, 32)
-            .expect("the shipped icon.png must decode and downsample");
-        assert_eq!((w, h), (32, 32));
-        assert_eq!(rgba.len(), 32 * 32 * 4, "one RGBA quad per output pixel");
-    }
-
-    #[test]
-    fn an_opaque_rgb_source_decodes_with_full_alpha() {
-        let mut png_bytes = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut png_bytes, 64, 64);
-            encoder.set_color(png::ColorType::Rgb);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().unwrap();
-            writer
-                .write_image_data(&[10u8, 20, 30].repeat(64 * 64))
-                .unwrap();
-        }
-        let (rgba, w, h) = decode_and_downsample(&png_bytes, 32).expect("RGB decodes");
-        assert_eq!((w, h), (32, 32));
+    fn tray_template_has_transparent_ground_and_legible_coverage() {
+        let (rgba, w, h) = decode_template(BRAND_ICON_PNG).expect("valid tray template");
+        assert_eq!((w, h), (36, 36));
+        let pixels = rgba.as_chunks::<4>().0;
+        assert_eq!(pixels[0][3], 0, "no opaque square around the mark");
+        assert!(pixels.iter().all(|p| p[0..3] == [0, 0, 0]));
+        let solid = pixels.iter().filter(|p| p[3] > 128).count();
         assert!(
-            rgba.as_chunks::<4>()
-                .0
-                .iter()
-                .all(|px| *px == [10, 20, 30, 255])
+            (300..800).contains(&solid),
+            "recognisable mark, not a tiny dot or filled tile"
         );
+        let xs: Vec<_> = pixels
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p[3] > 128)
+            .map(|(i, _)| i % 36)
+            .collect();
+        assert!(xs.iter().max().unwrap() - xs.iter().min().unwrap() >= 30);
     }
 
     #[test]
-    fn a_uniform_source_downsamples_to_the_same_uniform_color() {
-        // The averaging math itself, isolated from the real asset: every
-        // source pixel identical must produce that same pixel at every
-        // output position, exactly (no drift from integer truncation
-        // when the block is uniform).
-        let src = flat_rgba_png(32, 32, [200, 100, 50, 255]);
-        let (rgba, w, h) = decode_and_downsample(&src, 4).unwrap();
-        assert_eq!((w, h), (4, 4));
-        for &px in rgba.as_chunks::<4>().0 {
-            assert_eq!(px, [200, 100, 50, 255]);
-        }
-    }
-
-    #[test]
-    fn a_block_averages_its_whole_area_not_just_one_corner() {
-        // A downsample that sampled only the block's top-left corner
-        // (a point sample dressed up as an average) would pass the
-        // uniform-source test above but land on 0 here, not the
-        // midpoint, and fail silently.
-        let mut px = vec![0u8; 4 * 4 * 4];
-        // Top half black, bottom half white, opaque -- an even 8/8 split
-        // of the whole 4x4 block, not just one quadrant of it.
-        for y in 0..4usize {
-            for x in 0..4usize {
-                let v = if y < 2 { 0 } else { 255 };
-                let i = (y * 4 + x) * 4;
-                px[i..i + 4].copy_from_slice(&[v, v, v, 255]);
-            }
-        }
-        let src = rgba_png(4, 4, &px);
-        let (rgba, _, _) = decode_and_downsample(&src, 1).unwrap();
-        // An even split across the whole block must land at the
-        // midpoint, not at either extreme.
-        assert_eq!(rgba[0..3], [127, 127, 127]);
-    }
-
-    #[test]
-    fn a_size_the_source_cannot_evenly_divide_is_refused_not_approximated() {
-        let src = flat_rgba_png(10, 10, [1, 2, 3, 4]);
-        assert!(
-            decode_and_downsample(&src, 3).is_none(),
-            "10 is not a multiple of 3 -- must fail rather than silently pick a wrong filter"
-        );
-    }
-
-    fn flat_rgba_png(w: u32, h: u32, rgba: [u8; 4]) -> Vec<u8> {
-        let px: Vec<u8> = rgba.repeat((w * h) as usize);
-        rgba_png(w, h, &px)
-    }
-
-    fn rgba_png(w: u32, h: u32, px: &[u8]) -> Vec<u8> {
-        let mut out = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut out, w, h);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_depth(png::BitDepth::Eight);
-            let mut writer = encoder.write_header().unwrap();
-            writer.write_image_data(px).unwrap();
-        }
-        out
+    fn invalid_template_is_refused() {
+        assert!(decode_template(b"not a PNG").is_none());
     }
 }

@@ -210,7 +210,7 @@ pub fn save(
     let mut ids = HashSet::with_capacity(profiles.len());
     for profile in profiles {
         if profile.id == "vak" {
-            return Err("Vak is the built-in agent; choose another id".into());
+            return Err("Vakyartha is the built-in agent; choose another id".into());
         }
         if profile.id.trim().is_empty() || profile.name.trim().is_empty() {
             return Err("agent id and name are required".into());

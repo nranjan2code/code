@@ -44,9 +44,9 @@ export default function Sidebar() {
   return (
     <aside class="sidebar">
       <div class="sb-head">
-        <div class="brand" aria-label="Vak">
+        <div class="brand" aria-label="Vakyartha">
           <span class="brand-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></span>
-          <span>vak</span>
+          <span>Vakyartha</span>
         </div>
         <div class="sb-head-actions">
           <button type="button" class="icon-button subtle" aria-label="Search agents" aria-expanded={searching()} onClick={() => setSearching(!searching())}><Icon name="search" /></button>
@@ -58,7 +58,7 @@ export default function Sidebar() {
       <Show when={searching()}><div class="sb-search-wrap"><input class="sb-search" type="search" aria-label="Search agents" placeholder="Find an agent" value={query()} onInput={(e) => setQuery(e.currentTarget.value)} /></div></Show>
 
       <nav class="sb-agent-list" aria-label="Agents">
-        <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><AgentMark character="vak" size={22} state={agentIsRunning("vak") ? "working" : "idle"} /><span>Vak</span></button>
+        <button type="button" class="sb-agent-item" classList={{active: activeAgentId() === "vak"}} aria-current={activeAgentId() === "vak" ? "page" : undefined} disabled={agentOpening()} onClick={() => void openAgentChat("vak")}><AgentMark character="vak" size={22} state={agentIsRunning("vak") ? "working" : "idle"} /><span>Vakyartha</span></button>
         <Show when={loaded()} fallback={
           <div class="sb-agent-skeleton" aria-hidden="true"><span /><span /></div>
         }>

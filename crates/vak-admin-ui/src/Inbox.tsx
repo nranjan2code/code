@@ -428,7 +428,7 @@ export function Inbox() {
               </h3>
               <p class="inbox-zero-desc">
                 {unreadOnly()
-                  ? "Vak captures unattended approval escalations, heartbeat check-ins, FinOps budget alerts, and scheduled task summaries here."
+                  ? "Vakyartha captures unattended approval escalations, heartbeat check-ins, FinOps budget alerts, and scheduled task summaries here."
                   : "Try clearing search filters or selecting a different category to view historical entries."}
               </p>
               <Show when={unreadOnly() && entries().length > 0}>

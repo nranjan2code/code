@@ -35,10 +35,10 @@ pub enum ThemeKind {
 impl ThemeKind {
     pub fn label(&self) -> &'static str {
         match self {
-            ThemeKind::VakWarm => "Vak Warm (Terracotta)",
-            ThemeKind::VakSlate => "Vak Slate (Dark)",
-            ThemeKind::VakPaper => "Vak Paper (Light)",
-            ThemeKind::VakContrast => "Vak Contrast (OLED)",
+            ThemeKind::VakWarm => "Vakyartha Warm (Terracotta)",
+            ThemeKind::VakSlate => "Vakyartha Slate (Dark)",
+            ThemeKind::VakPaper => "Vakyartha Paper (Light)",
+            ThemeKind::VakContrast => "Vakyartha Contrast (OLED)",
             ThemeKind::TokyoNight => "Tokyo Night (Cyber)",
         }
     }
@@ -84,7 +84,7 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Canonical Vak Web Terracotta Theme (`#171714` / `#df795f`).
+    /// Canonical Vakyartha Web Terracotta Theme (`#171714` / `#df795f`).
     pub fn vak_warm() -> Self {
         Self {
             kind: ThemeKind::VakWarm,
@@ -105,7 +105,7 @@ impl Theme {
         }
     }
 
-    /// Vak Slate Theme (`#121419` / `#7f9fca`).
+    /// Vakyartha Slate Theme (`#121419` / `#7f9fca`).
     pub fn vak_slate() -> Self {
         Self {
             kind: ThemeKind::VakSlate,
@@ -126,7 +126,7 @@ impl Theme {
         }
     }
 
-    /// Vak Paper Light Theme (`#f4f1ea` / `#a8462a`).
+    /// Vakyartha Paper Light Theme (`#f4f1ea` / `#a8462a`).
     pub fn vak_paper() -> Self {
         Self {
             kind: ThemeKind::VakPaper,
@@ -147,7 +147,7 @@ impl Theme {
         }
     }
 
-    /// Vak Contrast OLED Theme (`#080808` / `#ff8e70`).
+    /// Vakyartha Contrast OLED Theme (`#080808` / `#ff8e70`).
     pub fn vak_contrast() -> Self {
         Self {
             kind: ThemeKind::VakContrast,

@@ -10,7 +10,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 // cannot tell two binaries on the same release line apart, which is exactly
 // the question that matters when asking whether a fix is in the thing you
 // are running.
-#[command(name = "Vak", version = env!("VAK_VERSION"), about = "An agent harness")]
+#[command(name = "vak", version = env!("VAK_VERSION"), about = "Vakyartha — an agent harness")]
 pub(crate) struct Cli {
     /// Target a specific workspace directory instead of the current working directory.
     #[arg(long, short = 'C', global = true)]

@@ -269,7 +269,7 @@ pub fn apply(
         }
         if target.macro_enabled != format.macro_enabled {
             return fail(format!(
-                "the source is .{} and the output .{}; Vak never turns a file macro-enabled or strips its macros by renaming, so keep the .{} extension",
+                "the source is .{} and the output .{}; Vakyartha never turns a file macro-enabled or strips its macros by renaming, so keep the .{} extension",
                 format.extension(),
                 target.extension(),
                 format.extension()
@@ -392,7 +392,7 @@ pub fn apply(
 
 /// Removes the package's digital signatures (D4): the signature origin, its
 /// relationship from the package, every signature part and their content
-/// types. Returns how many signatures there were. Vak does not verify
+/// types. Returns how many signatures there were. Vakyartha does not verify
 /// signatures, but it knows an edit breaks every one of them.
 fn drop_signatures<R: std::io::Read + std::io::Seek>(
     work: &mut Work<'_, R>,

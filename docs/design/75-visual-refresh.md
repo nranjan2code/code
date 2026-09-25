@@ -278,10 +278,11 @@ shield today.
 
 ### 5.6 The mark and the characters
 
-- The mark stays whole, as `docs/brand/README.md` requires: never split,
-  recoloured or given light and dark variants. The sidebar shows the complete
-  tile. The master file gets a transparent-background export of the same
-  artwork, which fixes the Dock icon and dark mode without touching the mark.
+- The sidebar and other UI show the complete flat tile, without extra framing.
+  The separately requested 2026-09-25 brand correction adds a approved raster master,
+  transparent Dock export and generated platform sizes (`docs/brand/README.md`).
+  The macOS menu-bar template is the sole monochrome, tile-free exception;
+  AppKit supplies its appearance. Other surfaces retain the navy/saffron colours.
 - The 3D portraits stay for large moments at 64px or more: onboarding, empty
   states, agent creation, voice mode.
 - A flat two-colour glyph per character, in the mark's style, for 32px and

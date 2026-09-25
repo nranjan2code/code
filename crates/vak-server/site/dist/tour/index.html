@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>3D World Tour — vak</title>
-<meta name="description" content="An interactive 3D virtual world tour of the vak harness. Walk through the 10 sectors of execution from inbound surface to settled receipt." />
-<meta property="og:title" content="3D World Tour — vak" />
-<meta property="og:description" content="An interactive 3D virtual world tour of the vak harness. Walk through the 10 sectors of execution from inbound surface to settled receipt." />
+<title>3D World Tour — Vakyartha</title>
+<meta name="description" content="An interactive 3D virtual world tour of the Vakyartha harness. Walk through the 10 sectors of execution from inbound surface to settled receipt." />
+<meta property="og:title" content="3D World Tour — Vakyartha" />
+<meta property="og:description" content="An interactive 3D virtual world tour of the Vakyartha harness. Walk through the 10 sectors of execution from inbound surface to settled receipt." />
 <meta property="og:type" content="website" />
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
@@ -142,9 +142,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; margin-right: auto; }
 .brand-mark {
   display: grid; place-items: center; width: 27px; height: 27px;
-  border-radius: var(--radius-sm); background: var(--accent-wash); overflow: hidden; flex: none;
+  flex: none;
 }
-.brand-mark img { width: 18px; height: 18px; }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .brand-name { font-size: 15px; font-weight: 620; letter-spacing: -.015em; }
 
 .rail-nav { display: flex; align-items: center; gap: 2px; }
@@ -1501,12 +1501,12 @@ html.js .reveal.in {
   <div class="wrap">
     <a class="brand" href="/">
       <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
-      <span class="brand-name">vak</span>
+      <span class="brand-name">Vakyartha</span>
     </a>
     <nav class="rail-nav" id="railnav" aria-label="Pages">
       <a href="/">Home</a>
       <a href="/outcomes">Outcomes</a>
-      <a href="/vak">Vāk</a>
+      <a href="/vak">Meaning</a>
       <a href="/surfaces">Surfaces</a>
       <a href="/tour" class="on" aria-current="page">3D Tour</a>
       <a href="/security">Security</a>
@@ -1531,7 +1531,7 @@ html.js .reveal.in {
 <div class="tour-page-shell">
   <!-- 3D Game World Viewport -->
   <div class="world-viewport" id="world-viewport">
-    <canvas id="world-canvas" aria-label="Interactive 3D Virtual World Tour of Vak"></canvas>
+    <canvas id="world-canvas" aria-label="Interactive 3D Virtual World Tour of Vakyartha"></canvas>
 
     <!-- Game HUD: Top Bar -->
     <div class="game-hud-top">
@@ -1681,10 +1681,10 @@ html.js .reveal.in {
   <!-- Educational System Overview Below 3D World -->
   <div class="wrap" style="padding: 64px 26px 96px">
     <div class="section-head">
-      <h2>How to read the Vak 3D Citadel</h2>
+      <h2>How to read the Vakyartha 3D Citadel</h2>
       <p class="section-lead">
         Each structure in the virtual world corresponds to a real Rust crate and architectural boundary in this repository.
-        Unlike traditional black-box agent loops where tools execute invisibly, Vak isolates every effect behind observable barriers.
+        Unlike traditional black-box agent loops where tools execute invisibly, Vakyartha isolates every effect behind observable barriers.
       </p>
     </div>
 
@@ -1721,8 +1721,9 @@ html.js .reveal.in {
 
 <footer>
   <div class="wrap foot">
-    <span class="stamp" id="stamp">vak</span>
+    <span class="stamp" id="stamp">Vakyartha</span>
     <nav aria-label="Elsewhere">
+      <a href="https://vakyartha.com">vakyartha.com</a>
       <a href="/app">Workspace</a>
       <a href="/admin">Operations</a>
       <a href="/health">Health</a>
@@ -1772,7 +1773,7 @@ html.js .reveal.in {
         if (!v || !v.version) return;
         var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
         var stamp = $("stamp");
-        if (stamp) stamp.textContent = "vak " + v.version + (sha ? " · " + sha : "");
+        if (stamp) stamp.textContent = "Vakyartha " + v.version + (sha ? " · " + sha : "");
         if ($("bv")) {
           $("bv").textContent = v.version;
           $("bc").textContent = sha || "—";
@@ -2749,7 +2750,7 @@ html.js .reveal.in {
   }
 
   // =========================================================================
-  // 3D Virtual World Tour Game Engine: The Vak Citadel
+  // 3D Virtual World Tour Game Engine: The Vakyartha Citadel
   // =========================================================================
   function tour3D(M, reduce) {
     var root = $("world-viewport");
@@ -3028,7 +3029,7 @@ html.js .reveal.in {
       });
     });
 
-    // 10 Sector Megastructures of the Vak Citadel
+    // 10 Sector Megastructures of the Vakyartha Citadel
     var SECTORS = [
       {
         id: "surface",

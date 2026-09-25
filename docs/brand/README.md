@@ -1,10 +1,12 @@
-# vak brand assets
+# Vakyartha brand assets
 
-Source-of-truth marketing assets for vak. The runtime character package lives in
+Source-of-truth marketing assets for Vakyartha. The public name is Vakyartha and
+the official website is https://vakyartha.com. Internal commands, package names,
+identifiers and data paths remain `vak`. The runtime character package lives in
 `crates/vak-client-ui/public/characters/` (see `docs/design/71-agent-character-system.md`); this
 folder holds the marketing-ready derivatives and the brand facts that generations must respect.
 
-## Mascot — the vak songbird
+## Mascot — the Vakyartha songbird
 
 `mascot/vak-songbird-pose-01..08.png` — eight expression poses cropped from the canonical atlas
 (`crates/vak-client-ui/public/characters/vak-atlas.png`), 443 × 443, transparent.
@@ -25,10 +27,42 @@ face, calm expression, legible at 24 px.
 
 ## Mark
 
-`mark/vak-logo-master.png` is the single canonical Vak trademark: the complete warm-paper rounded
-tile with the navy-and-saffron woven mark. The same artwork is resized for every surface — tray,
-favicon, desktop/mobile app icon, website, documents, and social. Never extract the inner glyph,
-recolour it, swap the tile, or create light/dark variants.
+`mark/vak-logo-master.png` is the canonical artwork: the exact 1254px RGBA image
+supplied and approved by the maintainer on 2026-09-25 as `Va Logo.png`.
+SHA-256: `d0db2c2956a3a19179417335e2ec65abc931210613a0391b89e78eb10b963de3`.
+Preserve its navy-and-saffron woven V, paper tile, proportions and colour treatment.
+Do not redraw it, add a bevel, shadow, glow or 3D effect, or change it by theme.
+Production exports trim the exterior canvas and clip only the stray edge pixels;
+they embed the original raster unchanged. The tile bounds are 73,73 to 1181,1181.
+Display the complete tile in the client, admin, website, documents and social;
+do not add another coloured tile, crop the mark, stretch it or add a shadow.
+
+The maintainer requested this correction and the platform exports on 2026-09-25.
+Platform adaptations are generated from the same geometry:
+
+| Surface | Export contract |
+|---|---|
+| UI, favicon, notifications | Complete tile, transparent rounded corners, tight canvas; UI controls its display size. |
+| macOS Dock / Finder | `icon.icns` and `app-icon.png`: 824px tile in a transparent 1024px canvas; native 1x/2x representations. |
+| macOS menu bar | `tray-template.png`: 36px monochrome alpha mask for an 18pt status item. AppKit supplies light/dark/selection colour. This is the sole monochrome, tile-free exception. |
+| Other desktop trays | `tray-color.png`: complete colour tile at 32px. |
+| Browser installation | Actual 192px and 512px icons, plus an opaque 512px maskable export with the mark inside its safe circle. |
+| iOS / Apple touch | Opaque square paper ground; the OS supplies the corner mask. |
+| Android adaptive | Transparent foreground with safe padding; matching paper background. Legacy and round exports are generated too. |
+
+Run on macOS (Node 20.9+; `iconutil` is supplied by macOS):
+
+```sh
+npm ci --prefix scripts/brand
+npm --prefix scripts/brand run generate
+npm --prefix scripts/brand run check
+```
+
+`sharp` is pinned to 0.35.4 in the isolated asset-tool manifest and lockfile. It
+renders the approved source deterministically; it adds no application dependency.
+Do not hand-edit generated exports. Rebuild the client, admin and public-site
+bundles after changing assets or their framing. Baseline screenshots and the
+labelled before image in the visual-refresh review remain historical evidence.
 
 ## Palette (light / paper — the marketing ground)
 
@@ -51,8 +85,7 @@ experience screens in `docs/assets/vak-experience-2026/` are the reference for h
 
 ## Voice
 
-Brand voice on ElevenLabs: **Sana – Confident Indian Voice** (`tKZQTIqwDrPzLv6MrPxF`). Pronounce
-*vak* as the Hindi वाक् — spell it `Vaak` in TTS prompts.
+Brand voice on ElevenLabs: **Sana – Confident Indian Voice** (`tKZQTIqwDrPzLv6MrPxF`). Use **Vakyartha** in new public narration; internal `vak` commands retain their name.
 
 Sonic logo: `docs/video/spot-2026/audio/sfx-chirp.mp3` — a two-note songbird chirp. Use it on the
 mascot landing in every video.
@@ -73,5 +106,5 @@ experience screens and the voice, so generations made on the canvas stay on bran
 - Flat tonal depth; shadows only on things that float.
 - No dark sci-fi, neon, glow, particles, holograms, circuit boards.
 - No fake benchmarks, testimonials or customer names.
-- vak is universal — never frame it as developer-only.
-- No URL in brand pieces until a domain is live.
+- Vakyartha is universal — never frame it as developer-only.
+- The public website is https://vakyartha.com; do not substitute similarly named domains.

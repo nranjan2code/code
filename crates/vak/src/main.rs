@@ -678,7 +678,7 @@ fn resolve_trust(cwd: &std::path::Path, flag: bool, interactive: bool) -> bool {
     if interactive && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
         eprintln!();
         eprintln!(
-            "This directory ({}) contains a project-level Vak",
+            "This directory ({}) contains a project-level Vakyartha",
             cwd.display()
         );
         eprintln!("config (.vak/config.toml) and/or secrets that can run commands,");
@@ -1122,11 +1122,11 @@ async fn run_flow_exec(
             }
             vak_flow::FlowOutcome::Failed { node, reason, .. } => {
                 eprintln!("── flow failed at '{node}': {reason}");
-                eprintln!("   resume with: Vak flow run {name} --resume");
+                eprintln!("   resume with: vak flow run {name} --resume");
                 1
             }
             vak_flow::FlowOutcome::Aborted => {
-                eprintln!("── flow aborted · resume with: Vak flow run {name} --resume");
+                eprintln!("── flow aborted · resume with: vak flow run {name} --resume");
                 1
             }
         },
@@ -1732,7 +1732,7 @@ fn scope_label(scope: cli::PromptScope) -> &'static str {
 fn run_config_dump(cwd: PathBuf) {
     match Core::new(cwd.clone()) {
         Ok(core) => {
-            println!("# Vak effective config");
+            println!("# Vakyartha effective config");
             println!("version          = {}", vak_core::APP_VERSION);
             println!("cwd              = {}", core.cwd().display());
             println!("provider         = {}", core.effective_provider());

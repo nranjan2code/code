@@ -942,7 +942,7 @@ export default function WorkbenchPanel() {
           </Show>
           <p class="empty-title">No activity yet</p>
           <p class="empty-desc">
-            Files and execution details will appear here as Vak works.
+            Files and execution details will appear here as Vakyartha works.
           </p>
         </div>
       </Show>

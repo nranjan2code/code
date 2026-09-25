@@ -16,7 +16,7 @@ export interface AgentScopeItem {
 }
 
 export const [adminAgents, setAdminAgents] = createSignal<AgentScopeItem[]>([
-  { id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" },
+  { id: "vak", name: "Vakyartha", personality: "General Purpose Assistant", lifecycle: "active" },
 ]);
 
 export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
@@ -40,7 +40,7 @@ export async function refreshAdminAgents() {
       const hasVak = list.some((a) => a.id === "vak");
       const full = hasVak
         ? list
-        : [{ id: "vak", name: "Vak", personality: "General Purpose Assistant", lifecycle: "active" }, ...list];
+        : [{ id: "vak", name: "Vakyartha", personality: "General Purpose Assistant", lifecycle: "active" }, ...list];
       setAdminAgents(full);
     }
   } catch (err) {

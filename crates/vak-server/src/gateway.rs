@@ -238,7 +238,7 @@ pub struct AllowlistEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace: Option<PathBuf>,
     /// Agent selected for this endpoint. Missing values are normalized to the
-    /// reserved Vak identity when loading older allowlist rows.
+    /// reserved Vakyartha identity when loading older allowlist rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1906,7 +1906,7 @@ fn turn_drafts(log: &vak_session::SessionLog, workspace: &std::path::Path) -> Ve
 }
 
 /// The largest draft sent back on a channel; Telegram's bots may send up to
-/// 50 MB, and a document this large is better opened in Vak.
+/// 50 MB, and a document this large is better opened in Vakyartha.
 const RETURN_FILE_MAX_BYTES: u64 = 20 * 1024 * 1024;
 
 /// Each draft the turn made, for a channel that takes files: its bytes and a
@@ -1945,7 +1945,7 @@ async fn return_drafts(
             .unwrap_or_default();
         if !labels.is_empty() {
             notes.push(format!(
-                "{name} carries the sensitivity label {}, so it is not sent on this channel; review the draft in Vak.",
+                "{name} carries the sensitivity label {}, so it is not sent on this channel; review the draft in Vakyartha.",
                 labels.join(", ")
             ));
             continue;
@@ -1955,7 +1955,7 @@ async fn return_drafts(
             .unwrap_or(u64::MAX);
         if !accepts_files || size > RETURN_FILE_MAX_BYTES {
             notes.push(format!(
-                "The updated {name} is ready in Vak for review; this channel does not receive it."
+                "The updated {name} is ready in Vakyartha for review; this channel does not receive it."
             ));
             continue;
         }

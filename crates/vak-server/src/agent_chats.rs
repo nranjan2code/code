@@ -57,7 +57,7 @@ pub(crate) fn resolve_agent_identity(
         return Ok(AgentIdentity {
             id: id.to_string(),
             revision: 1,
-            name: "Vak".into(),
+            name: "Vakyartha".into(),
             character: "vak".into(),
             personality: String::new(),
             animation: "subtle".into(),

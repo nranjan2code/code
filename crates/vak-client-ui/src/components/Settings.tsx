@@ -944,7 +944,7 @@ export default function Settings() {
     const task = archivedSessions().find((session) => session.session_id === id);
     setConfirmConfig({
       title: `Permanently delete “${task?.title || "Untitled task"}”?`,
-      description: "This task and its conversation events will be deleted from Vak's ledger. This action cannot be undone.",
+      description: "This task and its conversation events will be deleted from Vakyartha's ledger. This action cannot be undone.",
       confirmLabel: "Delete Task",
       cancelLabel: "Cancel",
       isDanger: true,
@@ -964,7 +964,7 @@ export default function Settings() {
     if (!archivedSessions().length) return;
     setConfirmConfig({
       title: `Delete all ${archivedSessions().length} archived tasks?`,
-      description: "All archived tasks and their events will be permanently removed from Vak's ledger. This action cannot be undone.",
+      description: "All archived tasks and their events will be permanently removed from Vakyartha's ledger. This action cannot be undone.",
       confirmLabel: "Delete All Archived",
       cancelLabel: "Cancel",
       isDanger: true,
@@ -1146,7 +1146,7 @@ export default function Settings() {
   return (
     <div ref={settingsRoot} class="settings-shell" role="dialog" aria-modal="true" aria-label="Settings" use:trapFocus>
       <aside class="settings-nav">
-        <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vak</span></button>
+        <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vakyartha</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <For each={pageGroups()} fallback={<div class="settings-no-results">No matching settings</div>}>
           {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
@@ -1169,7 +1169,7 @@ export default function Settings() {
             <button type="button" classList={{ active: page() === "archived" }} onClick={() => selectPage("archived")}><Icon name="archive" /><span>Archived tasks</span></button>
           </nav>
         </Show>
-        <div class="settings-nav-foot"><div class="settings-app-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div><div><strong>Vak</strong><span>{backend().version ? `Version ${backend().version}` : "Version unavailable"}</span></div></div>
+        <div class="settings-nav-foot"><div class="settings-app-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></div><div><strong>Vakyartha</strong><span>{backend().version ? `Version ${backend().version}` : "Version unavailable"}</span></div></div>
       </aside>
 
       <main ref={settingsMain} class="settings-main">
@@ -1192,7 +1192,7 @@ export default function Settings() {
                     value={activeAgentId()}
                     onChange={(e) => void switchSettingsAgent(e.currentTarget.value)}
                   >
-                    <option value="vak">Vak</option>
+                    <option value="vak">Vakyartha</option>
                     <For each={settingsAgentOptions()}>{(a) => <option value={a.id}>{a.name}</option>}</For>
                   </select>
                 </div>
@@ -1208,12 +1208,12 @@ export default function Settings() {
             <Show when={page() === "general"}>
               <header><h1>General</h1><p>Notifications, sounds, and other app-wide preferences.</p></header>
               <Group title="Experience">
-                <Row title="Desktop notifications" description="Notify when the active task finishes while Vak is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
+                <Row title="Desktop notifications" description="Notify when the active task finishes while Vakyartha is in the background."><Switch label="Desktop notifications" checked={uiPreferences.notifications} onChange={(value) => updateUiPreference("notifications", value)} /></Row>
                 <Row title="Quiet hours" description="Suppress background completion and update notifications overnight. Approval requests remain interruptive because work is paused until you decide."><select aria-label="Quiet hours" value={uiPreferences.quietHours} onChange={(event) => updateUiPreference("quietHours", event.currentTarget.value as "off" | "22-07")}><option value="off">Off</option><option value="22-07">22:00–07:00</option></select></Row>
                 <Row title="Sound cues" description="Short chime when a task starts working and when it finishes."><Switch label="Sound cues" checked={uiPreferences.soundCues} onChange={(value) => updateUiPreference("soundCues", value)} /></Row>
                 <Row title="Suggested prompts" description="Show useful starting points when a task has no conversation yet."><Switch label="Suggested prompts" checked={uiPreferences.suggestions} onChange={(value) => updateUiPreference("suggestions", value)} /></Row>
                 <Row title="Transcript detail" description="Control how much agent activity appears in conversations."><select aria-label="Transcript detail" value={density()} onChange={(event) => setDensity(event.currentTarget.value as Density)}><option value="outcome">Outcome</option><option value="balanced">Balanced</option><option value="audit">Audit</option></select></Row>
-                <Row title="Presentation styles" description="Choose how Vak presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>
+                <Row title="Presentation styles" description="Choose how Vakyartha presents different kinds of results."><span class="settings-value">{presentationLibrary.loading ? "Loading…" : `${activePresentationCount()} active · ${presentationCatalog().reduce((count, group) => count + group.types.length, 0)} available`}</span></Row>
                 <Row title="Share presentation styles" description="Export your styles or import a collection."><span class="settings-actions"><button class="settings-button" onClick={() => void exportPresentationPack()}>Export</button><label class="settings-button">Import<input type="file" accept="application/json,.json" hidden onChange={importPresentationPack} /></label></span></Row>
                 <Show when={!presentationLibrary.loading && (presentationLibrary()?.definitions.length ?? 0) > 0}>
                   <details class="presentation-library-disclosure">
@@ -1276,7 +1276,7 @@ export default function Settings() {
                 <Row title="Keyboard shortcuts" description="See every shortcut for navigation, tasks, and workspace tools."><button class="settings-button" onClick={() => { setSettingsOpen(false); setShowShortcuts(true); }}>View shortcuts</button></Row>
               </Group>
               <Group id="voice-settings" title="Voice">
-                <Row title="Enable voice conversations" description="Talk with Vak using your microphone."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
+                <Row title="Enable voice conversations" description="Talk with Vakyartha using your microphone."><Switch label="Enable voice conversations" checked={config()?.voice?.enabled ?? false} onChange={(value) => void updateVoice({ voice_enabled: value })} /></Row>
                 <Row title="Speak updates aloud" description="Read task updates and approval requests aloud."><Switch label="Speak updates aloud" checked={uiPreferences.voiceEnabled} onChange={(value) => updateUiPreference("voiceEnabled", value)} /></Row>
                 <Row title="Session limit" description="Longest voice conversation, in seconds."><input type="number" min="1" max="86400" value={config()?.voice?.max_session_secs ?? 900} onChange={(e) => void updateVoice({ voice_max_session_secs: Number(e.currentTarget.value) })} /></Row>
                 <Row title="Simultaneous conversations" description="How many voice conversations can run at once."><input type="number" min="1" max="64" value={config()?.voice?.max_concurrent ?? 2} onChange={(e) => void updateVoice({ voice_max_concurrent: Number(e.currentTarget.value) })} /></Row>
@@ -1287,7 +1287,7 @@ export default function Settings() {
                 <Row title="Speaking model" description="Converts text to speech."><input type="text" value={config()?.voice?.synthesis_model ?? ""} placeholder="Use shared setting" onChange={(e) => void updateVoice({ voice_synthesis_model: e.currentTarget.value.trim() || null })} /></Row>
                 <Show when={uiPreferences.voiceEnabled}>
                   <Row title="Voice" description="Exact voice id from your provider; blank uses the provider's default."><input value={uiPreferences.voiceName} placeholder="Provider default" onChange={(event) => updateUiPreference("voiceName", event.currentTarget.value.trim())} /></Row>
-                  <Row title="Speaking style" description="Describe how Vak should sound."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
+                  <Row title="Speaking style" description="Describe how Vakyartha should sound."><input value={uiPreferences.voicePersona} placeholder="e.g. calm and concise" onInput={(event) => updateUiPreference("voicePersona", event.currentTarget.value)} /></Row>
                 </Show>
               </Group>
               <Group title="Desktop">
@@ -1297,7 +1297,7 @@ export default function Settings() {
 
             <Show when={page() === "archived"}>
               <header class="archived-header"><div><h1>Archived tasks</h1><p>Hidden from the sidebar until you restore them.</p></div><button class="settings-button danger" disabled={!archivedSessions().length} onClick={() => void deleteAllArchived()}><Icon name="trash" size={14} /> Delete all</button></header>
-              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from Vak’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
+              <div class="settings-callout"><Icon name="archive" /><div><strong>Archive is reversible</strong><span>Restore a task any time. Deleting removes it from Vakyartha’s task history; the append-only session ledger remains untouched on disk.</span></div></div>
               <Show when={archivedSessions().length} fallback={<div class="archived-empty"><Icon name="archive" size={24} /><strong>No archived tasks</strong><span>Tasks you archive from the sidebar will appear here.</span></div>}>
                 <section class="archived-list" aria-label="Archived tasks">
                   <For each={archivedSessions()}>{(session) => <div class="archived-item"><span class="archived-item-icon"><Icon name="chat" size={15} /></span><span class="archived-item-copy"><strong>{session.title || "Untitled task"}</strong><span>{session.updated_at ? new Date(session.updated_at).toLocaleString() : ""} · {session.entries ?? 0} events</span></span><button class="settings-button" onClick={() => void restoreTask(session.session_id)}><Icon name="restore" size={13} /> Restore</button><button class="icon-button subtle danger has-tooltip" data-tooltip="Delete task" aria-label={`Delete ${session.title || "untitled task"}`} onClick={() => void deleteTask(session.session_id)}><Icon name="trash" size={14} /></button></div>}</For>
@@ -1324,7 +1324,7 @@ export default function Settings() {
 
             <Show when={page() === "agent"}>
               <header><h1>Model & Provider</h1><p>Configure the model used when starting new tasks.</p></header>
-              <div class="settings-callout scope-callout"><Icon name="spark" /><div><strong>Editing: {activeAgent()?.name ?? "Vak"}</strong><span>Every page under "This agent" applies to whichever agent is currently active. To manage agents themselves — create, rename, or switch — use Fleet Roster.</span></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Open Fleet Roster</button></div>
+              <div class="settings-callout scope-callout"><Icon name="spark" /><div><strong>Editing: {activeAgent()?.name ?? "Vakyartha"}</strong><span>Every page under "This agent" applies to whichever agent is currently active. To manage agents themselves — create, rename, or switch — use Fleet Roster.</span></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Open Fleet Roster</button></div>
               <div class="settings-callout"><Icon name="spark" /><div><strong>Saved to this agent</strong><span>Applied changes take effect for new tasks. Existing tasks retain their frozen provider/model contract.</span></div></div>
               <Group title="Model">
                 <Row title="Provider" description={`${currentProviderInfo()?.env_var ? `Authenticated via ${currentProviderInfo()?.env_var}` : "The API provider used for new sessions."} · saved source: ${config()?.provider_source ?? "unknown"}`}>
@@ -1440,10 +1440,10 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "permissions"}>
-              <header><h1>Permissions</h1><p>Choose what Vak can do and when it should ask first.</p></header>
+              <header><h1>Permissions</h1><p>Choose what Vakyartha can do and when it should ask first.</p></header>
               <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               <Group title="Approvals">
-                <p class="settings-group-copy">Choose how often Vak pauses for your approval.</p>
+                <p class="settings-group-copy">Choose how often Vakyartha pauses for your approval.</p>
                 <div class="permission-options">
                   <For
                     each={
@@ -1499,7 +1499,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "reliability"}>
-              <header><h1>Reliability</h1><p>Understand how Vak recovers from provider and task failures.</p></header>
+              <header><h1>Reliability</h1><p>Understand how Vakyartha recovers from provider and task failures.</p></header>
               <Group title="Request recovery">
                 <Row title="Provider retries" description={`Initial backoff ${fmt(config()?.retry_base_backoff_ms ?? 0)} ms.`}><span class="metric">{config()?.max_retries}</span></Row>
                 <Row title="Request watchdog" description="Maximum time for a single provider step."><span class="metric">{config()?.request_timeout_secs}s</span></Row>
@@ -1531,7 +1531,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "learning"}>
-              <header><h1>Learning</h1><p>Review what Vak remembers and the skills it has suggested.</p></header>
+              <header><h1>Learning</h1><p>Review what Vakyartha remembers and the skills it has suggested.</p></header>
               <Group title={`Skill proposals (${proposals().length})`}>
                 <Show
                   when={proposals().length > 0}
@@ -1718,7 +1718,7 @@ export default function Settings() {
                 </Show></Group>
               </Show>
               <Show when={capabilityTab() === "skills"}>
-                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon skills"><Icon name="spark" /></span><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vak home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button type="button" class="settings-button" onClick={async () => { try { if (!navigator.clipboard) throw new Error("Clipboard access is unavailable"); await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command. Clipboard access was denied." }); } }}>Copy to composer</button></div></details>}</For></div></Show></Group>
+                <Group title={`Discovered skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon skills"><Icon name="spark" /></span><strong>No skills discovered</strong><span>{scope() === "user" ? "Add a SKILL.md to your Vakyartha home to make it available everywhere." : "Add a SKILL.md to this project or use Shared to add one everywhere."}</span></div>}><p class="settings-hint">{scope() === "user" ? "These are shared skills. They are inherited by every project." : "Shared skills and this project’s skills are both available here. Each item shows where it came from."}</p><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This project"}</small></span></span><span class="capability-state ready">Available</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.source}><code>{skill.source}</code></Show><button type="button" class="settings-button" onClick={async () => { try { if (!navigator.clipboard) throw new Error("Clipboard access is unavailable"); await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard. Open a task and paste it into the composer.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command. Clipboard access was denied." }); } }}>Copy to composer</button></div></details>}</For></div></Show></Group>
                 <Group title={`Pending proposals (${proposals().length})`}><Show when={proposals().length > 0} fallback={<Row title="No proposals waiting" description="The agent can suggest reusable skills; they stay inactive until you review them."><span class="settings-status good">Clear</span></Row>}><For each={proposals()}>{(proposal) => <div class="setting-row"><div class="setting-copy"><strong>{proposal.name}</strong><span>{proposal.description}</span></div><div class="setting-control"><button class="settings-button" onClick={() => void promote(proposal.id)}>Review & promote</button><button class="settings-button danger" onClick={() => void reject(proposal.id)}>Reject</button></div></div>}</For></Show></Group>
               </Show>
               <Show when={capabilityTab() === "hooks"}>
@@ -1889,7 +1889,7 @@ export default function Settings() {
                 <Row title="Session store" description={config()?.paths.sessions_home ?? ""}><button type="button" class="settings-button" onClick={() => void copySettingText(config()?.paths.sessions_home ?? "", "Session store path")}>Copy path</button></Row>
               </Group>
               <Group title="Data & backup">
-                <div class="settings-callout"><Icon name="shield" /><div><strong>Your backup includes Vak data and settings.</strong><span>Passwords and API keys stay excluded unless you include them below.</span></div></div>
+                <div class="settings-callout"><Icon name="shield" /><div><strong>Your backup includes Vakyartha data and settings.</strong><span>Passwords and API keys stay excluded unless you include them below.</span></div></div>
                 <Row
                   title="Export backup"
                   description="Pick a destination folder (or type a path), then export."

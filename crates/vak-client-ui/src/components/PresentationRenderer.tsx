@@ -74,7 +74,7 @@ function AssistantPartsView(props: { parts: AssistantPart[]; textWrap?: (text: s
   );
 }
 
-/** Wraps settled assistant content with the same Vak avatar + name header
+/** Wraps settled assistant content with the same Vakyartha avatar + name header
  *  that the streaming transcript uses, so completed turns don't lose their
  *  visual identity when ChatPane switches to PresentationTimelineView. */
 function AssistantMessage(props: { children: JSX.Element; text?: string; sessionId?: string }) {
@@ -701,7 +701,7 @@ export function Artifact(props: { item: OutputItem; showActions?: boolean }) {
 function compactFailure(text: string): { summary: string; details: string } {
   const details = text.trim();
   if (details === "max_turns") {
-    return { summary: "Vak reached this task’s step limit before finishing. Any saved work is shown above; you can ask it to continue.", details };
+    return { summary: "Vakyartha reached this task’s step limit before finishing. Any saved work is shown above; you can ask it to continue.", details };
   }
   const cleaned = stripControlScaffolding(details)
     .replace(/\[working directory:[^\]]*\]\s*/gi, "")
@@ -731,7 +731,7 @@ function SemanticApproval(props: { item: OutputItem; sessionId: string }) {
       aria-atomic="true"
       aria-label={`${pending() ? "Approval requested" : "Approval resolved"} for ${content.tool}`}
     >
-      <div class="ap-head">Vak wants to use {content.tool}</div>
+      <div class="ap-head">Vakyartha wants to use {content.tool}</div>
       <div class="ap-reason">This needs your approval before it can continue.</div>
       <details class="ap-details"><summary>View request details</summary><pre class="ap-args">{argsPretty()}</pre></details>
       <Show when={pending()} fallback={<div class="ap-done">{props.item.status}</div>}>
@@ -1219,7 +1219,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
           <Icon name="warning" size={15} />
           <div>
             <strong>Continue this task?</strong>
-            <p>Vak reached this run’s step limit. Saved work is shown above. Continuing starts another bounded turn in this conversation.</p>
+            <p>Vakyartha reached this run’s step limit. Saved work is shown above. Continuing starts another bounded turn in this conversation.</p>
             <Show when={props.allowContinuation}><button type="button" class="btn" disabled={isRunning(props.sessionId)} onClick={() => void sendPrompt(continuationPrompt(), undefined, undefined, props.sessionId, undefined, "follow_up")}>Continue</button></Show>
           </div>
         </section>;

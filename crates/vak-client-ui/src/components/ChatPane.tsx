@@ -75,7 +75,7 @@ function EmptyChat(props: { hasSession: boolean }) {
       <Show when={!props.hasSession}>
         <Show when={ongoing().length > 0}>
           <div class="home-ongoing" aria-label="Ongoing work" aria-live="polite">
-            <div class="home-ongoing-heading"><span>Ongoing</span><small>Vak is working in the background</small></div>
+            <div class="home-ongoing-heading"><span>Ongoing</span><small>Vakyartha is working in the background</small></div>
             <For each={ongoing()}>{(session) => <button type="button" class="home-ongoing-item" onClick={() => void activate(session.session_id)}><span class="dot run" /><span>{session.title || "Untitled task"}</span><small>Working</small></button>}</For>
           </div>
         </Show>
@@ -85,7 +85,7 @@ function EmptyChat(props: { hasSession: boolean }) {
             <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark">✓</span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
           </div>
         </Show>
-        <div class="chat-empty-examples" aria-label="Things Vak can help with">
+        <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">
           <For each={[
             ["Research a question", "Research this question and summarize the important points."],
             ["Write or rewrite", "Help me write or rewrite this clearly: "],
@@ -488,7 +488,7 @@ const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessio
   return (
     <Show when={!props.item.resolved}>
     <div class="approval" data-approval={props.item.id} role={props.item.resolved ? "status" : "alert"} aria-live={props.item.resolved ? "polite" : "assertive"} aria-label={`${props.item.resolved ? "Approval resolved" : "Approval requested"} for ${props.item.tool}`}>
-    <div class="ap-head">Vak wants to use {props.item.tool}</div>
+    <div class="ap-head">Vakyartha wants to use {props.item.tool}</div>
     <Show when={primary()}>
       {(p) => (
         <code class="ap-primary" title={p().value}>

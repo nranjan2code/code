@@ -1246,7 +1246,7 @@ fn operation_runs(state: &AppState) -> Vec<serde_json::Value> {
                 .core
                 .agent_identity()
                 .map(|id| (id.id.clone(), id.name.clone()))
-                .unwrap_or_else(|| ("vak".to_string(), "Vak".to_string()));
+                .unwrap_or_else(|| ("vak".to_string(), "Vakyartha".to_string()));
             Some(serde_json::json!({
                 "session_id": handle.id,
                 "workspace": handle.cwd,
@@ -1514,7 +1514,7 @@ async fn operations_center(State(state): State<AppState>) -> Json<serde_json::Va
         .collect::<Vec<_>>();
     let mut all_agents = vec![serde_json::json!({
         "id": "vak",
-        "name": "Vak",
+        "name": "Vakyartha",
         "personality": "Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, opencode-grade simplicity.",
         "lifecycle": "active",
     })];
@@ -2997,7 +2997,7 @@ pub async fn serve_with(
     // Initialize the distributed event bus (vak-bus, docs/design/53).
     // Falls back to InMemoryBus when NATS is absent or unreachable.
     init_server_bus(&core).await;
-    eprintln!("Vak server listening on http://{actual_addr}");
+    eprintln!("Vakyartha server listening on http://{actual_addr}");
     // Same source the real token-selection logic above (auth_token, in
     // AppState::new) already checks: `vak_config::get_var` also sees a
     // value that only reached the process through the credential store
@@ -5057,7 +5057,7 @@ async fn run_prompt(
                 return (
                     StatusCode::CONFLICT,
                     Json(serde_json::json!({
-                        "error": "This conversation is currently active in Vak Desktop. Close or finish the task in Desktop before continuing here."
+                        "error": "This conversation is currently active in Vakyartha Desktop. Close or finish the task in Desktop before continuing here."
                     })),
                 )
                     .into_response();
@@ -20549,7 +20549,7 @@ mod sandbox_promotion_tests {
                 )]),
             }],
             &vak_ooxml::edit::EditContext {
-                author: "Vak".into(),
+                author: "Vakyartha".into(),
                 date: "2026-09-24T10:00:00Z".into(),
             },
             vak_ooxml::Limits::default(),
@@ -22458,7 +22458,7 @@ mod scheduler_state_tests {
         let vak = vak_session::types::AgentIdentity {
             id: "vak".into(),
             revision: 1,
-            name: "Vak".into(),
+            name: "Vakyartha".into(),
             character: String::new(),
             personality: String::new(),
             animation: "spark".into(),

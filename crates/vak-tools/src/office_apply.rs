@@ -237,7 +237,7 @@ pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
 /// id, never a name the model chose.
 pub fn tracked_change_author(agent_id: &str) -> String {
     if agent_id == "vak" {
-        "Vak".to_string()
+        "Vakyartha".to_string()
     } else {
         agent_id.to_string()
     }
@@ -432,7 +432,7 @@ impl Job {
                 self.context.author
             )),
             vak_ooxml::Vocabulary::Excel => report.push_str(
-                "Vak does not calculate formulas: Excel recalculates when the file is opened, and until then cached values are stale.\n",
+                "Vakyartha does not calculate formulas: Excel recalculates when the file is opened, and until then cached values are stale.\n",
             ),
             _ => {}
         }

@@ -188,7 +188,7 @@ export default function WorkspaceGate() {
                   <p>Three simple steps, with the important details kept together.</p>
                   <div class="gate-sample-step"><span>1</span><strong>Pick a time</strong><small>Saturday morning</small></div>
                   <div class="gate-sample-step"><span>2</span><strong>Bring what you need</strong><small>Notebook and water</small></div>
-                  <div class="gate-sample-step"><span>3</span><strong>Leave room to adjust</strong><small>Vak keeps the plan flexible</small></div>
+                  <div class="gate-sample-step"><span>3</span><strong>Leave room to adjust</strong><small>Vakyartha keeps the plan flexible</small></div>
                 </div>
                 <div class="gate-features">
                   <span><Icon name="check" size={15} /> Isolated tasks and worktrees</span>
@@ -201,13 +201,13 @@ export default function WorkspaceGate() {
                 <button class="btn primary lg" type="button" disabled={busy()} onClick={() => void pick()}>
                   <Icon name="folder" /> {busy() ? "Opening workspace…" : "Open a workspace"}
                 </button>
-                <p class="gate-note"><Icon name="shield" size={13} /> Your files and settings stay on this device. Vak asks before anything needs extra access.</p>
+                <p class="gate-note"><Icon name="shield" size={13} /> Your files and settings stay on this device. Vakyartha asks before anything needs extra access.</p>
               </>
             }>
               <>
                 <h1>Open a workspace</h1>
                 <p class="gate-lead">
-                  Folders on the machine running Vak
+                  Folders on the machine running Vakyartha
                   <Show when={backend().cwd}>{" "}— currently {backend().cwd}</Show>.
                 </p>
                 <Show when={error()}><div class="gate-err">{error()}</div></Show>

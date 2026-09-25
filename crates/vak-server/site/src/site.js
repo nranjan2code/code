@@ -38,7 +38,7 @@
         if (!v || !v.version) return;
         var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
         var stamp = $("stamp");
-        if (stamp) stamp.textContent = "vak " + v.version + (sha ? " · " + sha : "");
+        if (stamp) stamp.textContent = "Vakyartha " + v.version + (sha ? " · " + sha : "");
         if ($("bv")) {
           $("bv").textContent = v.version;
           $("bc").textContent = sha || "—";
@@ -1015,7 +1015,7 @@
   }
 
   // =========================================================================
-  // 3D Virtual World Tour Game Engine: The Vak Citadel
+  // 3D Virtual World Tour Game Engine: The Vakyartha Citadel
   // =========================================================================
   function tour3D(M, reduce) {
     var root = $("world-viewport");
@@ -1294,7 +1294,7 @@
       });
     });
 
-    // 10 Sector Megastructures of the Vak Citadel
+    // 10 Sector Megastructures of the Vakyartha Citadel
     var SECTORS = [
       {
         id: "surface",

@@ -1,8 +1,10 @@
 <div align="center">
 
-# vak
+# Vakyartha
 
 ### An agent you can inspect, constrain, and extend.
+
+[Website](https://vakyartha.com) · Public name: **Vakyartha**. CLI and packages: **`vak`**.
 
 **A local-first Rust harness for running serious general-purpose agents without giving up the receipts.**
 
@@ -11,13 +13,13 @@
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
 [![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
 
-[Quick start](#quick-start) · [Why vak](#why-vak) · [Features](#what-you-get) · [Architecture](#one-core-many-surfaces) · [Documentation](#documentation)
+[Quick start](#quick-start) · [Why Vakyartha](#why-vakyartha) · [Features](#what-you-get) · [Architecture](#one-core-many-surfaces) · [Documentation](#documentation)
 
 </div>
 
 ![An editorial illustration of vak moving a task through an auditable ledger, permission gate, sandboxed execution, and verified result](docs/assets/vak-hero.webp)
 
-vak is an open-source agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core. Engineering, research, writing, data, and operations all run through that core, the same permission gate, and the same ledger.
+Vakyartha is an open-source agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core. Engineering, research, writing, data, and operations all run through that core, the same permission gate, and the same ledger.
 
 Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
 
@@ -25,9 +27,9 @@ The result is not another thin model wrapper. Sessions are append-only ledgers, 
 
 > **Supported baseline: 2.0.0.** Earlier versions are unsupported and cannot be upgraded in place. See the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
 
-## Why vak
+## Why Vakyartha
 
-Most agents make you choose between capability and legibility. vak is built around the idea that the agent can be ambitious while the runtime remains explicit.
+Most agents make you choose between capability and legibility. Vakyartha is built around the idea that the agent can be ambitious while the runtime remains explicit.
 
 | Principle | What it means in practice |
 |---|---|

@@ -18,7 +18,7 @@ pub struct SlashCommand {
 pub const AVAILABLE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/theme",
-        description: "Switch visual theme (Vak Warm, Slate, Paper, Tokyo Night)",
+        description: "Switch visual theme (Vakyartha Warm, Slate, Paper, Tokyo Night)",
     },
     SlashCommand {
         name: "/diff",

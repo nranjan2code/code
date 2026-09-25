@@ -37,8 +37,8 @@ pub fn info_plist(version: &str) -> String {
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key><string>Vak</string>
-  <key>CFBundleDisplayName</key><string>Vak</string>
+  <key>CFBundleName</key><string>Vakyartha</string>
+  <key>CFBundleDisplayName</key><string>Vakyartha</string>
   <key>CFBundleIdentifier</key><string>{IDENTIFIER}</string>
   <key>CFBundleVersion</key><string>{version}</string>
   <key>CFBundleShortVersionString</key><string>{version}</string>

@@ -63,7 +63,7 @@ export default function SearchModal() {
               class="chip"
               classList={{ on: global() }}
               aria-pressed={global()}
-              title="Search every project under the Vak home, not just this workspace"
+              title="Search every project under the Vakyartha home, not just this workspace"
               onClick={() => setGlobal((v) => !v)}
             >
               Global

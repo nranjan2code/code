@@ -130,7 +130,7 @@ export default function DiffPane(props: { sessionId: string | null }) {
             <button
               type="button"
               class="chip sm"
-              title="Ask Vak to review these changes (logic + security)"
+              title="Ask Vakyartha to review these changes (logic + security)"
               disabled={isRunning(props.sessionId ?? activeId()) || !entries().length}
               onClick={reviewChanges}
             >

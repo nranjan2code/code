@@ -38,7 +38,7 @@ struct TrayState {
 ///
 /// The `com.vak.desktop` / `vak-desktop.service` unit passes this so a
 /// login launch restores the tray without throwing a window on screen at
-/// every boot. Every other way in — double-click, Dock, `Open Vak`, a
+/// every boot. Every other way in — double-click, Dock, `Open Vakyartha`, a
 /// second launch handed over by the single-instance plugin — reveals the
 /// window, so the flag only suppresses the one startup nobody asked for.
 const TRAY_FLAG: &str = "--tray";
@@ -77,7 +77,7 @@ fn show_main_window(app: &AppHandle) {
     }
 }
 
-/// The desktop process is Vak's only GUI lifecycle owner. Keeping the
+/// The desktop process is Vakyartha's only GUI lifecycle owner. Keeping the
 /// tray here means a Dock/Finder activation and a tray activation target the
 /// same process and always have a window to reveal.
 fn service(index: usize) -> vak_ops::Service {
@@ -98,7 +98,7 @@ fn states_now() -> [vak_ops::State; 2] {
 
 fn status_tooltip(states: &[vak_ops::State; 2]) -> String {
     format!(
-        "Vak — gateway {}, chat bridges {}",
+        "Vakyartha — gateway {}, chat bridges {}",
         states[GATEWAY], states[BRIDGES]
     )
 }
@@ -180,7 +180,7 @@ fn build_tray_menu(
     watchdog_on: bool,
     autostart_on: bool,
 ) -> tauri::Result<Menu<tauri::Wry>> {
-    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open Vak", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, TRAY_OPEN_ID, "Open Vakyartha", true, None::<&str>)?;
     // The same three destinations the landing page offers, in the same
     // order and with the same names. Two entries that both opened the admin
     // console at different hash routes was the tray describing one page as
@@ -211,7 +211,7 @@ fn build_tray_menu(
         None::<&str>,
     )?;
     let separator_watchdog = PredefinedMenuItem::separator(app)?;
-    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit Vak", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, TRAY_QUIT_ID, "Quit Vakyartha", true, None::<&str>)?;
     let mut items: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
         vec![&open, &separator_top, &home, &workspace, &admin, &separator];
     items.extend(
@@ -299,7 +299,7 @@ fn pinned_gateway_token() -> Option<String> {
 fn open_web_path(path: &str) {
     let config = vak_ops::OpsConfig::detect();
     if vak_ops::status(vak_ops::Service::Gateway, &config) != vak_ops::State::Running {
-        notify("Vak", "Start the gateway service first.");
+        notify("Vakyartha", "Start the gateway service first.");
         return;
     }
     let base = format!("http://127.0.0.1:{}{path}", config.port);
@@ -308,7 +308,7 @@ fn open_web_path(path: &str) {
         None => base,
     };
     if let Err(error) = std::process::Command::new("open").arg(url).spawn() {
-        notify("Vak", &format!("Could not open that page: {error}"));
+        notify("Vakyartha", &format!("Could not open that page: {error}"));
     }
 }
 
@@ -329,7 +329,7 @@ fn run_service_action(app: &AppHandle, service: vak_ops::Service, action: &str) 
         _ => None,
     };
     if let Some(problem) = problem {
-        notify("Vak", &format!("{}: {problem}", service.label()));
+        notify("Vakyartha", &format!("{}: {problem}", service.label()));
     }
     refresh_tray(app);
 }
@@ -353,7 +353,10 @@ fn handle_tray_menu(app: &AppHandle, id: &str) {
             tray.autostart.store(new_value, Ordering::SeqCst);
             if let Err(err) = vak_ops::services::set_service_autostart("com.vak.desktop", new_value)
             {
-                notify("Vak", &format!("Could not update autostart setting: {err}"));
+                notify(
+                    "Vakyartha",
+                    &format!("Could not update autostart setting: {err}"),
+                );
             }
             refresh_tray(app);
         }
@@ -383,7 +386,7 @@ fn start_tray_monitor(app: AppHandle) {
                     let running = states[index] == vak_ops::State::Running;
                     if last_running[index] && !running {
                         notify(
-                            "Vak watchdog",
+                            "Vakyartha watchdog",
                             &format!(
                                 "{} is down — launchd will recover it",
                                 service(index).label()
@@ -426,11 +429,14 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
                 show_main_window(tray.app_handle());
             }
         });
-    // Give the status item the purpose-built 32px representation. Passing the
-    // 512px Dock artwork leaves AppKit to choose a scale and has produced an
-    // opaque-looking square in the menu bar on Retina displays.
-    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))?;
-    tray = tray.icon(icon);
+    // AppKit renders this alpha mask at 18pt and supplies the current menu-bar
+    // colour. Other platforms keep the complete colour tile.
+    #[cfg(target_os = "macos")]
+    let icon_bytes = include_bytes!("../icons/tray-template.png").as_slice();
+    #[cfg(not(target_os = "macos"))]
+    let icon_bytes = include_bytes!("../icons/tray-color.png").as_slice();
+    let icon = tauri::image::Image::from_bytes(icon_bytes)?;
+    tray = tray.icon(icon).icon_as_template(cfg!(target_os = "macos"));
     tray.build(app)?;
     start_tray_monitor(app.handle().clone());
     Ok(())
@@ -787,8 +793,8 @@ fn percent_decode(encoded: &str) -> Option<String> {
 /// "Open with…" (docs/design/72, P4): hands a workspace document to the
 /// application the operating system associates with it. Scoped to a regular
 /// Word, Excel, PowerPoint or Visio file inside the open workspace, named
-/// relative to it; a macro-enabled file is refused, so Vak never hands over
-/// a file whose macros could run. Vak does not read or run the file here.
+/// relative to it; a macro-enabled file is refused, so Vakyartha never hands over
+/// a file whose macros could run. Vakyartha does not read or run the file here.
 #[tauri::command]
 fn open_workspace_file(state: State<'_, BackendState>, path: String) -> Result<(), String> {
     let cwd = state
@@ -815,7 +821,7 @@ fn open_workspace_file(state: State<'_, BackendState>, path: String) -> Result<(
         .ok_or_else(|| format!("{path} is not a Word, Excel, PowerPoint or Visio file"))?;
     if format.macro_enabled {
         return Err(format!(
-            "{path} can contain macros, so Vak does not open it; open it yourself if you trust it"
+            "{path} can contain macros, so Vakyartha does not open it; open it yourself if you trust it"
         ));
     }
     #[cfg(target_os = "macos")]
@@ -1047,7 +1053,7 @@ fn main() {
                 // folder was explicitly chosen, so it is trusted).
                 vak_config::replace_env_files(&[vak_home().join(".env").as_path()]);
                 let explicit_project = launch_project;
-                // Vak opens its canonical personal workspace on first launch.
+                // Vakyartha opens its canonical personal workspace on first launch.
                 // Choosing a folder is a later workspace switch, not an
                 // onboarding prerequisite; the default can be changed from
                 // the workspace controls whenever the person wants.

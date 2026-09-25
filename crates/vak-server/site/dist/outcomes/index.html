@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-<title>Outcomes — vak</title>
-<meta name="description" content="How vak turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface." />
-<meta property="og:title" content="Outcomes — vak" />
-<meta property="og:description" content="How vak turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface." />
+<title>Outcomes — Vakyartha</title>
+<meta name="description" content="How Vakyartha turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface." />
+<meta property="og:title" content="Outcomes — Vakyartha" />
+<meta property="og:description" content="How Vakyartha turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface." />
 <meta property="og:type" content="website" />
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
@@ -142,9 +142,9 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
 .brand { display: flex; align-items: center; gap: 9px; text-decoration: none; margin-right: auto; }
 .brand-mark {
   display: grid; place-items: center; width: 27px; height: 27px;
-  border-radius: var(--radius-sm); background: var(--accent-wash); overflow: hidden; flex: none;
+  flex: none;
 }
-.brand-mark img { width: 18px; height: 18px; }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .brand-name { font-size: 15px; font-weight: 620; letter-spacing: -.015em; }
 
 .rail-nav { display: flex; align-items: center; gap: 2px; }
@@ -1501,12 +1501,12 @@ html.js .reveal.in {
   <div class="wrap">
     <a class="brand" href="/">
       <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
-      <span class="brand-name">vak</span>
+      <span class="brand-name">Vakyartha</span>
     </a>
     <nav class="rail-nav" id="railnav" aria-label="Pages">
       <a href="/">Home</a>
       <a href="/outcomes" class="on" aria-current="page">Outcomes</a>
-      <a href="/vak">Vāk</a>
+      <a href="/vak">Meaning</a>
       <a href="/surfaces">Surfaces</a>
       <a href="/tour">3D Tour</a>
       <a href="/security">Security</a>
@@ -1532,7 +1532,7 @@ html.js .reveal.in {
   <div class="wrap">
     <h1>From a request to a result you can stand behind</h1>
     <p class="lead">
-      Vak does not treat the first plausible renderer as the product. It reads
+      Vakyartha does not treat the first plausible renderer as the product. It reads
       what you are trying to accomplish, admits a bounded engagement, records
       what happened, evaluates the result, and then chooses a presentation that
       fits the evidence and the surface.
@@ -1571,7 +1571,7 @@ html.js .reveal.in {
       <h2 id="steer-h" class="reveal">A live run is collaborative</h2>
       <p class="section-lead reveal" style="--d:60ms">
         A new message is not automatically a distraction, and it is not
-        automatically permission. Vak classifies it against the active goal
+        automatically permission. Vakyartha classifies it against the active goal
         and makes the impact visible before applying it.
       </p>
     </div>
@@ -1594,7 +1594,7 @@ html.js .reveal.in {
     <div class="section-head">
       <h2 id="evidence-h" class="reveal">Evidence before polish</h2>
       <p class="section-lead reveal" style="--d:60ms">
-        A beautiful answer with the wrong confidence is a product failure. Vak
+        A beautiful answer with the wrong confidence is a product failure. Vakyartha
         keeps evidence attached to the claim it supports and degrades honestly
         when the preferred presentation is unavailable.
       </p>
@@ -1621,7 +1621,7 @@ html.js .reveal.in {
       <div class="facts-row"><span class="k">Workspace-scoped first</span><span class="v">A generated skill, hook or renderer is confined to the workspace until it has been tested and deliberately promoted.</span></div>
       <div class="facts-row"><span class="k">Human oversight</span><span class="v">Installation, promotion, credential use and irreversible effects stay behind the existing permission and approval boundaries.</span></div>
       <div class="facts-row"><span class="k">Live reconciliation</span><span class="v">Additions appear at a safe turn boundary; revocations take effect immediately. A failed probe is visible state, never a phantom callable tool.</span></div>
-      <div class="facts-row"><span class="k">No hidden widening</span><span class="v">An extension can improve how Vak works or presents an outcome, but it cannot raise a capability, budget or approval ceiling on its own.</span></div>
+      <div class="facts-row"><span class="k">No hidden widening</span><span class="v">An extension can improve how Vakyartha works or presents an outcome, but it cannot raise a capability, budget or approval ceiling on its own.</span></div>
     </div>
     <div class="next">
       <span class="lbl">Next</span>
@@ -1634,8 +1634,9 @@ html.js .reveal.in {
 
 <footer>
   <div class="wrap foot">
-    <span class="stamp" id="stamp">vak</span>
+    <span class="stamp" id="stamp">Vakyartha</span>
     <nav aria-label="Elsewhere">
+      <a href="https://vakyartha.com">vakyartha.com</a>
       <a href="/app">Workspace</a>
       <a href="/admin">Operations</a>
       <a href="/health">Health</a>
@@ -1685,7 +1686,7 @@ html.js .reveal.in {
         if (!v || !v.version) return;
         var sha = v.git_sha && v.git_sha !== "unknown" ? v.git_sha : null;
         var stamp = $("stamp");
-        if (stamp) stamp.textContent = "vak " + v.version + (sha ? " · " + sha : "");
+        if (stamp) stamp.textContent = "Vakyartha " + v.version + (sha ? " · " + sha : "");
         if ($("bv")) {
           $("bv").textContent = v.version;
           $("bc").textContent = sha || "—";
@@ -2662,7 +2663,7 @@ html.js .reveal.in {
   }
 
   // =========================================================================
-  // 3D Virtual World Tour Game Engine: The Vak Citadel
+  // 3D Virtual World Tour Game Engine: The Vakyartha Citadel
   // =========================================================================
   function tour3D(M, reduce) {
     var root = $("world-viewport");
@@ -2941,7 +2942,7 @@ html.js .reveal.in {
       });
     });
 
-    // 10 Sector Megastructures of the Vak Citadel
+    // 10 Sector Megastructures of the Vakyartha Citadel
     var SECTORS = [
       {
         id: "surface",
