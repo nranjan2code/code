@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.6 done. V3.7 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.7 done. V3.8 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -257,7 +257,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   a list that opens each page.
 - [x] **V3.6 Review and Canvas.** Review as a sheet with the preview first;
   Canvas with device icons and plain labels.
-- [ ] **V3.7 One sheet component** for every dialog: title, close at top
+- [x] **V3.7 One sheet component** for every dialog: title, close at top
   right, focus trap, Escape, return focus.
 - [ ] **V3.8 Agents.** Picker and creation wizard in plain words; every
   agent gets its own character by default. The one-time "Meet Vakyartha"
@@ -627,3 +627,41 @@ what was not.
   both Review and Canvas because its `<title>` is unclosed (the draft the
   review comment asks to fix), not because of the frame. Not checked live:
   an Office draft and a multi-file draft in the new layout.
+- 2026-09-26: V3.7 done. `components/Sheet.tsx` is the one dialog frame:
+  a Newsreader 22/28 title with an optional line under it, the close
+  button at the top right, a scrolling body, an optional pinned footer,
+  focus kept inside (`use:trapFocus`) and moved inside once drawn, Escape
+  to close, and focus returned to what opened it; a `busy` sheet ignores
+  Escape, the backdrop and close. On a phone it is a bottom sheet. Every
+  dialog uses it: Review, Connect, Your agents, Agent identity, New agent,
+  Meet Vakyartha, Keyboard shortcuts, Search, Search feeds, History,
+  Scheduled tasks, Activity log, Background tasks, Compare approaches,
+  Invite someone, the transcript, the confirmation dialog and the Always
+  allow rule. Their own headers, close buttons, Escape handlers and the
+  confirm dialog's button styles are gone, and their titles now match the
+  menu items that open them. Settings and Canvas stay full-screen panels.
+  Bug fixed on the way: App's Escape handler fell through to `stopRun()`
+  whenever a dialog it did not list was open (Feeds, Background tasks, New
+  agent, Meet Vakyartha, the identity editor, Connect, Invite, Review), so
+  Escape there could stop the running turn. The newest sheet now takes
+  Escape in the capture phase and stops it, and the handler's dialog list
+  is gone. Two more: V3.6's Review preview read a pending resource inside
+  the dock's `<Suspense>`, which pulled the panel out of the page and
+  remounted the sheet (now a signal); and the … menu dropped focus to the
+  page when it closed (it now returns to the … button). Focus return
+  falls back to the visible control with the same name when the opener
+  was re-rendered (Review's "Review changes" button is). Checked live in
+  headless Chrome over CDP with real key events at 1440 × 900 and
+  390 × 844, light and dark: nine sheets (Review, Your agents, New agent,
+  Keyboard shortcuts, Search, History, Background tasks, Activity log,
+  Compare approaches) each open with the title labelling the dialog, the
+  close button at the top right, focus inside, inside the viewport and no
+  sideways scroll; Escape closes each with no stop or cancel request; focus
+  returns to the opener, or to the page for the two opened by keyboard
+  shortcut. Evidence: `after/V3.7-*` (the History shot predates renaming
+  its title from "Time travel"). Not returned on a phone: Review's opener
+  is covered by the details panel after closing, so focus goes to the
+  page. Not checked live: Connect, Agent identity, Meet Vakyartha, Search
+  feeds, Scheduled tasks, Invite someone, the transcript, the
+  confirmation dialog and the Always allow rule (same component, not
+  opened).
