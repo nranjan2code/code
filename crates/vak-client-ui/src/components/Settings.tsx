@@ -1441,7 +1441,7 @@ export default function Settings() {
 
             <Show when={page() === "permissions"}>
               <header><h1>Permissions</h1><p>Choose what Vakyartha can do and when it should ask first.</p></header>
-              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "code" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "shield" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Read only", text: "Inspect files and search the workspace without making changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Workspace write", text: "Edit files inside this workspace and ask before sensitive actions.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access", text: "Run unrestricted commands and access files outside the workspace.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               <Group title="Approvals">
                 <p class="settings-group-copy">Choose how often Vakyartha pauses for your approval.</p>
                 <div class="permission-options">
@@ -1450,7 +1450,7 @@ export default function Settings() {
                       [
                         { id: "ask", title: "Ask me every time", text: "Pause and wait for you before anything that needs approval.", icon: "shield" as IconName },
                         { id: "approve-safe", title: "Approve workspace actions", text: "Reading and editing here can continue. Web and outside access still ask.", icon: "check" as IconName },
-                        { id: "auto-approve", title: "Approve automatically", text: "Continue without pausing unless a rule requires approval.", icon: "code" as IconName },
+                        { id: "auto-approve", title: "Approve automatically", text: "Continue without pausing unless a rule requires approval.", icon: "warning" as IconName },
                       ] as const
                     }
                   >
@@ -1650,7 +1650,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "integrations"}>
-              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Choose the tools available to every agent." : "Choose the tools available to this agent."}</p></header>
+              <header><h1>Integrations</h1><p>{scope() === "user" ? "Choose the tools available to every agent." : "Choose the tools available to this agent."}</p></header>
               <div class="settings-callout scope-callout"><Icon name={scope() === "user" ? "layers" : "folder"} /><div><strong>{scope() === "user" ? "Shared tools" : `Tools for ${activeAgent()?.name ?? "this agent"}`}</strong><span>{scope() === "user" ? "Available to every agent." : "Changes here do not affect your other agents."}</span></div></div>
               <nav class="capability-tabs" aria-label="Capability types">
                 <button classList={{ active: capabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>Connections</span><em>{totalMcpCount()}</em></button>

@@ -713,7 +713,7 @@ export default function Composer(props: { cwd: string }) {
           </div>
 
           <Show when={armedGoal()}>
-            <div class="goal-chip" title="Goal mode armed (docs/design/27 Phase H) — completion will be audited against the criteria">
+            <div class="goal-chip" title="Goal set. The result is checked against these criteria before the task finishes.">
               <Icon name="spark" size={13} />
               <span>{armedGoal()!.objective.slice(0, 60)}</span>
               {" · "}

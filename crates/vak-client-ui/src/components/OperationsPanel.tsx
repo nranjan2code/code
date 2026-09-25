@@ -46,7 +46,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
     <Show when={error()}><div class="settings-warning"><Icon name="shield" /> {error()} <button class="settings-button" onClick={() => void refresh()}>Retry</button></div></Show>
     <Show when={loading() && !data()}><div class="operations-empty">Loading operational status…</div></Show>
     <Show when={data()}>
-      <section class="operations-hero"><div><h2>Operations</h2><p>Live health, background services, gateway bindings, flows, and spend controls.</p></div><button class="settings-button" onClick={() => void refresh()}>Refresh</button></section>
+      <section class="operations-hero"><div><h2>Services</h2><p>Live health, background services, gateway bindings, flows, and spend controls.</p></div><button class="settings-button" onClick={() => void refresh()}>Refresh</button></section>
       <div class="operations-grid">
         <section class="operation-card"><header><div><h3>Runtime health</h3><p>Current execution environment</p></div><Status value={data()!.health.status} /></header>
           <div class="operation-facts"><span><b>Provider</b>{data()!.health.provider || "—"}</span><span><b>Model</b>{data()!.health.model || "—"}</span><span><b>Sandbox</b>{data()!.health.sandbox || "—"}</span><span><b>Permission</b>{data()!.health.permission_mode || "—"}</span></div>

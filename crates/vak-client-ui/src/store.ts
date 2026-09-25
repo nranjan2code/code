@@ -60,7 +60,7 @@ export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
  * because it means something different to the reader: events were lost and
  * the transcript is being rebuilt, so what is on screen is briefly behind.
  */
-export type Connection = "live" | "reconnecting" | "resyncing" | "offline";
+export type Connection = "connecting" | "live" | "reconnecting" | "resyncing" | "offline";
 export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
 export type CoworkingParticipant = { principal_id: string; display_name: string };
@@ -80,6 +80,7 @@ export function agentForSession(id: string | null): AgentSummary {
 }
 export const activeAgentId = () => activeAgent()?.id ?? agentForSession(activeId()).id;
 export const [agentOpening, setAgentOpening] = createSignal(false);
+export const [openingAgentId, setOpeningAgentId] = createSignal<string | null>(null);
 export interface ReplyTarget {
   sessionId: string;
   resultId?: string;

@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, Show } from "solid-js";
 import { host } from "../host";
 import {
   activeId,
@@ -64,12 +64,16 @@ export default function WorkspaceHeader() {
   // one — otherwise every agent shows the same directory regardless of which
   // is selected.
   const workspaceCwd = createMemo(() => session()?.cwd || backend().cwd);
+  // Setup state is read from the server on every open (store.ts): the header
+  // names only what needs attention, so a ready conversation shows no status.
+  const [setup] = createResource(() => api.onboarding());
+  const needsService = () => { const state = setup(); return !!state && !state.core_ready && state.provider?.state === "incomplete"; };
   const taskStatus = createMemo(() => {
     const id = activeId();
-    if (!id) return "New task";
+    if (!id) return "";
     if (itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "Needs your decision";
     if (isRunning(id)) return isStopping(id) ? "Stopping…" : retryOf(id) ? "Retrying" : "Working";
-    return "Ready";
+    return needsService() ? "Needs an AI service" : "";
   });
   const characterState = createMemo(() => {
     const id = activeId();
@@ -167,7 +171,7 @@ export default function WorkspaceHeader() {
               <span>{workspaceCwd() ? (workspaceCwd() as string).split("/").pop() || "root" : "workspace"}</span>
             </button>
 
-            <Show when={activeId()}>
+            <Show when={activeId() && taskStatus()}>
               <span class="run-state" classList={{ active: isRunning(activeId()) }}>
                 <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
                   aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
@@ -218,7 +222,7 @@ export default function WorkspaceHeader() {
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void toggleSplit(); }}><Icon name="grid" />Split view ⌘\</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setHistoryOpen(true); }}><Icon name="history" />History</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setReceiptsOpen(true); }}><Icon name="receipt" />Activity receipts</button>
-              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><span class="menu-letter">W</span>Background tasks</button>
+              <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); setWorkOpen(true); }}><Icon name="sync" />Background tasks</button>
               <button type="button" role="menuitem" onClick={(event) => { closeMoreMenu(event); void exportTranscript(); }} disabled={exporting()}><Icon name="download" />Download transcript</button>
             </Show>
           </div>

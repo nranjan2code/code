@@ -67,7 +67,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
     }
   };
 
-  return <div class="modal-backdrop" role="presentation" onClick={props.onClose}>
+  return <div class="modal-back" role="presentation" onClick={props.onClose}>
     <section class="modal coworking-share" role="dialog" aria-modal="true" aria-labelledby="coworking-share-title" onClick={(event) => event.stopPropagation()} onKeyDown={(event) => { if (event.key === "Escape") props.onClose(); }} use:trapFocus>
       <header class="modal-header">
         <div><h2 id="coworking-share-title">Invite someone to this conversation</h2><p>They can join the conversation and review its saved drafts. Their messages never start Agent work or change your workspace.</p></div>

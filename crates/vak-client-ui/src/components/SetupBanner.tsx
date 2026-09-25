@@ -20,6 +20,17 @@ const SETUP_ORDER = [
   "first_result",
 ] as const;
 
+/** Everyday words for a step, keyed by the step's id and never by its text.
+ * Steps without an entry keep the server's own wording. The action still
+ * opens the one setup wizard (docs/design/46 D7). */
+const PLAIN_STEP: Partial<Record<(typeof SETUP_ORDER)[number], { what: string; repair: string; action: string }>> = {
+  provider: {
+    what: "Connect an AI service to start.",
+    repair: "Vakyartha needs an AI model to think with. It takes about a minute.",
+    action: "Connect",
+  },
+};
+
 
 /**
  * Says when setup is incomplete, and opens the wizard.
@@ -48,7 +59,10 @@ export default function SetupBanner() {
     if (!s || s.core_ready) return null;
     for (const key of SETUP_ORDER) {
       const step = s[key];
-      if (step && step.state === "incomplete") return step;
+      if (step && step.state === "incomplete") {
+        const plain = PLAIN_STEP[key];
+        return { what: plain?.what ?? step.what, repair: plain?.repair ?? step.repair, action: plain?.action ?? "Finish setup" };
+      }
     }
     return null;
   };
@@ -66,7 +80,7 @@ export default function SetupBanner() {
             class="btn primary sm"
             onClick={() => host.openAdmin("#/setup")}
           >
-            Finish setup
+            {step().action}
           </button>
         </div>
       )}

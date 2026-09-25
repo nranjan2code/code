@@ -41,6 +41,7 @@ export type IconName =
   | "trash"
   | "timer"
   | "tune"
+  | "pencil"
   | "warning";
 
 const paths: Record<IconName, () => JSX.Element> = {
@@ -84,6 +85,7 @@ const paths: Record<IconName, () => JSX.Element> = {
   timer: () => <><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M9 2h6" /></>,
   receipt: () => <><path d="M6 3h12v18l-2.5-1.5L13 21l-2.5-1.5L8 21l-2-1.5Z" /><path d="M9 8h6M9 12h6M9 16h3" /></>,
   tune: () => <><path d="M4 7h10M18 7h2M4 17h2M10 17h10" /><circle cx="16" cy="7" r="2" /><circle cx="8" cy="17" r="2" /></>,
+  pencil: () => <path d="M4 20h4L18.5 9.5l-4-4L4 16Z" />,
   warning: () => <><path d="M12 3 2.8 20h18.4Z" /><path d="M12 9v5M12 17.5v.1" /></>,
 };
 

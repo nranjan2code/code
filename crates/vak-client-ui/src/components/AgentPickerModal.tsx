@@ -310,22 +310,17 @@ export default function AgentPickerModal() {
                         <div style="min-width: 0;">
                           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
                             <strong style="font-size: 14px;">{agent.name}</strong>
-                            <span style="font-size: 10.5px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); font-family: var(--mono);">
-                              {agent.id}
-                            </span>
                             <Show when={isActive()}>
-                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font-weight: 600;">
-                                CURRENT
-                              </span>
+                              <span class="agent-current" title="Current agent"><Icon name="check" size={14} /><span class="visually-hidden">Current agent</span></span>
                             </Show>
                             <Show when={agent.lifecycle === "paused"}>
-                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
-                                PAUSED
+                              <span style="font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                                Paused
                               </span>
                             </Show>
                             <Show when={agent.lifecycle === "archived"}>
-                              <span style="font-size: 10px; padding: 2px 6px; border-radius: 4px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
-                                ARCHIVED
+                              <span style="font-size: 12px; padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                                Archived
                               </span>
                             </Show>
                           </div>

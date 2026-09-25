@@ -17,6 +17,7 @@ import {
   activeAgentId,
   setActiveAgent,
   setAgentOpening,
+  setOpeningAgentId,
   setReplyTarget,
   setBackend,
   setDockTab,
@@ -461,6 +462,7 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
     await openingAgent;
   }
   setAgentOpening(true);
+  setOpeningAgentId(agentId);
   const source = api.backendUrl();
   const cwd = backend().cwd;
   openingAgent = (async () => {
@@ -478,6 +480,8 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
       setArmedGoal(null);
       setDockTab(null);
       if (await activate(existing) === false) throw new Error("The conversation could not be resumed. Try again.");
+      setAgentOpening(false);
+      setOpeningAgentId(null);
       await refreshSessions();
       return existing;
     }
@@ -491,6 +495,8 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
     setArmedGoal(null);
     setDockTab(null);
     if (await activate(res.session_id) === false) throw new Error("The conversation could not be resumed. Try again.");
+    setAgentOpening(false);
+    setOpeningAgentId(null);
     await refreshSessions();
     return res.session_id;
   } catch (e) {
@@ -499,7 +505,7 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
   }
   })();
   try { return await openingAgent; }
-  finally { openingAgent = null; setAgentOpening(false); }
+  finally { openingAgent = null; setAgentOpening(false); setOpeningAgentId(null); }
 }
 
 export async function newSession() {
@@ -1090,6 +1096,8 @@ export default function App() {
         if (resyncingSessions.size === 0) setConnection("live");
       } else if (status === "offline") {
         setConnection("offline");
+      } else if (status === "connecting") {
+        setConnection("connecting");
       } else if (status !== "idle") {
         setConnection("reconnecting");
       }

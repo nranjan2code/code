@@ -61,8 +61,7 @@ function EmptyChat(props: { hasSession: boolean }) {
   return (
     <div class="chat-empty">
       <div class="chat-empty-mark">
-        <span class="vak-companion" aria-hidden="true">◌</span>
-        <Icon name="chat" size={16} />
+        <AgentMark character={agentForSession(activeId()).character} size={64} />
       </div>
       <h2 class="chat-empty-headline">
         {props.hasSession ? "Nothing here yet" : "What would you like to do?"}
@@ -1070,7 +1069,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
             {/* Unified continuous chat canvas: The transcript stays permanently mounted
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
-            <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={true} />}>
+            <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={itemsOf(sid()).some((item) => item.kind === "user")} />}>
               <Index each={displayedTurns()}>{(entry) => <div class="chat-turn" data-turn-index={entry().index}>
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
                 <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>

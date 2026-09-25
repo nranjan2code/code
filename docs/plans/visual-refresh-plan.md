@@ -1,7 +1,8 @@
 # Plan — visual refresh (Ink and Saffron)
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
-completed by explicit request; V1 to V3 and V4.2 to V4.5 remain unstarted.**
+completed by explicit request; V1 landed except V1.12, which needs its own
+session (server and ledger). V2, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -81,14 +82,14 @@ Locked by the maintainer on 2026-09-25.
 Paths are relative to `crates/vak-client-ui/src` unless they start with
 `crates/`.
 
-- [ ] **V1.1 New users never see the welcome.** Opening an agent creates its
+- [x] **V1.1 New users never see the welcome.** Opening an agent creates its
   conversation, so the empty state takes the "has session" branch ("Nothing
   here yet. Ask a follow-up or open its details to inspect prior work.").
   Where: `components/ChatPane.tsx`, empty state. Fix: show the welcome
   whenever the conversation has no turns.
   Done when: a fresh home (empty `HOME` and `VAK_HOME`) shows the greeting
   and the four starters; a conversation with turns never shows them.
-- [ ] **V1.2 "Opening agent…" floats mid-sidebar** for about 3.5 s on load
+- [x] **V1.2 "Opening agent…" floats mid-sidebar** for about 3.5 s on load
   and 5.5 s on a switch (debug build).
   Where: `components/Sidebar.tsx` (the `agentOpening` status line),
   `styles.css` `.sb-empty { margin: auto 0 }`. Fix: a spinner on the chosen
@@ -96,42 +97,48 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   once.
   Done when: no loading text appears in the sidebar, and a switch shows the
   target agent's last conversation without a blank interval.
-- [ ] **V1.3 A Reconnecting bar shows on every load** for about 3.4 s,
+- [x] **V1.3 A Reconnecting bar shows on every load** for about 3.4 s,
   before the first connection, and its tooltip says the stream dropped.
   Where: `components/StatusBar.tsx` and the connection state in `store.ts`.
   Fix: a silent `connecting` state; later drops show as a small pill above
   the message box after a grace period.
   Done when: a normal load shows no connection UI; stopping the server shows
   the pill within the grace period, and restarting it clears the pill.
-- [ ] **V1.4 Share dialog.** The close button sits under the description on
+- [x] **V1.4 Share dialog.** The close button sits under the description on
   the left, and the dialog pins to the conversation's top-left corner.
   Where: `components/CoworkingShare.tsx`. Fix: close at top right, centred.
   Done when: Escape closes it and focus returns to Share, at both widths.
-- [ ] **V1.5 Review overlap.** "Open saved version in Canvas" overlaps the
+- [x] **V1.5 Review overlap.** "Open saved version in Canvas" overlaps the
   "187 B · draft hash" line. Where: `components/WorkbenchPanel.tsx`
   (candidate review). Fix: stack the button under the caption.
   Done when: no overlap at either width.
-- [ ] **V1.6 Letter icon.** Background tasks shows a letter W.
+- [x] **V1.6 Letter icon.** Background tasks shows a letter W.
   Where: `components/WorkspaceHeader.tsx` (`menu-letter`). Fix: a real icon.
-- [ ] **V1.7 Phone message box.** At 390px the send button covers Attach.
+- [x] **V1.7 Phone message box.** At 390px the send button covers Attach.
   Where: `components/Composer.tsx` toolbar. Fix: +, mic and send, with the
   rest in the + menu.
   Done when: nothing overlaps at 390 × 844 and every control is reachable
   by keyboard.
-- [ ] **V1.8 Empty-state mark.** A ◌ character in a pink tile with a chat
+- [x] **V1.8 Empty-state mark.** A ◌ character in a pink tile with a chat
   icon hanging below it. Where: `components/ChatPane.tsx`,
   `styles.css` `.vak-companion`. Fix: the agent's portrait.
-- [ ] **V1.9 Design-doc tooltip.** The goal chip's tooltip cites
+- [x] **V1.9 Design-doc tooltip.** The goal chip's tooltip cites
   "docs/design/27 Phase H". Where: `components/Composer.tsx`. Fix: plain
   words.
-- [ ] **V1.10 Setup leaves the app.** Finish setup opens the admin console's
+- [x] **V1.10 Setup leaves the app.** Finish setup opens the admin console's
   Setup & Readiness page. Where: `components/SetupBanner.tsx`. Fix: plain
   copy ("Connect an AI service to start. It takes about a minute.") and open
   the client's own Settings credentials section; the full connect sheet is
   V3.4.
   Done when: on a fresh home the banner opens Settings at the credentials
   group, in the same window.
-- [ ] **V1.11 Ready with no AI service.** The header says Ready on first run.
+  *Revised when built:* opening Settings would have been a second setup path
+  beside the one wizard (`docs/design/46-stabilization-install-and-onboarding.md`
+  D7, invariant 30). The banner now uses plain words for the provider step,
+  keyed by step id, and "Connect" still opens the one wizard. Moving that
+  wizard into the client is V3.4, and it must replace the admin wizard, not
+  join it.
+- [x] **V1.11 Ready with no AI service.** The header says Ready on first run.
   Where: `components/WorkspaceHeader.tsx` (`taskStatus`). Fix: "Needs an AI
   service" from the setup status the client already reads.
   Done when: a fresh home shows it; a configured home shows no status at
@@ -148,15 +155,15 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   Done when: a live revision from a coworker's comment shows as an event, the
   ledger entry is unchanged apart from the new tag, and replay shows the same
   event.
-- [ ] **V1.13 Settings names disagree.** Services opens a page titled
+- [x] **V1.13 Settings names disagree.** Services opens a page titled
   Operations; Integrations opens Capabilities. Where:
   `components/Settings.tsx`, `components/OperationsPanel.tsx`. Fix: one name
   per page.
-- [ ] **V1.14 Permission icons.** Full access, the riskiest option, uses a
+- [x] **V1.14 Permission icons.** Full access, the riskiest option, uses a
   shield; Workspace write and Approve automatically use a code icon. Where:
   `components/Settings.tsx` (permission and approval option lists). Fix:
   eye, pencil and warning.
-- [ ] **V1.15 Agent picker badges.** A filled CURRENT badge and monospace
+- [x] **V1.15 Agent picker badges.** A filled CURRENT badge and monospace
   IDs. Where: `components/AgentPickerModal.tsx`. Fix: a check mark; IDs move
   under Technical details once V2.6 exists, and are dropped from the row now.
 
@@ -278,3 +285,20 @@ what was not.
   macOS AppKit, Dock ICNS, and tray-template renders checked. Color/trademark
   uniqueness scan was a limited visual web search; no registry search or legal
   conclusion. Remaining V4 work was not started.
+- 2026-09-25: V1 landed except V1.12. Built both client bundles and the
+  server; checked live in headless Chrome and the browser pane on the 4.1.0
+  dev build, against the real configuration (port 8933) and an empty home
+  (port 8934). Checked: no status pill and no "Opening agent" text during
+  load; the row spinner clears on switch (0.16 s and 2.3 s, debug build); a
+  stopped server shows "Reconnecting…" about 1.5 s later and a restart
+  clears it; Share and Background tasks are centred sheets with the close
+  button beside the title, and Escape returns focus to Share; the Review
+  caption sits 6px below its button; Background tasks has an icon; no
+  overlap and no sideways scroll in the 390px message box (light and dark);
+  the agent picker shows a check mark and no IDs; Services and Integrations
+  titles match the navigation; permission icons are eye, pencil and
+  warning; on the empty home, the welcome with four starters and the
+  agent's portrait, the plain provider banner with Connect, and "Needs an
+  AI service" in the header, with no status at rest on a configured home.
+  Evidence: `after/V1.*`. Not checked live: the goal-chip tooltip (V1.9,
+  source only); V1.12 not started. Client typecheck and node tests pass.
