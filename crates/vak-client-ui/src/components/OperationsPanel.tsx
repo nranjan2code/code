@@ -3,6 +3,7 @@ import * as api from "../api";
 import { host } from "../host";
 import { activeAgentId } from "../store";
 import Icon from "./Icon";
+import Skeleton from "./Skeleton";
 
 function Status(props: { value: string; good?: boolean }) {
   return <span class="settings-status" classList={{ good: props.good ?? ["running", "ok", "enabled"].includes(props.value), bad: !(props.good ?? ["running", "ok", "enabled"].includes(props.value)) }}>{props.value}</span>;
@@ -44,7 +45,7 @@ export default function OperationsPanel(props: { onNotice?: (text: string) => vo
   };
   return <div class="operations-panel">
     <Show when={error()}><div class="settings-warning"><Icon name="shield" /> {error()} <button class="settings-button" onClick={() => void refresh()}>Retry</button></div></Show>
-    <Show when={loading() && !data()}><div class="operations-empty">Loading operational status…</div></Show>
+    <Show when={loading() && !data()}><Skeleton kind="rows" label="Loading system health" /></Show>
     <Show when={data()}>
       <section class="operations-hero"><div><h2>Services</h2><p>Live health, background services, gateway bindings, flows, and spend controls.</p></div><button class="settings-button" onClick={() => void refresh()}>Refresh</button></section>
       <div class="operations-grid">

@@ -16,6 +16,7 @@ import { hasSettledProjection, serverTurnFor } from "../turnPairing";
 import * as api from "../api";
 import "../focusTrap";
 import { assistantParts, cleanAssistantText, groupAssistantParts, parseVakFence, stripControlScaffolding } from "../structured";
+import Skeleton from "./Skeleton";
 export { parseVakFence, stripControlScaffolding };
 
 /// The typed-output transport fence: a ` ```vak ``` ` block in a tool
@@ -177,13 +178,7 @@ function WorkingIndicator(props: { sessionId: string | null; executionId?: strin
 
 function TranscriptSkeleton() {
   return (
-    <div class="transcript-skeleton" aria-label="Loading task">
-      <span class="skeleton-line wide" />
-      <span class="skeleton-line medium" />
-      <span class="skeleton-card" />
-      <span class="skeleton-line wide" />
-      <span class="skeleton-line short" />
-    </div>
+    <Skeleton kind="transcript" class="transcript-skeleton" label="Loading the conversation" />
   );
 }
 
@@ -904,6 +899,22 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     });
   };
   const working = createMemo(() => activeWorkingState(sid()));
+  // A turn that appears after its conversation has loaded is new, and
+  // arrives with motion; the turns a conversation opens with do not. Opening
+  // always loads (activate hydrates), and the conversation becomes active a
+  // moment before that load starts, so it counts as loaded only once its load
+  // has been seen to start and then finish.
+  const [settledSid, setSettledSid] = createSignal<string | null>(null);
+  let loadingSid: string | null = null;
+  createEffect(() => {
+    const id = sid();
+    const loading = hydratingId();
+    if (!id) return;
+    if (loading === id) { loadingSid = id; return; }
+    if (loadingSid !== id) return;
+    const frame = requestAnimationFrame(() => setSettledSid(id));
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
   // An empty conversation shows the greeting, which reads from the top.
   const showsGreeting = createMemo(() => !sid() || !(visibleItems(itemsOf(sid())).length || working()));
 
@@ -1118,12 +1129,12 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={itemsOf(sid()).some((item) => item.kind === "user")} />}>
-              <Index each={displayedTurns()}>{(entry) => <div class="chat-turn" data-turn-index={entry().index}>
+              <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} data-turn-index={entry().index}>
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
                 <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
-                  {(timeline) => <PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser />}
+                  {(timeline) => <div class="turn-result"><PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser /></div>}
                 </Show>
-              </div>}</Index>
+              </div>; }}</Index>
               <Show when={working()}>{(state) => <WorkingIndicator sessionId={sid()} executionId={state().executionId} />}</Show>
             </Show>
           </Show>

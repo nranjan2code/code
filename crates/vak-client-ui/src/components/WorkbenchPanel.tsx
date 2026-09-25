@@ -28,6 +28,7 @@ import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoi
 import { artifactPreviewHtml } from "../artifactPreview";
 import { sandboxedSrcdoc } from "../safeUrl";
 import { activate } from "../App";
+import Skeleton from "./Skeleton";
 
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "0 B";
@@ -1347,7 +1348,7 @@ export default function WorkbenchPanel() {
                 <div class="viewer-header">
                   <span class="viewer-path">{technicalDetails() ? selectedArtifact() : selectedArtifact()?.split("/").pop()}</span>
                   <Show when={loadingArtifact()}>
-                    <span class="viewer-loading">Loading…</span>
+                    <Skeleton kind="text" label="Loading the file" />
                   </Show>
                   <button
                     type="button"

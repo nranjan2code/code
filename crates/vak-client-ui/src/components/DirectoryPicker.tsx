@@ -1,6 +1,7 @@
 import { createResource, createSignal, For, Show } from "solid-js";
 import { listDirectory } from "../api";
 import Icon from "./Icon";
+import Skeleton from "./Skeleton";
 
 /**
  * Choose a folder on the *server's* filesystem.
@@ -52,7 +53,7 @@ export default function DirectoryPicker(props: {
       <div class="dirpick-list" role="listbox" aria-label="Folders">
         <For
           each={listing()?.entries ?? []}
-          fallback={<div class="dirpick-empty">{listing.loading ? "Loading…" : "No folders here."}</div>}
+          fallback={listing.loading ? <Skeleton kind="rows" label="Loading folders" /> : <div class="dirpick-empty">No folders here.</div>}
         >
           {(entry) => (
             <div class="dirpick-row">

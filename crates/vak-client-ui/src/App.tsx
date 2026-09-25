@@ -127,6 +127,7 @@ import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import ConnectSheet from "./components/ConnectSheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
+import Skeleton from "./components/Skeleton";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
 const streams = new Map<string, () => void>();
@@ -1362,7 +1363,7 @@ export default function App() {
                     <Icon name="close" />
                   </button>
                 </div>
-                <Suspense fallback={<div class="pane-loading" role="status">Loading workspace tools…</div>}>
+                <Suspense fallback={<Skeleton kind="text" class="pane-loading" label="Loading" />}>
                   <Show when={tab() === "workbench"}>
                     <WorkbenchPanel />
                   </Show>
@@ -1434,7 +1435,7 @@ export default function App() {
           <ConnectSheet />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
-            <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>
+            <Suspense fallback={<Skeleton kind="blocks" class="modal-loading" label="Loading settings" />}><Settings /></Suspense>
           </Show>
         </div>
       )}

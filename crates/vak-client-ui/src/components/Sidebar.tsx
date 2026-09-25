@@ -6,6 +6,7 @@ import { host } from "../host";
 import AgentMark from "./AgentMark";
 import { sortByRecent } from "../agentRecents";
 import Icon from "./Icon";
+import Skeleton from "./Skeleton";
 
 export default function Sidebar() {
   const [agents, setAgents] = createSignal<api.Agent[]>([]);
@@ -73,7 +74,7 @@ export default function Sidebar() {
       <nav class="sb-agent-list" aria-label="Agents">
         <AgentRow id="vak" name="Vakyartha" character="vak" />
         <Show when={loaded()} fallback={
-          <div class="sb-agent-skeleton" aria-hidden="true"><span /><span /></div>
+          <Skeleton shapes={["row", "row"]} class="sb-agent-skeleton" label="Loading your agents" />
         }>
           <For each={shown()}>{(profile) => <AgentRow id={profile.id} name={profile.name} character={profile.character} motion={profile.animation} />}</For>
         </Show>

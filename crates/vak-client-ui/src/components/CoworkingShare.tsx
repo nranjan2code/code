@@ -2,6 +2,7 @@ import { createEffect, createSignal, For, Show } from "solid-js";
 import * as api from "../api";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
+import Skeleton from "./Skeleton";
 
 export default function CoworkingShare(props: { sessionId: string; onClose: () => void }) {
   const [invitations, setInvitations] = createSignal<api.CoworkingInvitation[]>([]);
@@ -86,7 +87,7 @@ export default function CoworkingShare(props: { sessionId: string; onClose: () =
       </form>
       <div class="coworking-invitations">
         <h3>Invitations</h3>
-        <Show when={!loading()} fallback={<p class="dim">Loading invitations…</p>}>
+        <Show when={!loading()} fallback={<Skeleton kind="rows" label="Loading invitations" />}>
           <For each={invitations()} fallback={<p class="dim">No one has been invited to this conversation.</p>}>
             {(invitation) => <div class="coworking-invitation">
               <div><strong>{invitation.display_name}</strong><span>{invitation.status === "active" ? `${invitation.capabilities.includes("message") ? "Conversation" : "Read"}${invitation.capabilities.includes("comment") ? ", draft comments" : ""} · until ${new Date(invitation.expires_at).toLocaleString()}` : invitation.status === "revoked" ? "Access revoked" : "Access expired"}</span></div>

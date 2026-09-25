@@ -3,6 +3,7 @@ import { sessions, setTranscriptViewId, transcriptToItems, transcriptViewId, typ
 import * as api from "../api";
 import { ItemView } from "./ChatPane";
 import Sheet from "./Sheet";
+import Skeleton from "./Skeleton";
 
 /**
  * Read-only historical transcript (docs/design/29): any session by id, served
@@ -91,13 +92,7 @@ export default function TranscriptModal() {
         </Show>
         <div class="transcript-scroll" ref={scroller}>
           <Show when={!loading()} fallback={
-            <div class="transcript-skeleton" aria-label="Loading transcript">
-              <span class="skeleton-line wide" />
-              <span class="skeleton-line medium" />
-              <span class="skeleton-card" />
-              <span class="skeleton-line wide" />
-              <span class="skeleton-line short" />
-            </div>
+            <Skeleton kind="transcript" class="transcript-skeleton" label="Loading the conversation" />
           }>
             <For each={items()}>
               {(it) => <ItemView item={it} />}

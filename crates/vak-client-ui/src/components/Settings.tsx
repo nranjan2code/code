@@ -38,6 +38,7 @@ import Icon, { type IconName } from "./Icon";
 import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
+import Skeleton from "./Skeleton";
 
 /** Sentinel option that swaps the model select for a free-text field. */
 const CUSTOM_MODEL = "\u0000custom";
@@ -1214,7 +1215,7 @@ export default function Settings() {
               <Show when={promptLayer.error || promptEffective.error}><span> Prompt configuration is unavailable.</span></Show>
             </div>
           </Show>
-          <Show when={!loading()} fallback={<div class="settings-loading"><span /><span /><span /></div>}>
+          <Show when={!loading()} fallback={<Skeleton kind="blocks" class="settings-loading" label="Loading settings" />}>
             <Show when={SCOPED_PAGES.has(page())}>
               {/* Editing one agent is the default; the shared defaults are the
                   deliberate, secondary choice, so they sit behind a quiet link. */}
@@ -1687,7 +1688,7 @@ export default function Settings() {
                 </Show>
               </nav>
               <Show when={shownCapabilityTab() === "mcp"}>
-                <Group title="Connections"><Show when={mcpServers()} fallback={<Row title="Loading connections…" description="Checking your connected tools."><span /></Row>}>
+                <Group title="Connections"><Show when={mcpServers()} fallback={<Skeleton kind="rows" label="Loading connections" />}>
                   <div class="mcp-editor">
                     <Show when={Object.keys(mcpServers() ?? {}).length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon mcp"><Icon name="plug" /></span><strong>{scope() === "user" ? "No shared connections yet" : (Object.keys(inheritedMcpServers()).length > 0 ? "Nothing added for this agent" : "No connections yet")}</strong><span>{scope() === "user" ? "Add one to give every agent a tool such as search, a browser or your data." : (Object.keys(inheritedMcpServers()).length > 0 ? "This agent uses the shared connections below. Add one here to give only this agent a tool." : "Add a connection to give the agent tools such as search, a browser or your data.")}</span></div>}>
                       <For each={Object.entries(mcpServers() ?? {})}>{([name, def]) => <div class="mcp-row">
