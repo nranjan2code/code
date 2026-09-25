@@ -40,7 +40,7 @@ export default function OnboardingWelcome() {
         <div class="modal" style="max-width: 420px;" role="dialog" aria-modal="true" aria-labelledby="onboarding-title" onClick={(e) => e.stopPropagation()}>
           <div style="margin-bottom: 12px;"><AgentMark character="vak" size={44} /></div>
           <h2 id="onboarding-title" style="margin: 0 0 6px;">Meet Vakyartha</h2>
-          <p style="margin: 0 0 18px; color: var(--muted); font-size: 13.5px; line-height: 1.5;">
+          <p style="margin: 0 0 18px; color: var(--muted); font-size: 15px; line-height: 1.5;">
             Vakyartha is ready to help out of the box. You can also build your own specialists — an agent with its own
             personality, instructions, and workspace — for the things you do often.
           </p>

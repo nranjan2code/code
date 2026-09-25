@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-to V2.3 done. V2.4 onward, V3 and V4.2 to V4.5 remain unstarted.**
+to V2.4 done. V2.5 onward, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -189,7 +189,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
   client, loaded with `font-display: swap` and a serif fallback; licence file
   alongside. Done when: the desktop shell and the web app both render it with
   no network access.
-- [ ] **V2.4 Type scale.** Every `font-size` moves to the nine steps; three
+- [x] **V2.4 Type scale.** Every `font-size` moves to the nine steps; three
   weights; conversation text at 16px; answers wrap at about 68 characters;
   the text-size preference still scales everything.
   Done when: exit criterion 1 holds and the conversation screen's measured
@@ -377,3 +377,14 @@ what was not.
   retired-id fallback; four theme choices; no sideways scroll at 390.
   Evidence: `after/V2.2-*`. Not done here: rules still use literal sizes
   (V2.4) and other literal hex values remain outside the tokens (V2.8).
+- 2026-09-25: V2.4 done. Every px font size in the stylesheet (579) and in
+  six components moved one step onto the nine-step scale; none is under
+  12px. Weights are 400, 500 and 600 only; 25 capitalised labels and 22
+  wide letter-spacings removed. Interface text is 15px, and conversation
+  text and the message box are 16px with a 1.6 line height, still scaled
+  by the text-size preference. Measured on the conversation screen at
+  1440 × 900 (light), visible characters by rendered size: 12px 342, 13px
+  351, 14px 14, 14.4px 75 (code), 15px 115, 16px 845, 18px 9; none under
+  12px, also on Settings and at 390px dark (no sideways scroll). Before:
+  44% under 13px and nothing over 15px. Known regression for V3.1: long
+  agent names now truncate in the sidebar. Evidence: `after/V2.4-*`.

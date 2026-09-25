@@ -149,17 +149,17 @@ export default function WorkspaceHeader() {
               }}
               title="Switch Agent Specialist"
             >
-              <h1 style="margin: 0; font-size: 15px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
+              <h1 style="margin: 0; font-size: 16px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px;">
                 <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={20} state={characterState()} interactive />
                 <span>{title()}</span>
-                <span style="font-size: 11px; opacity: 0.6;">▾</span>
+                <span style="font-size: 12px; opacity: 0.6;">▾</span>
               </h1>
             </button>
 
             <button
               type="button"
               class="target-dir-pill"
-              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: 11.5px; color: var(--muted); cursor: pointer; text-decoration: none;"
+              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: 13px; color: var(--muted); cursor: pointer; text-decoration: none;"
               onClick={() => {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);
