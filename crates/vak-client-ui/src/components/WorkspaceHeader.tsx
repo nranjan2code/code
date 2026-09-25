@@ -2,6 +2,8 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { host } from "../host";
 import {
   activeId,
+  setConnectOpen,
+  setupEpoch,
   dockTab,
   inboxOpen,
   inboxUnread,
@@ -67,7 +69,7 @@ export default function WorkspaceHeader() {
   const workspaceCwd = createMemo(() => session()?.cwd || backend().cwd);
   // Setup state is read from the server on every open (store.ts): the header
   // names only what needs attention, so a ready conversation shows no status.
-  const [setup] = createResource(() => api.onboarding());
+  const [setup] = createResource(setupEpoch, () => api.onboarding());
   const needsService = () => { const state = setup(); return !!state && !state.core_ready && state.provider?.state === "incomplete"; };
   const taskStatus = createMemo(() => {
     const id = activeId();
@@ -177,11 +179,15 @@ export default function WorkspaceHeader() {
             </Show>
 
             <Show when={activeId() && taskStatus()}>
-              <span class="run-state" classList={{ active: isRunning(activeId()) }}>
-                <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
-                  aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
-                {taskStatus()}
-              </span>
+              <Show when={taskStatus() === "Needs an AI service"} fallback={
+                <span class="run-state" classList={{ active: isRunning(activeId()), attention: taskStatus() === "Needs your decision" }}>
+                  <span class="dot" classList={{ run: isRunning(activeId()) }} role="img"
+                    aria-label={isRunning(activeId()) ? "Running" : "Idle"} />
+                  {taskStatus()}
+                </span>
+              }>
+                <button type="button" class="run-state attention" onClick={() => setConnectOpen(true)}>{taskStatus()}</button>
+              </Show>
             </Show>
             <Show when={coworkingPresence(activeId()).length > 0}>
               <div class="coworking-presence" aria-label="People here now">

@@ -593,6 +593,14 @@ export const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
 export const [agentPickerTab, setAgentPickerTab] = createSignal<"fleet" | "target">("fleet");
 export const [agentCreateOpen, setAgentCreateOpen] = createSignal(false);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
+/** The in-app "Connect an AI service" sheet (docs/design/75 §6.2). */
+export const [connectOpen, setConnectOpen] = createSignal(false);
+/** Bumped by anything that can change setup; every `GET /onboarding`
+ * reader refetches on it, so the banner and the header agree at once. */
+export const [setupEpoch, setSetupEpoch] = createSignal(0);
+/** How many empty-conversation greetings are on screen. While one is, it
+ * carries the setup card and the app-wide banner stands down. */
+export const [greetingsShown, setGreetingsShown] = createSignal(0);
 /** Left navigation manages user-wide defaults; the workspace header manages
  * the active project's overlay. The server remains the single source of truth. */
 // Defaults to "workspace" (edit the active agent) — that's what someone

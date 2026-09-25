@@ -63,6 +63,7 @@ import {
   searchOpen,
   setSearchOpen,
   settingsOpen,
+  greetingsShown,
   setSettingsOpen,
   agentPickerOpen,
   setAgentPickerOpen,
@@ -131,6 +132,7 @@ import InboxPage from "./components/InboxPage";
 import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import OnboardingWelcome from "./components/OnboardingWelcome";
+import ConnectSheet from "./components/ConnectSheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
@@ -1407,9 +1409,11 @@ export default function App() {
             )}
           </Show>
           <StatusBar />
-          {/* Incomplete setup never blocks the workspace; the banner
-              points at the one wizard rather than being a second one. */}
-          <SetupBanner />
+          {/* Incomplete setup never blocks the workspace. An empty
+              conversation's greeting carries this card instead. */}
+          <Show when={greetingsShown() === 0}>
+            <SetupBanner />
+          </Show>
           <BudgetBanner />
           <Show when={showShortcuts()}>
             <ShortcutsModal />
@@ -1441,6 +1445,7 @@ export default function App() {
           <AgentPickerModal />
           <AgentCreateWizard />
           <OnboardingWelcome />
+          <ConnectSheet />
           <Suspense><ArtifactCanvas /></Suspense>
           <Show when={settingsOpen()}>
             <Suspense fallback={<div class="modal-loading" role="status">Loading settings…</div>}><Settings /></Suspense>

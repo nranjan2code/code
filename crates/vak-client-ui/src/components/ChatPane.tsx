@@ -1,10 +1,11 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import AgentMark from "./AgentMark";
+import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import PresentationTimelineView, { Artifact, StructuredView } from "./PresentationRenderer";
@@ -37,9 +38,22 @@ function stripVakFence(text: string): string {
  * despite DESIGN.md naming "the chat empty state" as the canonical use
  * of the headline type scale (22px/620/-0.02em) it defines.
  */
+/** The starters an empty conversation offers, each with an everyday example
+ * (docs/design/75 §6.2). The prompt is what lands in the message box. */
+const STARTERS: readonly { label: string; example: string; prompt: string }[] = [
+  { label: "Research a question", example: "Compare three laptops for a student", prompt: "Compare three laptops for a student and recommend one." },
+  { label: "Write or rewrite", example: "Make this email warmer and shorter", prompt: "Make this email warmer and shorter: " },
+  { label: "Analyze data", example: "What changed in this spreadsheet?", prompt: "What changed in this spreadsheet? " },
+  { label: "Plan something", example: "A relaxed Saturday with the kids", prompt: "Plan a relaxed Saturday with the kids." },
+];
+
 function EmptyChat(props: { hasSession: boolean }) {
+  // While a greeting is on screen it carries the setup card (App.tsx).
+  onMount(() => setGreetingsShown((n) => n + 1));
+  onCleanup(() => setGreetingsShown((n) => n - 1));
   const ongoing = createMemo(() => sessions().filter((session) => session.running).slice(0, 3));
-  const completed = createMemo(() => sessions().filter((session) => !session.running).slice(0, 3));
+  // A conversation with no title has had no message yet: nothing to resume.
+  const completed = createMemo(() => sessions().filter((session) => !session.running && session.title).slice(0, 3));
   const [previews, setPreviews] = createSignal<Record<string, string>>({});
   const [previewLoaded, setPreviewLoaded] = createSignal<ReadonlySet<string>>(new Set());
   createEffect(() => {
@@ -61,16 +75,15 @@ function EmptyChat(props: { hasSession: boolean }) {
   return (
     <div class="chat-empty">
       <div class="chat-empty-mark">
-        <AgentMark character={agentForSession(activeId()).character} size={64} />
+        <AgentMark character={agentForSession(activeId()).character} size={narrowViewport() ? 72 : 104} />
       </div>
-      <h2 class="chat-empty-headline">
-        {props.hasSession ? "Nothing here yet" : "What would you like to do?"}
-      </h2>
+      <h2 class="chat-empty-headline">Hi, I'm {agentForSession(activeId()).name}.</h2>
       <p class="chat-empty-hint">
         {props.hasSession
-          ? "This conversation is ready when you are. Ask a follow-up or open its details to inspect prior work."
-          : "Ask a question or hand over something to plan, find, create, remember, schedule, or complete."}
+          ? "Pick up where you left off, or ask something new."
+          : "Ask a question, plan something or hand over a task. Talk or type, whichever is easier."}
       </p>
+      <SetupBanner inGreeting />
       <Show when={!props.hasSession}>
         <Show when={ongoing().length > 0}>
           <div class="home-ongoing" aria-label="Ongoing work" aria-live="polite">
@@ -84,25 +97,21 @@ function EmptyChat(props: { hasSession: boolean }) {
             <For each={completed()}>{(session) => <button type="button" class="home-result-row" onClick={() => void activate(session.session_id)}><span class="home-result-mark"><Icon name="check" size={14} /></span><span><strong>{session.title || "Untitled conversation"}</strong><small>{previews()[session.session_id] || "Open this conversation to see the result."}</small></span><em>Open</em></button>}</For>
           </div>
         </Show>
-        <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">
-          <For each={[
-            ["Research a question", "Research this question and summarize the important points."],
-            ["Write or rewrite", "Help me write or rewrite this clearly: "],
-            ["Analyze data", "Help me analyze this data and explain the key findings."],
-            ["Plan something", "Help me make a practical plan for: "],
-          ]}>
-            {([label, prompt]) => (
-              <button
-                type="button"
-                class="chat-empty-example"
-                onClick={() => window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: prompt } }))}
-              >
-                {label}
-              </button>
-            )}
-          </For>
-        </div>
       </Show>
+      <div class="chat-empty-examples" aria-label="Things Vakyartha can help with">
+        <For each={STARTERS}>
+          {(starter) => (
+            <button
+              type="button"
+              class="chat-empty-example"
+              onClick={() => window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: starter.prompt } }))}
+            >
+              <strong>{starter.label}</strong>
+              <span>{starter.example}</span>
+            </button>
+          )}
+        </For>
+      </div>
     </div>
   );
 }
@@ -860,6 +869,8 @@ export default function ChatPane(props: { sessionId?: string | null }) {
     });
   };
   const working = createMemo(() => activeWorkingState(sid()));
+  // An empty conversation shows the greeting, which reads from the top.
+  const showsGreeting = createMemo(() => !sid() || !(visibleItems(itemsOf(sid())).length || working()));
 
   const onScroll = () => {
     if (smoothScrolling) return;
@@ -915,7 +926,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       setActiveTurn(Math.max(1, count - 1));
       return;
     }
-    if (pinned && !smoothScrolling) {
+    if (pinned && !smoothScrolling && !showsGreeting()) {
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
       pinned = true;
       setAtBottom(true);
@@ -1084,7 +1095,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         </Show>
         </div>
       </div>
-      <Show when={!atBottom()}>
+      <Show when={!atBottom() && !showsGreeting()}>
         <button type="button" class="scroll-latest" onClick={() => scrollToBottom(true)}>
           <Icon name="chevron" size={13} /> Latest
         </button>

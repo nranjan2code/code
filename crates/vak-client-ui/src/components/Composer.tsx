@@ -97,6 +97,8 @@ export default function Composer(props: { cwd: string }) {
   let draftText = "";
   const [modelList, setModelList] = createSignal<string[]>([]);
   const [lookupError, setLookupError] = createSignal("");
+  // Why the model switch is empty; it only matters to that switch.
+  const [modelError, setModelError] = createSignal("");
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
   const drafts = new Map<string, {text: string; files: { name: string; mime: string; data: string }[]; inbox: InboxChip[]}>();
@@ -150,10 +152,10 @@ export default function Composer(props: { cwd: string }) {
     if (!p) return;
     api.discoverModels(p).then((r) => {
       setModelList(r.models);
-      setLookupError("");
+      setModelError("");
     }).catch((error) => {
       setModelList([]);
-      setLookupError(`Model discovery unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      setModelError(error instanceof Error ? error.message : String(error));
     });
   });
 
@@ -680,6 +682,7 @@ export default function Composer(props: { cwd: string }) {
                 <select
                   class="composer-mode composer-model-select"
                   aria-label="Model"
+                  title={modelError() || undefined}
                   value={health()?.model ?? ""}
                   onChange={(e) => void switchModel(e.currentTarget.value)}
                   disabled={modelList().length === 0}
