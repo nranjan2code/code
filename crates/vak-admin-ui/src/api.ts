@@ -267,7 +267,7 @@ export const api = {
     nats_credentials_jwt?: string;
     nats_nkey_seed?: string;
     workspace_secret_env?: string;
-  }): Promise<{ configured: boolean; env_vars: string[]; takes_effect: string }> =>
+  }): Promise<{ configured: boolean }> =>
     fetch("/config/bus", {
       method: "PUT",
       headers: { "content-type": "application/json" },
@@ -275,7 +275,7 @@ export const api = {
     }).then((r) => handle(r)),
 
   deleteBusConfig: (): Promise<void> =>
-    fetch("/config/bus/credentials", { method: "DELETE" }).then((r) => void handle(r)),
+    fetch("/config/bus", { method: "DELETE" }).then((r) => void handle(r)),
 
   // ---- Sandbox (docs/design/2026-sandboxed-execution) --------------------
 

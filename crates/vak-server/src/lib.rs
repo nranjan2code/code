@@ -2957,6 +2957,12 @@ pub async fn init_server_bus(core: &Core) {
     if config.nats_url.is_none() {
         return;
     }
+    install_server_bus(core, &config).await;
+}
+
+/// Builds the bus `config` describes, with its secrets from the secrets
+/// chain, and makes it the live one.
+async fn install_server_bus(core: &Core, config: &vak_config::BusResolved) {
     let sessions_home = core.sessions_home();
     let workspace_id = {
         use sha2::{Digest, Sha256};
@@ -2968,7 +2974,12 @@ pub async fn init_server_bus(core: &Core) {
         let hex: String = prefix.iter().map(|b| format!("{b:02x}")).collect();
         format!("ws_{}", hex)
     };
-    let bus = crate::bus::ServerBus::from_resolved(&workspace_id, &config).await;
+    let bus = crate::bus::ServerBus::from_resolved(
+        &workspace_id,
+        config,
+        &crate::bus::BusCredentials::of(core),
+    )
+    .await;
     if let Some(mut hub) = crate::events::global() {
         hub.set_server_bus(std::sync::Arc::new(bus));
     }
@@ -13461,10 +13472,11 @@ async fn get_bus_config(State(state): State<AppState>) -> axum::response::Respon
     .into_response()
 }
 
-/// PUT /config/bus — store NATS credentials in the workspace secret scope.
-/// Takes effect on the next server restart (the ServerBus is initialized
-/// at startup; runtime reconnection is a future enhancement).
-/// Credentials are never returned by GET /config/bus once set.
+/// PUT /config/bus — sets the bus for this workspace and applies it now
+/// (invariant 31). The NATS URL and the workspace-secret variable's name
+/// go to the project config's `[server.bus]`; the credentials JWT and nkey
+/// seed go to the project secret scope through `vak_config::credentials`,
+/// never to a file. Credentials are never returned by GET.
 async fn put_bus_config(
     State(state): State<AppState>,
     Json(body): Json<BusConfigBody>,
@@ -13472,102 +13484,106 @@ async fn put_bus_config(
     if body.nats_url.is_none()
         && body.nats_credentials_jwt.is_none()
         && body.nats_nkey_seed.is_none()
+        && body.workspace_secret_env.is_none()
     {
         return (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "error": "at least one of nats_url, nats_credentials_jwt, or nats_nkey_seed must be provided"
+                "error": "at least one of nats_url, nats_credentials_jwt, nats_nkey_seed or workspace_secret_env must be provided"
             })),
         )
             .into_response();
     }
-
-    let env_updates: Vec<(String, String)> = [
-        body.nats_url.map(|v| ("VAK_BUS_NATS_URL".to_string(), v)),
-        body.nats_credentials_jwt
-            .map(|v| ("VAK_BUS_NATS_CREDENTIALS_JWT".to_string(), v)),
-        body.nats_nkey_seed
-            .map(|v| ("VAK_BUS_NATS_NKEY_SEED".to_string(), v)),
-        body.workspace_secret_env
-            .map(|v| ("VAK_BUS_WORKSPACE_SECRET_ENV".to_string(), v)),
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-
-    let env_path = state.core.cwd().join(".vak/env");
-    let _ = std::fs::create_dir_all(state.core.cwd().join(".vak"));
-    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let mut lines: Vec<String> = existing.lines().map(String::from).collect();
-
-    for (key, val) in &env_updates {
-        let pattern = format!("{key}=");
-        if let Some(pos) = lines.iter().position(|l| l.starts_with(&pattern)) {
-            lines[pos] = format!("{key}={val}");
-        } else {
-            lines.push(format!("{key}={val}"));
+    let core = state.core.clone();
+    let project_scope = core.cwd().join(".env");
+    let mut changed = Vec::new();
+    for (var, value) in [
+        (vak_config::BUS_NATS_JWT_VAR, &body.nats_credentials_jwt),
+        (vak_config::BUS_NATS_NKEY_SEED_VAR, &body.nats_nkey_seed),
+    ] {
+        let Some(value) = value.as_deref().map(str::trim).filter(|v| !v.is_empty()) else {
+            continue;
+        };
+        if let Err(error) = vak_config::upsert_env_file(&project_scope, var, value) {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": format!("could not store {var}: {error}") })),
+            )
+                .into_response();
         }
+        changed.push(var);
     }
-
-    let content = lines.join("\n") + "\n";
-    if let Err(e) = std::fs::write(&env_path, &content) {
+    if let Err(error) = vak_config::persist_bus_settings(
+        core.cwd().join(".vak").join("config.toml"),
+        body.nats_url.as_deref().map(Some),
+        body.workspace_secret_env.as_deref().map(Some),
+    ) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": format!("failed to write .vak/env: {e}") })),
+            Json(serde_json::json!({ "error": error.to_string() })),
         )
             .into_response();
     }
-    for (key, _val) in &env_updates {
-        state.hub.emit_config_changed("bus_credential_set", key);
+    for key in changed
+        .iter()
+        .copied()
+        .chain(body.nats_url.as_ref().map(|_| "nats_url"))
+        .chain(
+            body.workspace_secret_env
+                .as_ref()
+                .map(|_| "workspace_secret_env"),
+        )
+    {
+        state.hub.emit_config_changed("bus_config_set", key);
     }
-
     vak_core::security_events::record(
-        &state.core.sessions_home(),
+        &core.sessions_home(),
         vak_core::security_events::EventKind::ConfigChange,
-        "bus_credential_set",
-        &format!(
-            "keys={}",
-            env_updates
-                .iter()
-                .map(|(k, _)| k.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        "bus_config_set",
+        &format!("secrets={}", changed.join(", ")),
         None,
     );
-
+    let current = core.config().server.bus.clone();
+    let live = vak_config::BusResolved {
+        nats_url: body.nats_url.clone().or(current.nats_url),
+        workspace_secret: match body.workspace_secret_env.as_deref() {
+            Some(name) => std::env::var(name).ok().map(String::into_bytes),
+            None => current.workspace_secret,
+        },
+    };
+    install_server_bus(&core, &live).await;
     Json(serde_json::json!({
         "configured": true,
-        "env_vars": env_updates.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
-        "takes_effect": "on next server restart",
+        "runtime": state.hub.bus_status(),
     }))
     .into_response()
 }
 
-/// DELETE /config/bus/credentials — remove NATS credentials from .vak/env.
+/// DELETE /config/bus — removes the bus's secrets from the project secret
+/// scope and its settings from the project config, and returns the live
+/// bus to local-only.
 async fn delete_bus_config(State(state): State<AppState>) -> axum::response::Response {
-    let env_path = state.core.cwd().join(".vak/env");
-    let existing = std::fs::read_to_string(&env_path).unwrap_or_default();
-    let keys = [
-        "VAK_BUS_NATS_URL",
-        "VAK_BUS_NATS_CREDENTIALS_JWT",
-        "VAK_BUS_NATS_NKEY_SEED",
-        "VAK_BUS_WORKSPACE_SECRET_ENV",
-    ];
-    let filtered: Vec<String> = existing
-        .lines()
-        .filter(|line| !keys.iter().any(|k| line.starts_with(&format!("{k}="))))
-        .map(String::from)
-        .collect();
-    let content = if filtered.is_empty() {
-        String::new()
-    } else {
-        filtered.join("\n") + "\n"
-    };
-    let _ = std::fs::write(&env_path, &content);
-    state
-        .hub
-        .emit_config_changed("bus_credential_cleared", "all");
+    let core = state.core.clone();
+    let project_scope = core.cwd().join(".env");
+    for var in [
+        vak_config::BUS_NATS_JWT_VAR,
+        vak_config::BUS_NATS_NKEY_SEED_VAR,
+    ] {
+        let _ = vak_config::remove_env_file_key(&project_scope, var);
+    }
+    if let Err(error) = vak_config::persist_bus_settings(
+        core.cwd().join(".vak").join("config.toml"),
+        Some(None),
+        Some(None),
+    ) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    install_server_bus(&core, &vak_config::BusResolved::default()).await;
+    state.hub.emit_config_changed("bus_config_cleared", "all");
     Json(serde_json::json!({ "configured": false })).into_response()
 }
 

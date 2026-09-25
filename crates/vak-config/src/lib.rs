@@ -304,14 +304,16 @@ pub struct ServerSettings {
 pub struct BusConfig {
     /// NATS server URL. Empty/unset = local InMemoryBus only.
     pub nats_url: Option<String>,
-    /// Optional NATS credentials JWT for authenticated connections.
-    pub nats_credentials_jwt: Option<String>,
-    /// Optional NATS nkey seed for NKEY-authenticated connections.
-    pub nats_nkey_seed: Option<String>,
     /// Name of the env var holding the workspace encryption secret.
     /// The secret itself is never stored in config — only the env var name.
     pub workspace_secret_env: Option<String>,
 }
+
+/// The NATS credentials JWT, a secret: kept in the secrets chain under this
+/// name (project scope when set through `/config/bus`), never in TOML.
+pub const BUS_NATS_JWT_VAR: &str = "VAK_BUS_NATS_CREDENTIALS_JWT";
+/// The NATS nkey seed, a secret, kept like [`BUS_NATS_JWT_VAR`].
+pub const BUS_NATS_NKEY_SEED_VAR: &str = "VAK_BUS_NATS_NKEY_SEED";
 
 #[derive(Debug, Clone, Deserialize, Default)]
 #[serde(default)]
@@ -358,10 +360,6 @@ pub struct ServerResolved {
 pub struct BusResolved {
     /// NATS server URL. None = local InMemoryBus only.
     pub nats_url: Option<String>,
-    /// Optional NATS credentials JWT.
-    pub nats_credentials_jwt: Option<String>,
-    /// Optional NATS nkey seed.
-    pub nats_nkey_seed: Option<String>,
     /// Resolved workspace encryption key (read from the env var named in
     /// `BusConfig.workspace_secret_env`). Never the env var name itself.
     pub workspace_secret: Option<Vec<u8>>,
@@ -2305,6 +2303,86 @@ pub fn persist_evidence_max_age(path: PathBuf, seconds: i64) -> Result<(), Confi
     std::fs::rename(&temp, path.clone()).map_err(|source| ConfigError::Write { path, source })
 }
 
+/// Changes the project's `[server.bus]` settings (the NATS URL and the name
+/// of the workspace-secret variable), leaving the rest of the file as it
+/// was: `None` leaves a key alone, `Some(None)` or an empty value removes
+/// it, `Some(Some(value))` sets it. The bus's secrets never go here.
+pub fn persist_bus_settings(
+    path: PathBuf,
+    nats_url: Option<Option<&str>>,
+    workspace_secret_env: Option<Option<&str>>,
+) -> Result<(), ConfigError> {
+    static WRITE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    let _guard = WRITE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let write_error = |path: &PathBuf, message: &str| ConfigError::Write {
+        path: path.clone(),
+        source: std::io::Error::other(message.to_string()),
+    };
+    let text = if path.is_file() {
+        std::fs::read_to_string(&path).map_err(|source| ConfigError::Read {
+            path: path.clone(),
+            source,
+        })?
+    } else {
+        String::new()
+    };
+    let mut root = if text.is_empty() {
+        toml::Value::Table(toml::map::Map::new())
+    } else {
+        toml::from_str::<toml::Value>(&text).map_err(|source| ConfigError::Parse {
+            path: path.clone(),
+            source,
+        })?
+    };
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| write_error(&path, "top-level config must be a TOML table"))?;
+    let server = table
+        .entry("server")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| write_error(&path, "server config must be a TOML table"))?;
+    let bus = server
+        .entry("bus")
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| write_error(&path, "server.bus config must be a TOML table"))?;
+    for (key, change) in [
+        ("nats_url", nats_url),
+        ("workspace_secret_env", workspace_secret_env),
+    ] {
+        let Some(value) = change else {
+            continue;
+        };
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => {
+                bus.insert(key.into(), toml::Value::String(value.to_string()));
+            }
+            None => {
+                bus.remove(key);
+            }
+        }
+    }
+    let output =
+        toml::to_string_pretty(&root).map_err(|error| write_error(&path, &error.to_string()))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| write_error(&path, "config has no parent directory"))?;
+    std::fs::create_dir_all(parent).map_err(|source| ConfigError::Write {
+        path: parent.to_path_buf(),
+        source,
+    })?;
+    let temp = parent.join(format!(".bus-config.{}.tmp", std::process::id()));
+    std::fs::write(&temp, output).map_err(|source| ConfigError::Write {
+        path: temp.clone(),
+        source,
+    })?;
+    std::fs::rename(&temp, path.clone()).map_err(|source| ConfigError::Write { path, source })
+}
+
 /// Persist `[memory]` toggles for the current project without disturbing
 /// unrelated config (docs/design/23-memory.md). Mirrors
 /// [`persist_project_preferences`]'s atomic-write shape exactly.
@@ -3597,8 +3675,6 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     // secret bytes read from the environment at resolution time.
     cfg.server.bus = BusResolved {
         nats_url: sv.bus.nats_url.clone(),
-        nats_credentials_jwt: sv.bus.nats_credentials_jwt.clone(),
-        nats_nkey_seed: sv.bus.nats_nkey_seed.clone(),
         workspace_secret: sv
             .bus
             .workspace_secret_env

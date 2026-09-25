@@ -4300,6 +4300,12 @@ impl Core {
         self.scoped_secret(env_var)
     }
 
+    /// A distributed-bus secret (`vak_config::BUS_NATS_JWT_VAR`,
+    /// `BUS_NATS_NKEY_SEED_VAR`) through the secrets chain.
+    pub fn bus_secret(&self, env_var: &str) -> Option<String> {
+        self.scoped_secret(env_var)
+    }
+
     fn provider_secret(&self, env_var: &str) -> Option<String> {
         self.scoped_secret(env_var)
             .or_else(|| vak_config::get_var(env_var))

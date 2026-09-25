@@ -39,6 +39,23 @@ impl std::fmt::Debug for Backend {
     }
 }
 
+/// The NATS secrets, resolved through the secrets chain at the moment a
+/// bus is built (`Core::bus_secret`), never read from TOML.
+#[derive(Default)]
+pub struct BusCredentials {
+    pub jwt: Option<String>,
+    pub nkey_seed: Option<String>,
+}
+
+impl BusCredentials {
+    pub fn of(core: &vak_core::Core) -> Self {
+        Self {
+            jwt: core.bus_secret(vak_config::BUS_NATS_JWT_VAR),
+            nkey_seed: core.bus_secret(vak_config::BUS_NATS_NKEY_SEED_VAR),
+        }
+    }
+}
+
 /// Distributed event bus for the vak server.
 ///
 /// Wraps a vak-bus backend (`InMemoryBus` for local operation, `NatsBus` for
@@ -78,14 +95,15 @@ impl ServerBus {
     pub async fn distributed(
         workspace_id: impl Into<String>,
         config: &vak_config::BusResolved,
+        credentials: &BusCredentials,
     ) -> Result<Self, vak_bus::BusError> {
         let nats_config = NatsConfig {
             url: config
                 .nats_url
                 .clone()
                 .unwrap_or_else(|| NatsConfig::default().url),
-            credentials_jwt: config.nats_credentials_jwt.clone(),
-            nkey_seed: config.nats_nkey_seed.clone(),
+            credentials_jwt: credentials.jwt.clone(),
+            nkey_seed: credentials.nkey_seed.clone(),
             ..NatsConfig::default()
         };
         let bus = NatsBus::connect(nats_config).await?;
@@ -106,10 +124,11 @@ impl ServerBus {
     pub async fn from_resolved(
         workspace_id: impl Into<String>,
         config: &vak_config::BusResolved,
+        credentials: &BusCredentials,
     ) -> Self {
         let ws = workspace_id.into();
         if config.nats_url.is_some() {
-            match Self::distributed(&ws, config).await {
+            match Self::distributed(&ws, config, credentials).await {
                 Ok(bus) => bus,
                 Err(e) => {
                     eprintln!(
@@ -399,7 +418,7 @@ mod tests {
             nats_url: Some("nats://127.0.0.1:1".to_string()),
             ..Default::default()
         };
-        let bus = ServerBus::from_resolved("ws_fb", &cfg).await;
+        let bus = ServerBus::from_resolved("ws_fb", &cfg, &BusCredentials::default()).await;
         bus.emit(&SystemEvent::Heartbeat, None)
             .await
             .expect("emit on fallback");

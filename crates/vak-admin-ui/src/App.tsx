@@ -5975,7 +5975,7 @@ function Settings() {
       if (busSecretEnv().trim()) body.workspace_secret_env = busSecretEnv().trim();
       await api.putBusConfig(body);
       await refetchBus();
-      pushToast("info", "Bus configuration saved — takes effect on next server restart");
+      pushToast("info", "Bus settings saved and applied");
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -5989,7 +5989,7 @@ function Settings() {
     try {
       await api.deleteBusConfig();
       await refetchBus();
-      pushToast("info", "Bus credentials removed");
+      pushToast("info", "Bus settings and credentials removed");
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -6626,7 +6626,7 @@ function Settings() {
                   </Show>
                 </div>
                 <p class="dim" style="margin-top:8px">
-                  Credentials written to <code>.vak/env</code>. Takes effect on next server restart.
+                  Applies now. The address is saved with this workspace's settings; the credentials go to its secret store, never to a file.
                 </p>
               </Show>
             </section>

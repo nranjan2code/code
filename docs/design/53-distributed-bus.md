@@ -73,6 +73,11 @@ vak.<plane>.<workspace_id>.<entity>.<target_or_session>.<verb_or_type>
 - Payloads are encrypted in-place using authenticated AES-256-GCM with a 96-bit (12-byte) cryptographically secure random nonce generated via `ring::rand::SystemRandom`.
 - **Additional Authenticated Data (AAD)** binds the envelope's ID, event type, workspace ID, and sequence number (`format!("{id}:{type}:{ws}:{seq}")`). Any attempt to tamper with headers, swap envelope targets, or alter ciphertext causes `CryptoError::DecryptionFailed` immediately.
 
+### 3.1a Where the bus's settings and secrets live
+- The NATS URL and the *name* of the variable that holds the workspace encryption secret are ordinary settings in `[server.bus]` (`nats_url`, `workspace_secret_env`). `[server]` is privileged, so an untrusted project's values are not used.
+- The NATS credentials JWT and nkey seed are secrets. They live in the secrets chain under `VAK_BUS_NATS_CREDENTIALS_JWT` and `VAK_BUS_NATS_NKEY_SEED` (`vak_config::BUS_NATS_JWT_VAR`, `BUS_NATS_NKEY_SEED_VAR`), read with `Core::bus_secret`, and are never accepted in TOML.
+- `PUT /config/bus` writes the settings to the project config and the secrets to the project secret scope through `vak_config::credentials`, then rebuilds the live bus (invariant 31); `DELETE /config/bus` removes both and returns the bus to local-only. `GET /config/bus` never returns a secret. `bus_credentials_never_written_to_a_file` (vak-server tests) checks that no file under the workspace or the data home ever holds one.
+
 ### 3.2 Subject-Level Role-Based ACLs
 The `AclPolicy` enforces least-privilege access per agent role:
 - **Worker Agents** are permitted to publish only to their assigned session events, receipts, and DLQ.
