@@ -1,0 +1,1235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- Visual reference for docs/design/75-visual-refresh.md. Open in a browser; the headline font loads from Google Fonts. -->
+<title>Vak Visual Refresh</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap">
+<style>
+:root {
+  --paper: #F6F5F1;
+  --surface: #FFFFFF;
+  --sidebar: #EFEEE8;
+  --sunken: #EDECE6;
+  --line: #E3E1DA;
+  --line-strong: #CFCCC2;
+  --ink: #1B1E36;
+  --ink-2: #474B66;
+  --ink-3: #5F6380;
+  --primary: #2F3C94;
+  --primary-hover: #26327D;
+  --on-primary: #FFFFFF;
+  --primary-wash: #E8EAF6;
+  --link: #2F3C94;
+  --saffron: #F5A400;
+  --saffron-wash: #FCEFD9;
+  --saffron-ink: #8A5300;
+  --success: #2E6B4A;
+  --danger: #A33A3A;
+  --danger-wash: #F7E3E1;
+  --logo-navy: #101D3D;
+  --bar: #3A48A8;
+  --av-vak: #E4E6F4;
+  --av-moss: #E6EDDB;
+  --av-pip: #E1E6EF;
+  --shadow: 0 1px 2px rgba(27, 30, 54, .06), 0 10px 30px rgba(27, 30, 54, .07);
+  --show-light: block;
+  --show-dark: none;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --display: "Newsreader", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #0F1120; --surface: #171A2B; --sidebar: #13162A; --sunken: #1D2137;
+    --line: #2A2E47; --line-strong: #3A3F5E;
+    --ink: #ECEBF5; --ink-2: #BDBFD3; --ink-3: #9295AE;
+    --primary: #4B59C9; --primary-hover: #5A68D6; --on-primary: #FFFFFF; --primary-wash: #232850; --link: #A3ADF7;
+    --saffron: #F5A400; --saffron-wash: #33291A; --saffron-ink: #F5B04A;
+    --success: #7CC39A; --danger: #F08A8A; --danger-wash: #3A2226;
+    --logo-navy: #D9DCF6; --bar: #7C88E8;
+    --av-vak: #262B4D; --av-moss: #26301F; --av-pip: #232A3D;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 10px 30px rgba(0, 0, 0, .35);
+    --show-light: none; --show-dark: block;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0F1120; --surface: #171A2B; --sidebar: #13162A; --sunken: #1D2137;
+  --line: #2A2E47; --line-strong: #3A3F5E;
+  --ink: #ECEBF5; --ink-2: #BDBFD3; --ink-3: #9295AE;
+  --primary: #4B59C9; --primary-hover: #5A68D6; --on-primary: #FFFFFF; --primary-wash: #232850; --link: #A3ADF7;
+  --saffron: #F5A400; --saffron-wash: #33291A; --saffron-ink: #F5B04A;
+  --success: #7CC39A; --danger: #F08A8A; --danger-wash: #3A2226;
+  --logo-navy: #D9DCF6; --bar: #7C88E8;
+  --av-vak: #262B4D; --av-moss: #26301F; --av-pip: #232A3D;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 10px 30px rgba(0, 0, 0, .35);
+  --show-light: none; --show-dark: block;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 400 16px/1.6 var(--sans);
+  padding-inline: 20px;
+  padding-block: 0 96px;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--link); text-underline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; border-radius: 6px; }
+code { font-family: var(--mono); font-size: .88em; background: var(--sunken); padding: 1px 5px; border-radius: 5px; }
+.page { max-width: 1120px; margin: 0 auto; }
+.prose { max-width: 68ch; }
+h1, h2, .display {
+  font-family: var(--display);
+  font-weight: 500;
+  letter-spacing: -0.012em;
+  text-wrap: balance;
+}
+h1 { font-size: clamp(40px, 6.4vw, 60px); line-height: 1.02; margin: 0 0 18px; }
+h2 { font-size: clamp(29px, 3.8vw, 38px); line-height: 1.12; margin: 0 0 14px; }
+h3 { font: 600 19px/1.35 var(--sans); margin: 44px 0 10px; text-wrap: balance; }
+h4 { font: 600 16px/1.4 var(--sans); margin: 0 0 6px; }
+p { margin: 0 0 14px; }
+ul, ol { margin: 0 0 14px; padding-left: 22px; }
+li { margin-bottom: 6px; }
+li::marker { color: var(--ink-3); }
+.lead { font-size: clamp(18px, 2vw, 20px); line-height: 1.55; color: var(--ink-2); max-width: 62ch; }
+.muted { color: var(--ink-3); }
+.small { font-size: 14px; }
+
+/* nav */
+.toc {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 20;
+  margin-inline: -20px; padding: 10px 20px;
+  background: var(--paper); border-bottom: 1px solid var(--line);
+}
+.toc-inner { max-width: 1120px; margin: 0 auto; display: flex; align-items: center; gap: 18px; overflow-x: auto; scrollbar-width: none; }
+.toc-inner::-webkit-scrollbar { display: none; }
+.toc-brand { display: flex; align-items: center; gap: 8px; font-family: var(--display); font-weight: 600; font-size: 19px; color: var(--ink); text-decoration: none; flex: none; }
+.tile { position: relative; display: inline-block; flex: none; width: 26px; height: 26px; border-radius: 23%; overflow: hidden; }
+.tile img { position: absolute; max-width: none; width: 210%; height: 210%; left: -55%; top: -55%; }
+.m-brand .tile { width: 32px; height: 32px; }
+.toc a.toc-link { flex: none; font-size: 14px; font-weight: 500; color: var(--ink-2); text-decoration: none; padding: 4px 2px; }
+.toc a.toc-link:hover { color: var(--ink); }
+
+/* header */
+.masthead { padding-block: 56px 28px; }
+.eyebrow { font-size: 14px; color: var(--ink-3); margin-bottom: 14px; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.eyebrow span + span::before { content: "·"; margin-right: 14px; color: var(--line-strong); }
+
+.page > section { padding-top: 88px; scroll-margin-top: 64px; }
+.section-kicker { font-size: 14px; font-weight: 600; color: var(--saffron-ink); margin-bottom: 8px; }
+
+/* moves */
+.moves { list-style: none; padding: 0; margin: 28px 0 0; display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+.moves li { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 14px; }
+.moves b { display: block; font-size: 17px; margin-bottom: 4px; }
+.moves span { color: var(--ink-2); font-size: 15px; line-height: 1.55; }
+.moves .rank { font: 600 13px var(--sans); color: var(--ink-3); display: block; margin-bottom: 6px; }
+
+.note {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  padding: 16px 18px; font-size: 15px; color: var(--ink-2); margin: 20px 0;
+}
+.note b { color: var(--ink); }
+.callout {
+  background: var(--primary-wash); border-radius: 14px; padding: 16px 18px; margin: 18px 0; font-size: 15.5px;
+}
+.callout b { color: var(--ink); }
+
+/* flip compare */
+.flip { margin: 30px 0 8px; }
+.flip-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.seg { display: inline-flex; background: var(--sunken); border-radius: 999px; padding: 3px; }
+.seg button {
+  font: 600 14px var(--sans); color: var(--ink-2); background: transparent; border: 0;
+  padding: 7px 16px; border-radius: 999px; cursor: pointer; transition: background 160ms cubic-bezier(.2,0,0,1), color 160ms;
+}
+.seg button[aria-pressed="true"] { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.flip-hint { font-size: 14px; color: var(--ink-3); }
+.flip-expand { margin-left: auto; font: 500 14px var(--sans); color: var(--link); background: none; border: 0; cursor: pointer; padding: 6px 4px; }
+.frame { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--surface); }
+.frame img { display: block; width: 100%; height: auto; }
+.theme-light-only { display: var(--show-light); }
+.theme-dark-only { display: var(--show-dark); }
+.changes { margin-top: 18px; display: grid; gap: 10px 28px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); padding: 0; list-style: none; }
+.changes li { margin: 0; font-size: 15px; color: var(--ink-2); padding-left: 18px; position: relative; }
+.changes li::before { content: ""; position: absolute; left: 0; top: .62em; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
+.changes b { color: var(--ink); }
+
+/* evidence figures */
+.fig-grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); margin: 18px 0; align-items: start; }
+.fig-grid.two { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+figure { margin: 0; }
+figcaption { font-size: 13.5px; color: var(--ink-3); margin-top: 8px; line-height: 1.45; }
+.crop {
+  position: relative; overflow: hidden; aspect-ratio: var(--w) / var(--h);
+  border-radius: 12px; border: 1px solid var(--line); background: var(--surface); box-shadow: var(--shadow);
+  cursor: zoom-in; display: block; width: 100%; padding: 0;
+}
+.crop img {
+  position: absolute; max-width: none;
+  width: calc(var(--W) / var(--w) * 100%);
+  left: calc(var(--x) / var(--w) * -100%);
+  top: calc(var(--y) / var(--h) * -100%);
+}
+.shot { display: block; width: 100%; border-radius: 12px; border: 1px solid var(--line); box-shadow: var(--shadow); cursor: zoom-in; background: var(--surface); padding: 0; overflow: hidden; }
+.shot img { display: block; width: 100%; height: auto; }
+
+.quotes { display: grid; gap: 10px; margin: 16px 0; }
+.quote { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; }
+.quote q { font-size: 15.5px; color: var(--ink); quotes: "\201C" "\201D"; }
+.quote small { display: block; font-size: 13px; color: var(--ink-3); margin-top: 4px; }
+
+/* chart */
+.chart { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 18px 20px 14px; margin: 18px 0; }
+.chart-title { font-weight: 600; font-size: 16px; }
+.chart-sub { font-size: 13.5px; color: var(--ink-3); margin-bottom: 14px; }
+.bars { display: grid; gap: 10px; }
+.bar-row { display: grid; grid-template-columns: 112px 1fr; align-items: center; gap: 12px; border-radius: 8px; padding: 3px 0; cursor: default; }
+.bar-row:hover .bar, .bar-row:focus-visible .bar { filter: brightness(1.08); }
+.bar-label { font-size: 14px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.bar-track { position: relative; display: flex; align-items: center; gap: 8px; min-height: 24px; }
+.bar { height: 20px; width: calc(var(--v) / 60 * 100%); min-width: 3px; background: var(--bar); border-radius: 0 4px 4px 0; }
+.bar-val { font-size: 14px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tip {
+  position: fixed; z-index: 50; pointer-events: none; max-width: 280px;
+  background: var(--ink); color: var(--paper); font-size: 13px; line-height: 1.45;
+  padding: 8px 10px; border-radius: 8px; box-shadow: var(--shadow);
+}
+details.data { margin-top: 12px; font-size: 14px; }
+details.data summary { cursor: pointer; color: var(--link); font-weight: 500; }
+
+/* tables */
+.table-wrap { overflow-x: auto; margin: 16px 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+th, td { text-align: left; vertical-align: top; padding: 11px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+th { font-size: 13px; font-weight: 600; color: var(--ink-3); background: var(--paper); }
+td.where { color: var(--ink-3); font-size: 13.5px; }
+td.old { color: var(--ink-2); }
+td.new { color: var(--ink); font-weight: 500; }
+td.num { font-variant-numeric: tabular-nums; color: var(--ink-3); width: 56px; white-space: nowrap; }
+td.file { font-family: var(--mono); font-size: 12.5px; color: var(--ink-2); word-break: break-word; }
+
+/* brand options */
+.options { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin: 22px 0; }
+.opt { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; }
+.opt.is-rec { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.opt-body { padding: 16px 18px 18px; }
+.opt-body h4 { font-size: 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.opt-body p { font-size: 15px; color: var(--ink-2); }
+.rec { font: 600 12px var(--sans); color: var(--on-primary); background: var(--primary); padding: 3px 9px; border-radius: 999px; }
+.pc { font-size: 14.5px; color: var(--ink-2); padding-left: 18px; margin: 0; }
+.opt-preview { display: grid; grid-template-columns: 1fr; }
+.opt-preview.split { grid-template-columns: 1fr 1fr; }
+.pv { padding: 16px; background: var(--pv-paper); color: var(--pv-ink); display: grid; gap: 12px; align-content: start; min-height: 150px; }
+.pv-head { display: flex; align-items: center; gap: 10px; }
+.pv-av { width: 34px; height: 34px; border-radius: 50%; overflow: hidden; background: var(--pv-wash); flex: none; }
+.pv-av img { width: 118%; height: 118%; max-width: none; margin: -9% 0 0 -9%; object-fit: cover; }
+.pv-name { font-family: var(--pv-font); font-size: 21px; font-weight: 600; line-height: 1; }
+.pv-chip { margin-left: auto; font-size: 12.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; background: var(--pv-chip-bg); color: var(--pv-ink); }
+.pv-chip i { width: 8px; height: 8px; border-radius: 50%; background: var(--pv-accent); }
+.pv-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.pv-btn { font-size: 13.5px; font-weight: 600; padding: 7px 12px; border-radius: 9px; background: var(--pv-primary); color: #fff; }
+.pv-btn2 { font-size: 13.5px; font-weight: 600; padding: 7px 12px; border-radius: 9px; border: 1px solid var(--pv-line); color: var(--pv-ink); }
+.pv-text { font-size: 13.5px; line-height: 1.45; color: var(--pv-ink-2); }
+.sw { display: flex; gap: 0; border-top: 1px solid var(--line); }
+.sw span { flex: 1; height: 34px; background: var(--c); position: relative; }
+.sw-labels { display: flex; font: 500 11.5px var(--mono); color: var(--ink-3); padding: 6px 12px 0; justify-content: space-between; gap: 6px; flex-wrap: wrap; }
+
+/* token table + type specimen */
+.chip-split { display: inline-flex; width: 44px; height: 26px; border-radius: 7px; overflow: hidden; border: 1px solid var(--line); vertical-align: middle; }
+.chip-split i { flex: 1; background: var(--c); }
+.spec { display: grid; gap: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; margin: 16px 0; }
+.spec-row { display: grid; grid-template-columns: 170px 1fr; gap: 16px; align-items: baseline; padding: 12px 18px; border-bottom: 1px solid var(--line); }
+.spec-row:last-child { border-bottom: 0; }
+.spec-meta { font-size: 13px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.spec-meta b { display: block; color: var(--ink-2); font-size: 13.5px; font-weight: 600; }
+.spec-sample { color: var(--ink); overflow-wrap: anywhere; }
+.f-display { font-family: var(--display); }
+
+.rules { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); margin: 16px 0; }
+.rule { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; font-size: 15px; color: var(--ink-2); }
+.rule h4 { color: var(--ink); }
+.rule ul { margin: 0; padding-left: 18px; }
+
+.brand-strip { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin: 16px 0; }
+.bs { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; font-size: 14px; color: var(--ink-2); }
+.bs h4 { font-size: 14.5px; }
+.portraits { display: flex; flex-wrap: wrap; gap: 6px; align-items: end; margin: 8px 0; }
+.portraits img { display: block; }
+.p64 img { width: 44px; height: 44px; }
+.p22 img { width: 22px; height: 22px; }
+.swatch-row { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+.swatch-row span { width: 40px; height: 40px; border-radius: 10px; background: var(--c); border: 1px solid rgba(0,0,0,.06); }
+.icon-demo { display: flex; gap: 14px; align-items: end; margin: 8px 0; }
+.icon-demo img { border-radius: 6px; }
+
+.fix-table td:nth-child(2) { min-width: 240px; }
+.fix-table td.file { min-width: 230px; word-break: normal; overflow-wrap: anywhere; }
+.token-table td { vertical-align: middle; }
+.fix-table td:nth-child(4) { min-width: 200px; }
+.phase { margin: 26px 0 8px; display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.phase h3 { margin: 0; }
+.size { font-size: 13px; font-weight: 600; color: var(--ink-2); background: var(--sunken); padding: 3px 9px; border-radius: 999px; }
+
+.decisions { list-style: none; padding: 0; display: grid; gap: 12px; margin: 18px 0; }
+.decisions li { margin: 0; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+.decisions b { display: block; font-size: 16.5px; margin-bottom: 4px; }
+.decisions span { font-size: 15px; color: var(--ink-2); }
+.decisions em { font-style: normal; color: var(--link); font-weight: 600; }
+
+footer.end { margin-top: 72px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 14px; color: var(--ink-3); }
+
+/* lightbox */
+dialog.lb { border: 0; padding: 0; background: transparent; max-width: min(96vw, 1500px); width: 96vw; max-height: 94vh; }
+dialog.lb::backdrop { background: rgba(10, 12, 24, .72); }
+.lb-inner { background: var(--surface); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; max-height: 94vh; }
+.lb-bar { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 14px; color: var(--ink-2); gap: 12px; }
+.lb-close { font: 600 14px var(--sans); background: var(--sunken); color: var(--ink); border: 0; border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+.lb-body { overflow: auto; }
+.lb-body img { display: block; max-width: none; width: 100%; min-width: 900px; height: auto; }
+.lb-body .mock-scale { min-width: 900px; }
+
+/* ---------- app mockups (design px, scaled by script) ---------- */
+.mock-scale { position: relative; width: 100%; aspect-ratio: 1200 / 750; overflow: hidden; background: var(--paper); }
+.mock {
+  position: absolute; top: 0; left: 0; width: 1200px; height: 750px; transform-origin: 0 0;
+  display: grid; grid-template-columns: 264px 1fr; background: var(--paper); color: var(--ink);
+  font: 400 15px/1.5 var(--sans); text-align: left; overflow: hidden;
+}
+.mock .ic { width: 20px; height: 20px; }
+.ic { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.m-side { background: var(--sidebar); border-right: 1px solid var(--line); padding: 14px 14px 12px; display: flex; flex-direction: column; gap: 2px; min-height: 0; }
+.m-lights { display: flex; gap: 8px; padding: 4px 6px 16px; }
+.m-lights i { width: 12px; height: 12px; border-radius: 50%; background: #FF5F57; }
+.m-lights i:nth-child(2) { background: #FEBC2E; }
+.m-lights i:nth-child(3) { background: #28C840; }
+.m-brand { display: flex; align-items: center; gap: 9px; padding: 0 8px 14px; }
+.m-word { font-family: var(--display); font-size: 27px; font-weight: 600; letter-spacing: -0.01em; line-height: 1; }
+.m-search { display: flex; align-items: center; gap: 10px; height: 38px; padding: 0 10px; border-radius: 10px; color: var(--ink-2); }
+.m-search kbd { margin-left: auto; font: 500 12px var(--sans); color: var(--ink-3); }
+.m-sec { font: 600 13px var(--sans); color: var(--ink-3); padding: 18px 10px 6px; }
+.m-agent { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 12px; }
+.m-agent.is-active { background: var(--surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
+.m-agent-t { display: grid; line-height: 1.3; min-width: 0; }
+.m-agent-t b { font-weight: 600; font-size: 15px; }
+.m-agent-t small { font-size: 13px; color: var(--ink-3); }
+.m-av { width: 36px; height: 36px; border-radius: 50%; background: var(--av, var(--av-vak)); overflow: hidden; flex: none; position: relative; }
+.m-av img { position: absolute; width: 124%; height: 124%; max-width: none; left: -12%; top: -8%; object-fit: cover; }
+.m-av.sm { width: 28px; height: 28px; }
+.m-av.lg { width: 42px; height: 42px; }
+.m-av.xl { width: 60px; height: 60px; }
+.m-new { color: var(--ink-2); padding: 10px; display: flex; gap: 10px; align-items: center; }
+.m-foot { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 12px 10px 4px; color: var(--ink-2); border-top: 1px solid var(--line); }
+.m-foot kbd { margin-left: auto; font: 500 12px var(--sans); color: var(--ink-3); }
+.m-main { display: grid; grid-template-rows: auto 1fr auto auto; min-width: 0; min-height: 0; }
+.m-head { display: flex; align-items: center; gap: 12px; padding: 18px 28px 12px; }
+.m-name { font-family: var(--display); font-size: 25px; font-weight: 600; line-height: 1.05; }
+.m-status { display: flex; align-items: center; gap: 7px; font-size: 13.5px; color: var(--ink-3); }
+.m-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--saffron); }
+.m-head-actions { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+.m-btn { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 14px; border-radius: 10px; font: 500 14px var(--sans); color: var(--ink); background: var(--surface); border: 1px solid var(--line); white-space: nowrap; }
+.m-btn.primary { background: var(--primary); color: var(--on-primary); border-color: transparent; }
+.m-btn.ghost { background: transparent; border-color: transparent; color: var(--ink-2); }
+.m-icon { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 10px; color: var(--ink-2); }
+.m-thread { min-height: 0; overflow: hidden; padding-top: 10px; }
+.m-col { width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: 26px; }
+.m-event { align-self: flex-end; display: flex; gap: 12px; max-width: 580px; background: var(--sunken); border-radius: 18px; padding: 14px 18px; }
+.m-event .ic { color: var(--ink-3); margin-top: 2px; }
+.m-event-t { font-size: 14px; color: var(--ink-2); line-height: 1.45; }
+.m-event-t b { color: var(--ink); font-weight: 600; }
+.m-event blockquote { margin: 6px 0 0; font-size: 16px; line-height: 1.5; color: var(--ink); }
+.m-who { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
+.m-answer { font-size: 16px; line-height: 1.65; margin: 6px 0 0 38px; color: var(--ink); }
+.m-answer code { font: 14px var(--mono); background: var(--sunken); padding: 1px 6px; border-radius: 6px; color: var(--ink); }
+.m-result { margin: 16px 0 0 38px; display: grid; grid-template-columns: 190px 1fr; gap: 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 14px; }
+.m-thumb { border-radius: 10px; background: var(--sunken); padding: 10px; }
+.m-thumb-page { background: #FFFFFF; color: #111111; height: 112px; border-radius: 6px; padding: 12px 12px; font-family: "Times New Roman", Times, serif; display: grid; align-content: start; gap: 8px; box-shadow: 0 1px 2px rgba(0, 0, 0, .1); }
+.m-thumb-page b { font-size: 17px; line-height: 1.1; }
+.m-thumb-page span { font-size: 12px; }
+.m-kicker { font-size: 13px; color: var(--saffron-ink); font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.m-kicker .m-dot { width: 7px; height: 7px; }
+.m-rtitle { font-size: 18px; font-weight: 600; margin-top: 3px; }
+.m-rsub { font-size: 14px; color: var(--ink-3); margin-top: 1px; }
+.m-actions { display: flex; gap: 8px; align-items: center; margin-top: 14px; }
+.m-link { font: 500 14px var(--sans); color: var(--link); padding: 0 8px; }
+.m-composer { width: 720px; margin: 0 auto; display: flex; align-items: center; gap: 10px; background: var(--surface); border: 1px solid var(--line); border-radius: 22px; padding: 10px 10px 10px 12px; box-shadow: var(--shadow); min-height: 62px; }
+.m-plus { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; color: var(--ink-2); background: var(--sunken); }
+.m-ph { flex: 1; color: var(--ink-3); font-size: 16px; }
+.m-mic { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--ink); }
+.m-send { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--sunken); color: var(--ink-3); }
+.m-note { text-align: center; font-size: 12px; color: var(--ink-3); padding: 7px 0 12px; }
+.m-welcome { width: 700px; margin: 0 auto; display: flex; flex-direction: column; align-items: center; text-align: center; padding-top: 8px; }
+.m-hero { width: 104px; height: 104px; border-radius: 50%; background: var(--av-vak); overflow: hidden; position: relative; }
+.m-hero img { position: absolute; width: 120%; height: 120%; max-width: none; left: -10%; top: -6%; }
+.m-greet { font-family: var(--display); font-size: 36px; font-weight: 500; line-height: 1.1; margin: 16px 0 8px; letter-spacing: -0.01em; }
+.m-greet-sub { font-size: 16px; color: var(--ink-2); max-width: 470px; margin: 0; }
+.m-connect { margin-top: 24px; width: 100%; display: flex; align-items: center; gap: 14px; text-align: left; background: var(--saffron-wash); border-radius: 16px; padding: 14px 16px; }
+.m-connect-ic { width: 42px; height: 42px; border-radius: 12px; background: var(--surface); display: grid; place-items: center; color: var(--saffron-ink); flex: none; }
+.m-connect-t b { display: block; font-size: 15.5px; }
+.m-connect-t span { font-size: 14px; color: var(--ink-2); }
+.m-connect .m-btn { margin-left: auto; }
+.m-starters { margin-top: 14px; width: 100%; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; text-align: left; }
+.m-starter { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; display: grid; gap: 2px; }
+.m-starter b { font-size: 15px; font-weight: 600; }
+.m-starter span { font-size: 14px; color: var(--ink-3); }
+.m-nav-item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: 10px; color: var(--ink-2); }
+.m-nav-item.is-active { background: var(--surface); color: var(--ink); font-weight: 500; box-shadow: 0 1px 2px rgba(0, 0, 0, .06); }
+.m-nav-item.is-dim { color: var(--ink-3); }
+.m-back { display: flex; align-items: center; gap: 8px; padding: 0 8px 12px; color: var(--ink-2); }
+.m-set { min-height: 0; overflow: hidden; padding: 30px 0 0; }
+.m-set-col { width: 700px; margin: 0 auto; display: flex; flex-direction: column; gap: 10px; }
+.m-set-head { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; }
+.m-set-head .m-t { font-family: var(--display); font-size: 32px; font-weight: 600; line-height: 1.05; }
+.m-set-head p { margin: 3px 0 0; font-size: 14px; color: var(--ink-3); }
+.m-set-head .m-btn { margin-left: auto; }
+.m-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+.m-row { display: flex; align-items: center; gap: 14px; padding: 13px 18px; }
+.m-row + .m-row { border-top: 1px solid var(--line); }
+.m-row b { display: block; font-size: 15px; font-weight: 600; }
+.m-row small { display: block; font-size: 14px; color: var(--ink-3); line-height: 1.4; }
+.m-row .end { margin-left: auto; }
+.m-row .ic { color: var(--ink-2); }
+.m-ctitle { font-size: 15px; font-weight: 600; margin: 12px 4px 0; }
+.m-rb { width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid var(--line-strong); flex: none; }
+.m-row.is-on .m-rb { border: 5.5px solid var(--primary); }
+.m-row.is-on { background: color-mix(in srgb, var(--primary-wash) 55%, transparent); }
+.m-card .m-row:first-child { border-radius: 16px 16px 0 0; }
+.m-card .m-row:last-child { border-radius: 0 0 16px 16px; }
+.m-warn { color: var(--danger); font-size: 13.5px; }
+.m-toggle { width: 42px; height: 25px; border-radius: 999px; background: var(--primary); position: relative; }
+.m-toggle::after { content: ""; position: absolute; top: 3.5px; right: 3.5px; width: 18px; height: 18px; border-radius: 50%; background: #FFFFFF; }
+.m-disc { display: flex; align-items: center; gap: 10px; padding: 14px 18px; color: var(--ink-2); }
+.m-disc span { color: var(--ink-3); font-size: 14px; }
+
+@media (max-width: 700px) {
+  body { font-size: 15.5px; }
+  .eyebrow { flex-direction: column; gap: 2px; }
+  .eyebrow span + span::before { content: none; }
+  .fix-table thead { display: none; }
+  .fix-table, .fix-table tbody, .fix-table tr, .fix-table td { display: block; width: auto; }
+  .fix-table tr { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .fix-table td { border: 0; padding: 3px 0; min-width: 0 !important; }
+  .fix-table td.num { font-weight: 600; color: var(--ink-2); }
+  .spec-row { grid-template-columns: 1fr; gap: 4px; }
+  .bar-row { grid-template-columns: 92px 1fr; }
+  .flip-expand { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="vmark" viewBox="0 0 40 40"><path d="M10.5 9 L19.4 30.5" style="fill:none;stroke:var(--logo-navy);stroke-width:7.5;stroke-linecap:round"/><path d="M29.8 9 L21.4 27.6" style="fill:none;stroke:var(--saffron);stroke-width:7.5;stroke-linecap:round"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="M14.5 4.5v15"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5.5 12h.01M12 12h.01M18.5 12h.01" stroke-width="3.2"/></symbol>
+    <symbol id="i-comment" viewBox="0 0 24 24"><path d="M20.5 11.5a8 8 0 0 1-11.7 7.1L4 19.8l1.2-4.4a8 8 0 1 1 15.3-3.9z"/></symbol>
+    <symbol id="i-plug" viewBox="0 0 24 24"><path d="M9 3v5M15 3v5M6.5 8h11v3.5a5.5 5.5 0 0 1-11 0zM12 17v4"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+    <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></symbol>
+    <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 15V4M8 8l4-4 4 4M5 13v5.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V13"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.4 1.4M17 17l1.4 1.4M5.6 18.4L7 17M17 7l1.4-1.4"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8.5" r="3"/><path d="M3.5 19a5.5 5.5 0 0 1 11 0"/><path d="M16 6a3 3 0 0 1 0 6M17.5 14.2A5.5 5.5 0 0 1 20.5 19"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.5l7 3v5c0 4.5-3 7.8-7 9-4-1.2-7-4.5-7-9v-5z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/></symbol>
+    <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M4 20h4L18.5 9.5l-4-4L4 16z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4l9 16H3z"/><path d="M12 10v4.5M12 17.3v.2"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></symbol>
+    <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5L12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9"/></symbol>
+  </defs>
+</svg>
+
+<nav class="toc" aria-label="Sections">
+  <div class="toc-inner">
+    <a class="toc-brand" href="#top"><span class="tile" aria-hidden="true"><img src="img/vak-icon.png" alt=""></span>Vak</a>
+    <a class="toc-link" href="#moves">Summary</a>
+    <a class="toc-link" href="#diagnosis">Diagnosis</a>
+    <a class="toc-link" href="#brand">Brand</a>
+    <a class="toc-link" href="#system">System</a>
+    <a class="toc-link" href="#screens">Screens</a>
+    <a class="toc-link" href="#words">Words</a>
+    <a class="toc-link" href="#modes">Modes</a>
+    <a class="toc-link" href="#fixes">Fixes</a>
+    <a class="toc-link" href="#decisions">Decisions</a>
+  </div>
+</nav>
+
+<main class="page" id="top">
+  <header class="masthead">
+    <div class="eyebrow"><span>Design and brand review</span><span>Vak 4.0.2, desktop and web app</span><span>25 September 2026</span></div>
+    <h1>Vak Visual Refresh</h1>
+    <p class="lead">Vak's structure already suits everyday people: one conversation per agent, results with clear next steps, and a review before anything changes. The layer on top is what feels technical. The text is small and flat, the words come from the codebase, machinery shows by default, and the brand pulls in four directions. This proposal replaces that layer and keeps every capability one click away.</p>
+
+    <div class="flip" data-flip>
+      <div class="flip-bar">
+        <div class="seg" role="group" aria-label="Compare the conversation screen">
+          <button type="button" data-show="after" aria-pressed="true">Proposed</button>
+          <button type="button" data-show="before" aria-pressed="false">Today</button>
+        </div>
+        <span class="flip-hint">Same conversation, same content. Switch to compare.</span>
+        <button type="button" class="flip-expand" data-expand>View larger</button>
+      </div>
+      <div class="frame">
+        <div data-view="after">
+          <div class="mock-scale">
+            <div class="mock" role="img" aria-label="Proposed conversation screen: a calm sidebar with three agents, the agent header, a revision event, the answer as plain text and one result card with Review changes, then a rounded message box with a microphone.">
+              <aside class="m-side">
+                <div class="m-lights"><i></i><i></i><i></i></div>
+                <div class="m-brand"><span class="tile" aria-hidden="true"><img src="img/vak-icon.png" alt=""></span><span class="m-word">Vak</span></div>
+                <div class="m-search"><svg class="ic"><use href="#i-search"/></svg>Search<kbd>⌘K</kbd></div>
+                <div class="m-sec">Agents</div>
+                <div class="m-agent is-active"><span class="m-av" style="--av: var(--av-vak)"><img src="img/char-vak.png" alt=""></span><span class="m-agent-t"><b>Vak</b><small>Revised your draft</small></span></div>
+                <div class="m-agent"><span class="m-av" style="--av: var(--av-moss)"><img src="img/char-moss.png" alt=""></span><span class="m-agent-t"><b>Research Analyst</b><small>Compared model results</small></span></div>
+                <div class="m-agent"><span class="m-av" style="--av: var(--av-pip)"><img src="img/char-pip.png" alt=""></span><span class="m-agent-t"><b>Communications &amp; Writer</b><small>Ready when you are</small></span></div>
+                <div class="m-new"><svg class="ic"><use href="#i-plus"/></svg>New agent</div>
+                <div class="m-foot"><svg class="ic"><use href="#i-sliders"/></svg>Settings<kbd>⌘,</kbd></div>
+              </aside>
+              <section class="m-main">
+                <div class="m-head">
+                  <span class="m-av lg"><img src="img/char-vak.png" alt=""></span>
+                  <div><div class="m-name">Vak</div><div class="m-status">Your everyday agent</div></div>
+                  <div class="m-head-actions">
+                    <span class="m-btn ghost"><svg class="ic"><use href="#i-share"/></svg>Share</span>
+                    <span class="m-icon"><svg class="ic"><use href="#i-panel"/></svg></span>
+                    <span class="m-icon"><svg class="ic"><use href="#i-dots"/></svg></span>
+                  </div>
+                </div>
+                <div class="m-thread">
+                  <div class="m-col">
+                    <div class="m-event">
+                      <svg class="ic"><use href="#i-comment"/></svg>
+                      <div>
+                        <div class="m-event-t">You asked Vak to revise <b>isolated-review.html</b> using Asha Test's comment on line 1</div>
+                        <blockquote>For the next draft version, replace the placeholder with one clear welcome sentence.</blockquote>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="m-who"><span class="m-av sm"><img src="img/char-vak.png" alt=""></span>Vak</div>
+                      <p class="m-answer">The revision based on the feedback ("replace the placeholder with one clear welcome sentence") has been applied. The file <code>isolated-review.html</code> now contains the line: <code>&lt;p&gt;Welcome to the review draft.&lt;/p&gt;</code>.</p>
+                      <div class="m-result">
+                        <div class="m-thumb"><div class="m-thumb-page"><b>Isolated Review Draft</b><span>Welcome to the review draft.</span></div></div>
+                        <div>
+                          <div class="m-kicker"><i class="m-dot"></i>Draft, version 2, waiting for your review</div>
+                          <div class="m-rtitle">isolated-review.html</div>
+                          <div class="m-rsub">Web page · made just now · your folder hasn't changed yet</div>
+                          <div class="m-actions"><span class="m-btn primary">Review changes</span><span class="m-btn">Open</span><span class="m-link">Ask for changes</span></div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div class="m-composer">
+                  <span class="m-plus"><svg class="ic"><use href="#i-plus"/></svg></span>
+                  <span class="m-ph">Ask Vak anything…</span>
+                  <span class="m-mic"><svg class="ic"><use href="#i-mic"/></svg></span>
+                  <span class="m-send"><svg class="ic"><use href="#i-up"/></svg></span>
+                </div>
+                <div class="m-note">Vak can make mistakes. Check anything important.</div>
+              </section>
+            </div>
+          </div>
+        </div>
+        <div data-view="before" hidden>
+          <img class="theme-light-only" src="img/before-conversation-light.jpg" alt="Today's conversation screen in the light theme: small text, a folder chip and Ready chip in the header, a user bubble full of IDs, a boxed answer and four text buttons under the message box.">
+          <img class="theme-dark-only" src="img/before-conversation-dark.jpg" alt="Today's conversation screen in the warm dark theme, with the same layout and a yellow Reconnecting bar at the bottom.">
+        </div>
+      </div>
+    </div>
+    <ul class="changes" aria-label="What changed on the conversation screen">
+      <li><b>Sidebar.</b> The wordmark gets a display face. Each agent has its own character and a one-line status. Search is a row instead of an icon.</li>
+      <li><b>Header.</b> A larger character and name. The folder chip and the Ready chip move into Details; status appears only when something is wrong.</li>
+      <li><b>Revision request.</b> Asha's comment shows as an event with the file and quote, instead of a message full of IDs.</li>
+      <li><b>Answer.</b> The model's own text, unchanged, set at 16px on the page. Only the result is a card, with a preview, the version and three clear actions.</li>
+      <li><b>Message box.</b> One field. The + menu holds attach, mention and skills; the mic is the voice button; model and permissions move to the agent menu.</li>
+      <li><b>Colour.</b> Indigo for actions, saffron only for live states. Here it marks the draft that is waiting for you.</li>
+    </ul>
+  </header>
+
+  <section id="moves" style="padding-top: 56px;">
+    <h2>Five moves, in priority order</h2>
+    <ol class="moves">
+      <li><span class="rank">1</span><b>Bigger, calmer type</b><span>Conversation text at 16px, controls at 14px, nothing under 12px, and the brand's Newsreader serif for names and titles. Today almost all text sits between 9.5px and 13.3px.</span></li>
+      <li><span class="rank">2</span><b>Plain words</b><span>Rewrite about 130 interface strings that use engineering terms. The precise terms stay available under Technical details.</span></li>
+      <li><span class="rank">3</span><b>Technical details off by default</b><span>One switch controls folder chips, IDs, file sizes, sandbox labels, the Developer menu and the technical Settings pages. Developers turn it on once.</span></li>
+      <li><span class="rank">4</span><b>One brand: Ink and Saffron</b><span>Indigo ink and saffron, taken from the logo and the name, on a lighter paper. Terracotta, which makes Vak look like Claude, retires. Decided on 25 September 2026.</span></li>
+      <li><span class="rank">5</span><b>Smooth edges</b><span>Fix 15 visible bugs and slow loading states, including a first-run screen that tells new users to inspect prior work.</span></li>
+    </ol>
+    <div class="note">
+      <b>How this was reviewed.</b> I ran the current dev build (4.0.2, commit acca0c88) with your real configuration: Shared config, your three agents and the local Ollama model. A second copy with an empty home showed first run. Every main screen was captured at 1440 × 900 and 390 × 844, in light and dark, and I read DESIGN.md, docs/brand/README.md, design docs 70 and 71, and styles.css. The desktop app loads the same client bundle, so the findings apply to both; desktop-only notes are marked. Not covered: the public website (as you asked), voice in use, and the admin console beyond its setup page. Timings come from an unoptimised debug build.
+    </div>
+  </section>
+
+  <section id="diagnosis">
+    <div class="section-kicker">Diagnosis</div>
+    <h2>Why it feels technical</h2>
+    <p class="prose">Six causes, from the deepest to the most visible. Click any screenshot to see it full size.</p>
+
+    <h3>1. Two design systems are competing</h3>
+    <div class="prose">
+      <p>DESIGN.md still names its north star "The Auditor's Desk": dark first, dense, a 13px body, font weights such as 540 and 620, and monospace for anything shaped like a receipt. It describes an instrument for a practiced hand. Doc 70, the direction you approved, says most users are not developers and asks the interface to conceal machinery until it helps a decision.</p>
+      <p>The stylesheet shows the result. Calm passes were added on top of the old base instead of replacing it. Outside media queries, 144 selectors are defined two or more times and 35 are defined three or more times; <code>.sidebar</code>, <code>.msg</code> and <code>.worker</code> appear five times each. The file also carries 179 distinct hex values and 27 <code>!important</code> rules. Each pass adds overrides, so the old system keeps showing through.</p>
+    </div>
+    <div class="callout prose"><b>Fix the source first.</b> Rewrite the north star in DESIGN.md, replace the token layer, and delete the overrides it supersedes in the same change. That is invariant 30, one canonical way, applied to CSS.</div>
+
+    <h3>2. Text is small and flat</h3>
+    <figure class="chart" aria-labelledby="chart-title">
+      <div class="chart-title" id="chart-title">Visible text on the conversation screen, by font size</div>
+      <div class="chart-sub">Share of the 1,753 visible characters, measured in the running app at 1440 × 900, light theme</div>
+      <div class="bars">
+        <div class="bar-row" tabindex="0" data-tip="143 characters. The disclaimer under the message box (9.5px) and section labels such as Your agents (10px)."><span class="bar-label">9.5 to 10.5px</span><span class="bar-track"><span class="bar" style="--v: 8.2"></span><span class="bar-val">8%</span></span></div>
+        <div class="bar-row" tabindex="0" data-tip="301 characters. Toolbar labels under the message box (11px) and inline code such as file names (11.9px)."><span class="bar-label">11 to 11.9px</span><span class="bar-track"><span class="bar" style="--v: 17.2"></span><span class="bar-val">17%</span></span></div>
+        <div class="bar-row" tabindex="0" data-tip="332 characters. Buttons and result actions such as Open working file (12px)."><span class="bar-label">12 to 12.5px</span><span class="bar-track"><span class="bar" style="--v: 18.9"></span><span class="bar-val">19%</span></span></div>
+        <div class="bar-row" tabindex="0" data-tip="974 characters. The answer text (13.26px), your message and the sidebar (13px)."><span class="bar-label">13 to 13.5px</span><span class="bar-track"><span class="bar" style="--v: 55.6"></span><span class="bar-val">56%</span></span></div>
+        <div class="bar-row" tabindex="0" data-tip="3 characters. The agent name in the header (15px) is the largest text on the screen."><span class="bar-label">14px and up</span><span class="bar-track"><span class="bar" style="--v: 0.2"></span><span class="bar-val">0.2%</span></span></div>
+      </div>
+      <details class="data">
+        <summary>Show the data table</summary>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Size</th><th>Characters</th><th>Share</th><th>Where</th></tr></thead>
+            <tbody>
+              <tr><td>9.5px</td><td>84</td><td>4.8%</td><td>Disclaimer under the message box</td></tr>
+              <tr><td>10px and 10.5px</td><td>59</td><td>3.4%</td><td>Section labels, small chips</td></tr>
+              <tr><td>11px and 11.5px</td><td>226</td><td>12.9%</td><td>Toolbar labels, captions</td></tr>
+              <tr><td>11.9px (monospace)</td><td>75</td><td>4.3%</td><td>Inline code and file names</td></tr>
+              <tr><td>12px and 12.5px</td><td>332</td><td>18.9%</td><td>Buttons, result actions</td></tr>
+              <tr><td>13px</td><td>129</td><td>7.4%</td><td>Your message, sidebar</td></tr>
+              <tr><td>13.26px</td><td>842</td><td>48.0%</td><td>Answer text</td></tr>
+              <tr><td>13.5px and 15px</td><td>6</td><td>0.3%</td><td>Wordmark, agent name</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </figure>
+    <p class="prose">44% of the visible characters are smaller than 13px. The answer is 13.26px, the disclaimer under the message box is 9.5px, and section labels are 10px capitals. The largest text on the screen is the 15px agent name. With every size within a few pixels of every other, nothing leads the eye, and the screen reads like a settings panel instead of a conversation.</p>
+
+    <h3>3. The words come from the codebase</h3>
+    <p class="prose">About 130 interface strings use engineering terms: workspace, session, provider, sandbox, ledger, receipt, frozen, candidate, execution, token. A few, exactly as they appear today:</p>
+    <div class="quotes prose">
+      <div class="quote"><q>Agent Fleet &amp; Working Target. Select an autonomous persona or point to an execution directory.</q><small>Agent picker, opened from the agent name</small></div>
+      <div class="quote"><q>Generated by sandbox execution (146 bytes)</q><small>Every file result</small></div>
+      <div class="quote"><q>Applied changes take effect for new tasks. Existing tasks retain their frozen provider/model contract.</q><small>Settings, Model &amp; Provider</small></div>
+      <div class="quote"><q>How long a successful tool receipt remains fresh for outcome verification.</q><small>Settings, Evidence freshness</small></div>
+      <div class="quote"><q>Doctor parity: health checks, runtime facts, frozen ladder</q><small>Settings, Services</small></div>
+      <div class="quote"><q>anthropic is not connected. Add a credential for this provider in setup, or choose another.</q><small>The first thing a new user reads</small></div>
+      <div class="quote"><q>Goal mode armed (docs/design/27 Phase H)</q><small>A tooltip in the message box that cites a design document</small></div>
+    </div>
+    <p class="prose">A coworker's comment turned into a revision request shows up as your own message, IDs and all:</p>
+    <figure style="max-width: 720px;">
+      <button type="button" class="crop" data-full="img/before-conversation-light.jpg" style="--x:600; --y:272; --w:690; --h:142; --W:1440;"><img src="img/before-conversation-light.jpg" alt="A user bubble reading: Revise candidate 01a0c2d9-9f67-7473-909f-5e4b0fb095a7 for result 01a0c1bd-4c7e-76b3-9f97-43047d2bdfdd-text-1 file isolated-review.html, line 1. Owner selected comment comment-candidate-comment-01a0c2f0… by Asha Test as feedback."></button>
+      <figcaption>The runtime writes this text for the model. The chat should show a typed revision event, never the text itself.</figcaption>
+    </figure>
+
+    <h3>4. Machinery is on the first screen</h3>
+    <p class="prose">A first-time user sees the folder name and a Ready chip in the header, four text buttons under the message box, and a More menu that holds a model picker and a permission picker. The … menu has 13 items, most of them developer tools. Results show monospace file names and byte counts. Details shows <code>.vak/scratch/vak/call_fe1z30qg/isolated-review.html</code>, and Canvas labels its preview with 100%, 768px, 375px and "Sandboxed · net: blocked".</p>
+    <div class="fig-grid">
+      <figure>
+        <button type="button" class="crop" data-full="img/before-conversation-light.jpg" style="--x:252; --y:8; --w:600; --h:48; --W:1440;"><img src="img/before-conversation-light.jpg" alt="Header with the agent name, a folder chip reading vak-screen1-live and a Ready chip."></button>
+        <figcaption>Header: folder chip and Ready chip on every screen.</figcaption>
+      </figure>
+      <figure>
+        <button type="button" class="crop" data-full="img/before-conversation-light.jpg" style="--x:416; --y:782; --w:870; --h:112; --W:1440;"><img src="img/before-conversation-light.jpg" alt="Message box with More, Voice, Use recording and Attach buttons and a 9.5px disclaimer."></button>
+        <figcaption>Message box: four text buttons and a 9.5px disclaimer.</figcaption>
+      </figure>
+      <figure>
+        <button type="button" class="crop" data-full="img/before-canvas.jpg" style="--x:505; --y:0; --w:935; --h:48; --W:1440;"><img src="img/before-canvas.jpg" alt="Canvas toolbar with a PREVIEW badge, a truncated scratch path, Preview and Code tabs, and 100%, 768px and 375px width buttons."></button>
+        <figcaption>Canvas: PREVIEW badge, scratch path, widths in pixels.</figcaption>
+      </figure>
+    </div>
+    <div class="fig-grid">
+      <figure>
+        <button type="button" class="crop" data-full="img/before-more-menu.jpg" style="--x:1228; --y:50; --w:200; --h:466; --W:1440;"><img src="img/before-more-menu.jpg" alt="The … menu with Workbench, Preview, a DEVELOPER label, Changes, Terminal, Editor, Pull request, Side question, Compare approaches, Split view, History, Activity receipts, a W letter for Background tasks, and Download transcript."></button>
+        <figcaption>The … menu: 13 items. Background tasks uses a letter W as its icon.</figcaption>
+      </figure>
+      <figure>
+        <button type="button" class="crop" data-full="img/before-details.jpg" style="--x:921; --y:0; --w:519; --h:306; --W:1440;"><img src="img/before-details.jpg" alt="Details panel with Files, Live preview and More tabs, Result 1 run, Activity and Files tabs, a file row reading text/html 164 B and a monospace scratch path."></button>
+        <figcaption>Details: two rows of tabs, MIME type, bytes and a scratch path.</figcaption>
+      </figure>
+      <figure>
+        <button type="button" class="crop" data-full="img/before-agent-picker.jpg" style="--x:381; --y:229; --w:679; --h:442; --W:1440;"><img src="img/before-agent-picker.jpg" alt="Agent Fleet and Working Target dialog listing Vak, Research Analyst and Communications and Writer, each with the same bird, a monospace id and a CURRENT badge on Vak."></button>
+        <figcaption>Agent picker: fleet language, monospace IDs, the same bird three times.</figcaption>
+      </figure>
+    </div>
+
+    <h3>5. The brand pulls in four directions</h3>
+    <div class="prose">
+      <p>Four colour stories meet on one screen. The logo is navy and saffron. The mascot and companions are glossy 3D renders. The interface accent is terracotta on cream, or terracotta on brown-black in dark mode. The approved reference screens use deep green and a serif. Even docs/brand/README.md lists terracotta as "the one accent on paper" and sage green for primary buttons, beside the navy and saffron of the mark.</p>
+      <p>At 22px the 3D portraits blur, and all three of your agents use the same bird, so the sidebar list has no identity. The wordmark is a lowercase "vak" in 13.5px system bold. The app icon is an opaque beige square with a smaller tile drawn inside it, so the Dock shows a square around a tile around a small V. Cream with a clay-orange accent is also the look people associate with Claude's own app, and one that many AI products now share, so Vak reads as one of them.</p>
+    </div>
+    <div class="brand-strip">
+      <div class="bs">
+        <h4>Logo and app icon</h4>
+        <div class="icon-demo"><img src="img/vak-icon.png" width="80" height="80" alt="Current app icon: a beige square containing a cream tile with a navy and saffron V."><img src="img/vak-icon.png" width="32" height="32" alt=""><img src="img/vak-icon.png" width="16" height="16" alt=""></div>
+        Navy and saffron mark. The opaque beige background fills the canvas, and the tile covers about half of it.
+      </div>
+      <div class="bs">
+        <h4>Interface accent</h4>
+        <div class="swatch-row"><span style="--c:#A8462A" title="#A8462A"></span><span style="--c:#DF795F" title="#DF795F"></span><span style="--c:#F4F1EA" title="#F4F1EA"></span><span style="--c:#171714" title="#171714"></span></div>
+        Terracotta #A8462A (light) and #DF795F (dark) on #F4F1EA cream or #171714 brown-black.
+      </div>
+      <div class="bs">
+        <h4>Characters, at 44px and at 22px</h4>
+        <div class="portraits p64"><img src="img/char-vak.png" alt="Vak songbird"><img src="img/char-mira.png" alt="Mira fox"><img src="img/char-moss.png" alt="Moss"><img src="img/char-nori.png" alt="Nori seal"><img src="img/char-pip.png" alt="Pip penguin"><img src="img/char-lumi.png" alt="Lumi cloud"><img src="img/char-tavi.png" alt="Tavi owl"><img src="img/char-beni.png" alt="Beni rabbit"></div>
+        <div class="portraits p22"><img src="img/char-vak.png" alt=""><img src="img/char-mira.png" alt=""><img src="img/char-moss.png" alt=""><img src="img/char-nori.png" alt=""><img src="img/char-pip.png" alt=""><img src="img/char-lumi.png" alt=""><img src="img/char-tavi.png" alt=""><img src="img/char-beni.png" alt=""></div>
+        Charming at 44px. At 22px, the size the sidebar uses, they lose their faces.
+      </div>
+      <div class="bs">
+        <h4>Reference screens (doc 70)</h4>
+        <div class="swatch-row"><span style="--c:#476A58" title="#476A58"></span><span style="--c:#FAF6F0" title="#FAF6F0"></span><span style="--c:#EDE8DF" title="#EDE8DF"></span></div>
+        Deep green #476A58 buttons on #FAF6F0, with a serif display. A fourth palette.
+      </div>
+    </div>
+
+    <h3>6. Rough edges break the calm</h3>
+    <p class="prose">Smoothness is mostly the absence of small surprises. The review found fifteen, from a close button in the wrong corner to a first-run screen that tells new users to "inspect prior work". Three of them:</p>
+    <div class="fig-grid">
+      <figure>
+        <button type="button" class="crop" data-full="img/before-share.jpg" style="--x:254; --y:66; --w:516; --h:340; --W:1440;"><img src="img/before-share.jpg" alt="Share dialog whose close button sits under the description on the left, pinned to the top-left of the conversation."></button>
+        <figcaption>Share: the close button sits under the description, on the left.</figcaption>
+      </figure>
+      <figure>
+        <button type="button" class="crop" data-full="img/before-review.jpg" style="--x:470; --y:378; --w:420; --h:92; --W:1440;"><img src="img/before-review.jpg" alt="Review dialog where the Open saved version in Canvas button overlaps a line reading 187 B draft hash sha256."></button>
+        <figcaption>Review: a button overlaps the size and hash line.</figcaption>
+      </figure>
+      <figure>
+        <button type="button" class="crop" data-full="img/before-mobile.jpg" style="--x:0; --y:706; --w:390; --h:138; --W:390;"><img src="img/before-mobile.jpg" alt="Phone-width message box where the send button covers the Attach label."></button>
+        <figcaption>At 390px, the send button covers Attach.</figcaption>
+      </figure>
+    </div>
+    <p class="prose muted small">The full list, with file locations, is under <a href="#fixes">Fixes</a>.</p>
+  </section>
+
+  <section id="brand">
+    <div class="section-kicker">Brand</div>
+    <h2>One brand: Ink and Saffron</h2>
+    <p class="prose"><b>Decided on 25 September 2026: direction A.</b> The three directions that were considered are kept below for the record. Each card shows its palette on a sample header, status chip and buttons.</p>
+    <div class="options">
+      <article class="opt is-rec">
+        <div class="opt-preview split">
+          <div class="pv" style="--pv-paper:#F6F5F1; --pv-ink:#1B1E36; --pv-ink-2:#474B66; --pv-primary:#2F3C94; --pv-accent:#F5A400; --pv-chip-bg:#FCEFD9; --pv-wash:#E4E6F4; --pv-line:#CFCCC2; --pv-font: var(--display);">
+            <div class="pv-head"><span class="pv-av"><img src="img/char-vak.png" alt=""></span><span class="pv-name">Vak</span></div>
+            <span class="pv-chip" style="margin-left:0; justify-self:start;"><i></i>Listening</span>
+            <div class="pv-row"><span class="pv-btn">Review changes</span></div>
+          </div>
+          <div class="pv" style="--pv-paper:#0F1120; --pv-ink:#ECEBF5; --pv-ink-2:#BDBFD3; --pv-primary:#4B59C9; --pv-accent:#F5A400; --pv-chip-bg:#33291A; --pv-wash:#262B4D; --pv-line:#3A3F5E; --pv-font: var(--display);">
+            <div class="pv-head"><span class="pv-av"><img src="img/char-vak.png" alt=""></span><span class="pv-name">Vak</span></div>
+            <span class="pv-chip" style="margin-left:0; justify-self:start;"><i></i>Listening</span>
+            <div class="pv-row"><span class="pv-btn">Review changes</span></div>
+          </div>
+        </div>
+        <div class="sw"><span style="--c:#101D3D"></span><span style="--c:#2F3C94"></span><span style="--c:#F5A400"></span><span style="--c:#F6F5F1"></span><span style="--c:#0F1120"></span></div>
+        <div class="sw-labels"><span>#101D3D</span><span>#2F3C94</span><span>#F5A400</span><span>#F6F5F1</span><span>#0F1120</span></div>
+        <div class="opt-body">
+          <h4>A. Ink and Saffron <span class="rec">Chosen</span></h4>
+          <p>Vāk (वाक्) is Sanskrit for speech, the mascot is a songbird, and the logo is already navy and saffron. Indigo carries text and actions. Saffron marks the moments Vak is live: listening, speaking, working, or waiting for you. Paper is lighter and less yellow than today, and dark mode becomes indigo night instead of brown-black.</p>
+          <ul class="pc">
+            <li>Matches the logo and mascot with no redraw.</li>
+            <li>Clearly different from Claude, ChatGPT and Gemini.</li>
+            <li>Gives voice a colour of its own.</li>
+            <li>Cost: a new palette across the app; terracotta retires.</li>
+          </ul>
+        </div>
+      </article>
+      <article class="opt">
+        <div class="opt-preview">
+          <div class="pv" style="--pv-paper:#FAF6F0; --pv-ink:#22261F; --pv-ink-2:#4A5046; --pv-primary:#476A58; --pv-accent:#476A58; --pv-chip-bg:#E4EBE3; --pv-wash:#E4EBE3; --pv-line:#D5CFC3; --pv-font: var(--display);">
+            <div class="pv-head"><span class="pv-av"><img src="img/char-vak.png" alt=""></span><span class="pv-name">Vak</span><span class="pv-chip"><i></i>Listening</span></div>
+            <div class="pv-row"><span class="pv-btn">Review changes</span><span class="pv-btn2">Open</span></div>
+            <div class="pv-text">The rounding issue is fixed in a draft.</div>
+          </div>
+        </div>
+        <div class="sw"><span style="--c:#22261F"></span><span style="--c:#476A58"></span><span style="--c:#E4EBE3"></span><span style="--c:#FAF6F0"></span><span style="--c:#EDE8DF"></span></div>
+        <div class="sw-labels"><span>#22261F</span><span>#476A58</span><span>#E4EBE3</span><span>#FAF6F0</span><span>#EDE8DF</span></div>
+        <div class="opt-body">
+          <h4>B. Sage and Paper</h4>
+          <p>The palette of the four reference screens: deep green actions on cream with a serif display. Calm, and already approved as imagery.</p>
+          <ul class="pc">
+            <li>Closest to the images in doc 70.</li>
+            <li>Cost: the logo and mascot need recolouring to match.</li>
+            <li>Cream with a serif stays close to the look many AI products share.</li>
+          </ul>
+        </div>
+      </article>
+      <article class="opt">
+        <div class="opt-preview">
+          <div class="pv" style="--pv-paper:#F4F1EA; --pv-ink:#23211C; --pv-ink-2:#4A463D; --pv-primary:#A8462A; --pv-accent:#A8462A; --pv-chip-bg:#F2E4DC; --pv-wash:#F2E4DC; --pv-line:#D9D3C6; --pv-font: var(--sans);">
+            <div class="pv-head"><span class="pv-av"><img src="img/char-vak.png" alt=""></span><span class="pv-name">Vak</span><span class="pv-chip"><i></i>Listening</span></div>
+            <div class="pv-row"><span class="pv-btn">Review changes</span><span class="pv-btn2">Open</span></div>
+            <div class="pv-text">Today's palette, with bigger type and plain words.</div>
+          </div>
+        </div>
+        <div class="sw"><span style="--c:#23211C"></span><span style="--c:#A8462A"></span><span style="--c:#DF795F"></span><span style="--c:#F4F1EA"></span><span style="--c:#171714"></span></div>
+        <div class="sw-labels"><span>#23211C</span><span>#A8462A</span><span>#DF795F</span><span>#F4F1EA</span><span>#171714</span></div>
+        <div class="opt-body">
+          <h4>C. Refined terracotta</h4>
+          <p>Keep today's accent and apply the type, words and modes from this proposal.</p>
+          <ul class="pc">
+            <li>The least work.</li>
+            <li>Vak keeps looking like Claude.</li>
+            <li>The logo and mascot still clash with the interface.</li>
+          </ul>
+        </div>
+      </article>
+    </div>
+    <h3>What the brand rules already say, and what changes</h3>
+    <div class="rules">
+      <div class="rule"><h4>The mark stays whole</h4>docs/brand/README.md says the logo tile is never split, recoloured or given light and dark variants. The proposal keeps that: the sidebar shows the complete tile. What changes is the file. The master has an opaque beige square around the tile, so it only looks right on #F4F1EA. A transparent-background export of the same artwork fixes the Dock icon and dark mode without touching the mark.</div>
+      <div class="rule"><h4>One accent per composition</h4>The README's rule survives with a new meaning. Indigo is the ink: text, buttons, links, selection. Saffron (#F5A400, the mark's own) is the one accent, and it means live. The palette table in the README changes in the same step: terracotta and sage green leave, indigo joins.</div>
+      <div class="rule"><h4>A universal line</h4>The README's product tagline, "An agent you can inspect, constrain, and extend", is a developer's line, and the same README says never to frame Vak as developer-only. Lead with the campaign line, "Ask. Then go live your day.", in the product and onboarding, and keep the technical line for developer docs.</div>
+    </div>
+  </section>
+
+  <section id="system">
+    <div class="section-kicker">System</div>
+    <h2>The proposed system</h2>
+    <p class="prose">Direction A, written as tokens. This page uses it, so switching your theme shows both halves. Every text pair below passes WCAG AA; the ratios were computed, not estimated.</p>
+
+    <h3>Colour</h3>
+    <div class="table-wrap">
+      <table class="token-table">
+        <thead><tr><th></th><th>Token</th><th>Light</th><th>Dark</th><th>Use</th><th>Contrast</th></tr></thead>
+        <tbody>
+          <tr><td><span class="chip-split"><i style="--c:#F6F5F1"></i><i style="--c:#0F1120"></i></span></td><td>paper</td><td class="file">#F6F5F1</td><td class="file">#0F1120</td><td>Window background</td><td class="muted">ground</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#FFFFFF"></i><i style="--c:#171A2B"></i></span></td><td>surface</td><td class="file">#FFFFFF</td><td class="file">#171A2B</td><td>Cards, message box, sheets</td><td class="muted">ground</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#EFEEE8"></i><i style="--c:#13162A"></i></span></td><td>sidebar</td><td class="file">#EFEEE8</td><td class="file">#13162A</td><td>Sidebar and settings navigation</td><td class="muted">ground</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#E3E1DA"></i><i style="--c:#2A2E47"></i></span></td><td>line</td><td class="file">#E3E1DA</td><td class="file">#2A2E47</td><td>Dividers, only where spacing cannot separate</td><td class="muted">non-text</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#1B1E36"></i><i style="--c:#ECEBF5"></i></span></td><td>ink</td><td class="file">#1B1E36</td><td class="file">#ECEBF5</td><td>Text</td><td>15.0 / 15.9</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#474B66"></i><i style="--c:#BDBFD3"></i></span></td><td>ink-2</td><td class="file">#474B66</td><td class="file">#BDBFD3</td><td>Secondary text</td><td>7.8 / 9.5</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#5F6380"></i><i style="--c:#9295AE"></i></span></td><td>ink-3</td><td class="file">#5F6380</td><td class="file">#9295AE</td><td>Captions, hints, placeholders</td><td>5.4 / 5.9</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#2F3C94"></i><i style="--c:#4B59C9"></i></span></td><td>primary</td><td class="file">#2F3C94</td><td class="file">#4B59C9</td><td>Buttons, selection. White text on it.</td><td>9.6 / 5.9</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#2F3C94"></i><i style="--c:#A3ADF7"></i></span></td><td>link</td><td class="file">#2F3C94</td><td class="file">#A3ADF7</td><td>Links and text buttons</td><td>8.8 / 8.1</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#F5A400"></i><i style="--c:#F5A400"></i></span></td><td>saffron</td><td class="file">#F5A400</td><td class="file">#F5A400</td><td>The one accent, for live states only: listening, speaking, working, needs you. A fill, never text on light.</td><td>ink on it 7.9</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#2E6B4A"></i><i style="--c:#7CC39A"></i></span></td><td>success</td><td class="file">#2E6B4A</td><td class="file">#7CC39A</td><td>Passed checks, applied changes. Always with an icon and a word.</td><td>6.3 / 8.3</td></tr>
+          <tr><td><span class="chip-split"><i style="--c:#A33A3A"></i><i style="--c:#F08A8A"></i></span></td><td>danger</td><td class="file">#A33A3A</td><td class="file">#F08A8A</td><td>Failures, destructive actions</td><td>6.5 / 7.1</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="rules">
+      <div class="rule"><h4>Indigo is the ink</h4>Text, buttons, links and the selected item. Nothing decorative uses it.</div>
+      <div class="rule"><h4>Saffron is the one accent, and it means live</h4>It fills the mic while listening, the dot while an agent works, and the badge when Vak is waiting for you. Because nothing else uses it, a glance tells you whether Vak needs you.</div>
+      <div class="rule"><h4>Four themes</h4>Match system, Light, Dark and High contrast. Warm dark, Sage, Paper, Mist and Dawn retire, and the new Dark takes Midnight's place: each extra palette needs its own contrast calibration and none changes what the app can do.</div>
+    </div>
+
+    <h3>Type</h3>
+    <div class="rules">
+      <div class="rule"><h4>Display: Newsreader (decided)</h4>The headline serif docs/brand/README.md already names. For the wordmark, agent names, page titles, the greeting and result headlines. Nothing else. Bundle it as WOFF2 (Latin and Latin Extended, SIL Open Font License); the desktop CSP already allows <code>font-src 'self'</code>.</div>
+      <div class="rule"><h4>Text: the system font</h4>SF Pro on macOS, Segoe UI Variable on Windows. Native, crisp, free to render and already familiar to every user.</div>
+      <div class="rule"><h4>Code: the system monospace</h4>Only for code and file contents. Never for file names, counts, versions or percentages in everyday screens.</div>
+    </div>
+    <div class="spec">
+      <div class="spec-row"><div class="spec-meta"><b>Hero</b>36 / 42 · display 500</div><div class="spec-sample f-display" style="font-size:36px; line-height:42px; font-weight:500;">Hi, I'm Vak.</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Greeting</b>28 / 34 · display 500</div><div class="spec-sample f-display" style="font-size:28px; line-height:34px; font-weight:500;">What can I help with today?</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Page title</b>22 / 28 · display 600</div><div class="spec-sample f-display" style="font-size:22px; line-height:28px; font-weight:600;">Appearance</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Section</b>18 / 26 · text 600</div><div class="spec-sample" style="font-size:18px; line-height:26px; font-weight:600;">Your agents</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Reading</b>16 / 26 · text 400</div><div class="spec-sample" style="font-size:16px; line-height:26px;">The revision has been applied. The draft now opens with one clear welcome sentence.</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Interface</b>15 / 22 · text 400</div><div class="spec-sample" style="font-size:15px; line-height:22px;">Desktop notifications. Tell me when a task finishes while Vak is in the background.</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Control</b>14 / 20 · text 500</div><div class="spec-sample" style="font-size:14px; line-height:20px; font-weight:500;">Review changes · Keep draft · Ask for changes</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Meta</b>13 / 18 · text 400</div><div class="spec-sample" style="font-size:13px; line-height:18px; color: var(--ink-3);">Made just now · Version 2</div></div>
+      <div class="spec-row"><div class="spec-meta"><b>Caption</b>12 / 16 · text 500</div><div class="spec-sample" style="font-size:12px; line-height:16px; font-weight:500; color: var(--ink-3);">Vak can make mistakes. Check anything important.</div></div>
+    </div>
+    <p class="prose small muted">Three weights (400, 500, 600) replace the eight in use today. Sentence case everywhere, with no capitalised micro-labels. Answers wrap at about 68 characters. The existing text-size preference keeps scaling all of it.</p>
+
+    <h3>Shape, space, depth and motion</h3>
+    <div class="rules">
+      <div class="rule"><h4>Shape and space</h4><ul><li>Radius 8 for controls, 12 for cards, 16 for the message box and sheets, full for avatars and pills.</li><li>A 4px grid: 4, 8, 12, 16, 24, 32, 48.</li><li>Sidebar rows 40px, buttons 36px, message box at least 56px.</li></ul></div>
+      <div class="rule"><h4>Depth</h4><ul><li>Flat at rest, as today.</li><li>One soft shadow for the message box, which floats over the conversation. Result cards stay flat, as the brand rule "shadows only on things that float" asks.</li><li>Borders only where spacing cannot separate things.</li></ul></div>
+      <div class="rule"><h4>Motion</h4><ul><li>120ms for hover and press, 200ms for menus and panels, 320ms for sheets. One curve: <code>cubic-bezier(0.2, 0, 0, 1)</code>.</li><li>New messages fade up 6px; a result reveals once; skeletons replace loading text.</li><li>Nothing moves under the pointer, so the sidebar's 1px hover nudge goes. Reduced motion keeps working.</li></ul></div>
+    </div>
+
+    <h3>Icons, characters and voice</h3>
+    <div class="rules">
+      <div class="rule"><h4>Icons</h4><ul><li>One line family at 20px with a 1.5px stroke: Lucide (ISC) or Phosphor (MIT).</li><li>Replace the letter glyphs in menus and empty states: W, @, /, ◌, ✓ and ✕.</li><li>Pick icons by meaning. Full access, the riskiest permission, uses a shield today.</li></ul></div>
+      <div class="rule"><h4>Characters</h4><ul><li>Keep the 3D portraits for large moments at 64px or more: onboarding, empty states, agent creation, voice mode.</li><li>Commission a flat two-colour glyph per character, in the logo's style, for 32px and below.</li><li>Give every agent its own character. The creation templates already pair Research with Moss and Writer with Pip.</li><li>Serve 64 and 128px WebP copies. Today the app loads 512px portraits and 1024 × 512 atlases, 0.2 to 1 MB each, to draw 22px marks.</li></ul></div>
+      <div class="rule"><h4>Voice and tone</h4><ul><li>Name things by what people recognise: your agents, folder, draft, changes, connections, AI service.</li><li>Buttons say what happens: Review changes, Keep draft, Apply 1 change.</li><li>Show numbers and IDs only when they help a decision.</li><li>Setup and error messages say what happened and what to do next, one sentence each.</li></ul></div>
+    </div>
+  </section>
+
+  <section id="screens">
+    <div class="section-kicker">Screens</div>
+    <h2>Before and after</h2>
+    <p class="prose">The mockups use real content and settings from the review session and change only what the interface controls. The conversation is at the top of the page.</p>
+
+    <h3>First run</h3>
+    <div class="flip" data-flip>
+      <div class="flip-bar">
+        <div class="seg" role="group" aria-label="Compare the first-run screen">
+          <button type="button" data-show="after" aria-pressed="true">Proposed</button>
+          <button type="button" data-show="before" aria-pressed="false">Today</button>
+        </div>
+        <button type="button" class="flip-expand" data-expand>View larger</button>
+      </div>
+      <div class="frame">
+        <div data-view="after">
+          <div class="mock-scale">
+            <div class="mock" role="img" aria-label="Proposed first run: the Vak songbird, a greeting, a saffron card asking to connect an AI service, and four starter cards above the message box.">
+              <aside class="m-side">
+                <div class="m-lights"><i></i><i></i><i></i></div>
+                <div class="m-brand"><span class="tile" aria-hidden="true"><img src="img/vak-icon.png" alt=""></span><span class="m-word">Vak</span></div>
+                <div class="m-search"><svg class="ic"><use href="#i-search"/></svg>Search<kbd>⌘K</kbd></div>
+                <div class="m-sec">Agents</div>
+                <div class="m-agent is-active"><span class="m-av"><img src="img/char-vak.png" alt=""></span><span class="m-agent-t"><b>Vak</b><small>Needs an AI service</small></span></div>
+                <div class="m-new"><svg class="ic"><use href="#i-plus"/></svg>New agent</div>
+                <div class="m-foot"><svg class="ic"><use href="#i-sliders"/></svg>Settings<kbd>⌘,</kbd></div>
+              </aside>
+              <section class="m-main">
+                <div class="m-head">
+                  <span class="m-av lg"><img src="img/char-vak.png" alt=""></span>
+                  <div><div class="m-name">Vak</div><div class="m-status"><i class="m-dot"></i>Needs an AI service</div></div>
+                  <div class="m-head-actions"><span class="m-icon"><svg class="ic"><use href="#i-panel"/></svg></span><span class="m-icon"><svg class="ic"><use href="#i-dots"/></svg></span></div>
+                </div>
+                <div class="m-thread">
+                  <div class="m-welcome">
+                    <div class="m-hero"><img src="img/char-vak.png" alt=""></div>
+                    <div class="m-greet">Hi, I'm Vak.</div>
+                    <p class="m-greet-sub">Ask a question, plan something or hand over a task. Talk or type, whichever is easier.</p>
+                    <div class="m-connect">
+                      <span class="m-connect-ic"><svg class="ic"><use href="#i-plug"/></svg></span>
+                      <div class="m-connect-t"><b>Connect an AI service to start</b><span>Vak needs a model to think with. It takes about a minute, and you can change it later.</span></div>
+                      <span class="m-btn primary">Connect</span>
+                    </div>
+                    <div class="m-starters">
+                      <div class="m-starter"><b>Research a question</b><span>Compare three laptops under £800</span></div>
+                      <div class="m-starter"><b>Write or rewrite</b><span>Make this email warmer and shorter</span></div>
+                      <div class="m-starter"><b>Analyze data</b><span>What changed in this spreadsheet?</span></div>
+                      <div class="m-starter"><b>Plan something</b><span>A relaxed Saturday with the kids</span></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="m-composer">
+                  <span class="m-plus"><svg class="ic"><use href="#i-plus"/></svg></span>
+                  <span class="m-ph">Ask Vak anything…</span>
+                  <span class="m-mic"><svg class="ic"><use href="#i-mic"/></svg></span>
+                  <span class="m-send"><svg class="ic"><use href="#i-up"/></svg></span>
+                </div>
+                <div class="m-note">Vak can make mistakes. Check anything important.</div>
+              </section>
+            </div>
+          </div>
+        </div>
+        <div data-view="before" hidden>
+          <img src="img/before-first-run.jpg" alt="Today's first run: Nothing here yet, with advice to ask a follow-up or inspect prior work, a Ready chip in the header, and a banner saying anthropic is not connected with a Finish setup button.">
+        </div>
+      </div>
+    </div>
+    <ul class="changes">
+      <li><b>Welcome.</b> A greeting from the mascot replaces "Nothing here yet" and its advice to "inspect prior work".</li>
+      <li><b>Setup in place.</b> Connecting an AI service happens in the app. Today Finish setup opens the admin console's Setup &amp; Readiness page.</li>
+      <li><b>Honest status.</b> The header says Needs an AI service, in saffron, instead of Ready.</li>
+      <li><b>Starters.</b> The four existing suggestions, each with an everyday example.</li>
+    </ul>
+    <figure style="max-width: 640px; margin-top: 20px;">
+      <button type="button" class="shot" data-full="img/before-admin-setup.jpg"><img src="img/before-admin-setup.jpg" alt="The admin console Setup and Readiness page with Phase 1 Environment and Host Foundation, requirement counts and a monospace scratch path."></button>
+      <figcaption>Where Finish setup leads today: "Verify host prerequisites, AI model dispatch, sandbox containment, and platform service registration."</figcaption>
+    </figure>
+
+    <h3>Settings for an agent</h3>
+    <div class="flip" data-flip>
+      <div class="flip-bar">
+        <div class="seg" role="group" aria-label="Compare the agent settings screen">
+          <button type="button" data-show="after" aria-pressed="true">Proposed</button>
+          <button type="button" data-show="before" aria-pressed="false">Today</button>
+        </div>
+        <button type="button" class="flip-expand" data-expand>View larger</button>
+      </div>
+      <div class="frame">
+        <div data-view="after">
+          <div class="mock-scale">
+            <div class="mock" role="img" aria-label="Proposed agent settings: navigation split into Everyday, This agent and Advanced; a page headed Vak with the AI model, helpers, what Vak can do without asking, when to ask you, and a collapsed Technical details row.">
+              <aside class="m-side">
+                <div class="m-lights"><i></i><i></i><i></i></div>
+                <div class="m-back"><svg class="ic"><use href="#i-back"/></svg>Back to Vak</div>
+                <div class="m-search"><svg class="ic"><use href="#i-search"/></svg>Search settings</div>
+                <div class="m-sec">Everyday</div>
+                <div class="m-nav-item"><svg class="ic"><use href="#i-sliders"/></svg>General</div>
+                <div class="m-nav-item"><svg class="ic"><use href="#i-sun"/></svg>Appearance</div>
+                <div class="m-nav-item"><svg class="ic"><use href="#i-mic"/></svg>Voice and sound</div>
+                <div class="m-nav-item"><svg class="ic"><use href="#i-plug"/></svg>Connections</div>
+                <div class="m-nav-item"><svg class="ic"><use href="#i-shield"/></svg>Privacy and safety</div>
+                <div class="m-sec">Agents</div>
+                <div class="m-nav-item is-active"><span class="m-av sm"><img src="img/char-vak.png" alt=""></span>Vak</div>
+                <div class="m-nav-item"><span class="m-av sm" style="--av: var(--av-moss)"><img src="img/char-moss.png" alt=""></span>Research Analyst</div>
+                <div class="m-sec">Advanced</div>
+                <div class="m-nav-item is-dim"><svg class="ic"><use href="#i-box"/></svg>Models, services and storage</div>
+              </aside>
+              <section class="m-main m-set">
+                <div class="m-set-col">
+                  <div class="m-set-head">
+                    <span class="m-av xl"><img src="img/char-vak.png" alt=""></span>
+                    <div><div class="m-t">Vak</div><p>Your everyday agent. Changes apply to new conversations.</p></div>
+                    <span class="m-btn">Edit personality</span>
+                  </div>
+                  <div class="m-card">
+                    <div class="m-row"><div><b>AI model</b><small>gemma4:e2b-mlx through Ollama, running on this Mac</small></div><span class="m-btn end">Change</span></div>
+                    <div class="m-row"><div><b>Helpers</b><small>Vak can split big jobs across helpers that work in parallel</small></div><span class="m-toggle end"></span></div>
+                  </div>
+                  <div class="m-ctitle">What Vak can do without asking</div>
+                  <div class="m-card">
+                    <div class="m-row"><span class="m-rb"></span><svg class="ic"><use href="#i-eye"/></svg><div><b>Look only</b><small>Read and search this folder. Makes no changes.</small></div></div>
+                    <div class="m-row"><span class="m-rb"></span><svg class="ic"><use href="#i-pencil"/></svg><div><b>Edit files in this folder</b><small>Asks before anything sensitive.</small></div></div>
+                    <div class="m-row is-on"><span class="m-rb"></span><svg class="ic"><use href="#i-alert"/></svg><div><b>Full access to this computer</b><small class="m-warn">Runs any command and opens files outside this folder.</small></div></div>
+                  </div>
+                  <div class="m-ctitle">When to ask you</div>
+                  <div class="m-card">
+                    <div class="m-row"><span class="m-rb"></span><div><b>Every time</b><small>Pause for anything that needs approval.</small></div></div>
+                    <div class="m-row"><span class="m-rb"></span><div><b>Only outside this folder</b><small>Reading and editing here continue. Web and outside access still ask.</small></div></div>
+                    <div class="m-row is-on"><span class="m-rb"></span><div><b>Don't ask</b><small>Vak keeps going unless a rule requires your approval.</small></div></div>
+                  </div>
+                  <div class="m-card"><div class="m-disc"><svg class="ic"><use href="#i-chev"/></svg>Technical details<span>Turn limit 40 · Evidence freshness 24 h · Context 128,000 tokens</span></div></div>
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+        <div data-view="before" hidden>
+          <img src="img/before-settings-model.jpg" alt="Today's Model and Provider settings: an Editing agent select, three stacked notices about editing, Fleet Roster and frozen provider contracts, and rows for provider ollama, model gemma4:e2b-mlx in monospace, maximum turns, evidence freshness and workers.">
+        </div>
+      </div>
+    </div>
+    <ul class="changes">
+      <li><b>One header.</b> The agent is named once. Three notices about editing, saving and frozen contracts become one line.</li>
+      <li><b>Outcomes, not modes.</b> Look only, Edit files in this folder, Full access to this computer. Your current choices are kept: Full access and Don't ask.</li>
+      <li><b>Technical details.</b> Turn limit, evidence freshness and context size move behind one row, with their values intact.</li>
+      <li><b>Navigation.</b> Everyday pages first, then Agents, then one Advanced entry. On phones it becomes a list that opens each page.</li>
+    </ul>
+    <p class="prose small muted">Proposed navigation. Everyday: General, Appearance, Voice and sound, Notifications, Connections, Privacy and safety. Agents: one page per agent. Advanced, shown with technical details on: Models and routing, Reliability, Prompts, Services and health, Storage and backup.</p>
+  </section>
+
+  <section id="words">
+    <div class="section-kicker">Words</div>
+    <h2>Plain words</h2>
+    <p class="prose">A starting glossary. Each change is a string edit, and the precise term stays available under Technical details or in the admin console. A CI check can then fail on the old terms in user-facing strings, the same way vak-eval's banned-token gate works.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Where</th><th>Today</th><th>Proposed</th></tr></thead>
+        <tbody>
+          <tr><td class="where">Agent picker title</td><td class="old">Agent Fleet &amp; Working Target</td><td class="new">Your agents</td></tr>
+          <tr><td class="where">Agent picker subtitle</td><td class="old">Select an autonomous persona or point to an execution directory.</td><td class="new">Choose who to work with, or which folder they use.</td></tr>
+          <tr><td class="where">Agent picker tabs</td><td class="old">Fleet Roster (3) · Target Directory</td><td class="new">Agents · Folder</td></tr>
+          <tr><td class="where">Header</td><td class="old">vak-screen1-live chip ("Project Working Directory")</td><td class="new">Hidden. Shown in Details as Folder.</td></tr>
+          <tr><td class="where">Your messages</td><td class="old">YOU</td><td class="new">No label. The alignment already says it.</td></tr>
+          <tr><td class="where">File result</td><td class="old">Generated by sandbox execution (146 bytes)</td><td class="new">Draft · made just now</td></tr>
+          <tr><td class="where">Result actions</td><td class="old">Open working file · Review draft</td><td class="new">Open · Review changes</td></tr>
+          <tr><td class="where">Details panel</td><td class="old">text/html · 164 B · .vak/scratch/vak/call_fe1z30qg/…</td><td class="new">Web page. Path and size under Technical details.</td></tr>
+          <tr><td class="where">Canvas</td><td class="old">PREVIEW · 100% · 768px · 375px · Sandboxed · net: blocked</td><td class="new">Draft preview · Desktop, Tablet, Phone icons · Safe preview, offline</td></tr>
+          <tr><td class="where">Review</td><td class="old">Frozen copy verified: Yes</td><td class="new">Saved copy is intact</td></tr>
+          <tr><td class="where">Review</td><td class="old">No registered verifier supports these files.</td><td class="new">Vak can't check this type of file automatically yet.</td></tr>
+          <tr><td class="where">First-run banner</td><td class="old">anthropic is not connected. Add a credential for this provider in setup, or choose another.</td><td class="new">Connect an AI service to start. It takes about a minute.</td></tr>
+          <tr><td class="where">Message box</td><td class="old">Use recording</td><td class="new">Upload a recording (in the + menu)</td></tr>
+          <tr><td class="where">Message box menu</td><td class="old">Target: vak-screen1-live</td><td class="new">Folder: vak-screen1-live</td></tr>
+          <tr><td class="where">Permissions</td><td class="old">Read only · Workspace write · Full access</td><td class="new">Look only · Edit files in this folder · Full access to this computer</td></tr>
+          <tr><td class="where">Approvals</td><td class="old">Approve automatically. Continue without pausing unless a rule requires approval.</td><td class="new">Don't ask. Vak keeps going unless a rule requires your approval.</td></tr>
+          <tr><td class="where">Model settings</td><td class="old">Existing tasks retain their frozen provider/model contract.</td><td class="new">Conversations already started keep the model they began with.</td></tr>
+          <tr><td class="where">Model settings</td><td class="old">Evidence freshness. How long a successful tool receipt remains fresh for outcome verification.</td><td class="new">Technical details: how long a successful check still counts as current.</td></tr>
+          <tr><td class="where">Model settings</td><td class="old">Workers. Allow the agent to delegate bounded parallel work.</td><td class="new">Helpers. Vak can split big jobs across helpers that work in parallel.</td></tr>
+          <tr><td class="where">General</td><td class="old">Transcript detail: Outcome</td><td class="new">Show: Results only · Results and steps · Everything</td></tr>
+          <tr><td class="where">Appearance</td><td class="old">Rich output. Render link previews, metrics, media, and other typed presentation items.</td><td class="new">Show cards and previews</td></tr>
+          <tr><td class="where">Appearance</td><td class="old">External media. Allow safe images and media from approved HTTP(S) sources.</td><td class="new">Show images from the web</td></tr>
+          <tr><td class="where">Services</td><td class="old">Doctor parity: health checks, runtime facts, frozen ladder</td><td class="new">System health</td></tr>
+          <tr><td class="where">Integrations</td><td class="old">No project-specific MCP overrides … npx -y tavily-mcp@latest · Inherited (Active)</td><td class="new">Web search (Tavily) · Connected · Used by all agents</td></tr>
+          <tr><td class="where">Prompts</td><td class="old">The narrowest layer that sets this wins.</td><td class="new">This agent's version replaces the shared one.</td></tr>
+          <tr><td class="where">Settings navigation</td><td class="old">EXPERIENCE · THIS AGENT · ARCHIVED</td><td class="new">Everyday · Agents · Advanced</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="modes">
+    <div class="section-kicker">Modes</div>
+    <h2>Everyday by default, technical on request</h2>
+    <p class="prose">One setting, Show technical details, decides how much machinery each screen shows. It changes presentation only and never what an agent may do. Doc 57 already defines Everyday and Advanced as two projections of one history; this applies that idea to the whole app.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Element</th><th>Everyday (default)</th><th>With technical details</th></tr></thead>
+        <tbody>
+          <tr><td class="where">Header</td><td>Agent, status when something is wrong, Share</td><td>Adds the folder, connection state and model</td></tr>
+          <tr><td class="where">… menu</td><td>History, Background tasks, Download conversation</td><td>Adds a Developer group: Terminal, Editor, Changes, Pull request, Compare approaches, Activity receipts</td></tr>
+          <tr><td class="where">Results</td><td>Name, kind, version, age, preview</td><td>Adds size, path, execution and result IDs</td></tr>
+          <tr><td class="where">Review</td><td>Summary, preview, changes, decision</td><td>Adds hashes, provenance and check names</td></tr>
+          <tr><td class="where">Message box + menu</td><td>Attach, mention a file, skills, upload a recording</td><td>Adds model and permission switches</td></tr>
+          <tr><td class="where">Settings</td><td>Everyday and Agents pages</td><td>Adds the Advanced pages</td></tr>
+          <tr><td class="where">Connection</td><td>A small pill above the message box, only after a few seconds without a connection</td><td>Adds a live connection indicator</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout prose"><b>Default it off for new installs.</b> Ask once during onboarding ("Do you build software? Show technical details") and keep the switch in General. Developers turn it on in one click; nobody else meets a terminal they did not ask for.</div>
+  </section>
+
+  <section id="fixes">
+    <div class="section-kicker">Fixes</div>
+    <h2>Fix list</h2>
+    <p class="prose">Stages match the tracker in <code>docs/plans/visual-refresh-plan.md</code>. V0 records the decisions. V1 fixes what is broken and can ship first. V2 builds the foundation, V3 applies it to each surface, and V4 renews the brand assets. File paths are relative to <code>crates/vak-client-ui/src</code> unless noted.</p>
+
+    <div class="phase"><h3>V1. Fix what is broken</h3><span class="size">Small, one change each</span></div>
+    <div class="table-wrap">
+      <table class="fix-table">
+        <thead><tr><th>#</th><th>What happens</th><th>Where</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td class="num">V1.1</td><td>New users never see the welcome. Opening an agent creates its conversation, so the empty state takes the "has session" branch: "Nothing here yet. Ask a follow-up or open its details to inspect prior work."</td><td class="file">components/ChatPane.tsx, empty state</td><td>Show the welcome whenever the conversation has no turns.</td></tr>
+          <tr><td class="num">V1.2</td><td>"Opening agent…" floats in the middle of the sidebar for about 3.5 s on load and 5.5 s when switching agents.</td><td class="file">components/Sidebar.tsx:71; styles.css:369 (.sb-empty margin: auto)</td><td>Spinner on the chosen row, a skeleton in the conversation, and the cached conversation shown at once.</td></tr>
+          <tr><td class="num">V1.3</td><td>A yellow Reconnecting bar shows on every load for about 3.4 s, before the first connection. Its tooltip says the stream dropped.</td><td class="file">components/StatusBar.tsx</td><td>Add a silent "connecting" state. Show later drops as a small pill above the message box.</td></tr>
+          <tr><td class="num">V1.4</td><td>Share dialog: the close button sits under the description on the left, and the dialog pins to the conversation's top-left corner.</td><td class="file">components/CoworkingShare.tsx</td><td>Use one sheet component with the close button top right, centred.</td></tr>
+          <tr><td class="num">V1.5</td><td>Review: "Open saved version in Canvas" overlaps the "187 B · draft hash" line.</td><td class="file">components/WorkbenchPanel.tsx, candidate review</td><td>Stack the button below the caption; move the hash to Technical details.</td></tr>
+          <tr><td class="num">V1.6</td><td>Background tasks uses a letter W for its icon.</td><td class="file">components/WorkspaceHeader.tsx:221</td><td>Use a real icon.</td></tr>
+          <tr><td class="num">V1.7</td><td>At 390px the send button covers Attach.</td><td class="file">components/Composer.tsx, toolbar</td><td>Collapse to +, mic and send.</td></tr>
+          <tr><td class="num">V1.8</td><td>The empty-state mark is a ◌ character in a pink tile with a chat icon hanging below it.</td><td class="file">components/ChatPane.tsx:62; styles.css .vak-companion</td><td>Use the agent's portrait.</td></tr>
+          <tr><td class="num">V1.9</td><td>A tooltip cites "docs/design/27 Phase H".</td><td class="file">components/Composer.tsx, goal chip</td><td>Describe the goal in plain words.</td></tr>
+          <tr><td class="num">V1.10</td><td>Finish setup sends a first-time user to the admin console's Setup &amp; Readiness page.</td><td class="file">components/SetupBanner.tsx:67</td><td>An in-app connect sheet.</td></tr>
+          <tr><td class="num">V1.11</td><td>The header says Ready before any AI service is connected.</td><td class="file">components/WorkspaceHeader.tsx</td><td>Show Needs an AI service.</td></tr>
+          <tr><td class="num">V1.12</td><td>A coworker's comment sent to Vak shows as your own message, with raw IDs.</td><td class="file">revision request message; ChatPane.tsx</td><td>Give the message a typed kind and render that kind as an event. Never match on its text.</td></tr>
+          <tr><td class="num">V1.13</td><td>Settings names disagree: Services opens a page titled Operations, Integrations opens Capabilities.</td><td class="file">components/Settings.tsx, OperationsPanel.tsx</td><td>One name per page.</td></tr>
+          <tr><td class="num">V1.14</td><td>Full access, the riskiest permission, uses a shield icon; Workspace write and Approve automatically use a code icon.</td><td class="file">components/Settings.tsx:1444, 1451 to 1453</td><td>Eye, pencil and warning icons.</td></tr>
+          <tr><td class="num">V1.15</td><td>The agent picker marks the current agent with a filled CURRENT badge and repeats IDs in monospace.</td><td class="file">components/AgentPickerModal.tsx</td><td>A check mark; IDs under Technical details.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="phase"><h3>V2. Foundation</h3><span class="size">Medium to large</span></div>
+    <ul class="prose">
+      <li>Rewrite DESIGN.md: a new north star for the calm direction, the named rules above, and the old Auditor's Desk sections removed.</li>
+      <li>A new token layer (colour for Light, Dark and High contrast; type scale; spacing; radius; motion). Delete the old <code>:root</code> and theme blocks and every override they supersede, in the same change.</li>
+      <li>Bundle Newsreader as WOFF2 in <code>vak-client-ui</code>; conversation text to 16px; three weights.</li>
+      <li>The copy pass across about 130 strings, plus the CI check for old terms.</li>
+      <li>One disclosure setting, Show technical details, wired through the header, menus, results, review, message box and Settings. It replaces today's Transcript detail preference (<code>Density</code> in <code>store.ts</code>) instead of adding a second switch.</li>
+      <li>Delete dead styles, starting with the 21 <code>.everyday-rail</code> rules that no component uses.</li>
+    </ul>
+
+    <div class="phase"><h3>V3. Surfaces</h3><span class="size">Large</span></div>
+    <ul class="prose">
+      <li>Sidebar and header; conversation and result card; message box with + menu and mic.</li>
+      <li>Settings information architecture, with list-then-page navigation on phones.</li>
+      <li>Review as a sheet with the preview first; Canvas toolbar with device icons.</li>
+      <li>The in-app connect flow for AI services.</li>
+      <li>One sheet component for every dialog, so close, title and focus behave the same everywhere.</li>
+    </ul>
+
+    <div class="phase"><h3>V4. Brand assets and desktop chrome</h3><span class="size">Medium</span></div>
+    <ul class="prose">
+      <li>App icon and logo files: a transparent-background export of the same master artwork, with the tile filling the macOS icon grid. The mark itself does not change.</li>
+      <li>Update docs/brand/README.md: the Ink and Saffron palette, Newsreader, and the campaign line as the product line.</li>
+      <li>Flat character glyphs for small sizes, and WebP copies at 64 and 128px.</li>
+      <li>Desktop only: an overlay title bar with the traffic lights inside the sidebar. In <code>crates/vak-desktop/tauri.conf.json</code> set <code>"titleBarStyle": "Overlay"</code>, <code>"hiddenTitle": true</code> and <code>"trafficLightPosition"</code> (supported by the pinned Tauri 2.11), and add drag regions to the sidebar head and the header. Today the window uses the standard title bar, which makes the app look like a web page in a frame.</li>
+    </ul>
+  </section>
+
+  <section id="decisions">
+    <div class="section-kicker">Decisions</div>
+    <h2>Decisions</h2>
+    <p class="prose">All five were locked on 25 September 2026. The tracker in <code>docs/plans/visual-refresh-plan.md</code> keeps the same list with their consequences.</p>
+    <ol class="decisions">
+      <li><b>Brand direction</b><span>Decided on 25 September 2026: <em>A, Ink and Saffron.</em></span></li>
+      <li><b>Display face</b><span>Decided: <em>Newsreader</em>, the headline serif the brand README already names, bundled as WOFF2.</span></li>
+      <li><b>Technical details default</b><span>Decided: <em>off for new installs</em>, offered once in onboarding and kept as a switch in General. It replaces Transcript detail.</span></li>
+      <li><b>Themes</b><span>Decided: <em>Match system, Light, Dark and High contrast.</em> Warm dark, Sage, Paper, Mist and Dawn retire; the new Dark takes Midnight's place.</span></li>
+      <li><b>Order</b><span>Decided: <em>V1 fixes and the V2 foundation first</em> (DESIGN.md, tokens, type, words), then screens (V3), then brand assets and desktop chrome (V4).</span></li>
+    </ol>
+  </section>
+
+  <footer class="end">
+    Screenshots were captured on 25 September 2026 from the running 4.0.2 dev build at 1440 × 900 and 390 × 844. Mockups are proposals drawn in HTML with this page's tokens; nothing in the app has changed yet. The repository copy lives in docs/design/75-visual-refresh.md, with the tracker in docs/plans/visual-refresh-plan.md. Character portraits and the app icon are Vak's own assets, shown for reference.
+  </footer>
+</main>
+
+<dialog class="lb" id="lightbox" aria-label="Full-size view">
+  <div class="lb-inner">
+    <div class="lb-bar"><span id="lb-title">Full size</span><button type="button" class="lb-close" id="lb-close">Close</button></div>
+    <div class="lb-body" id="lb-body"></div>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const W = 1200, H = 750;
+  const fit = (root = document) => {
+    root.querySelectorAll('.mock-scale').forEach((wrap) => {
+      const w = wrap.clientWidth;
+      if (!w) return;
+      const s = w / W;
+      const mock = wrap.firstElementChild;
+      if (mock) mock.style.transform = `scale(${s})`;
+      wrap.style.height = `${H * s}px`;
+    });
+  };
+  fit();
+  const ro = new ResizeObserver(() => fit());
+  document.querySelectorAll('.mock-scale').forEach((el) => ro.observe(el));
+  window.addEventListener('load', () => fit());
+
+  document.querySelectorAll('[data-flip]').forEach((flip) => {
+    const buttons = flip.querySelectorAll('[data-show]');
+    buttons.forEach((btn) => btn.addEventListener('click', () => {
+      const show = btn.dataset.show;
+      buttons.forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+      flip.querySelectorAll('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== show; });
+      fit(flip);
+    }));
+  });
+
+  const lb = document.getElementById('lightbox');
+  const body = document.getElementById('lb-body');
+  const title = document.getElementById('lb-title');
+  const open = (node, label) => {
+    body.replaceChildren(node);
+    title.textContent = label || 'Full size';
+    if (typeof lb.showModal === 'function') lb.showModal(); else lb.setAttribute('open', '');
+    requestAnimationFrame(() => fit(body));
+  };
+  const close = () => { if (lb.open) lb.close(); body.replaceChildren(); };
+  document.getElementById('lb-close').addEventListener('click', close);
+  lb.addEventListener('click', (e) => { if (e.target === lb) close(); });
+
+  document.querySelectorAll('.crop, .shot').forEach((btn) => btn.addEventListener('click', () => {
+    const img = document.createElement('img');
+    img.src = btn.dataset.full || btn.querySelector('img').src;
+    img.alt = btn.querySelector('img').alt;
+    open(img, 'Screenshot, full size');
+  }));
+  document.querySelectorAll('[data-expand]').forEach((btn) => btn.addEventListener('click', () => {
+    const flip = btn.closest('[data-flip]');
+    const visible = [...flip.querySelectorAll('[data-view]')].find((v) => !v.hidden);
+    const clone = visible.cloneNode(true);
+    clone.hidden = false;
+    const label = flip.querySelector('[aria-pressed="true"]').textContent;
+    open(clone, label);
+  }));
+
+  const tip = document.createElement('div');
+  tip.className = 'tip';
+  tip.hidden = true;
+  document.body.appendChild(tip);
+  const place = (x, y) => {
+    const r = tip.getBoundingClientRect();
+    tip.style.left = `${Math.min(x + 14, window.innerWidth - r.width - 8)}px`;
+    tip.style.top = `${Math.max(8, y - r.height - 12)}px`;
+  };
+  document.querySelectorAll('.bar-row').forEach((row) => {
+    const show = (x, y) => { tip.textContent = row.dataset.tip; tip.hidden = false; place(x, y); };
+    row.addEventListener('mousemove', (e) => show(e.clientX, e.clientY));
+    row.addEventListener('mouseleave', () => { tip.hidden = true; });
+    row.addEventListener('focus', () => { const r = row.getBoundingClientRect(); show(r.left + 120, r.top); });
+    row.addEventListener('blur', () => { tip.hidden = true; });
+  });
+})();
+</script>
+</body>
+</html>
