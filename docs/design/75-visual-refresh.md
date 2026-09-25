@@ -350,7 +350,9 @@ stays the model's own text.
   hasn't changed yet", and Review changes, Open, Ask for changes.
 - The message box is one field: + holds attach, mention a file, skills and
   upload a recording; the mic is the voice button (saffron while listening);
-  send sits beside it. Model and permissions move to the agent menu.
+  send sits beside it. Model and permission switches join the + menu only
+  with technical details on (§8). "Full access" always shows beside +,
+  because it is a safety state.
 
 ### 6.2 First run
 

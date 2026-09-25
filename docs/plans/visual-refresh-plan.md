@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 and V3.2 done. V3.3 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.3 done. V3.4 onward and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -244,9 +244,10 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   status shown only when something is wrong; one footer menu.
 - [x] **V3.2 Conversation.** Answers on the page, results as the only card,
   revision events (V1.12) styled, no YOU label, quiet working state.
-- [ ] **V3.3 Message box.** One field; + menu (attach, mention, skills,
+- [x] **V3.3 Message box.** One field; + menu (attach, mention, skills,
   upload a recording); mic as the voice button, saffron while listening;
-  model and permissions move to the agent menu.
+  model and permission switches in the + menu only with technical details
+  on (doc 75 §8); "Full access" always in view.
 - [ ] **V3.4 First run.** The mascot greeting, starters with examples, and an
   in-app "Connect an AI service" sheet (local model if found, or an account
   key), replacing the admin-console hand-off.
@@ -462,3 +463,25 @@ what was not.
   commit was pushed anyway because of a command-chaining mistake; the test
   then passed 3 of 3 in isolation and the full suite passed (460) with
   `--no-fail-fast`. The flake predates this work and is server-side.
+- 2026-09-25: V3.3 done (commit `37efa996`). The message box is one field
+  with three round buttons: + (Attach files, Upload a recording, Folder,
+  Mention a file, Use a skill or command), the mic and send. The separate
+  Attach button and the inline recording upload are gone; a recording
+  chosen from + reaches the voice control through one `vak:voice-recording`
+  event. Listening, processing and speaking take the saffron wash. Model and
+  permission switches show in the + menu only with technical details on, as
+  doc 75 §8's table says; §6.1 said "move to the agent menu", contradicting
+  it, and now follows §8. A "Full access" notice stays beside + whenever the
+  agent may act outside its folder, whatever the setting, and opens
+  Settings at Permissions. Two pre-existing bugs fixed on the way: the
+  toolbar's `overflow-x: auto` and the box's `overflow: hidden` clipped the
+  + menu, so it never showed; and the web app never loaded `/health`
+  (`loadHealth` returned early on the web's empty same-origin base), so the
+  browser never knew the permission mode or model. The review workspace had
+  been in Full access with auto-approve and the web app showed nothing.
+  Checked live at 1440 (light and dark) and 390: the three buttons are 34px
+  circles, the menu shows its five items, nothing overlaps, no sideways
+  scroll; the notice is 13px at 5.6:1 (light) and 5.5:1 (dark). Evidence:
+  `after/V3.3-*`. Seen for later: an older revision request still shows as a
+  raw user message carrying a comment id (check under V3.6), and a small
+  dash sits at the left edge of the phone conversation (check under V3.10).
