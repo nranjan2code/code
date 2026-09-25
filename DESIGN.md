@@ -25,7 +25,7 @@ colors:
   dark-ink: "#ECEBF5"
   dark-ink-2: "#BDBFD3"
   dark-ink-3: "#9295AE"
-  dark-primary: "#4B59C9"
+  dark-primary: "#A3ADF7"
   dark-link: "#A3ADF7"
 typography:
   hero:
@@ -178,10 +178,11 @@ The complete palette is in the front matter. Every text pair clears WCAG AA
 - **Surface** (`#FFFFFF`, dark `#171A2B`): cards, sheets, the message box.
 - **Ink** (`#1B1E36`, dark `#ECEBF5`), **ink-2** and **ink-3**: text, in three
   steps. Ink-3 is the quietest text allowed, including placeholders.
-- **Primary** (`#2F3C94`, dark `#4B59C9`): buttons and selection, with white
-  text. **Link** (`#2F3C94`, dark `#A3ADF7`): links and text buttons.
+- **Primary** (`#2F3C94`, dark `#A3ADF7`): buttons, links and selection. Text
+  on it is white in light and dark ink (`#0F1120`) in dark, where the
+  primary lightens so one token serves as both fill and link.
 - **Saffron** (`#F5A400`): the one accent. **Saffron-ink** (`#8A5300`) when
-  text must carry it.
+  text must carry it. The stylesheet names them `--live` and `--live-ink`.
 - **Success** and **danger**: state only, always with an icon and a word.
 
 ### Named rules

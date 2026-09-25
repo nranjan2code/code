@@ -8,7 +8,7 @@ function getMermaidTheme(): "dark" | "neutral" | "base" | "default" {
   const theme = uiPreferences.theme === "system"
     ? (typeof window !== "undefined" && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
     : uiPreferences.theme;
-  if (theme === "light" || theme === "sage" || theme === "paper") return "neutral";
+  if (theme === "light") return "neutral";
   if (theme === "contrast") return "base";
   return "dark";
 }
@@ -49,13 +49,13 @@ export default function MermaidViewer(props: { source: string; title?: string })
           lineColor: "#ffffff",
           background: "#080808",
         } : {
-          primaryColor: "#22221f",
-          primaryTextColor: "#eeeae2",
-          primaryBorderColor: "#41413b",
-          lineColor: "#df795f",
-          secondaryColor: "#292925",
-          tertiaryColor: "#1c1c19",
-          background: "#171714",
+          primaryColor: "#1e2236",
+          primaryTextColor: "#ecebf5",
+          primaryBorderColor: "#3d4466",
+          lineColor: "#a3adf7",
+          secondaryColor: "#252a40",
+          tertiaryColor: "#171a2b",
+          background: "#0f1120",
         },
       });
 

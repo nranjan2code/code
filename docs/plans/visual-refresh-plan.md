@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-and V2.3 done. V2.2, V2.4 onward, V3 and V4.2 to V4.5 remain unstarted.**
+to V2.3 done. V2.4 onward, V3 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -179,7 +179,7 @@ Paths are relative to `crates/vak-client-ui/src` unless they start with
 - [x] **V2.1 `DESIGN.md` rewrite.** The new north star (working name: the
   Good Listener), the rules kept from today (doc 75 §5.8), the changes (doc
   75 §5.9), and the Ink and Saffron tokens. The Auditor's Desk sections go.
-- [ ] **V2.2 Token layer.** Light, Dark and High contrast as Ink and Saffron
+- [x] **V2.2 Token layer.** Light, Dark and High contrast as Ink and Saffron
   (doc 75 §5.1); the type scale, spacing, radius and motion as tokens. The old
   `:root` palette, the seven `data-theme` blocks and the Settings theme grid
   are replaced in the same change; the five retired palettes' previews go.
@@ -362,3 +362,18 @@ what was not.
   (checked in `dist/`). Evidence: `after/V2.3-*`. `cargo test -p
   vak-server`: 33 binaries, 460 tests, all pass (this run also covers the
   V1 bundle; the V1 entry's count was taken from a truncated summary).
+- 2026-09-25: V2.2 done. `:root` is now the Ink and Saffron light palette,
+  `dark` is indigo night and `contrast` is rebuilt; the Warm dark, Sage,
+  Paper, Mist and Dawn palettes, their previews and their selectors are
+  gone, and a stored retired theme resolves to Match system. New tokens:
+  `--live` (saffron) and its wash and ink, type sizes, spacing, radius
+  (8/12/16), motion and `--shadow-float`. Running dots, voice capture and
+  the approval card use saffron. 50 old-palette rgba literals became token
+  mixes; the terminal and diagram colour maps follow indigo night. In dark
+  the primary is `#A3ADF7` with dark text, so one token serves as fill and
+  link (DESIGN.md and doc 75 updated). Computed contrast: every text token
+  on every ground passes AA (lowest 4.73 light, 5.27 dark, 6.24 contrast).
+  Checked live: each theme's ground, text, accent and live colour; the
+  retired-id fallback; four theme choices; no sideways scroll at 390.
+  Evidence: `after/V2.2-*`. Not done here: rules still use literal sizes
+  (V2.4) and other literal hex values remain outside the tokens (V2.8).

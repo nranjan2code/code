@@ -672,7 +672,7 @@ export interface UiPreferences {
   /** "system" follows the OS/browser, which is the only sane default for
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
-  theme: "system" | "light" | "warm" | "dark" | "contrast" | "sage" | "paper" | "mist" | "dawn";
+  theme: "system" | "light" | "dark" | "contrast";
   textScale: number;
   codeScale: number;
   compactSidebar: boolean;
@@ -716,7 +716,10 @@ const defaultUiPreferences: UiPreferences = {
 
 function loadUiPreferences(): UiPreferences {
   try {
-    return { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
+    const stored: UiPreferences = { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
+    // A theme that no longer exists resolves to Match system (DESIGN.md).
+    if (!["system", "light", "dark", "contrast"].includes(stored.theme)) stored.theme = "system";
+    return stored;
   } catch {
     return defaultUiPreferences;
   }
