@@ -528,10 +528,33 @@ const DRAFT_REPEAT_ACK: &str = "Already drafted: this exact call ran earlier in 
 /// person with its change list and an imitation of it is not.
 const WITHHELD_CARD_ACK: &str = "Not shown:";
 
+/// The start of the result for a shell command that would copy a file this
+/// run delivered for review out of `.vak/scratch/`: it is not run, because
+/// the draft reaches the workspace only when the person accepts it.
+const DRAFT_COPY_REFUSED: &str = "Not run:";
+
 fn is_no_op_ack(text: &str) -> bool {
     text.starts_with(CARD_REPEAT_ACK)
         || text.starts_with(DRAFT_REPEAT_ACK)
         || text.starts_with(WITHHELD_CARD_ACK)
+        || text.starts_with(DRAFT_COPY_REFUSED)
+}
+
+/// The delivered path a shell command reaches into `.vak/scratch/` for, by
+/// the draft's file name.
+fn copies_delivered_draft<'a>(
+    command: &str,
+    delivered: impl IntoIterator<Item = &'a String>,
+) -> Option<&'a String> {
+    if !command.contains(".vak/scratch/") {
+        return None;
+    }
+    delivered.into_iter().find(|path| {
+        std::path::Path::new(path.trim())
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| command.contains(name))
+    })
 }
 
 /// What calls delivered this run (`Tool::delivered_file`), reset per run.
@@ -4901,6 +4924,18 @@ impl Agent {
                     continue;
                 }
                 live_deliveries.insert(call.id.clone(), (delivery_key, path));
+            }
+            if vak_tools::canonical_tool_name(&call.name) == "bash"
+                && let Some(command) = call.input.get("command").and_then(Value::as_str)
+                && let Some(delivered) = copies_delivered_draft(command, &deliveries.paths).cloned()
+            {
+                answered.push((
+                    call.id.clone(),
+                    ToolRunOutput::Ok(format!(
+                        "{DRAFT_COPY_REFUSED} {delivered} is a draft waiting for the person's review, and copying it out of .vak/scratch/ would skip that review. It reaches the workspace when they accept it. Answer with one sentence saying what you changed."
+                    )),
+                ));
+                continue;
             }
             if self.tool_presents_cards(&call.name)
                 && let Some(path) = call

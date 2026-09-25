@@ -242,3 +242,32 @@ fn a_cell_on_a_sheet_whose_name_needs_quotes_is_anchored_as_the_reader_anchors_i
         "the reader uses the same anchor"
     );
 }
+
+#[test]
+fn a_changed_input_reports_the_formulas_left_showing_old_values() {
+    let before = fixtures::xlsx();
+    let after = edited(
+        &before,
+        vec![OfficeOp::SetCells {
+            sheet: "budget".into(),
+            cells: BTreeMap::from([("B2".to_string(), CellValue::Number(150.0))]),
+        }],
+    );
+    let impacts = impact(Some(&project(&before)), &project(&after));
+    let recalculation = impacts
+        .iter()
+        .find(|impact| impact.kind == ImpactKind::Recalculation)
+        .expect("the stale formula is reported");
+    assert!(
+        recalculation.message.contains("B4"),
+        "{}",
+        recalculation.message
+    );
+    assert!(!recalculation.warning, "stale values weaken no protection");
+    assert!(
+        impact(Some(&project(&after)), &project(&after))
+            .iter()
+            .all(|impact| impact.kind != ImpactKind::Recalculation),
+        "a formula already stale before the change is not news"
+    );
+}

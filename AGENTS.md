@@ -81,9 +81,10 @@ Read before changing behaviour in these areas:
   (by 61), `62-universal-delegation-experience.md` and
   `62-universal-delegation-prototype.md` (by 64),
   `63-agent-first-conversations.md` (by 64).
+- **Office documents** — `72-openxml-documents.md` (the file-in, cite,
+  redline, review, file-out loop is shipped; its ledger lists what is
+  deferred and why).
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
-  `72-openxml-documents.md` (Office documents: the file-in, cite, redline,
-  review, file-out loop and its ledger; P0 and part of P1 are built),
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture
   refactor; see "Pending" below),
@@ -834,7 +835,10 @@ session starts one unasked.
     is written. `office_apply` never writes the workspace file: its result is
     a draft in its execution's `.vak/scratch/` directory, and the one Review
     path (candidate, worker verification, semantic diff, atomic promotion
-    with undo) is how a change reaches the workspace. A Word edit to an existing document
+    with undo) is how a change reaches the workspace. The agent loop refuses
+    a shell command that names a draft the turn delivered for review, and no
+    command or script is the way to change an Office file; FullAccess can
+    still do it, which is what FullAccess means (invariant 13). A Word edit to an existing document
     is a tracked change authored by the runtime's Agent id, never a name the
     model supplies. A changed Excel input or formula sets `fullCalcOnLoad`,
     and cached values read as stale until Excel recalculates. An op never

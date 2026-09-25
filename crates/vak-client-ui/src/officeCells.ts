@@ -39,3 +39,15 @@ export function columnName(column: number): string {
   }
   return name;
 }
+
+/** "B2" or "B2:D9" → its corners, first above-left of last; null otherwise. */
+export function cellRange(cells: string): { first: { column: number; row: number }; last: { column: number; row: number } } | null {
+  const [from, to = from] = cells.trim().split(":");
+  const a = cellAddress(from);
+  const b = cellAddress(to);
+  if (!a || !b) return null;
+  return {
+    first: { column: Math.min(a.column, b.column), row: Math.min(a.row, b.row) },
+    last: { column: Math.max(a.column, b.column), row: Math.max(a.row, b.row) },
+  };
+}

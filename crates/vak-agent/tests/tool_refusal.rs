@@ -304,6 +304,32 @@ impl vak_tools::Tool for Deliverer {
 }
 
 #[derive(Default)]
+struct Shell {
+    runs: AtomicUsize,
+}
+
+#[async_trait]
+impl vak_tools::Tool for Shell {
+    fn name(&self) -> &str {
+        "bash"
+    }
+    fn description(&self) -> &str {
+        "test stand-in"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({"type": "object"})
+    }
+    async fn execute(
+        &self,
+        _args: &serde_json::Value,
+        _ctx: &vak_tools::context::ToolContext,
+    ) -> vak_tools::ToolOutput {
+        self.runs.fetch_add(1, Ordering::SeqCst);
+        vak_tools::ToolOutput::ok("ran")
+    }
+}
+
+#[derive(Default)]
 struct PreviewCard {
     runs: AtomicUsize,
 }
@@ -481,12 +507,13 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
         ..Default::default()
     });
     let cards = Arc::new(PreviewCard::default());
+    let shell = Arc::new(Shell::default());
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
-    cfg.mode = Mode::WorkspaceWrite;
+    cfg.mode = Mode::FullAccess;
     cfg.retry_base_backoff_ms = 1;
     cfg.run_retry_base_backoff_ms = 1;
-    cfg.tools = vec![drafts.clone(), cards.clone()];
+    cfg.tools = vec![drafts.clone(), cards.clone(), shell.clone()];
     let slide = serde_json::json!({"path": "deck.pptx", "ops": [{"op": "add_slide_from_layout"}]});
     let script = VecDeque::from([
         tool_call("c1", "make_draft", slide.clone()),
@@ -494,6 +521,16 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
             "c2",
             "emit_ui_preview_card",
             serde_json::json!({"payload": {"artifact_path": "./deck.pptx", "html": "<h1>Next steps</h1>"}}),
+        ),
+        tool_call(
+            "c4",
+            "bash",
+            serde_json::json!({"command": "cp .vak/scratch/vak/c1/deck.pptx ./deck.pptx"}),
+        ),
+        tool_call(
+            "c5",
+            "bash",
+            serde_json::json!({"command": "ls .vak/scratch"}),
         ),
         tool_call("c3", "make_draft", slide),
         msg(
@@ -554,5 +591,14 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
     assert!(
         result("c3").contains("Already drafted") && result("c3").contains("Draft for deck.pptx"),
         "{results:?}"
+    );
+    assert!(
+        result("c4").contains("Not run: deck.pptx is a draft waiting for the person's review"),
+        "copying the draft out of scratch is refused even in FullAccess: {results:?}"
+    );
+    assert_eq!(
+        shell.runs.load(Ordering::SeqCst),
+        1,
+        "only the command that does not name the draft ran"
     );
 }

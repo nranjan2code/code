@@ -1034,7 +1034,7 @@ export type OfficeChoice = {
 
 /** What accepting does beyond the visible changes: to digital signatures
  *  and sensitivity labels. `warning` when it removes or weakens one. */
-export type OfficeImpact = { kind: "signature" | "label"; message: string; warning: boolean };
+export type OfficeImpact = { kind: "signature" | "label" | "recalculation"; message: string; warning: boolean };
 
 export type OfficeReview = {
   path: string;

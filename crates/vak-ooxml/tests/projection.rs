@@ -190,3 +190,31 @@ fn a_citation_finds_the_unit_it_names() {
     assert!(deck.units[located].anchor.starts_with(slide_anchor));
     assert!(located <= slide);
 }
+
+#[test]
+fn a_cited_page_opens_at_the_start_of_its_section() {
+    let workbook = read_bytes(&fixtures::xlsx());
+    let rows: Vec<usize> = workbook
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| unit.kind == read::UnitKind::SheetRow)
+        .map(|(index, _)| index)
+        .collect();
+    let cited = rows[1];
+    let sheet = workbook
+        .sections
+        .iter()
+        .find(|section| section.units.contains(&cited))
+        .unwrap();
+    assert_eq!(
+        projection::page_start(&workbook, cited, PAGE_BYTES),
+        sheet.units.start,
+        "a cited row opens with its sheet's first row, the header"
+    );
+    assert_eq!(
+        projection::page_start(&workbook, cited, 1),
+        cited,
+        "when the section does not fit, the page starts at the citation"
+    );
+}

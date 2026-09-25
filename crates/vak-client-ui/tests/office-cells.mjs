@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cellAddress, columnName, parseCell } from "../src/officeCells.ts";
+import { cellAddress, cellRange, columnName, parseCell } from "../src/officeCells.ts";
 
 assert.deepEqual(parseCell("150"), { shown: "150", formula: null, stale: false, notCalculated: false });
 assert.deepEqual(parseCell("=SUM(B2:B4) [cached: 1950, stale until recalculated]"), { shown: "1950", formula: "=SUM(B2:B4)", stale: true, notCalculated: false });
@@ -14,4 +14,8 @@ assert.equal(columnName(1), "A");
 assert.equal(columnName(26), "Z");
 assert.equal(columnName(27), "AA");
 assert.equal(columnName(703), "AAA");
+assert.deepEqual(cellRange("B2:C5"), { first: { column: 2, row: 2 }, last: { column: 3, row: 5 } });
+assert.deepEqual(cellRange("C5:B2"), { first: { column: 2, row: 2 }, last: { column: 3, row: 5 } }, "corners in either order");
+assert.deepEqual(cellRange("D7"), { first: { column: 4, row: 7 }, last: { column: 4, row: 7 } });
+assert.equal(cellRange("A2:D"), null);
 console.log("office-cells: ok");

@@ -54,7 +54,7 @@ impl Tool for OfficeApplyTool {
                 },
                 "base_digest": {
                     "type": "string",
-                    "description": "The sha256 value doc_read printed for the source file, proving the ops were written against its current content."
+                    "description": "The sha256 exactly as doc_read printed it for the source file (its first 16 characters, as shown, are enough; never fill in the rest), proving the ops were written against its current content."
                 },
                 "ops": {
                     "type": "array",
@@ -190,7 +190,7 @@ impl Tool for OfficeApplyTool {
                 crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &draft, &root);
                 finish(0, vec![draft_relative.clone()]);
                 ToolOutput::ok(format!(
-                    "Draft for {path} written to {draft_relative}. {path} in the workspace is unchanged until a person reviews and accepts the draft: the draft is already shown to them with Review draft and its change list, so do not present it again as a card, HTML or a diff; answer with one sentence saying what you changed. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
+                    "Draft for {path} written to {draft_relative}. {path} in the workspace is unchanged until a person reviews and accepts the draft: the draft is already shown to them with Review draft and its change list, so do not present it again as a card, HTML or a diff, and never copy, move or rename the draft into the workspace yourself: that would skip the person's review. Answer with one sentence saying what you changed, and stop. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
                 ))
             }
             Ok(Err(error)) => {
@@ -374,7 +374,8 @@ pub(crate) fn apply_checked(
         .to_ascii_lowercase();
     if base_digest.len() < 16 || !digest.starts_with(&base_digest) {
         return Err(format!(
-            "base_digest {base_digest:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
+            "base_digest {base_digest:?} does not match the source (sha256 {}…); the file changed since it was read or the digest was mistyped. Pass the sha256 exactly as the read shows it, `{}…`, without completing it; if the file changed, read it again (doc_read, or `vak office read`) and use the anchors and sha256 from that read",
+            &digest[..16],
             &digest[..16]
         ));
     }

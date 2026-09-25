@@ -1,7 +1,13 @@
 import { For, Show } from "solid-js";
-import type { OfficeChange, OfficeChoice, OfficeReview } from "../api";
+import type { OfficeChange, OfficeChoice, OfficeImpact, OfficeReview } from "../api";
 import Redline from "./OfficeRedline";
 import { kept } from "../officeChoices";
+
+const IMPACT_NAMES: Record<OfficeImpact["kind"], string> = {
+  signature: "Signature",
+  label: "Sensitivity label",
+  recalculation: "Formulas",
+};
 
 // The semantic change list for an Office draft (docs/design/72, P3): what
 // changed, where a person would look for it, before and after, and which
@@ -133,7 +139,7 @@ export default function OfficeChangeList(props: {
         <ul class="office-impact" aria-label="What accepting also does">
           <For each={props.review.impact}>{(impact) => (
             <li classList={{ "office-impact-warning": impact.warning }}>
-              <strong>{impact.kind === "signature" ? "Signature" : "Sensitivity label"}</strong>
+              <strong>{IMPACT_NAMES[impact.kind]}</strong>
               <span>{impact.message}</span>
             </li>
           )}</For>

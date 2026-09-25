@@ -158,6 +158,26 @@ pub fn locate(document: &Document, anchor: &str) -> Option<usize> {
     })
 }
 
+/// Where a page opened at the cited unit `focus` starts: the start of the
+/// innermost section that holds it (a sheet's first row, the heading above
+/// a paragraph, a slide's title), so a citation opens with its context,
+/// when everything from there through the cited unit fits in `budget`;
+/// otherwise the cited unit itself.
+pub fn page_start(document: &Document, focus: usize, budget: usize) -> usize {
+    if focus >= document.units.len() {
+        return focus;
+    }
+    let start = document
+        .sections
+        .iter()
+        .filter(|section| section.units.contains(&focus))
+        .map(|section| section.units.start)
+        .max()
+        .unwrap_or(focus);
+    let span: usize = document.units[start..=focus].iter().map(weight).sum();
+    if span <= budget { start } else { focus }
+}
+
 /// Roughly what a unit costs once serialised.
 fn weight(unit: &Unit) -> usize {
     64 + unit.anchor.len()

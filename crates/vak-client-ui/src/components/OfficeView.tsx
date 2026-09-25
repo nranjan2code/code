@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import * as api from "../api";
 import Redline from "./OfficeRedline";
-import { cellAddress, columnName, parseCell } from "../officeCells";
+import { cellAddress, cellRange, columnName, parseCell } from "../officeCells";
 
 // The Canvas views of an Office file (docs/design/72, P4, U1–U4): a
 // Document, Workbook or Deck view of the reader's own projection, and the
@@ -71,7 +71,8 @@ export default function OfficeView(props: {
       if (replace) setWindowStart(page.from);
       setNext(page.next);
       if (at) {
-        if (page.focus) select(page.focus);
+        // A workbook citation names cells; select those, not the whole row.
+        if (page.focus) select(page.vocabulary === "excel" && cellRange(at.slice(at.lastIndexOf("!") + 1)) ? at.trim() : page.focus);
         else setError(`${props.fileName} has no place ${at}; it may have changed since it was cited.`);
       }
       const target = scrollTo ?? page.focus;
@@ -310,7 +311,7 @@ function WorkbookGrid(props: {
   });
   const grid = createMemo(() => {
     let maxColumn = 0;
-    const byRow: { number: number; labels: string[]; cells: Map<number, string> }[] = [];
+    const byRow: { number: number; anchor: string; labels: string[]; cells: Map<number, string> }[] = [];
     for (const row of rows()) {
       const cells = new Map<number, string>();
       let number = 0;
@@ -321,19 +322,26 @@ function WorkbookGrid(props: {
         cells.set(at.column, value);
         maxColumn = Math.max(maxColumn, at.column);
       }
-      if (number > 0) byRow.push({ number, labels: row.labels, cells });
+      if (number > 0) byRow.push({ number, anchor: row.anchor, labels: row.labels, cells });
     }
     return { columns: Array.from({ length: maxColumn }, (_, index) => index + 1), rows: byRow };
   });
-  const selectedCell = () => {
+  const selectedRange = () => {
     const entry = current();
     const anchor = props.selected;
     if (!entry || !anchor || !anchor.startsWith(entry.anchor)) return null;
-    const address = anchor.slice(entry.anchor.length);
-    const at = cellAddress(address);
-    if (!at) return null;
-    const value = grid().rows.find((row) => row.number === at.row)?.cells.get(at.column) ?? "";
+    return cellRange(anchor.slice(entry.anchor.length));
+  };
+  const selectedCell = () => {
+    const range = selectedRange();
+    if (!range) return null;
+    const address = `${columnName(range.first.column)}${range.first.row}`;
+    const value = grid().rows.find((row) => row.number === range.first.row)?.cells.get(range.first.column) ?? "";
     return { address, cell: parseCell(value) };
+  };
+  const inSelection = (column: number, row: number) => {
+    const range = selectedRange();
+    return Boolean(range && column >= range.first.column && column <= range.last.column && row >= range.first.row && row <= range.last.row);
   };
   const choose = (entry: api.OfficeOutlineEntry) => {
     setSheet(entry);
@@ -362,18 +370,20 @@ function WorkbookGrid(props: {
             </thead>
             <tbody>
               <For each={grid().rows}>{(row) => (
-                <tr classList={{ "office-grid-flagged": row.labels.length > 0 }} title={row.labels.join(", ") || undefined}>
+                <tr id={unitId(row.anchor)} classList={{ "office-grid-flagged": row.labels.length > 0 }} title={row.labels.join(", ") || undefined}>
                   <th scope="row">{row.number}</th>
                   <For each={grid().columns}>{(column) => {
                     const value = row.cells.get(column);
                     const address = `${columnName(column)}${row.number}`;
                     const anchor = () => `${current()?.anchor ?? ""}${address}`;
                     const cell = value === undefined ? null : parseCell(value);
+                    const shown = cell ? (cell.notCalculated && cell.formula ? cell.formula : cell.shown) : "";
                     return (
                       <td
                         tabIndex={value === undefined ? -1 : 0}
-                        classList={{ selected: props.selected === anchor(), stale: Boolean(cell?.stale), formula: Boolean(cell?.formula) }}
-                        aria-label={value === undefined ? undefined : `${address}: ${cell?.shown ?? ""}`}
+                        classList={{ selected: props.selected === anchor() || inSelection(column, row.number), stale: Boolean(cell?.stale), formula: Boolean(cell?.formula) }}
+                        title={cell?.notCalculated ? "Not calculated yet: Excel works this out when it opens the file" : undefined}
+                        aria-label={value === undefined ? undefined : `${address}: ${shown}`}
                         onClick={() => value !== undefined && props.select(props.selected === anchor() ? null : anchor())}
                         onKeyDown={(event) => {
                           if (value !== undefined && (event.key === "Enter" || event.key === " ")) {
@@ -381,7 +391,7 @@ function WorkbookGrid(props: {
                             props.select(anchor());
                           }
                         }}
-                      >{cell?.shown ?? ""}</td>
+                      >{shown}</td>
                     );
                   }}</For>
                 </tr>

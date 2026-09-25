@@ -399,11 +399,49 @@ fn slide_titles(before: &Document, after: &Document, changes: &mut Vec<Change>) 
     }
 }
 
+/// Formula cells whose cached value the draft marks stale and `before` did
+/// not, as `Sheet!A1` anchors in document order.
+fn newly_stale_formulas(before: Option<&Document>, after: &Document) -> Vec<String> {
+    const STALE: &str = ", stale until recalculated]";
+    let stale_in = |document: &Document| -> std::collections::HashSet<String> {
+        document
+            .units
+            .iter()
+            .filter(|unit| unit.kind == UnitKind::SheetRow)
+            .flat_map(|unit| {
+                let sheet = unit.anchor.rsplit_once('!').map_or("", |(sheet, _)| sheet);
+                unit.cells
+                    .iter()
+                    .filter(|(_, value)| value.ends_with(STALE))
+                    .map(move |(address, _)| format!("{sheet}!{address}"))
+            })
+            .collect()
+    };
+    let already = before.map(stale_in).unwrap_or_default();
+    let mut stale: Vec<String> = Vec::new();
+    for unit in after
+        .units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::SheetRow)
+    {
+        let sheet = unit.anchor.rsplit_once('!').map_or("", |(sheet, _)| sheet);
+        for (address, value) in &unit.cells {
+            let anchor = format!("{sheet}!{address}");
+            if value.ends_with(STALE) && !already.contains(&anchor) {
+                stale.push(anchor);
+            }
+        }
+    }
+    stale
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ImpactKind {
     Signature,
     Label,
+    /// Formulas whose values in the file predate the change.
+    Recalculation,
 }
 
 /// Something accepting the draft does beyond its visible changes, stated
@@ -418,9 +456,25 @@ pub struct Impact {
 }
 
 /// What accepting `after` in place of `before` (absent for a new file) does
-/// to digital signatures and sensitivity labels.
+/// to digital signatures, sensitivity labels and calculated values.
 pub fn impact(before: Option<&Document>, after: &Document) -> Vec<Impact> {
     let mut impacts = Vec::new();
+    let stale = newly_stale_formulas(before, after);
+    if !stale.is_empty() {
+        let examples: Vec<&str> = stale.iter().take(3).map(String::as_str).collect();
+        impacts.push(Impact {
+            kind: ImpactKind::Recalculation,
+            message: format!(
+                "{} formula{} ({}{}) still show{} values from before these changes. Excel recalculates when it opens the file; until then, anything that shows the saved values, such as a preview, shows old numbers.",
+                stale.len(),
+                if stale.len() == 1 { "" } else { "s" },
+                examples.join(", "),
+                if stale.len() > examples.len() { ", …" } else { "" },
+                if stale.len() == 1 { "s" } else { "" },
+            ),
+            warning: false,
+        });
+    }
     let was_signed = before.is_some_and(|before| before.inspection.signed);
     let signed = after.inspection.signed;
     if was_signed && !signed {

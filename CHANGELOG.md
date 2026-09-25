@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Office documents: the loop is closed.** Asking about, redlining and
+  reviewing Word, Excel and PowerPoint files was run end to end with a real
+  model, and what that turned up is fixed:
+  - A citation opens its file with context: a workbook shows its header
+    row and selects exactly the cited cells; a paragraph shows its heading.
+  - A formula with no calculated value shows its formula instead of an
+    empty cell.
+  - A citation whose sheet name has a space no longer shows raw brackets.
+  - Review says when formulas will show old values until Excel
+    recalculates.
+  - The assistant can no longer copy a draft out of its working folder to
+    skip your review, and it is told that only its Office tool changes an
+    Office file.
+  - It is told that the shortened file fingerprint it was shown is enough,
+    so it stops inventing the rest.
+
+  What is left (templates, macro explanations, a live Telegram round trip)
+  is listed with reasons in doc 72.
 - **Trash means hidden everywhere.** "Delete" on an archived conversation is
   now "Move to trash", and it does what it says: a trashed conversation is
   gone from the sidebar, every search (the assistant's own search of past

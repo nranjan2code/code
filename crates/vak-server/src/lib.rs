@@ -20287,10 +20287,18 @@ mod sandbox_promotion_tests {
         assert_eq!(diff["changes"][0]["before"], "100");
         assert_eq!(diff["changes"][0]["after"], "150");
         assert_eq!(diff["compared_with"], "workspace");
-        assert_eq!(
-            diff["impact"],
-            serde_json::json!([]),
-            "unsigned and unlabelled"
+        let impacts = diff["impact"].as_array().cloned().unwrap_or_default();
+        assert!(
+            impacts
+                .iter()
+                .all(|impact| impact["kind"] == "recalculation"),
+            "unsigned and unlabelled: {diff}"
+        );
+        assert!(
+            impacts.iter().any(|impact| impact["message"]
+                .as_str()
+                .is_some_and(|message| message.contains("Budget!B4"))),
+            "the formula left showing its old value is named: {diff}"
         );
         assert!(diff.get("choices_unavailable").is_none(), "{diff}");
         let ids: Vec<&str> = diff["choices"]
@@ -20511,9 +20519,10 @@ mod sandbox_promotion_tests {
         )
         .await;
         let at = body_json(response).await;
-        assert_eq!(at["from"], 2, "{at}");
+        assert_eq!(at["from"], 1, "the page opens at the cited section: {at}");
         assert_eq!(at["focus"], cited.as_str());
-        assert_eq!(at["units"][0]["anchor"], cited.as_str());
+        assert_eq!(at["units"][0]["text"], "Summary", "{at}");
+        assert_eq!(at["units"][1]["anchor"], cited.as_str());
 
         let response = read("q3.docx", 0, Some("facts")).await;
         assert_eq!(response.status(), StatusCode::OK);

@@ -818,7 +818,15 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
             };
             let from = match &view {
                 OfficeView::Content { from } => *from,
-                OfficeView::At { .. } => focus.unwrap_or(0),
+                OfficeView::At { .. } => focus
+                    .map(|index| {
+                        vak_ooxml::projection::page_start(
+                            &document,
+                            index,
+                            vak_ooxml::projection::PAGE_BYTES,
+                        )
+                    })
+                    .unwrap_or(0),
                 _ => document.units.len(),
             };
             let mut page = serde_json::to_value(vak_ooxml::projection::project(

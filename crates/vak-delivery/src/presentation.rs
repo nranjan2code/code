@@ -494,18 +494,57 @@ impl Node {
     }
 }
 
+/// ``[`X`](X)``, a code span linked to exactly itself, becomes `` `X` ``.
+/// The link adds nothing, and when `X` holds a space (an Office citation
+/// such as `book.xlsx#'Q3 by region'!B2`) it is not a valid link at all and
+/// would otherwise show as raw brackets around the code.
+fn unlink_self_linked_code(source: &str) -> std::borrow::Cow<'_, str> {
+    if !source.contains("[`") {
+        return std::borrow::Cow::Borrowed(source);
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut rest = source;
+    while let Some(start) = rest.find("[`") {
+        out.push_str(&rest[..start]);
+        let candidate = &rest[start + 2..];
+        let collapsed = candidate.find("`](").and_then(|close| {
+            let code = &candidate[..close];
+            let destination = candidate[close + 3..].strip_prefix(code)?;
+            (!code.is_empty() && !code.contains('`') && !code.contains('\n')).then_some(())?;
+            destination
+                .strip_prefix(')')
+                .map(|_| (code, close + 3 + code.len() + 1))
+        });
+        match collapsed {
+            Some((code, consumed)) => {
+                out.push('`');
+                out.push_str(code);
+                out.push('`');
+                rest = &candidate[consumed..];
+            }
+            None => {
+                out.push_str("[`");
+                rest = candidate;
+            }
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 pub fn compile_markdown(source: impl Into<String>) -> PresentationDocument {
     let raw_source = source.into();
     let source_markdown: String = raw_source
         .chars()
         .filter(|c| !('\u{E0000}'..='\u{E007F}').contains(c))
         .collect();
+    let parsed = unlink_self_linked_code(&source_markdown);
     let mut stack = vec![Node::Root(Vec::new())];
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
         | Options::ENABLE_FOOTNOTES;
-    for event in Parser::new_ext(&source_markdown, options) {
+    for event in Parser::new_ext(&parsed, options) {
         match event {
             Event::Start(tag) => stack.push(start_node(tag)),
             Event::End(_) => close_node(&mut stack),
@@ -1036,6 +1075,21 @@ fn safe_media(url: &str) -> bool {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
+
+    #[test]
+    fn a_code_span_linked_to_itself_is_just_the_code_span() {
+        use super::{compile_markdown, unlink_self_linked_code};
+        let source = "West [`book.xlsx#'Q3 by region'!B2:C5`](book.xlsx#'Q3 by region'!B2:C5) and \
+                      [`q3.docx#p@6`](q3.docx#p@6), but [`a`](b) stays a link.";
+        assert_eq!(
+            unlink_self_linked_code(source),
+            "West `book.xlsx#'Q3 by region'!B2:C5` and `q3.docx#p@6`, but [`a`](b) stays a link."
+        );
+        let document = compile_markdown(source);
+        let nodes = serde_json::to_string(&document.blocks).expect("serialises");
+        assert!(!nodes.contains("]("), "{nodes}");
+    }
+
     use super::{
         DocumentBlock, InlineNode, OutputContent, OutputTimeline, PRESENTATION_SCHEMA_VERSION,
         compile_markdown, safe_link,
