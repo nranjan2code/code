@@ -20000,7 +20000,14 @@ mod sandbox_promotion_tests {
         }
     }
 
-    fn seed_bound_result(core: &Core, session_id: &str, execution_id: &str) {
+    /// Returns the still-locked ledger so a caller that appends more keeps
+    /// the one handle: releasing the lock and taking it again races any
+    /// fork a parallel test makes, whose child holds the lock until exec.
+    fn seed_bound_result(
+        core: &Core,
+        session_id: &str,
+        execution_id: &str,
+    ) -> vak_session::SessionLog {
         let path = core
             .sessions_home()
             .join("sessions")
@@ -20051,6 +20058,7 @@ mod sandbox_promotion_tests {
             meta: None,
         })
         .unwrap();
+        log
     }
 
     /// Target verification runs in the broker worker, so a test that
@@ -20110,13 +20118,7 @@ mod sandbox_promotion_tests {
     /// A ledger in which the Agent made `calls` (`office_apply` id and
     /// arguments), each succeeding, then answered.
     fn seed_office_calls(core: &Core, session_id: &str, calls: &[(&str, serde_json::Value)]) {
-        seed_bound_result(core, session_id, "unused");
-        let path = core
-            .sessions_home()
-            .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
-            .join(format!("{session_id}.jsonl"));
-        let mut log = vak_session::SessionLog::open(path).unwrap();
+        let mut log = seed_bound_result(core, session_id, "unused");
         log.append_message(vak_session::types::MessageRecord {
             message: vak_llm::Message::user_text("Update the budget"),
             meta: None,
