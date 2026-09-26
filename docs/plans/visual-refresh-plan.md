@@ -881,3 +881,24 @@ what was not.
   workbench reset; one luna turn made two drafts of the same file, and
   accepting one leaves the other waiting (and primary); Office files show
   their kind, not a page preview.
+- 2026-09-26: Fixed the Canvas that closed itself soon after load (seen in
+  V3.14). On a load of `/app`, `refreshBackend` opens the conversation with
+  `activate`, which sets `#/s/<id>`; `init()` then applies that route and
+  calls `activate` for the same conversation again, and its
+  `resetWorkbenchExecutions()` closed a Canvas opened in between. The reset
+  now takes the conversation being shown and keeps a Canvas opened in that
+  conversation (`openArtifactCanvas` records it: the preview's `sessionId`,
+  else the active one); a reset for a different conversation still closes
+  it. The unused history-clearing argument went with it. Checked live on the
+  review conversation (`/tmp/vak-screen1-live`, dev build on the real home)
+  before and after: before, Open on the draft card opened Canvas and the
+  second `activate` closed it about 3.5 s later with the sidebar left
+  collapsed; after, in headless Chrome at 1440 × 900 and 390 × 844, light and
+  dark (`after/V3.14-canvas-after-load-*`), Open was clicked within 5 ms of
+  the card rendering and Canvas stayed on "Draft preview · Version 2"
+  through a same-conversation `activate` (forced by a route change in every
+  run; the load-time one also landed after the click in two of the four),
+  and a route to another conversation closed it. Not met as written: the card
+  was not on screen until 4.7 to 9.6 s after load on the debug build, so no
+  click could come within 2 s of load. Left as is: the load still attaches and
+  hydrates the conversation twice.

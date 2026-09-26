@@ -425,7 +425,7 @@ export async function activate(id: string) {
   setReplyTarget(null);
   // Do not let execution/artifact state from the previously selected task
   // bleed into this task while its durable sidecar is loading.
-  resetWorkbenchExecutions();
+  resetWorkbenchExecutions(id);
   if (sessions().find((session) => session.session_id === id)?.running) {
     markRunning(id, true);
   }
