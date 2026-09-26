@@ -217,7 +217,7 @@ function OutlineRail(props: { outline: api.OfficeOutlineEntry[]; jump: (entry: a
     <Show when={props.outline.length > 0}>
       <nav class="office-outline" aria-label={props.label}>
         <For each={props.outline}>{(entry) => (
-          <button type="button" style={{ "padding-left": `${8 + Math.max(0, entry.level - 1) * 10}px` }} onClick={() => props.jump(entry)}>{entry.title || entry.anchor}</button>
+          <button type="button" style={{ "--depth": String(Math.max(0, entry.level - 1)) }} onClick={() => props.jump(entry)}>{entry.title || entry.anchor}</button>
         )}</For>
       </nav>
     </Show>
