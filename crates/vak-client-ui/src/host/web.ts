@@ -69,6 +69,11 @@ export const activeHost: Host = {
     return info;
   },
 
+  // The browser draws its own chrome around the page; nothing overlays it.
+  onFullscreenChange(): () => void {
+    return () => {};
+  },
+
   onInfoChanged(handler: (info: BackendInfo) => void): () => void {
     // Host-level changes (a workspace opened in another tab, a failed
     // boot) ride the tab's shared stream rather than being polled.

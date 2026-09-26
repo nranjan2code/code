@@ -1067,3 +1067,21 @@ what was not.
   attribute changed and no scroll movement (before: the greeting rebuilt and
   the skeleton flashed every 10 s); the maintainer confirmed the flicker
   gone. Web: 30 s on a conversation with content, nothing removed.
+- 2026-09-26: V4.3 in progress (not ticked). The desktop window uses an
+  overlay title bar (`titleBarStyle: Overlay`, `hiddenTitle`,
+  `trafficLightPosition` 18,22 in `crates/vak-desktop/tauri.conf.json`), and
+  `core:window:allow-start-dragging` is granted for the drag regions. The
+  shell reports `window_chrome` (`overlay` on macOS, `native` elsewhere) in
+  `backend_info`, and the client sets `data-chrome="overlay"` on the root
+  unless the window is in full screen (`Host::onFullscreenChange`; the web
+  host reports nothing). With it set, the sidebar and Settings keep a 34px
+  draggable strip above their content for the window controls (so does a
+  Settings page on a phone-width window), a header that reaches the left
+  edge (sidebar hidden, or a narrow window) starts 76px further in, and the
+  sidebar head and header are drag regions. Checked in the browser with the
+  attribute forced and the controls drawn in their place, at 1440 and 390,
+  light and dark (`after/V4.3-simulated-*`): the controls sit in the strip
+  above the wordmark, clear of the header with the sidebar hidden, and
+  above "Back to Vakyartha" in Settings. The desktop app ran with it (the
+  maintainer moved the window); still to confirm in the running app: drag,
+  double-click to zoom, full screen and the controls' exact position.

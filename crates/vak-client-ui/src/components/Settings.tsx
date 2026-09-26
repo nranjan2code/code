@@ -1201,6 +1201,7 @@ export default function Settings() {
   return (
     <div ref={settingsRoot} class="settings-shell" data-phone-view={phoneView()} role="dialog" aria-modal="true" aria-label="Settings" use:trapFocus>
       <aside class="settings-nav">
+        <div class="window-drag-strip" data-tauri-drag-region aria-hidden="true" />
         <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vakyartha</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <Show when={pageGroups().length > 0 || agentEntries().length > 0} fallback={<div class="settings-no-results">No matching settings</div>}>
@@ -1218,6 +1219,7 @@ export default function Settings() {
       </aside>
 
       <main ref={settingsMain} class="settings-main">
+        <div class="window-drag-strip settings-main-strip" data-tauri-drag-region aria-hidden="true" />
         <div class="settings-content">
           <button type="button" class="settings-page-back" onClick={() => setPhoneView("list")}><Icon name="chevron" /><span>Settings</span></button>
           <Show when={voiceProviders.error || presentationLibrary.error || promptLayer.error || promptEffective.error}>

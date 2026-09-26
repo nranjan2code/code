@@ -64,7 +64,8 @@ export default function Sidebar() {
 
   return (
     <aside class="sidebar">
-      <div class="sb-head">
+      <div class="window-drag-strip" data-tauri-drag-region aria-hidden="true" />
+      <div class="sb-head" data-tauri-drag-region>
         <div class="brand" aria-label="Vakyartha">
           <span class="brand-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></span>
           <span>Vakyartha</span>

@@ -97,6 +97,9 @@
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
+  /* Room for window controls drawn over the page (data-chrome="overlay"). */
+  --titlebar-inset: 0px;
+  --titlebar-lead: 0px;
   --ease: cubic-bezier(0.2, 0, 0, 1);
   --dur-fast: 120ms;
   --dur: 200ms;
@@ -272,6 +275,15 @@ code, pre, kbd { font-family: var(--mono); }
 @keyframes pulse { 50% { opacity: .55; } }
 
 /* Sidebar */
+/* The macOS desktop shell draws the window controls over the top-left of
+ * the page: the sidebar and Settings keep a draggable strip above their
+ * content for them, and a header that reaches the left edge starts after
+ * them. In full screen the attribute goes and so does the room. */
+:root[data-chrome="overlay"] { --titlebar-inset: 34px; --titlebar-lead: 76px; }
+.window-drag-strip { flex: none; height: var(--titlebar-inset); }
+.app.sidebar-collapsed .workspace-head { padding-left: calc(18px + var(--titlebar-lead)); }
+/* A Settings page reaches the top-left only on a phone-width window. */
+.settings-main-strip { display: none; }
 .sidebar { grid-area: sidebar; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-soft); background: color-mix(in srgb, var(--sidebar) 78%, var(--bg)); border-color: transparent; border-right-color: color-mix(in srgb, var(--border) 42%, transparent); }
 
 .sb-head-actions { display: flex; align-items: center; gap: 1px; }
@@ -2620,6 +2632,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
   .settings-nav { flex: 1; min-height: 0; padding: var(--space-3) 10px 10px; overflow-y: auto; border-right: 0; }
   .settings-shell[data-phone-view="page"] .settings-nav { display: none; }
   .settings-shell[data-phone-view="list"] .settings-main { display: none; }
+  .settings-shell[data-phone-view="page"] .settings-main-strip { display: block; }
   .settings-page-back { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; margin: 0 0 var(--space-4) -8px; padding: 6px var(--space-2); border-radius: 8px; color: var(--muted); font-size: var(--fs-ui); }
   .settings-page-back .icon { transform: rotate(180deg); }
   .settings-content > header.agent-settings-header { flex-direction: column; gap: var(--space-3); }

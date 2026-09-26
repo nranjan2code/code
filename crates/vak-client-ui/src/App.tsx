@@ -1233,6 +1233,17 @@ export default function App() {
     if (backend().ready) void loadHealth();
   });
 
+  // Where the window controls overlay the page (the macOS desktop shell),
+  // `data-chrome="overlay"` makes the sidebar, header and Settings leave
+  // room for them, except in full screen, where the system hides them.
+  const [fullscreen, setFullscreen] = createSignal(false);
+  onMount(() => onCleanup(host.onFullscreenChange(setFullscreen)));
+  createEffect(() => {
+    const overlay = backend().window_chrome === "overlay" && !fullscreen();
+    if (overlay) document.documentElement.dataset.chrome = "overlay";
+    else delete document.documentElement.dataset.chrome;
+  });
+
   // "system" is resolved here rather than in CSS so one attribute always
   // names the palette actually in force — every rule, and anything reading
   // a token out of the DOM (the terminal's theme, for one), sees the same
