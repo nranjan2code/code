@@ -31,6 +31,8 @@ import {
   setUsageFor,
   hydrateFromTranscript,
   hydrateFromPresentation,
+  itemsOf,
+  presentationOf,
   hydrateWorkbenchExecutions,
   setWorkbenchLoadError,
   resetWorkbenchExecutions,
@@ -230,6 +232,12 @@ async function settledTranscript(id: string): ReturnType<typeof api.transcript> 
   throw new Error("Transcript is not ready");
 }
 
+/** What `hydrate` last applied per conversation. The session heartbeat
+ * re-reads every visible settled conversation every 10 s; applying an
+ * identical read rebuilt every turn (and reloaded every result preview),
+ * which read as the page refreshing. */
+const lastHydrated = new Map<string, string>();
+
 async function hydrate(id: string) {
   setHydratingId(id);
   try {
@@ -244,6 +252,10 @@ async function hydrate(id: string) {
       }),
       api.sandboxExecutions(id).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) })),
     ]);
+    const read = JSON.stringify([t ?? null, presentation ?? null, sandbox]);
+    const unchanged = lastHydrated.get(id) === read && itemsOf(id).length > 0 && (!presentation || presentationOf(id) !== null);
+    if (unchanged) return;
+    lastHydrated.set(id, read);
     if (!isRunning(id) && t) {
       hydrateFromTranscript(id, t.messages, t.entries);
       if (presentation) hydrateFromPresentation(id, presentation);

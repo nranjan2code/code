@@ -24,7 +24,13 @@ export default function Sidebar() {
     const refresh = async () => {
       try {
         const result = await api.listAgents();
-        if (!disposed && cwd === backend().cwd) { setAgents(result.agents); setError(""); setLoaded(true); }
+        if (!disposed && cwd === backend().cwd) {
+          // A new list with the same agents would rebuild every row (and
+          // redraw every character) on each 10 s refresh.
+          if (!loaded() || JSON.stringify(result.agents) !== JSON.stringify(agents())) setAgents(result.agents);
+          setError("");
+          setLoaded(true);
+        }
       } catch (e) { if (!disposed) { setError(e instanceof Error ? e.message : String(e)); setLoaded(true); } }
     };
     void refresh();

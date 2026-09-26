@@ -1037,3 +1037,19 @@ what was not.
   no PNG is requested, and the page's character art is 104 KB at ratio 1 and
   181 KB at ratio 2 (the same two characters' sources were 1.9 MB); the art
   stays sharp. Not checked: the desktop shell, which ships the same `dist/`.
+- 2026-09-26: Fixed the flicker the maintainer saw in the desktop and web
+  apps. The session heartbeat re-reads every visible settled conversation
+  every 10 s (so an owner sees a coworker's messages), and applying that
+  read replaced every transcript item, so every turn was rebuilt; since
+  V3.14 each file result holds a preview frame, which reloaded each time and
+  read as the page refreshing. The sidebar's 10 s agents refresh also
+  rebuilt every agent row and character. `hydrate` now skips a read
+  identical to the last one it applied for that conversation, and the
+  sidebar keeps its list when the agents are unchanged; a real change (a new
+  message, an accepted draft) still applies. Measured live on the review
+  conversation over 30 s at 1440 light and 390 dark, with a mutation
+  observer: before, 6 turns and 6 result cards were rebuilt, 3 preview
+  frames reloaded and their files were fetched again; after, no element was
+  removed and no frame reloaded, while the heartbeat still asked the server
+  for changes. Not checked in the desktop shell itself (it runs the same
+  bundle).
