@@ -290,7 +290,21 @@ fn managed_run_component(value: &str) -> String {
 
 pub const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_SYSTEM_PROMPT: &str = include_str!("system-prompt.md");
-const TASK_COPY_TOOLS: &[&str] = &["read", "glob", "grep", "ls", "write", "edit", "bash"];
+/// The file tools of a task copy. `doc_read` and `office_apply` are how an
+/// Office file is read and changed at all (`read`, `write` and `edit` refuse
+/// a package); both run in the worker, confined to the copy, and
+/// `office_apply` writes only a draft under the copy's `.vak/scratch/`.
+const TASK_COPY_TOOLS: &[&str] = &[
+    "read",
+    "glob",
+    "grep",
+    "ls",
+    "write",
+    "edit",
+    "bash",
+    "doc_read",
+    "office_apply",
+];
 
 /// Re-exported so consumers (and tests) can name config types via vak_core.
 pub use vak_config;

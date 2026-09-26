@@ -133,8 +133,8 @@ impl Tool for OfficeApplyTool {
                 "{path} is inside .vak; name the workspace file the draft is for, and pass an earlier draft as source"
             ));
         }
-        let agent = ctx.agent_id.clone().unwrap_or_else(|| "vak".into());
-        let author = tracked_change_author(&agent);
+        let agent = ctx.agent_id.as_deref();
+        let author = tracked_change_author(agent.unwrap_or(DEFAULT_AGENT));
         let now = chrono::Utc::now();
         let date = now.format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let execution = ctx
@@ -142,11 +142,7 @@ impl Tool for OfficeApplyTool {
             .as_ref()
             .map(|sink| sink.execution_id().to_string())
             .unwrap_or_else(|| format!("office-{}", now.timestamp_nanos_opt().unwrap_or(0)));
-        let draft_root = root
-            .join(".vak")
-            .join("scratch")
-            .join(&agent)
-            .join(&execution);
+        let draft_root = root.join(draft_dir(agent, &execution));
         let draft = draft_root.join(&relative);
         let draft_relative = draft
             .strip_prefix(&root)
@@ -231,6 +227,21 @@ pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
             "{display} is {what}, a ZIP package that {tool} would corrupt; nothing was changed. Read it with doc_read, then change it with office_apply, which writes a draft for review."
         ),
     })
+}
+
+/// The Agent a draft is filed under when the session names none.
+const DEFAULT_AGENT: &str = "vak";
+
+/// Where one execution's drafts live, relative to the workspace root:
+/// `.vak/scratch/<agent>/<execution>/`, the draft of a file keeping the
+/// file's workspace path beneath it. The execution is the `office_apply`
+/// call's id and the agent is the session's Agent id, so the ledger alone
+/// locates every draft a session delivered.
+pub fn draft_dir(agent_id: Option<&str>, execution: &str) -> PathBuf {
+    Path::new(".vak")
+        .join("scratch")
+        .join(agent_id.unwrap_or(DEFAULT_AGENT))
+        .join(execution)
 }
 
 /// The name Word shows on an Agent's tracked changes: the runtime's Agent
