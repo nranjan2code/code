@@ -573,6 +573,16 @@ fixes:
 * `RESOLVER_VERSION` stayed at 1 through eleven lexicon changes. Pinned.
 * The misread ledger scanned the whole session for escalations. Scoped.
 
+Resolver version 4 (2026-09-26): `live` is read by sense. The verb "reside"
+("we live in the city", "my kids live with me", every `lives`/`lived`/
+`living`) votes for nothing; the adjective ("a live score", "is it live", "go
+live") still votes `live-data` and irreversible stakes. The sense comes from
+the neighbouring words only — a subject or auxiliary before it, or a
+residence preposition after it unless a copula or "go" precedes — so it stays
+deterministic and names no topic. Measured live before the fix: a weekend-
+planning request containing "we live in the city" set `live-data`, the
+freshness check refused its plan card, and the person got no plan.
+
 ## Verification
 
 `cargo test -p vak-intent -p vak-commit` covers axis algebra, the cascade, the
