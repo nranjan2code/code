@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, lazy, onCleanup, onMount, Show, For, Suspense } from "solid-js";
 import { host } from "./host";
+import { interfaceFonts, contentFonts, codeFonts } from "./typography";
 import { watchSession, watchStatus } from "./streamHub";
 import {
   activeId,
@@ -1289,6 +1290,10 @@ export default function App() {
     document.documentElement.dataset.reduceMotion = String(uiPreferences.reduceMotion);
     document.documentElement.style.setProperty("--text-scale", String(uiPreferences.textScale / 100));
     document.documentElement.style.setProperty("--code-scale", String(uiPreferences.codeScale / 100));
+    document.documentElement.style.setProperty("--sans", interfaceFonts[uiPreferences.interfaceFont].stack);
+    document.documentElement.style.setProperty("--display", interfaceFonts[uiPreferences.interfaceFont].stack);
+    document.documentElement.style.setProperty("--content", uiPreferences.contentFont === "inherit" ? interfaceFonts[uiPreferences.interfaceFont].stack : contentFonts[uiPreferences.contentFont].stack);
+    document.documentElement.style.setProperty("--mono", codeFonts[uiPreferences.codeFont].stack);
   });
 
   return (

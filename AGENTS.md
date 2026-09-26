@@ -208,13 +208,13 @@ in progress, and the rest of V4 follows it.
 
 **What it is.** One visual system for the shared client
 (`crates/vak-client-ui`), so for both the desktop and the web app:
-- readable type: 16px conversation text, 14px controls, nothing under 12px,
-  Newsreader for names and titles;
+- readable type: 16px conversation text and 14px controls at 100%, nothing
+  under 12px, with system sans as the default and Newsreader as an option;
 - plain words in place of engineering terms in every everyday string;
 - one Show technical details setting, off for new installs, which replaces
   Transcript detail and hides detail, never capability or safety state;
-- the **Ink and Saffron** brand: indigo ink, the Songbird mark's saffron as the one
-  accent for live states, a lighter paper, an indigo-night dark theme, and
+- the **Ink and Saffron** brand: indigo actions, the Songbird mark's saffron as the one
+  accent for live states, neutral light surfaces, a charcoal dark theme, and
   four theme choices;
 - fixes for fifteen visible defects found in the 4.0.2 review.
 

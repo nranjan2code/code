@@ -261,7 +261,7 @@ export default function PreviewPane() {
       <Show when={activeTab() === "component"}>
         <Show when={activeComponentPreview()} fallback={
           <div class="dock-empty" style="padding: 32px 16px; text-align: center;">
-            <div style="font-size: 14px; font-weight: 600; margin-bottom: 6px; color: var(--text);">
+            <div style="font-size: var(--fs-control); font-weight: 600; margin-bottom: 6px; color: var(--text);">
               No active component preview
             </div>
             <div class="hint" style="max-width: 260px; line-height: 1.5;">
@@ -273,19 +273,19 @@ export default function PreviewPane() {
             <div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
               {/* Component Info Bar */}
               <div
-                style="padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; font-size: 12px;"
+                style="padding: 6px 10px; background: var(--surface); border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-caption);"
               >
                 <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                  <span class="card-badge badge-indigo" style="font-size: 12px; padding: 1px 6px;">
+                  <span class="card-badge badge-indigo" style="font-size: var(--fs-caption); padding: 1px 6px;">
                     Sandbox
                   </span>
                   <strong style="color: var(--text);">{cp().title}</strong>
-                  <span style="color: var(--muted); font-size: 12px;">
+                  <span style="color: var(--muted); font-size: var(--fs-caption);">
                     ({cp().artifactPath})
                   </span>
                 </div>
                 <span
-                  style="color: var(--faint); font-size: 12px;"
+                  style="color: var(--faint); font-size: var(--fs-caption);"
                   title="Strict CSP network policy"
                 >
                   net: {cp().connectSrc ?? "blocked"}
@@ -294,13 +294,13 @@ export default function PreviewPane() {
 
               {/* Iframe View */}
               <Show when={componentLoading()}>
-                <div style="padding: 24px; text-align: center; color: var(--muted); font-size: 13px;">
+                <div style="padding: 24px; text-align: center; color: var(--muted); font-size: var(--fs-meta);">
                   Loading component…
                 </div>
               </Show>
 
               <Show when={componentError()}>
-                <div style="padding: 14px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); font-size: 12px;">
+                <div style="padding: 14px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); font-size: var(--fs-caption);">
                   {componentError()}
                 </div>
               </Show>

@@ -6,6 +6,8 @@ import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
 import { stripControlScaffolding } from "./structured";
 import { mergePresentationSnapshot, applyPresentationDelta } from "./presentationHydration";
+import { interfaceFonts, contentFonts, codeFonts } from "./typography";
+import type { InterfaceFont, ContentFont, CodeFont } from "./typography";
 import type {
   ClientEvent,
   AssistantMessage,
@@ -686,6 +688,9 @@ export interface UiPreferences {
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
   theme: "system" | "light" | "dark" | "contrast";
+  interfaceFont: InterfaceFont;
+  contentFont: ContentFont;
+  codeFont: CodeFont;
   textScale: number;
   codeScale: number;
   compactSidebar: boolean;
@@ -709,6 +714,9 @@ export interface UiPreferences {
 
 const defaultUiPreferences: UiPreferences = {
   theme: "system",
+  interfaceFont: "system",
+  contentFont: "inherit",
+  codeFont: "system",
   textScale: 100,
   codeScale: 100,
   compactSidebar: false,
@@ -732,6 +740,11 @@ function loadUiPreferences(): UiPreferences {
     const stored: UiPreferences = { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
     // A theme that no longer exists resolves to Match system (DESIGN.md).
     if (!["system", "light", "dark", "contrast"].includes(stored.theme)) stored.theme = "system";
+    if (!Object.prototype.hasOwnProperty.call(interfaceFonts, stored.interfaceFont)) stored.interfaceFont = "system";
+    if (!Object.prototype.hasOwnProperty.call(contentFonts, stored.contentFont)) stored.contentFont = "inherit";
+    if (!Object.prototype.hasOwnProperty.call(codeFonts, stored.codeFont)) stored.codeFont = "system";
+    stored.textScale = Number.isFinite(stored.textScale) ? Math.max(75, Math.min(125, stored.textScale)) : 100;
+    stored.codeScale = Number.isFinite(stored.codeScale) ? Math.max(75, Math.min(125, stored.codeScale)) : 100;
     return stored;
   } catch {
     return defaultUiPreferences;

@@ -1052,7 +1052,7 @@ export function StructuredView(props: { output: import("../types").StructuredOut
       <Show when={showOriginal() && showOperatorChrome()} fallback={
         <>
           <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
-            <StructuredRenderer output={props.output} />
+            <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
           </PresentationInteractionContext.Provider>
           <Show when={showOperatorChrome() && props.sessionId}>
             <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} presentationId={props.presentationId} />

@@ -158,7 +158,7 @@ export default function WorkspaceHeader() {
               <h1 class="agent-header-title">
                 <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={28} state={characterState()} interactive />
                 <span>{title()}</span>
-                <span style="font-size: 12px; opacity: 0.6;">▾</span>
+                <span style="font-size: var(--fs-caption); opacity: 0.6;">▾</span>
               </h1>
             </button>
 
@@ -167,7 +167,7 @@ export default function WorkspaceHeader() {
             <button
               type="button"
               class="target-dir-pill"
-              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: 13px; color: var(--muted); cursor: pointer; text-decoration: none;"
+              style="display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 999px; background: var(--surface-raised); border: 1px solid var(--border-soft); font-size: var(--fs-meta); color: var(--muted); cursor: pointer; text-decoration: none;"
               onClick={() => {
                 setAgentPickerTab("target");
                 setAgentPickerOpen(true);

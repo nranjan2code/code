@@ -1,6 +1,6 @@
 # 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand
 
-Status: **implementation record, 2026-09-26. Ink and Saffron, Newsreader,
+Status: **implementation record, 2026-09-26; typography and neutral-surface correction 2026-09-27. Ink and Saffron, optional Newsreader,
 technical details off by default, and four themes were locked 2026-09-25.
 V1, V2 and V3 are complete; V4.4 records the maintainer-approved Vakyartha
 Songbird rollout. Desktop runtime proof and character glyph work remain in
@@ -9,6 +9,14 @@ tracker is
 `docs/plans/visual-refresh-plan.md`. The visual reference, with
 before-and-after mockups and every review screenshot, is
 `docs/assets/visual-refresh-2026/visual-refresh.html`.
+
+The 2026-09-27 maintainer review supersedes D1's paper-tinted surfaces and
+D2's default Newsreader display role. The shared client's default is neutral
+surfaces with system sans throughout; Newsreader is an optional preference.
+Appearance also separates interface, content and code fonts, while Text size
+acts on the shared type tokens from 75% to 125%. Earlier palette and type
+tables below document the original V2 decision, not the current default;
+`DESIGN.md` and `crates/vak-client-ui/src/styles.css` carry the current values.
 
 This is the design record for refreshing the shared client,
 `crates/vak-client-ui`, which both the desktop shell (`crates/vak-desktop`)

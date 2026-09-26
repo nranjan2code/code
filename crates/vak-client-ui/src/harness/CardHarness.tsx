@@ -4,7 +4,8 @@
 // Runs the production client rendering path
 // (assistantParts -> parseVakFence -> StructuredView -> STRUCTURED_RENDERERS)
 // so a regression here is a regression a real chat turn would also hit.
-import { createMemo, ErrorBoundary, For, Show, createSignal } from "solid-js";
+import { createEffect, createMemo, ErrorBoundary, For, Show, createSignal } from "solid-js";
+import { interfaceFonts } from "../typography";
 import { AdaptiveTreeView, StructuredView, structuredRendererTypes } from "../components/PresentationRenderer";
 import { assistantParts, groupAssistantParts } from "../structured";
 import {
@@ -182,6 +183,16 @@ function coverageGaps(): string[] {
 export default function CardHarness() {
   const types = structuredRendererTypes;
   const [filter, setFilter] = createSignal("");
+  const [theme, setTheme] = createSignal<"light" | "dark">("light");
+  const [textSize, setTextSize] = createSignal(100);
+  const [font, setFont] = createSignal<keyof typeof interfaceFonts>("system");
+  createEffect(() => {
+    document.documentElement.dataset.theme = theme();
+    document.documentElement.style.setProperty("--text-scale", String(textSize() / 100));
+    document.documentElement.style.setProperty("--sans", interfaceFonts[font()].stack);
+    document.documentElement.style.setProperty("--display", interfaceFonts[font()].stack);
+    document.documentElement.style.setProperty("--content", interfaceFonts[font()].stack);
+  });
   const filtered = createMemo(() => types.filter((t) => t.includes(filter().toLowerCase())));
   const gaps = createMemo(coverageGaps);
 
@@ -217,6 +228,11 @@ export default function CardHarness() {
           value={filter()}
           onInput={(e) => setFilter(e.currentTarget.value)}
         />
+        <div class="harness-type-controls">
+          <label>Theme <select value={theme()} onChange={(event) => setTheme(event.currentTarget.value as "light" | "dark")}><option value="light">Light</option><option value="dark">Dark</option></select></label>
+          <label>Text size <select value={textSize()} onChange={(event) => setTextSize(Number(event.currentTarget.value))}><For each={[75, 90, 100, 125]}>{(size) => <option value={size}>{size}%</option>}</For></select></label>
+          <label>Font <select value={font()} onChange={(event) => setFont(event.currentTarget.value as keyof typeof interfaceFonts)}><For each={Object.entries(interfaceFonts)}>{([value, choice]) => <option value={value}>{choice.label}</option>}</For></select></label>
+        </div>
       </header>
 
       <section>

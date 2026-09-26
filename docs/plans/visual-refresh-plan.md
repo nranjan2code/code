@@ -20,6 +20,26 @@ This file is the tracker. Tick an item only when its "done when" holds in the
 running app, and add a dated line to the progress log (§6) saying what was
 checked and what was not. A passing build or typecheck is not done.
 
+### 2026-09-27 typography correction
+
+The maintainer reviewed the shipped desktop client and superseded D1's paper
+surfaces and D2's default Newsreader titles. Default light and dark surfaces
+are neutral, and the system sans is the default for interface and content.
+Newsreader remains an optional font. Appearance offers interface, content and
+code font choices, and Text size now spans 75–125% through the shared type
+tokens. The Ink and Saffron action and live-state colors remain. This
+correction applies to the shared client and every presentation renderer, not
+just the research card. Runtime screenshots and verification belong with the
+implementation evidence before this correction is marked complete.
+
+Implementation check, 2026-09-27: desktop and web client builds pass; the
+browser card harness loads 97 semantic types and 545 fixture cards. Checked
+neutral light and dark surfaces, system and Arial font stacks, computed text
+sizes at 75% and 125%, and 390px dark layout without page overflow. The
+already-running desktop binary and its Settings page were not rebuilt for a
+live screenshot in this pass, so the tracker does not mark desktop visual
+acceptance complete.
+
 ## 1. Decisions
 
 Locked by the maintainer on 2026-09-25.

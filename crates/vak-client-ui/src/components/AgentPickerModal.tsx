@@ -200,7 +200,7 @@ export default function AgentPickerModal() {
               type="button"
               class="tab-button"
               classList={{ active: agentPickerTab() === "fleet" }}
-              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 14px; border-radius: var(--radius-sm);"
+              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: var(--fs-control); border-radius: var(--radius-sm);"
               onClick={() => setAgentPickerTab("fleet")}
             >
               <Icon name="spark" size={14} />
@@ -210,7 +210,7 @@ export default function AgentPickerModal() {
               type="button"
               class="tab-button"
               classList={{ active: agentPickerTab() === "target" }}
-              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 14px; border-radius: var(--radius-sm);"
+              style="display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: var(--fs-control); border-radius: var(--radius-sm);"
               onClick={() => setAgentPickerTab("target")}
             >
               <Icon name="folder" size={14} />
@@ -219,7 +219,7 @@ export default function AgentPickerModal() {
           </div>
 
           <Show when={error()}>
-            <div style="background: var(--rose-wash); color: var(--red); padding: 8px 12px; border-radius: var(--radius-sm); font-size: 13px; margin-bottom: 12px;">
+            <div style="background: var(--rose-wash); color: var(--red); padding: 8px 12px; border-radius: var(--radius-sm); font-size: var(--fs-meta); margin-bottom: 12px;">
               {error()}
             </div>
           </Show>
@@ -232,7 +232,7 @@ export default function AgentPickerModal() {
                 placeholder="Find an agent…"
                 value={searchQuery()}
                 onInput={(e) => setSearchQuery(e.currentTarget.value)}
-                style="flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: 14px;"
+                style="flex: 1; padding: 7px 10px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: var(--fs-control);"
               />
               <button
                 type="button"
@@ -259,12 +259,12 @@ export default function AgentPickerModal() {
             </div>
             <div style="max-height: 380px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
               <Show when={loading()}>
-                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 14px;">
+                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: var(--fs-control);">
                   Loading your agents…
                 </div>
               </Show>
               <Show when={!loading() && filteredAgents().length === 0}>
-                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: 14px;">
+                <div style="text-align: center; color: var(--muted); padding: 24px; font-size: var(--fs-control);">
                   No agents match.
                 </div>
               </Show>
@@ -282,22 +282,22 @@ export default function AgentPickerModal() {
                         <AgentMark character={agent.character} motion={agent.animation} size={36} />
                         <div style="min-width: 0;">
                           <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
-                            <strong style="font-size: 15px;">{agent.name}</strong>
+                            <strong style="font-size: var(--fs-ui);">{agent.name}</strong>
                             <Show when={isActive()}>
                               <span class="agent-current" title="Current agent"><Icon name="check" size={14} /><span class="visually-hidden">Current agent</span></span>
                             </Show>
                             <Show when={agent.lifecycle === "paused"}>
-                              <span style="font-size: 13px; padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                              <span style="font-size: var(--fs-meta); padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
                                 Paused
                               </span>
                             </Show>
                             <Show when={agent.lifecycle === "archived"}>
-                              <span style="font-size: 13px; padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
+                              <span style="font-size: var(--fs-meta); padding: 1px 7px; border-radius: 999px; background: var(--surface-raised); color: var(--muted); border: 1px solid var(--border-soft);">
                                 Archived
                               </span>
                             </Show>
                           </div>
-                          <p style="margin: 3px 0 0; font-size: 13px; color: var(--muted); line-height: 1.3;">
+                          <p style="margin: 3px 0 0; font-size: var(--fs-meta); color: var(--muted); line-height: 1.3;">
                             {agent.personality || "Your own agent."}
                           </p>
                         </div>
@@ -378,13 +378,13 @@ export default function AgentPickerModal() {
           <Show when={agentPickerTab() === "target"}>
             <div>
               <div style="padding: 10px 12px; background: var(--surface-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); margin-bottom: 12px;">
-                <span style="font-size: 13px; color: var(--muted); display: block;">
+                <span style="font-size: var(--fs-meta); color: var(--muted); display: block;">
                   {activeAgentId() === "vak" ? "Folder" : "This agent's own folder"}
                 </span>
-                <strong style="font-family: var(--mono); font-size: 14px; color: var(--text); word-break: break-all;">
+                <strong style="font-family: var(--mono); font-size: var(--fs-control); color: var(--text); word-break: break-all;">
                   {activeWorkspace() || "Your home folder"}
                 </strong>
-                <p style="margin: 4px 0 0; font-size: 13px; color: var(--muted);">
+                <p style="margin: 4px 0 0; font-size: var(--fs-meta); color: var(--muted);">
                   {activeAgentId() === "vak"
                     ? "Vakyartha reads, changes and runs things only inside this folder."
                     : "This agent has its own folder inside the project folder, so it never sees another agent's files. Choose a different project folder below to move it."}

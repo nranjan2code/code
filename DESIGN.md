@@ -2,14 +2,14 @@
 name: vakyartha
 description: A calm agent that listens, shows the result first, and explains the machinery when asked.
 colors:
-  paper: "#F6F5F1"
+  paper: "#F7F7F8"
   surface: "#FFFFFF"
-  sidebar: "#EFEEE8"
-  line: "#E3E1DA"
-  ink: "#1B1E36"
-  ink-2: "#474B66"
-  muted: "#5A5E7A"
-  ink-3: "#5F6380"
+  sidebar: "#F2F2F4"
+  line: "#DEDEE3"
+  ink: "#202127"
+  ink-2: "#41434D"
+  muted: "#5C5E6A"
+  ink-3: "#646674"
   primary: "#2F3C94"
   primary-wash: "#E8EAF6"
   link: "#2F3C94"
@@ -20,29 +20,29 @@ colors:
   danger: "#A33A3A"
   info: "#2F5580"
   mark-navy: "#101D3D"
-  dark-paper: "#0F1120"
-  dark-surface: "#171A2B"
-  dark-sidebar: "#13162A"
-  dark-line: "#2E3350"
-  dark-ink: "#ECEBF5"
-  dark-ink-2: "#BDBFD3"
-  dark-muted: "#A8ABC2"
-  dark-ink-3: "#A2A5BD"
+  dark-paper: "#18191B"
+  dark-surface: "#202124"
+  dark-sidebar: "#1D1E21"
+  dark-line: "#383A42"
+  dark-ink: "#F0F0F2"
+  dark-ink-2: "#D0D1D7"
+  dark-muted: "#B5B7C0"
+  dark-ink-3: "#A7A9B3"
   dark-primary: "#A3ADF7"
   dark-link: "#A3ADF7"
 typography:
   hero:
-    fontFamily: "Newsreader, 'Iowan Old Style', Georgia, serif"
+    fontFamily: "system-ui"
     fontSize: "36px"
     fontWeight: 500
     lineHeight: "42px"
   greeting:
-    fontFamily: "Newsreader, 'Iowan Old Style', Georgia, serif"
+    fontFamily: "system-ui"
     fontSize: "28px"
     fontWeight: 500
     lineHeight: "34px"
   page-title:
-    fontFamily: "Newsreader, 'Iowan Old Style', Georgia, serif"
+    fontFamily: "system-ui"
     fontSize: "22px"
     fontWeight: 600
     lineHeight: "28px"
@@ -220,17 +220,18 @@ resolves to Match system.
 
 ## Typography
 
-- **Display: Newsreader**, bundled with the client as WOFF2 (Latin and Latin
-  Extended, SIL Open Font License), with a serif fallback. Used only for the
-  wordmark, agent names, page titles, the greeting and result headlines.
-- **Text: the system font** (SF Pro on macOS, Segoe UI Variable on Windows).
-- **Code: the system monospace**, only for code and file contents.
+- **Default: the system sans font**, including titles and greetings. The bundled
+  Newsreader face remains an optional choice for people who prefer a serif.
+- **Font choices:** interface, conversation/results, and code each have their
+  own setting. Installed-font presets fall back to common platform fonts.
+- **Text size:** 75–125% scales the shared role tokens across the client;
+  text never drops below 12px. Code size remains independent.
 
 | Role | Size / line | Face and weight |
 |---|---|---|
-| Hero | 36 / 42 | Newsreader 500 |
-| Greeting | 28 / 34 | Newsreader 500 |
-| Page title | 22 / 28 | Newsreader 600 |
+| Hero | 36 / 42 | System 500 |
+| Greeting | 28 / 34 | System 500 |
+| Page title | 22 / 28 | System 600 |
 | Section | 18 / 26 | System 600 |
 | Reading | 16 / 26 | System 400 |
 | Interface | 15 / 22 | System 400 |

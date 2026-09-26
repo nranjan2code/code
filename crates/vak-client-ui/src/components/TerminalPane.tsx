@@ -1,11 +1,13 @@
 import { createEffect, onCleanup, Show } from "solid-js";
-import { backend, sessions } from "../store";
+import { backend, sessions, uiPreferences } from "../store";
+import { codeFonts } from "../typography";
 import { host, type TerminalTransport } from "../host";
 import type { Terminal } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 
 interface Live {
   term: Terminal;
+  refit: () => void;
   dispose: () => void;
 }
 
@@ -41,6 +43,18 @@ export default function TerminalPane(props: { sessionId: string | null }) {
     void mount(sid, hostEl);
   });
 
+  createEffect(() => {
+    const sid = props.sessionId;
+    const fontFamily = codeFonts[uiPreferences.codeFont].stack;
+    const fontSize = Math.max(12, 12.5 * uiPreferences.codeScale / 100);
+    const current = sid ? live.get(sid) : undefined;
+    if (current) {
+      current.term.options.fontFamily = fontFamily;
+      current.term.options.fontSize = fontSize;
+      current.refit();
+    }
+  });
+
   async function mount(sid: string, el: HTMLDivElement) {
     pending.add(sid);
     let transport: TerminalTransport | null = null;
@@ -61,8 +75,8 @@ export default function TerminalPane(props: { sessionId: string | null }) {
       }
 
       const term = new Terminal({
-        fontFamily: '"SFMono-Regular", "SF Mono", ui-monospace, Menlo, Consolas, monospace',
-        fontSize: 12.5,
+        fontFamily: codeFonts[uiPreferences.codeFont].stack,
+        fontSize: Math.max(12, 12.5 * uiPreferences.codeScale / 100),
         theme: terminalTheme(),
         cursorBlink: true,
       });
@@ -96,7 +110,9 @@ export default function TerminalPane(props: { sessionId: string | null }) {
         // Ends the shell and releases its handle on the other side.
         transport?.close();
       };
-      live.set(sid, { term, dispose });
+      live.set(sid, { term, refit: () => {
+        try { fit.fit(); transport?.resize(term.cols, term.rows); } catch { /* pane hidden */ }
+      }, dispose });
       onCleanup(dispose);
     } catch (e) {
       transport?.close();

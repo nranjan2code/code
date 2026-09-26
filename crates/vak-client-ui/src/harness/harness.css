@@ -20,6 +20,9 @@ html, body, #root {
   width: 320px;
   max-width: 100%;
 }
+.harness-type-controls { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.harness-type-controls label { display: flex; align-items: center; gap: 6px; font-size: var(--fs-meta); }
+.harness-type-controls select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--surface); }
 .harness-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
