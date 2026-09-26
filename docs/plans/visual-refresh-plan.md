@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.18 done (V3 complete). V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.18 done (V3 complete). V4.2 done (WebP copies; the glyphs moved to V4.6); V4.3 to V4.6 remain.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -358,8 +358,9 @@ it at 390 as well as 1440, light and dark, like every other item.
   padding; tray variants render correctly; and client, admin and website checks
   pass at 1440 × 900 and 390 × 844 in light and dark. Evidence: `after/` files
   named `V4.1-*`.
-- [ ] **V4.2 Character glyphs.** A flat two-colour glyph per character for 32px
-  and below, plus 64 and 128px WebP copies of the portraits; doc 71 updated.
+- [x] **V4.2 Character WebP copies.** WebP copies of the portraits and
+  atlases; doc 71 updated. *Revised by the maintainer on 2026-09-26:* the
+  glyphs moved to V4.6.
 - [ ] **V4.3 Desktop chrome.** Overlay title bar in
   `crates/vak-desktop/tauri.conf.json` (`titleBarStyle`, `hiddenTitle`,
   `trafficLightPosition`), drag regions on the sidebar head and header, and
@@ -369,6 +370,11 @@ it at 390 as well as 1440, light and dark, like every other item.
 - [ ] **V4.4 Brand README.** `docs/brand/README.md`: the Ink and Saffron
   palette, Newsreader, the campaign line as the product line, the
   transparent master.
+- [ ] **V4.6 Character glyphs.** A flat two-colour glyph per character for
+  32px and below, in the mark's style. Decided 2026-09-26: each glyph uses
+  its character's own two colours (fox orange with cream, the songbird's
+  indigo with saffron, and so on), checked for contrast on every theme's
+  ground; who draws them is still open.
 - [ ] **V4.5 Close out.** Doc 75's status changed to shipped with evidence;
   doc 70's visual rules pointed at doc 75; the AGENTS.md "Pending: the visual
   refresh" section removed and the design-doc list updated (§5).
@@ -1013,3 +1019,21 @@ what was not.
   (not applied) shows the Ollama note. Evidence: `after/V3.18-*` (the
   native option list does not draw in a screenshot; its text was read from
   the page). `server_ext` pins the label in the listing.
+- 2026-09-26: V4.2 done, as the maintainer scoped it: WebP copies now, the
+  glyphs later (V4.6, own two colours each). The 16 source PNGs (512px
+  portraits, 1024 × 512 atlases, 7.9 MB) moved to `docs/brand/characters/`
+  and no longer ship; `scripts/brand/generate.mjs` (sharp 0.35.4, already
+  pinned for V4.1) writes each portrait and atlas as WebP with 64, 128 and
+  256px frames (48 files, 2.0 MB) and its `--check` covers them. 256 is one
+  tier past the plan's 64 and 128, because the 104px greeting mascot needs
+  208 pixels on a 2× screen. `AgentMark` loads the smallest copy covering
+  its size at the screen's pixel ratio (`characterTier`,
+  `tests/character-tier.mjs`); `vak-server` serves `.webp` as `image/webp`,
+  and `packaged_character_assets_load_with_the_unauthenticated_shell` now
+  fetches a WebP atlas and pins that the source PNG is not served. Checked
+  live on the fresh home at 1440 and 390, light and dark, at pixel ratio 1
+  and 2 (`after/V4.2-*`): the 28px sidebar marks load the 64px copies, the
+  greeting mascot the 128px copy at ratio 1 and the 256px copy at ratio 2,
+  no PNG is requested, and the page's character art is 104 KB at ratio 1 and
+  181 KB at ratio 2 (the same two characters' sources were 1.9 MB); the art
+  stays sharp. Not checked: the desktop shell, which ships the same `dist/`.

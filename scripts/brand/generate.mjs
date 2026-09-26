@@ -108,6 +108,27 @@ frames.forEach((frame, i) => {
 });
 await save(`${icons}/icon.ico`, Buffer.concat([ico, ...frames]));
 
+// Agent characters (docs/design/71): the 512px portraits and 1024x512
+// expression atlases in docs/brand/characters are the source art. The client
+// loads only these WebP copies, the smallest that covers the mark's size at
+// the screen's pixel ratio, instead of the full sources for a 24px mark.
+const characters = ['vak', 'mira', 'moss', 'nori', 'pip', 'lumi', 'tavi', 'beni'];
+const webp = { quality: 88, alphaQuality: 100, effort: 6, smartSubsample: true };
+for (const id of characters) {
+  const portrait = await readFile(join(root, `docs/brand/characters/${id}.png`));
+  const atlas = await readFile(join(root, `docs/brand/characters/${id}-atlas.png`));
+  const [p, a] = await Promise.all([sharp(portrait).metadata(), sharp(atlas).metadata()]);
+  if (p.width !== 512 || p.height !== 512 || !p.hasAlpha || a.width !== 1024 || a.height !== 512 || !a.hasAlpha) {
+    throw new Error(`${id}: expected a 512px RGBA portrait and a 1024x512 RGBA atlas`);
+  }
+  for (const size of [64, 128, 256]) {
+    await save(`crates/vak-client-ui/public/characters/${id}-${size}.webp`,
+      await sharp(portrait).resize(size, size, { kernel: 'lanczos3' }).webp(webp).toBuffer());
+    await save(`crates/vak-client-ui/public/characters/${id}-atlas-${size}.webp`,
+      await sharp(atlas).resize(size * 4, size * 2, { kernel: 'lanczos3' }).webp(webp).toBuffer());
+  }
+}
+
 // iconutil emits the native small-size ICNS representations as well as Retina PNGs.
 if (process.platform !== 'darwin') throw new Error('ICNS generation/check requires macOS iconutil');
 const temporary = await mkdtemp(join(tmpdir(), 'vak-brand-'));
@@ -126,4 +147,4 @@ try {
   await rm(temporary, { recursive: true, force: true });
 }
 if (failures.length) throw new Error(`Stale brand exports:\n${failures.join('\n')}`);
-console.log(`${check ? 'Verified' : 'Generated'} ${count} brand assets from the approved vak-logo-master.png`);
+console.log(`${check ? 'Verified' : 'Generated'} ${count} brand assets from the approved vak-logo-master.png and the character sources`);

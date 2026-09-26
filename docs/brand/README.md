@@ -2,14 +2,14 @@
 
 Source-of-truth marketing assets for Vakyartha. The public name is Vakyartha and
 the official website is https://vakyartha.com. Internal commands, package names,
-identifiers and data paths remain `vak`. The runtime character package lives in
-`crates/vak-client-ui/public/characters/` (see `docs/design/71-agent-character-system.md`); this
+identifiers and data paths remain `vak`. The character source art lives in
+`docs/brand/characters/`, and the client ships generated WebP copies of it (see `docs/design/71-agent-character-system.md`); this
 folder holds the marketing-ready derivatives and the brand facts that generations must respect.
 
 ## Mascot — the Vakyartha songbird
 
 `mascot/vak-songbird-pose-01..08.png` — eight expression poses cropped from the canonical atlas
-(`crates/vak-client-ui/public/characters/vak-atlas.png`), 443 × 443, transparent.
+(`docs/brand/characters/vak-atlas.png`), 443 × 443, transparent.
 
 | Pose | Expression | Use |
 |---|---|---|

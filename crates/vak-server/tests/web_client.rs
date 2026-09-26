@@ -86,7 +86,7 @@ async fn the_client_shell_loads_without_a_session_but_data_does_not() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn packaged_character_assets_load_with_the_unauthenticated_shell() {
     let (addr, _token) = spawn().await;
-    let response = reqwest::get(format!("http://{addr}/app/characters/mira-atlas.png"))
+    let response = reqwest::get(format!("http://{addr}/app/characters/mira-atlas-128.webp"))
         .await
         .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
@@ -95,9 +95,21 @@ async fn packaged_character_assets_load_with_the_unauthenticated_shell() {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .unwrap(),
-        "image/png"
+        "image/webp"
     );
     assert!(!response.bytes().await.unwrap().is_empty());
+    // The 1024px source atlases are brand source art, not shipped runtime:
+    // the path falls through to the client shell, never to an image.
+    let source = reqwest::get(format!("http://{addr}/app/characters/mira-atlas.png"))
+        .await
+        .unwrap();
+    let kind = source
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_string();
+    assert!(!kind.starts_with("image/"), "source atlas served as {kind}");
 }
 
 /// `/auth/session` must distinguish "no session yet" from "unreachable",

@@ -27,6 +27,7 @@ pub(crate) fn mime_for(path: &str) -> &'static str {
         Some("json") => "application/json",
         Some("webmanifest") => "application/manifest+json",
         Some("png") => "image/png",
+        Some("webp") => "image/webp",
         Some("ico") => "image/x-icon",
         Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
