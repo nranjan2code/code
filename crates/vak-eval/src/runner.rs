@@ -443,6 +443,7 @@ async fn run_case_with_tools(
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,
+        new_documents: Vec::new(),
     };
     let verify_out = BashTool
         .execute(&serde_json::json!({"command": case.verify}), &verify_ctx)

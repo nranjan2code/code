@@ -39,6 +39,9 @@ enum WorkerTask {
         /// authorship depend on it.
         #[serde(default)]
         agent_id: Option<String>,
+        /// See [`ToolContext::new_documents`].
+        #[serde(default)]
+        new_documents: Vec<String>,
     },
     VerifyTargets {
         root: PathBuf,
@@ -93,6 +96,10 @@ pub struct OfficeLineage {
     pub base_digest: String,
     pub ops: Vec<vak_ooxml::edit::OfficeOp>,
     pub author: String,
+    /// The draft is a new document (its file did not exist when the chain
+    /// was made), so Word edits were written clean rather than tracked.
+    #[serde(default)]
+    pub new_file: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -229,11 +236,17 @@ pub async fn persistent_worker_main() -> i32 {
 pub struct BrokeredTool {
     inner: Arc<dyn Tool>,
     worker_exe: PathBuf,
+    /// Handed to every call's worker: see [`ToolContext::new_documents`].
+    new_documents: Vec<String>,
 }
 
 impl BrokeredTool {
-    pub fn new(inner: Arc<dyn Tool>, worker_exe: PathBuf) -> Self {
-        Self { inner, worker_exe }
+    pub fn new(inner: Arc<dyn Tool>, worker_exe: PathBuf, new_documents: Vec<String>) -> Self {
+        Self {
+            inner,
+            worker_exe,
+            new_documents,
+        }
     }
 }
 
@@ -272,11 +285,24 @@ impl Tool for BrokeredTool {
     }
 
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
-        execute(self.name(), args, &self.worker_exe, ctx).await
+        execute(
+            self.name(),
+            args,
+            &self.worker_exe,
+            &self.new_documents,
+            ctx,
+        )
+        .await
     }
 }
 
-async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext) -> ToolOutput {
+async fn execute(
+    tool: &str,
+    args: &Value,
+    worker_exe: &Path,
+    new_documents: &[String],
+    ctx: &ToolContext,
+) -> ToolOutput {
     if !worker_exe.is_file() {
         return ToolOutput::error(format!(
             "tool broker unavailable: worker executable not found: {}",
@@ -321,6 +347,7 @@ async fn execute(tool: &str, args: &Value, worker_exe: &Path, ctx: &ToolContext)
                 .map(|sink| sink.execution_id().to_string())
                 .unwrap_or_else(|| "unidentified".into()),
             agent_id: ctx.agent_id.clone(),
+            new_documents: new_documents.to_vec(),
         },
     };
     let payload = match serde_json::to_vec(&request) {
@@ -466,13 +493,14 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
-    let (tool_name, args, execution_id, agent_id) = match request.task {
+    let (tool_name, args, execution_id, agent_id, new_documents) = match request.task {
         WorkerTask::Tool {
             tool,
             args,
             execution_id,
             agent_id,
-        } => (tool, args, execution_id, agent_id),
+            new_documents,
+        } => (tool, args, execution_id, agent_id, new_documents),
         WorkerTask::OfficeReview {
             before,
             after,
@@ -554,7 +582,9 @@ pub async fn worker_main() -> i32 {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
             let (sink, mut rx) = crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
-            let mut ctx = ToolContext::new(cwd).with_sandbox_sink(sink);
+            let mut ctx = ToolContext::new(cwd)
+                .with_sandbox_sink(sink)
+                .with_new_documents(new_documents);
             if let Some(agent_id) = agent_id {
                 ctx = ctx.with_agent_id(agent_id);
             }
@@ -758,10 +788,7 @@ fn office_apply_in_worker(lineage: &OfficeLineage, out: &Path) -> Result<String,
                 out.display()
             )
         })?;
-    let context = vak_ooxml::edit::EditContext {
-        author: lineage.author.clone(),
-        date: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-    };
+    let context = lineage_context(lineage);
     let (source, applied) = crate::office_apply::apply_checked(
         &lineage.source,
         &lineage.base_digest,
@@ -882,6 +909,7 @@ fn lineage_context(lineage: &OfficeLineage) -> vak_ooxml::edit::EditContext {
     vak_ooxml::edit::EditContext {
         author: lineage.author.clone(),
         date: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        tracked: !lineage.new_file,
     }
 }
 

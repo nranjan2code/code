@@ -849,11 +849,23 @@ in progress, and the rest of V4 follows it.
     model supplies, and marks only the words that change: every run it does
     not split, and everything the reader does not show (footnote marks,
     images, field codes, bookmarks, hidden text, other authors' deletions),
-    is kept byte for byte, and a change to a field's result or to another
-    author's tracked change is refused, never written. A changed Excel input or formula sets `fullCalcOnLoad`,
+    is kept byte for byte, and a change to a field's result is refused,
+    never written; another author's tracked insertion is struck by a
+    deletion nested inside it and split around new text, never rewritten.
+    A new document (a file not yet in the workspace, as one made from a
+    template) is written clean. A changed Excel input or formula sets `fullCalcOnLoad`,
     and cached values read as stale until Excel recalculates. An op never
     adds, enables or strips macros: the output keeps the source's macro
-    state.
+    state. Shared Office workspaces are a built-in client surface over this
+    same engine, never a plugin or parser. Each room names an exact session,
+    candidate and path; edits are typed ops against an expected branch head,
+    applied in the broker worker and frozen as immutable candidate revisions.
+    The room snapshot contains metadata and candidate references only. Edit
+    grants permit editing and branching, not acceptance; promotion still uses
+    the owner-controlled Review path. A stale head is a conflict. Branch
+    merges must detect overlapping operations and conservatively refuse
+    positional Word merges when inserts/deletes could move anchors. Agent
+    candidates enter a room only through verified lineage from the same base.
 
 ## Code rules
 

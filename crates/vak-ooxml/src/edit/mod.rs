@@ -144,13 +144,17 @@ impl OfficeOp {
     }
 }
 
-/// Who and when, stamped on tracked changes. Supplied by the runtime, never
-/// by the model.
+/// Who and when, stamped on tracked changes, and whether there are any.
+/// Supplied by the runtime, never by the model.
 #[derive(Debug, Clone)]
 pub struct EditContext {
     pub author: String,
     /// ISO 8601, e.g. `2026-09-24T10:00:00Z`.
     pub date: String,
+    /// Word edits are tracked changes in an existing document; a new
+    /// document (one the edit creates, as from a template) is written
+    /// clean (docs/design/72, R7).
+    pub tracked: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -235,13 +239,19 @@ pub(crate) enum Expect {
     /// A section (sheet, slide, heading) with this anchor exists.
     Section(String),
     Title(String),
+    /// The op adds (1) or removes (-1) one Word paragraph; the written
+    /// document's paragraph count is checked against every op's together.
+    ParagraphDelta(i64),
     /// The Word paragraph reads `accepted` (compared folded, as
     /// [`textdiff::fold`] does) with `author`'s tracked changes accepted,
     /// reads `rejected` exactly with them rejected, and still holds the
     /// content the reader does not show (`fixed`, by element name).
+    /// A clean edit (`tracked` false) leaves no revisions, so the text
+    /// with them rejected is the text asked for too.
     Paragraph {
         anchor: String,
         author: String,
+        tracked: bool,
         accepted: String,
         rejected: String,
         fixed: Vec<String>,
@@ -271,9 +281,9 @@ impl Outcome {
     /// about one of them is superseded by this op's.
     fn rewritten(&self) -> impl Iterator<Item = &str> {
         self.expect.iter().filter_map(|expect| match expect {
-            Expect::Paragraph { anchor, .. } | Expect::UnitDeleted { anchor } => {
-                Some(anchor.as_str())
-            }
+            Expect::Paragraph { anchor, .. }
+            | Expect::UnitDeleted { anchor }
+            | Expect::Absent { anchor } => Some(anchor.as_str()),
             _ => None,
         })
     }
@@ -322,6 +332,13 @@ pub fn apply(
         let main = work.main_part();
         work.set_override(&main, target.main_content_type())?;
     }
+    let paragraphs_before = if vocabulary == Vocabulary::Word {
+        let main = work.main_part();
+        let bytes = work.get(&main)?;
+        Some(count_paragraphs(&bytes, &main, work.limits())?)
+    } else {
+        None
+    };
     let mut outcomes = Vec::with_capacity(ops.len());
     for (index, op) in ops.iter().enumerate() {
         let tag = |error: EditError| EditError {
@@ -418,6 +435,33 @@ pub fn apply(
         limits,
         main: None,
     };
+    if let Some(before) = paragraphs_before {
+        let delta: i64 = outcomes
+            .iter()
+            .flat_map(|(_, _, outcome)| &outcome.expect)
+            .map(|expect| match expect {
+                Expect::ParagraphDelta(delta) => *delta,
+                _ => 0,
+            })
+            .sum();
+        let (name, main) = written.main().map_err(|message| EditError {
+            op: None,
+            message: format!("postcondition failed after writing: {message}"),
+        })?;
+        let after = count_paragraphs(main, name, &limits).map_err(|error| EditError {
+            op: None,
+            message: format!("postcondition failed after writing: {}", error.message),
+        })?;
+        let expected = i64::try_from(before).unwrap_or(i64::MAX) + delta;
+        if i64::try_from(after).unwrap_or(i64::MAX) != expected {
+            return Err(EditError {
+                op: None,
+                message: format!(
+                    "postcondition failed after writing: the document has {after} paragraphs, and its edits should leave {expected}"
+                ),
+            });
+        }
+    }
     let mut results = Vec::with_capacity(outcomes.len());
     for (position, (index, name, outcome)) in outcomes.into_iter().enumerate() {
         for expect in &outcome.expect {
@@ -534,6 +578,72 @@ impl Written<'_> {
     }
 }
 
+/// Word paragraphs in a main part, as anchors count them.
+fn count_paragraphs(bytes: &[u8], part: &str, limits: &Limits) -> Result<usize, EditError> {
+    Ok(Tree::parse(bytes, part, limits)?
+        .descendants(0, "p")
+        .count())
+}
+
+/// `p@N` → N.
+fn ordinal(anchor: &str) -> Option<usize> {
+    anchor.strip_prefix("p@")?.split('/').next()?.parse().ok()
+}
+
+/// The Word paragraphs an op names.
+fn paragraph_references(op: &OfficeOp) -> Vec<&str> {
+    match op {
+        OfficeOp::ReplaceParagraphText { anchor, .. }
+        | OfficeOp::InsertParagraphAfter { anchor, .. }
+        | OfficeOp::DeleteParagraph { anchor } => vec![anchor.as_str()],
+        _ => Vec::new(),
+    }
+}
+
+/// Whether op `later` names a paragraph that removing the paragraph op
+/// `earlier` deletes renumbers. In a new document (written clean) a
+/// deleted paragraph is removed, so the `p@` paragraphs after a removed
+/// `p@N` move up one; `p:` anchors never move.
+pub fn renumbered_by(earlier: &OfficeOp, later: &OfficeOp, context: &EditContext) -> bool {
+    let OfficeOp::DeleteParagraph { anchor } = earlier else {
+        return false;
+    };
+    let Some(removed) = ordinal(anchor) else {
+        return false;
+    };
+    !context.tracked
+        && paragraph_references(later)
+            .iter()
+            .filter_map(|reference| ordinal(reference))
+            .any(|named| named >= removed)
+}
+
+/// Refuses ops written against one read that removing a `p@` paragraph
+/// earlier in the same call would renumber (see [`renumbered_by`]): they
+/// would land on the wrong paragraph. Checked where one call's ops are
+/// applied, never on a replay of several calls, whose later ops were
+/// written against the renumbered draft.
+pub fn check_renumbering(ops: &[OfficeOp], context: &EditContext) -> Result<(), EditError> {
+    for (earlier, op) in ops.iter().enumerate() {
+        if let Some(later) =
+            (earlier + 1..ops.len()).find(|later| renumbered_by(op, &ops[*later], context))
+        {
+            return Err(EditError {
+                op: Some((later, ops[later].name())),
+                message: format!(
+                    "it names a paragraph that removing {} (op {}) renumbers in this new document; put paragraph deletions after the ops that name later paragraphs, or read the draft again and use its anchors",
+                    paragraph_references(op)
+                        .first()
+                        .copied()
+                        .unwrap_or_default(),
+                    earlier + 1
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Result<(), String> {
     let unit = |anchor: &str| document.units.iter().find(|unit| unit.anchor == anchor);
     match expect {
@@ -610,23 +720,31 @@ fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Res
                 Err(format!("title is {:?}", document.title))
             }
         }
+        Expect::ParagraphDelta(_) => Ok(()),
         Expect::Paragraph {
             anchor,
             author,
+            tracked,
             accepted,
             rejected,
             fixed,
         } => {
             let limits = written.limits;
             let (name, bytes) = written.main()?;
-            let views = word::paragraph_views(name, bytes, &limits, anchor, author)?;
+            let views = word::paragraph_views(name, bytes, &limits, anchor, author, *tracked)?;
             if textdiff::fold_text(&views.accepted) != *accepted {
                 return Err(format!(
                     "{anchor} reads {:?} with the changes accepted, not the text asked for",
                     views.accepted
                 ));
             }
-            if views.rejected != *rejected {
+            if !*tracked && textdiff::fold_text(&views.rejected) != *accepted {
+                return Err(format!(
+                    "{anchor} was to be written clean, and reads {:?} with its changes rejected",
+                    views.rejected
+                ));
+            }
+            if *tracked && views.rejected != *rejected {
                 return Err(format!(
                     "{anchor} reads {:?} with the changes rejected, not what it read before",
                     views.rejected

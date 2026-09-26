@@ -108,7 +108,7 @@ pub fn choices(
         }
     }
     for position in 0..choices.len() {
-        let needed = requirements(ops, &created, op_of[position]);
+        let needed = requirements(ops, &created, op_of[position], context);
         choices[position].requires = choices
             .iter()
             .zip(&op_of)
@@ -203,7 +203,7 @@ pub fn narrow(
         .collect();
     let kept_ops: Vec<usize> = kept.iter().map(|(index, _)| *index).collect();
     for (index, _) in &kept {
-        if let Some(missing) = requirements(ops, &created, *index)
+        if let Some(missing) = requirements(ops, &created, *index, context)
             .into_iter()
             .find(|needed| !kept_ops.contains(needed))
         {
@@ -289,7 +289,12 @@ fn split_cells(op: &OfficeOp, changes: &[Change]) -> Option<Vec<(String, Vec<Cha
 }
 
 /// The earlier ops `index` builds on.
-fn requirements(ops: &[OfficeOp], created: &[Option<String>], index: usize) -> Vec<usize> {
+fn requirements(
+    ops: &[OfficeOp],
+    created: &[Option<String>],
+    index: usize,
+    context: &EditContext,
+) -> Vec<usize> {
     let references = references(&ops[index]);
     let sheet = match &ops[index] {
         OfficeOp::SetCells { sheet, .. } | OfficeOp::AppendRows { sheet, .. } => Some(sheet),
@@ -303,7 +308,10 @@ fn requirements(ops: &[OfficeOp], created: &[Option<String>], index: usize) -> V
                 .is_some_and(|minted| references.iter().any(|reference| names(reference, minted)));
             let added = matches!((&ops[*earlier], sheet),
                 (OfficeOp::AddSheet { name }, Some(sheet)) if name.eq_ignore_ascii_case(sheet));
-            minted || added
+            // A later op named a paragraph by the numbering an earlier
+            // removal left; without that removal it would land elsewhere.
+            let renumbered = edit::renumbered_by(&ops[*earlier], &ops[index], context);
+            minted || added || renumbered
         })
         .collect()
 }

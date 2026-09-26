@@ -187,6 +187,59 @@ fn refuse_complex(doc: &Doc, paragraph: &usize, anchor: &str) -> Result<(), Edit
     Ok(())
 }
 
+/// What removing a paragraph outright would break, in a new document where
+/// nothing is tracked: someone's tracked change, a section's layout, a
+/// comment or note left without its mark, or a field, bookmark or comment
+/// range that continues into another paragraph.
+fn refuse_unremovable(doc: &Doc, paragraph: usize, anchor: &str) -> Result<(), EditError> {
+    let tree = &doc.tree;
+    let has = |local: &str| tree.descendants(paragraph, local).next().is_some();
+    if ["ins", "del", "moveFrom", "moveTo"]
+        .iter()
+        .any(|local| has(local))
+    {
+        return fail(format!(
+            "{anchor} holds tracked changes, which removing it would discard; accept or reject them in Word first"
+        ));
+    }
+    if has("sectPr") {
+        return fail(format!(
+            "{anchor} ends a section of the document (its page layout), so removing it would merge two sections; replace its text with an empty string instead"
+        ));
+    }
+    if ["commentReference", "footnoteReference", "endnoteReference"]
+        .iter()
+        .any(|local| has(local))
+    {
+        return fail(format!(
+            "{anchor} holds the mark of a comment or a note, which would be left with nowhere to point; replace its text instead"
+        ));
+    }
+    let field_marks = |kind: &str| {
+        tree.descendants(paragraph, "fldChar")
+            .filter(|node| tree.nodes[*node].element.attr("fldCharType") == Some(kind))
+            .count()
+    };
+    let ids = |local: &str| -> std::collections::BTreeSet<String> {
+        tree.descendants(paragraph, local)
+            .filter_map(|node| tree.nodes[node].element.attr("id").map(str::to_string))
+            .collect()
+    };
+    let split_range = [
+        ("bookmarkStart", "bookmarkEnd"),
+        ("commentRangeStart", "commentRangeEnd"),
+        ("permStart", "permEnd"),
+    ]
+    .iter()
+    .any(|(start, end)| ids(start) != ids(end));
+    if field_marks("begin") != field_marks("end") || split_range {
+        return fail(format!(
+            "{anchor} holds one end of a field, bookmark or comment range that continues into another paragraph; replace its text instead"
+        ));
+    }
+    Ok(())
+}
+
 fn next_revision_id(doc: &Doc) -> u64 {
     let key = format!("{}id", doc.w);
     doc.tree
@@ -325,6 +378,7 @@ pub(super) fn replace_paragraph_text<R: Read + Seek>(
         expect: vec![Expect::Paragraph {
             anchor: anchor.to_string(),
             author: context.author.clone(),
+            tracked: context.tracked,
             accepted: replaced.accepted,
             rejected: replaced.rejected,
             fixed: replaced.fixed,
@@ -341,6 +395,7 @@ pub(super) fn paragraph_views(
     limits: &Limits,
     anchor: &str,
     author: &str,
+    tracked: bool,
 ) -> Result<redline::Views, String> {
     let tree = Tree::parse(bytes, name, limits).map_err(|error| error.to_string())?;
     let Some(w) = tree.prefix_for(W).or_else(|| tree.prefix_for(W_STRICT)) else {
@@ -359,7 +414,7 @@ pub(super) fn paragraph_views(
         limits,
         w: &w,
     };
-    redline::views(&part, paragraph, author).map_err(|error| error.message)
+    redline::views(&part, paragraph, author, tracked).map_err(|error| error.message)
 }
 
 pub(super) fn insert_paragraph_after<R: Read + Seek>(
@@ -386,25 +441,44 @@ pub(super) fn insert_paragraph_after<R: Read + Seek>(
         splice.replace(range, tag);
     }
     let para_id = new_para_id(&doc);
-    let first = next_revision_id(&doc);
     let style_xml = style_id
         .map(|id| format!(r#"<{w}pStyle {w}val="{}"/>"#, escape_attr(&id)))
         .unwrap_or_default();
-    let paragraph_xml = format!(
-        r#"<{w}p {w14}paraId="{para_id}"><{w}pPr>{style_xml}<{w}rPr><{w}ins{}/></{w}rPr></{w}pPr><{w}ins{}><{w}r>{}</{w}r></{w}ins></{w}p>"#,
-        revision(&doc, first, context),
-        revision(&doc, first + 1, context),
-        run_content(&w, text)
-    );
+    let paragraph_xml = if context.tracked {
+        let first = next_revision_id(&doc);
+        format!(
+            r#"<{w}p {w14}paraId="{para_id}"><{w}pPr>{style_xml}<{w}rPr><{w}ins{}/></{w}rPr></{w}pPr><{w}ins{}><{w}r>{}</{w}r></{w}ins></{w}p>"#,
+            revision(&doc, first, context),
+            revision(&doc, first + 1, context),
+            run_content(&w, text)
+        )
+    } else {
+        let properties = if style_xml.is_empty() {
+            String::new()
+        } else {
+            format!("<{w}pPr>{style_xml}</{w}pPr>")
+        };
+        format!(
+            r#"<{w}p {w14}paraId="{para_id}">{properties}<{w}r>{}</{w}r></{w}p>"#,
+            run_content(&w, text)
+        )
+    };
     splice.insert(doc.tree.nodes[paragraph].span.end, paragraph_xml);
     work.put(&doc.part, splice.apply(&doc.bytes, &doc.part)?);
     let new_anchor = format!("p:{para_id}");
     Ok(Outcome {
-        summary: format!("{new_anchor} inserted after {anchor} as a tracked insertion"),
-        expect: vec![Expect::UnitContains {
-            anchor: new_anchor.clone(),
-            needles: lines(text),
-        }],
+        summary: if context.tracked {
+            format!("{new_anchor} inserted after {anchor} as a tracked insertion")
+        } else {
+            format!("{new_anchor} inserted after {anchor}")
+        },
+        expect: vec![
+            Expect::UnitContains {
+                anchor: new_anchor.clone(),
+                needles: lines(text),
+            },
+            Expect::ParagraphDelta(1),
+        ],
         created: Some(new_anchor),
     })
 }
@@ -416,7 +490,11 @@ pub(super) fn delete_paragraph<R: Read + Seek>(
 ) -> Result<Outcome, EditError> {
     let doc = load(work)?;
     let paragraph = find(&doc, anchor)?;
-    refuse_complex(&doc, &paragraph, anchor)?;
+    if context.tracked {
+        refuse_complex(&doc, &paragraph, anchor)?;
+    } else {
+        refuse_unremovable(&doc, paragraph, anchor)?;
+    }
     let node = &doc.tree.nodes[paragraph];
     if let Some(parent) = node.parent {
         let parent_node = &doc.tree.nodes[parent];
@@ -440,6 +518,23 @@ pub(super) fn delete_paragraph<R: Read + Seek>(
                 "{anchor} is the only paragraph in its table cell, which Word requires; replace its text with an empty string instead"
             ));
         }
+    }
+    if !context.tracked {
+        // A new document is written clean: the paragraph simply goes.
+        let mut splice = Splice::default();
+        splice.replace(node.span.clone(), "");
+        work.put(&doc.part, splice.apply(&doc.bytes, &doc.part)?);
+        let mut expect = vec![Expect::ParagraphDelta(-1)];
+        if anchor.starts_with("p:") {
+            expect.push(Expect::Absent {
+                anchor: anchor.to_string(),
+            });
+        }
+        return Ok(Outcome {
+            summary: format!("{anchor} removed"),
+            expect,
+            created: None,
+        });
     }
     let w = doc.w.clone();
     let mut id = next_revision_id(&doc);

@@ -44,6 +44,10 @@ pub struct Unit {
     /// otherwise.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub cells: Vec<(String, String)>,
+    /// For a Word table row, each cell's paragraphs as (anchor, text), so a
+    /// cell can be named and changed like any paragraph; empty otherwise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub row_cells: Vec<Vec<(String, String)>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -179,10 +183,36 @@ impl Document {
 /// bullet boundary is never confused with a slash in the text itself.
 pub const PARAGRAPH_BREAK: &str = " ¶ ";
 
+/// A unit's text as a line shows it: a Word table row names each cell's
+/// paragraphs by anchor, so a cell can be cited and changed.
+fn display_text(unit: &Unit) -> String {
+    if unit.row_cells.is_empty() {
+        return unit.text.clone();
+    }
+    unit.row_cells
+        .iter()
+        .map(|paragraphs| {
+            paragraphs
+                .iter()
+                .map(|(anchor, text)| {
+                    if text.is_empty() {
+                        format!("[{anchor}]")
+                    } else {
+                        format!("[{anchor}] {text}")
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect::<Vec<_>>()
+        .join(" | ")
+}
+
 fn render_unit(unit: &Unit) -> Vec<String> {
-    let characters: Vec<char> = unit.text.chars().collect();
+    let text = display_text(unit);
+    let characters: Vec<char> = text.chars().collect();
     let chunks: Vec<String> = if characters.len() <= MAX_LINE_CHARS {
-        vec![unit.text.clone()]
+        vec![text]
     } else {
         characters
             .chunks(MAX_LINE_CHARS)
@@ -253,6 +283,9 @@ struct Paragraph {
     style: Option<String>,
     outline: Option<u8>,
     text: String,
+    /// The text a person reading the document sees: no reader markers, no
+    /// deleted or hidden text. Words are counted from it.
+    visible: String,
     labels: Vec<String>,
     comments: Vec<String>,
     in_table: bool,
@@ -306,6 +339,11 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
     let mut table_rows: Vec<Vec<String>> = Vec::new();
     let mut row: Vec<String> = Vec::new();
     let mut cell = String::new();
+    // The same rows, each cell as its paragraphs with their anchors.
+    let mut table_row_cells: Vec<Vec<Vec<(String, String)>>> = Vec::new();
+    let mut row_cells: Vec<Vec<(String, String)>> = Vec::new();
+    let mut cell_paragraphs: Vec<(String, String)> = Vec::new();
+    let mut visible_words = 0usize;
     let mut paragraph_ordinal = 0usize;
     let mut table_ordinal = 0usize;
     let mut units: Vec<Unit> = Vec::new();
@@ -427,10 +465,17 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                     table_depth += 1;
                     if table_depth == 1 {
                         table_rows.clear();
+                        table_row_cells.clear();
                     }
                 }
-                "tr" if table_depth == 1 => row.clear(),
-                "tc" if table_depth == 1 => cell.clear(),
+                "tr" if table_depth == 1 => {
+                    row.clear();
+                    row_cells.clear();
+                }
+                "tc" if table_depth == 1 => {
+                    cell.clear();
+                    cell_paragraphs.clear();
+                }
                 _ => {}
             },
             XmlEvent::Text(text) => {
@@ -459,6 +504,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                         return Ok(());
                     };
                     let text = paragraph.text.trim().to_string();
+                    visible_words += words(&paragraph.visible);
                     let level = heading_level(&paragraph, &styles);
                     let in_cell = paragraph.in_table && !paragraph.text_box;
                     if in_cell {
@@ -466,6 +512,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                             cell.push(' ');
                         }
                         cell.push_str(&text);
+                        cell_paragraphs.push((paragraph.anchor.clone(), text));
                     } else if !text.is_empty() || !paragraph.labels.is_empty() {
                         let mut labels = paragraph.labels.clone();
                         if paragraph.text_box {
@@ -482,12 +529,19 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                             text,
                             labels,
                             cells: Vec::new(),
+                            row_cells: Vec::new(),
                         });
                     }
                     attach_comments(&mut units, &paragraph, &comments);
                 }
-                "tc" if table_depth == 1 => row.push(std::mem::take(&mut cell)),
-                "tr" if table_depth == 1 => table_rows.push(std::mem::take(&mut row)),
+                "tc" if table_depth == 1 => {
+                    row.push(std::mem::take(&mut cell));
+                    row_cells.push(std::mem::take(&mut cell_paragraphs));
+                }
+                "tr" if table_depth == 1 => {
+                    table_rows.push(std::mem::take(&mut row));
+                    table_row_cells.push(std::mem::take(&mut row_cells));
+                }
                 "tbl" => {
                     table_depth = table_depth.saturating_sub(1);
                     if table_depth == 0 {
@@ -501,6 +555,7 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                                 text: cells.join(" | "),
                                 labels: Vec::new(),
                                 cells: Vec::new(),
+                                row_cells: table_row_cells.get(index).cloned().unwrap_or_default(),
                             });
                         }
                         tables.push(Table {
@@ -539,14 +594,9 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
         .iter()
         .filter(|unit| matches!(unit.kind, UnitKind::Paragraph | UnitKind::Heading))
         .count();
-    let word_count = units
-        .iter()
-        .filter(|unit| unit.kind != UnitKind::Comment)
-        .map(|unit| words(&unit.text))
-        .sum();
     document.stats = vec![
         ("paragraphs".into(), paragraphs),
-        ("words".into(), word_count),
+        ("words".into(), visible_words),
         ("headings".into(), sections.len()),
         ("tables".into(), tables.len()),
         ("comments".into(), comments.len()),
@@ -581,6 +631,9 @@ fn push_word_text(
         Some((false, author)) => format!("[deleted by {author}: {text}]"),
         None => text.to_string(),
     };
+    if !run.hidden && !matches!(revision.last(), Some((false, _))) {
+        paragraph.visible.push_str(text);
+    }
     if run.hidden {
         totals.hidden_runs += 1;
         paragraph.text.push_str(&format!("[hidden: {marked}]"));
@@ -613,6 +666,7 @@ fn attach_comments(
                 text: text.clone(),
                 labels: vec![format!("comment by {author}")],
                 cells: Vec::new(),
+                row_cells: Vec::new(),
             });
         }
     }
@@ -894,6 +948,7 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
                         )
                     })
                     .collect(),
+                row_cells: Vec::new(),
             });
             table_rows.push(
                 std::iter::once(row.number.to_string())
@@ -929,6 +984,7 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             text: format!("defined name {name} = {reference}"),
             labels: Vec::new(),
             cells: Vec::new(),
+            row_cells: Vec::new(),
         });
     }
     document.units = units;
@@ -1211,6 +1267,7 @@ fn powerpoint<R: Read + Seek>(
             text: format!("Slide {number}: {title}"),
             labels: slide_labels.clone(),
             cells: Vec::new(),
+            row_cells: Vec::new(),
         });
         for shape in &shapes {
             let mut labels = slide_labels.clone();
@@ -1232,6 +1289,7 @@ fn powerpoint<R: Read + Seek>(
                     text,
                     labels: labels.clone(),
                     cells: Vec::new(),
+                    row_cells: Vec::new(),
                 });
             }
             if !shape.table.is_empty() {
@@ -1262,6 +1320,7 @@ fn powerpoint<R: Read + Seek>(
                     text: notes.join(PARAGRAPH_BREAK),
                     labels: vec!["speaker notes".into()],
                     cells: Vec::new(),
+                    row_cells: Vec::new(),
                 });
             }
         }
@@ -1465,6 +1524,7 @@ fn visio<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             text: format!("Page: {}", page.name),
             labels: labels.clone(),
             cells: Vec::new(),
+            row_cells: Vec::new(),
         });
         if let Some(relationship) = page.relationship
             && let Some(part) = package.part_by_relationship_id(&pages_part, &relationship)?
@@ -1486,6 +1546,7 @@ fn visio<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
                     },
                     labels: labels.clone(),
                     cells: Vec::new(),
+                    row_cells: Vec::new(),
                 });
             }
         }

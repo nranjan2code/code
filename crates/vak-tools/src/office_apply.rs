@@ -37,7 +37,7 @@ impl Tool for OfficeApplyTool {
     }
 
     fn description(&self) -> &str {
-        "Propose edits to, or create, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace file does not change until then. Read the source with doc_read first and pass the sha256 value it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits become tracked changes. Excel formulas recalculate when the file is opened. New slides come from the deck's own layouts. To create a file from a template, set source to the template and path to the new file. To keep editing a draft, pass the draft as source. Macros are never added or run."
+        "Propose edits to, or create, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace file does not change until then. Read the source with doc_read first and pass the sha256 value it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, a table cell's paragraph as its row shows it, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits to an existing file become tracked changes; a new file (a path not yet in the workspace, as when creating from a template) is written clean. Excel formulas recalculate when the file is opened. New slides come from the deck's own layouts. To create a file from a template, set source to the template and path to the new file. To keep editing a draft, pass the draft as source. Macros are never added or run."
     }
 
     fn schema(&self) -> Value {
@@ -165,13 +165,21 @@ impl Tool for OfficeApplyTool {
             );
         }
         let base_digest = base_digest.to_string();
+        // A file not in the workspace yet is a new document, written clean;
+        // an existing one is edited with tracked changes (docs/design/72, R7).
+        let relative_path = relative.to_string_lossy().replace('\\', "/");
+        let tracked = destination.is_file() && !ctx.new_documents.contains(&relative_path);
         let job = Job {
             source: source_path,
             destination,
             draft: draft.clone(),
             base_digest,
             ops,
-            context: vak_ooxml::edit::EditContext { author, date },
+            context: vak_ooxml::edit::EditContext {
+                author,
+                date,
+                tracked,
+            },
             target,
         };
         let work = tokio::task::spawn_blocking(move || job.run()).await;
@@ -296,7 +304,7 @@ fn op_schemas() -> Value {
             "delete_paragraph",
             serde_json::json!({ "anchor": anchor("paragraph anchor") }),
             &["anchor"],
-            "Word: delete a paragraph (a tracked change)"
+            "Word: delete a paragraph (a tracked change in an existing file; removed outright in a new one)"
         ),
         op(
             "set_cells",
@@ -390,6 +398,8 @@ pub(crate) fn apply_checked(
             &digest[..16]
         ));
     }
+    vak_ooxml::edit::check_renumbering(ops, context)
+        .map_err(|error| format!("nothing was written: {error}"))?;
     let applied = vak_ooxml::edit::apply(&bytes, ops, context, limits, Some(target))
         .map_err(|error| format!("nothing was written: {error}"))?;
     Ok((bytes, applied))
@@ -848,6 +858,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_new_document_is_written_clean_and_an_existing_one_tracked() {
+        let dir = tempfile::tempdir().unwrap();
+        let brand = dir.path().join("brand.docx");
+        std::fs::write(&brand, vak_ooxml::fixtures::docx()).unwrap();
+        let body = |output: &ToolOutput| {
+            let bytes = std::fs::read(dir.path().join(draft_path(output))).unwrap();
+            let mut package =
+                vak_ooxml::Package::open(std::io::Cursor::new(bytes), vak_ooxml::Limits::default())
+                    .unwrap();
+            String::from_utf8(package.read_part("word/document.xml").unwrap()).unwrap()
+        };
+        let ops = serde_json::json!([
+            {"op": "replace_paragraph_text", "anchor": "p@11", "text": "Growing."},
+            {"op": "insert_paragraph_after", "anchor": "p@1", "text": "Details"}
+        ]);
+        let created = run(
+            dir.path(),
+            serde_json::json!({"path": "memo.docx", "source": "brand.docx", "base_digest": digest_of(&brand), "ops": ops}),
+        )
+        .await;
+        assert!(!created.is_error, "{}", created.content);
+        assert!(
+            !body(&created).contains(r#"w:author="mira""#),
+            "a file not yet in the workspace is a new document, written clean"
+        );
+        let edited = run(
+            dir.path(),
+            serde_json::json!({"path": "brand.docx", "base_digest": digest_of(&brand), "ops": ops}),
+        )
+        .await;
+        assert!(!edited.is_error, "{}", edited.content);
+        assert!(
+            body(&edited).contains(r#"w:author="mira""#),
+            "an existing document is edited with tracked changes"
+        );
+        let revised = OfficeApplyTool
+            .execute(
+                &serde_json::json!({"path": "brand.docx", "base_digest": digest_of(&brand), "ops": ops}),
+                &ToolContext::new(dir.path().to_path_buf())
+                    .with_agent_id("mira")
+                    .with_new_documents(vec!["brand.docx".into()]),
+            )
+            .await;
+        assert!(!revised.is_error, "{}", revised.content);
+        assert!(
+            !body(&revised).contains(r#"w:author="mira""#),
+            "a revision's copy of a new document stays clean, though the copy holds the file"
+        );
+    }
+
+    #[tokio::test]
     async fn refuses_escapes_bad_ops_and_failed_edits_without_writing() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("memo.docx");
@@ -863,7 +924,7 @@ mod tests {
                 "ops are not valid",
             ),
             (
-                serde_json::json!({"path": "memo.docx", "base_digest": digest, "ops": [{"op": "replace_paragraph_text", "anchor": "p@2", "text": "x"}]}),
+                serde_json::json!({"path": "memo.docx", "base_digest": digest, "ops": [{"op": "delete_paragraph", "anchor": "p@11"}]}),
                 "nothing was written: op 1",
             ),
             (

@@ -511,6 +511,7 @@ mod tests {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            new_documents: Vec::new(),
         };
 
         // Record entity via tool

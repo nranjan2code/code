@@ -119,6 +119,11 @@ enum Role {
     OwnDeleted,
     /// Visible and fixed; the group says why.
     Guarded(usize),
+    /// Visible text of another author's plain tracked insertion (the
+    /// wrapper). It may be struck, as a deletion nested inside their
+    /// insertion as Word writes it, and new text beside it splits their
+    /// insertion rather than nesting inside it.
+    Theirs(usize),
 }
 
 /// Where new text goes.
@@ -216,6 +221,14 @@ struct Paragraph {
     /// The author's own simple deletions, each with its runs.
     own_deletions: HashMap<usize, Vec<usize>>,
     in_own_deletion: HashMap<usize, usize>,
+    /// Other authors' plain tracked insertions, each with its runs in
+    /// order (runs inside the author's own deletions within it included).
+    theirs: HashMap<usize, Vec<usize>>,
+    /// Run, or the author's own deletion, → the other author's insertion
+    /// it sits in.
+    in_theirs: HashMap<usize, usize>,
+    /// Tracked changes (an existing document) or clean text (a new one).
+    tracked: bool,
     /// Each run's content elements (everything but `w:rPr`), in order.
     run_children: HashMap<usize, Vec<usize>>,
     /// `w:pPr/w:rPr`: the paragraph mark's formatting.
@@ -232,7 +245,7 @@ pub(super) fn replace(
     context: &EditContext,
     first_id: u64,
 ) -> Result<Replaced, EditError> {
-    let model = read(part, paragraph, &context.author)?;
+    let model = read(part, paragraph, &context.author, context.tracked)?;
     let wanted = text.replace("\r\n", "\n").replace('\r', "\n");
     let original: String = model.chars.iter().collect();
     for marker in MARKERS {
@@ -311,7 +324,7 @@ pub(super) fn replace(
     // the author's own earlier deletion.
     let restates = model.chunks.iter().any(|chunk| {
         (chunk.start..chunk.start + chunk.text.len()).any(|index| match chunk.role {
-            Role::Plain => !keep[index],
+            Role::Plain | Role::Theirs(_) => !keep[index],
             Role::OwnDeleted => keep[index],
             Role::Guarded(_) => false,
         })
@@ -378,8 +391,13 @@ pub(super) fn replace(
             list.push_str(&format!(" and {} more", described.len() - shown));
         }
         format!(
-            "{anchor}: {} tracked change{}, only where the text differs: {list}",
+            "{anchor}: {} {}change{}, only where the text differs: {list}",
             described.len(),
+            if context.tracked {
+                "tracked "
+            } else {
+                "clean "
+            },
             if described.len() == 1 { "" } else { "s" }
         )
     };
@@ -394,8 +412,13 @@ pub(super) fn replace(
 
 /// The paragraph's text with `author`'s changes accepted and rejected, and
 /// the content the reader does not show.
-pub(super) fn views(part: &Part<'_>, paragraph: usize, author: &str) -> Result<Views, EditError> {
-    let model = read(part, paragraph, author)?;
+pub(super) fn views(
+    part: &Part<'_>,
+    paragraph: usize,
+    author: &str,
+    tracked: bool,
+) -> Result<Views, EditError> {
+    let model = read(part, paragraph, author, tracked)?;
     let mut accepted = String::new();
     let mut own = model.own_insertions.iter().peekable();
     for (index, character) in model.chars.iter().enumerate() {
@@ -467,6 +490,7 @@ struct Context {
     link: Option<usize>,
     guard: Option<usize>,
     own_deletion: Option<usize>,
+    theirs: Option<usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -488,7 +512,12 @@ struct Walker<'p, 'a> {
     model: Paragraph,
 }
 
-fn read(part: &Part<'_>, paragraph: usize, author: &str) -> Result<Paragraph, EditError> {
+fn read(
+    part: &Part<'_>,
+    paragraph: usize,
+    author: &str,
+    tracked: bool,
+) -> Result<Paragraph, EditError> {
     let mut walker = Walker {
         part,
         author,
@@ -496,6 +525,7 @@ fn read(part: &Part<'_>, paragraph: usize, author: &str) -> Result<Paragraph, Ed
         fields: Vec::new(),
         model: Paragraph {
             node: paragraph,
+            tracked,
             ..Paragraph::default()
         },
     };
@@ -856,16 +886,48 @@ impl Walker<'_, '_> {
         Ok(text)
     }
 
+    /// Another author's insertion can be struck or split when it is plain:
+    /// runs of text, and the author's own plain deletions of them.
+    fn simple_theirs(&self, wrapper: usize) -> bool {
+        let tree = self.part.tree;
+        tree.nodes[wrapper].children.iter().all(|&child| {
+            let node = &tree.nodes[child];
+            if node.skipped {
+                return false;
+            }
+            match node.local() {
+                "r" => {
+                    let (hidden, white) = run_flags(tree, child);
+                    !hidden
+                        && !white
+                        && node.children.iter().all(|&content| {
+                            let content = &tree.nodes[content];
+                            !content.skipped
+                                && matches!(
+                                    content.local(),
+                                    "rPr" | "t" | "tab" | "br" | "cr" | "noBreakHyphen"
+                                )
+                        })
+                }
+                "del" => node.element.attr("author") == Some(self.author) && self.simple(child),
+                _ => false,
+            }
+        })
+    }
+
     fn revision(&mut self, node: usize, context: Context) -> Result<(), EditError> {
         let tree = self.part.tree;
         let element = &tree.nodes[node].element;
         let local = element.local();
         let author = element.attr("author").unwrap_or("unknown").to_string();
         let guard = self.enclosing_guard(context);
-        let own = matches!(local, "ins" | "del")
+        let tracked = self.model.tracked;
+        let own = tracked
+            && matches!(local, "ins" | "del")
             && author == self.author
             && guard.is_none()
             && context.own_deletion.is_none()
+            && !(local == "ins" && context.theirs.is_some())
             && self.simple(node);
         match (local, own) {
             ("ins", true) => {
@@ -881,6 +943,12 @@ impl Walker<'_, '_> {
                 let runs: Vec<usize> = tree.nodes[node].children.clone();
                 for &run in &runs {
                     self.model.in_own_deletion.insert(run, node);
+                    if let Some(theirs) = context.theirs {
+                        self.model.in_theirs.insert(run, theirs);
+                    }
+                }
+                if let Some(theirs) = context.theirs {
+                    self.model.in_theirs.insert(node, theirs);
                 }
                 self.model.own_deletions.insert(node, runs.clone());
                 for run in runs {
@@ -891,6 +959,35 @@ impl Walker<'_, '_> {
                             ..context
                         },
                     )?;
+                }
+            }
+            ("ins", false)
+                if tracked
+                    && guard.is_none()
+                    && context.own_deletion.is_none()
+                    && context.theirs.is_none()
+                    && self.simple_theirs(node) =>
+            {
+                let mut runs = Vec::new();
+                for &child in &tree.nodes[node].children {
+                    match tree.nodes[child].local() {
+                        "r" => runs.push(child),
+                        _ => runs.extend(tree.nodes[child].children.iter().copied()),
+                    }
+                }
+                for &run in &runs {
+                    self.model.in_theirs.insert(run, node);
+                }
+                self.model.theirs.insert(node, runs);
+                let inside = Context {
+                    theirs: Some(node),
+                    ..context
+                };
+                for &child in &tree.nodes[node].children {
+                    match tree.nodes[child].local() {
+                        "r" => self.run(child, inside)?,
+                        _ => self.revision(child, inside)?,
+                    }
                 }
             }
             ("ins" | "moveTo", false) => {
@@ -962,20 +1059,25 @@ impl Walker<'_, '_> {
                         continue;
                     }
                     let link = self.link_here(context);
-                    let (role, stray) = match self.enclosing_guard(context) {
-                        Some(group) => (Role::Guarded(group), false),
-                        None if context.own_deletion.is_some() => (Role::OwnDeleted, false),
+                    let (role, stray) = if let Some(group) = self.enclosing_guard(context) {
+                        (Role::Guarded(group), false)
+                    } else if context.own_deletion.is_some() {
+                        (Role::OwnDeleted, false)
+                    } else if local == "delText" {
                         // Deleted text outside a deletion: shown as text,
                         // and not this op's to change.
-                        None if local == "delText" => (
+                        (
                             Role::Guarded(self.group(
                                 Guard::Element("delText".into()),
                                 Some(before),
                                 Some(after),
                             )),
                             true,
-                        ),
-                        None => (Role::Plain, false),
+                        )
+                    } else if let Some(theirs) = context.theirs {
+                        (Role::Theirs(theirs), false)
+                    } else {
+                        (Role::Plain, false)
                     };
                     let order = self.chunk(
                         child,
@@ -1324,8 +1426,9 @@ impl Paragraph {
     }
 
     /// The same place, named so that nothing is split that need not be: a
-    /// run's edge becomes a place beside the run (or beside the author's
-    /// deletion the run is the edge of).
+    /// run's edge becomes a place beside the run, beside the author's
+    /// deletion the run is the edge of, or beside the other author's
+    /// insertion it is the edge of (new text never goes inside that).
     fn normalize(&self, spot: Spot) -> Spot {
         let Spot::InRun { run, child, offset } = spot else {
             return spot;
@@ -1346,6 +1449,16 @@ impl Paragraph {
         };
         let at_start = child == 0 && offset == 0;
         let at_end = child >= children.len();
+        if let Some(theirs) = self.in_theirs.get(&run) {
+            let runs = self.theirs.get(theirs);
+            return if at_start && runs.and_then(|runs| runs.first()) == Some(&run) {
+                Spot::Before(*theirs)
+            } else if at_end && runs.and_then(|runs| runs.last()) == Some(&run) {
+                Spot::After(*theirs)
+            } else {
+                Spot::InRun { run, child, offset }
+            };
+        }
         match self.in_own_deletion.get(&run) {
             None if at_start => Spot::Before(run),
             None if at_end => Spot::After(run),
@@ -1431,12 +1544,33 @@ enum Segment {
     Inserted(Vec<(String, String)>),
 }
 
+/// What a rewritten unit becomes: markup that stays where the unit was
+/// (runs, deletions), and new text, which never goes inside another
+/// author's insertion.
+enum Piece {
+    Kept(Vec<u8>),
+    New(Vec<u8>),
+}
+
+fn concat(pieces: Vec<Piece>) -> Vec<u8> {
+    let mut out = Vec::new();
+    for piece in pieces {
+        match piece {
+            Piece::Kept(xml) | Piece::New(xml) => out.extend(xml),
+        }
+    }
+    out
+}
+
 struct Emitter<'p, 'a> {
     part: &'p Part<'a>,
     model: &'p Paragraph,
     keep: &'p [bool],
-    /// Units rewritten in full: plain runs, and the author's deletions.
+    /// Units rewritten in full: plain runs, the author's deletions, and
+    /// other authors' insertions.
     rewrite: HashSet<usize>,
+    /// Runs and the author's deletions whose content changes.
+    changed: HashSet<usize>,
     /// Containers re-emitted around a change, copying what did not change.
     open: HashSet<usize>,
     dropped: HashSet<usize>,
@@ -1456,24 +1590,29 @@ impl<'p, 'a> Emitter<'p, 'a> {
         context: &'p EditContext,
         first_id: u64,
     ) -> Self {
-        let unit = |run: usize| model.in_own_deletion.get(&run).copied().unwrap_or(run);
-        let mut rewrite = HashSet::new();
+        // A run's unit: the other author's insertion it sits in (directly or
+        // inside the author's own deletion), else the author's deletion it
+        // sits in, else the run itself.
+        let owner = |run: usize| model.in_own_deletion.get(&run).copied().unwrap_or(run);
+        let unit = |node: usize| model.in_theirs.get(&node).copied().unwrap_or(node);
+        let mut changed = HashSet::new();
         for chunk in &model.chunks {
-            let changed =
+            let differs =
                 (chunk.start..chunk.start + chunk.text.len()).any(|index| match chunk.role {
-                    Role::Plain => !keep[index],
+                    Role::Plain | Role::Theirs(_) => !keep[index],
                     Role::OwnDeleted => keep[index],
                     Role::Guarded(_) => false,
                 });
-            if changed && let Some(run) = chunk.run {
-                rewrite.insert(unit(run));
+            if differs && let Some(run) = chunk.run {
+                changed.insert(owner(run));
             }
         }
         for spot in at.keys() {
             if let Spot::InRun { run, .. } = spot {
-                rewrite.insert(unit(*run));
+                changed.insert(owner(*run));
             }
         }
+        let rewrite: HashSet<usize> = changed.iter().map(|node| unit(*node)).collect();
         /// Marks the containers above `node`, up to the paragraph.
         fn open_above(tree: &Tree, paragraph: usize, open: &mut HashSet<usize>, node: usize) {
             let mut current = tree.nodes[node].parent;
@@ -1508,6 +1647,7 @@ impl<'p, 'a> Emitter<'p, 'a> {
             model,
             keep,
             rewrite,
+            changed,
             open,
             dropped,
             at,
@@ -1534,17 +1674,17 @@ impl<'p, 'a> Emitter<'p, 'a> {
         }
     }
 
+    /// New text: a tracked insertion, or in a new document plain runs.
     fn render(&mut self, list: Vec<(String, String)>, out: &mut Vec<u8>) {
         for (properties, text) in list {
             let w = self.part.w;
-            let revision = self.revision();
-            out.extend(
-                format!(
-                    "<{w}ins{revision}><{w}r>{properties}{}</{w}r></{w}ins>",
-                    run_content(w, &text)
-                )
-                .into_bytes(),
-            );
+            let run = format!("<{w}r>{properties}{}</{w}r>", run_content(w, &text));
+            if self.model.tracked {
+                let revision = self.revision();
+                out.extend(format!("<{w}ins{revision}>{run}</{w}ins>").into_bytes());
+            } else {
+                out.extend(run.into_bytes());
+            }
         }
     }
 
@@ -1574,10 +1714,12 @@ impl<'p, 'a> Emitter<'p, 'a> {
             return Ok(Vec::new());
         }
         if self.rewrite.contains(&node) {
-            return if self.model.own_deletions.contains_key(&node) {
-                self.own_deletion(node)
+            return if self.model.theirs.contains_key(&node) {
+                self.theirs(node)
+            } else if self.model.own_deletions.contains_key(&node) {
+                self.own_deletion(node).map(concat)
             } else {
-                self.plain_run(node)
+                self.plain_run(node).map(concat)
             };
         }
         let element = &self.part.tree.nodes[node];
@@ -1594,31 +1736,40 @@ impl<'p, 'a> Emitter<'p, 'a> {
         format!("</{}{local}>", self.part.w).into_bytes()
     }
 
-    fn plain_run(&mut self, run: usize) -> Result<Vec<u8>, EditError> {
-        let mut out = Vec::new();
+    fn plain_run(&mut self, run: usize) -> Result<Vec<Piece>, EditError> {
+        let mut pieces = Vec::new();
         for segment in self.segments(run)? {
             match segment {
                 Segment::Run { deleted: true, xml } => {
-                    let revision = self.revision();
-                    out.extend(format!("<{}del{revision}>", self.part.w).into_bytes());
-                    out.extend(xml);
-                    out.extend(self.close("del"));
+                    // A new document is written clean: deleted text just goes.
+                    if self.model.tracked {
+                        let revision = self.revision();
+                        let mut wrapped = format!("<{}del{revision}>", self.part.w).into_bytes();
+                        wrapped.extend(xml);
+                        wrapped.extend(self.close("del"));
+                        pieces.push(Piece::Kept(wrapped));
+                    }
                 }
-                Segment::Run { xml, .. } => out.extend(xml),
-                Segment::Inserted(list) => self.render(list, &mut out),
+                Segment::Run { xml, .. } => pieces.push(Piece::Kept(xml)),
+                Segment::Inserted(list) => {
+                    let mut out = Vec::new();
+                    self.render(list, &mut out);
+                    pieces.push(Piece::New(out));
+                }
             }
         }
-        Ok(out)
+        Ok(pieces)
     }
 
-    fn own_deletion(&mut self, wrapper: usize) -> Result<Vec<u8>, EditError> {
+    fn own_deletion(&mut self, wrapper: usize) -> Result<Vec<Piece>, EditError> {
         let runs = self
             .model
             .own_deletions
             .get(&wrapper)
             .cloned()
             .unwrap_or_default();
-        let mut out = Vec::new();
+        let mut pieces = Vec::new();
+        let mut kept = Vec::new();
         let mut open = false;
         for run in runs {
             for segment in self.segments(run)? {
@@ -1626,32 +1777,127 @@ impl<'p, 'a> Emitter<'p, 'a> {
                     Segment::Run { deleted: true, xml } => {
                         if !open {
                             let revision = self.revision();
-                            out.extend(format!("<{}del{revision}>", self.part.w).into_bytes());
+                            kept.extend(format!("<{}del{revision}>", self.part.w).into_bytes());
                             open = true;
                         }
-                        out.extend(xml);
+                        kept.extend(xml);
                     }
                     Segment::Run { xml, .. } => {
                         if open {
-                            out.extend(self.close("del"));
+                            kept.extend(self.close("del"));
                             open = false;
                         }
-                        out.extend(xml);
+                        kept.extend(xml);
                     }
                     Segment::Inserted(list) => {
                         if open {
-                            out.extend(self.close("del"));
+                            kept.extend(self.close("del"));
                             open = false;
                         }
+                        if !kept.is_empty() {
+                            pieces.push(Piece::Kept(std::mem::take(&mut kept)));
+                        }
+                        let mut out = Vec::new();
                         self.render(list, &mut out);
+                        pieces.push(Piece::New(out));
                     }
                 }
             }
         }
         if open {
-            out.extend(self.close("del"));
+            kept.extend(self.close("del"));
         }
+        if !kept.is_empty() {
+            pieces.push(Piece::Kept(kept));
+        }
+        Ok(pieces)
+    }
+
+    /// Another author's insertion with a change inside it: struck text is a
+    /// deletion nested inside their insertion, and new text closes their
+    /// insertion, follows it, and opens it again (with a fresh id), so it is
+    /// never nested inside.
+    fn theirs(&mut self, wrapper: usize) -> Result<Vec<u8>, EditError> {
+        let tree = self.part.tree;
+        let bytes = self.part.bytes;
+        let node = &tree.nodes[wrapper];
+        let open_tag = &bytes[node.span.start..node.inner.start];
+        let close_tag = &bytes[node.inner.end..node.span.end];
+        let mut out = Vec::new();
+        let mut inside = Vec::new();
+        let mut reopened = false;
+        for &child in &node.children {
+            let pieces = if !self.changed.contains(&child) {
+                vec![Piece::Kept(bytes[tree.nodes[child].span.clone()].to_vec())]
+            } else if self.model.own_deletions.contains_key(&child) {
+                self.own_deletion(child)?
+            } else {
+                self.plain_run(child)?
+            };
+            for piece in pieces {
+                match piece {
+                    Piece::Kept(xml) => inside.extend(xml),
+                    Piece::New(xml) => {
+                        self.close_theirs(
+                            wrapper,
+                            open_tag,
+                            close_tag,
+                            &mut reopened,
+                            &mut inside,
+                            &mut out,
+                        );
+                        out.extend(xml);
+                    }
+                }
+            }
+        }
+        self.close_theirs(
+            wrapper,
+            open_tag,
+            close_tag,
+            &mut reopened,
+            &mut inside,
+            &mut out,
+        );
         Ok(out)
+    }
+
+    /// Writes the other author's insertion around what has gathered inside
+    /// it: with its own start tag the first time, a fresh id after that.
+    fn close_theirs(
+        &mut self,
+        wrapper: usize,
+        open_tag: &[u8],
+        close_tag: &[u8],
+        reopened: &mut bool,
+        inside: &mut Vec<u8>,
+        out: &mut Vec<u8>,
+    ) {
+        if inside.is_empty() {
+            return;
+        }
+        if *reopened {
+            let element = &self.part.tree.nodes[wrapper].element;
+            let id = self.next_id;
+            self.next_id += 1;
+            let attributes: Vec<(String, String)> = element
+                .attributes
+                .iter()
+                .map(|(key, value)| {
+                    if crate::xml::local_name(key) == "id" {
+                        (key.clone(), id.to_string())
+                    } else {
+                        (key.clone(), value.clone())
+                    }
+                })
+                .collect();
+            out.extend(start_tag(&element.name, &attributes, false).into_bytes());
+        } else {
+            out.extend_from_slice(open_tag);
+        }
+        out.append(inside);
+        out.extend_from_slice(close_tag);
+        *reopened = true;
     }
 
     /// A run cut where its characters change state or new text goes in:

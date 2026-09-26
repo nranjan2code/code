@@ -10,6 +10,11 @@ pub struct ToolContext {
     pub sandbox: Option<Arc<dyn crate::sandbox::Sandbox>>,
     pub sandbox_sink: Option<crate::sandbox_events::SandboxEventSink>,
     pub agent_id: Option<String>,
+    /// Workspace paths (with `/`) of Office files that are new to the
+    /// workspace a task copy was made from, though the copy holds them:
+    /// their Word edits are written clean (docs/design/72, R7). Set by the
+    /// runtime, never by the model; empty outside a revision's copy.
+    pub new_documents: Vec<String>,
 }
 
 impl ToolContext {
@@ -20,6 +25,7 @@ impl ToolContext {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            new_documents: Vec::new(),
         }
     }
 
@@ -30,6 +36,11 @@ impl ToolContext {
 
     pub fn with_agent_id(mut self, agent_id: impl Into<String>) -> Self {
         self.agent_id = Some(agent_id.into());
+        self
+    }
+
+    pub fn with_new_documents(mut self, paths: Vec<String>) -> Self {
+        self.new_documents = paths;
         self
     }
 

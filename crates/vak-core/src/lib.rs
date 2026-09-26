@@ -632,6 +632,10 @@ pub struct Core {
     /// A child Core rooted in a retained, separate task copy. Never stamp
     /// this on the owner's ordinary conversation Core.
     task_copy_boundary: bool,
+    /// Office files a revision's task copy holds that are new to the
+    /// workspace it was made from, so their Word edits are written clean
+    /// (docs/design/72, R7). Set only by the server; empty otherwise.
+    new_documents: Arc<Vec<String>>,
     /// `<surface>:<chat>` for the conversation this turn is running
     /// inside, when known (set by the gateway per inbound message; unset
     /// for the CLI and desktop app, which have no chat to reply into).
@@ -1244,6 +1248,7 @@ impl Core {
         };
         Ok(Core {
             task_copy_boundary: false,
+            new_documents: Arc::default(),
             default_deliver_to: None,
             surface: Surface::Unknown,
             prompt_role: None,
@@ -1548,7 +1553,7 @@ impl Core {
             .ok()
             .map(|worker| worker.clone())
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
-        let tools = vak_tools::brokered_default_tools(worker);
+        let tools = vak_tools::brokered_tools(worker, &self.new_documents);
         self.filter_builtin_tools(tools)
     }
 
@@ -2828,6 +2833,13 @@ impl Core {
         self
     }
 
+    /// Marks Office files in this task copy as new to the workspace it was
+    /// made from (see the `new_documents` field).
+    pub fn with_new_documents(mut self, paths: Vec<String>) -> Self {
+        self.new_documents = Arc::new(paths);
+        self
+    }
+
     pub fn surface(&self) -> &Surface {
         &self.surface
     }
@@ -3527,7 +3539,7 @@ impl Core {
             .ok()
             .map(|worker| worker.clone())
             .unwrap_or_else(|| PathBuf::from("__vak_tool_worker_unavailable__"));
-        let mut tools = vak_tools::brokered_default_tools(worker);
+        let mut tools = vak_tools::brokered_tools(worker, &self.new_documents);
         tools.push(Arc::new(vak_tools::RecallTool));
         tools.push(Arc::new(tools_tasks::TasksTool {
             sessions_home: self.shared_data_home(),

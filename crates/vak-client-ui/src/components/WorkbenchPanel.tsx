@@ -22,6 +22,7 @@ import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 import OfficeChangeList from "./OfficeChangeList";
+import OfficeView from "./OfficeView";
 import { isOfficePath } from "../officeFiles";
 import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
@@ -381,6 +382,17 @@ export default function WorkbenchPanel() {
     if (previousUrl?.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
     setArtifactDataUrl(null);
     try {
+      if (isOfficePath(path)) {
+        // The Office view reads the file through the server's worker; the
+        // bytes are fetched only so the file can be downloaded.
+        const rawUrl = await api.readFileRaw(path);
+        if (request !== artifactRequest) {
+          URL.revokeObjectURL(rawUrl);
+          return;
+        }
+        setArtifactDataUrl(rawUrl);
+        return;
+      }
       const res = await api.readFile(path);
       if (request !== artifactRequest) return;
       if (res.data_url) {
@@ -1424,9 +1436,19 @@ export default function WorkbenchPanel() {
                     <div class="media-preview"><video src={artifactDataUrl()!} controls preload="metadata" /></div>
                   </Show>
 
+                  <Show when={isOfficePath(selectedArtifact()!)}>
+                    <div class="artifact-office">
+                      <OfficeView source={{ path: selectedArtifact()! }} fileName={selectedArtifact()!.split("/").pop() ?? selectedArtifact()!} />
+                      <Show when={artifactDataUrl()}>{(url) => (
+                        <a class="btn sm" href={url()} download={selectedArtifact()!.split("/").pop()}>Download file</a>
+                      )}</Show>
+                    </div>
+                  </Show>
+
                   {/* Code / Text Preview */}
                   <Show
                     when={
+                      !isOfficePath(selectedArtifact()!) &&
                       !isHtmlArtifact(selectedArtifact()!) &&
                       !isImageArtifact(selectedArtifact()!) &&
                       !isPdfArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&
@@ -1441,6 +1463,7 @@ export default function WorkbenchPanel() {
                   <Show
                     when={
                       artifactDataUrl() !== null &&
+                      !isOfficePath(selectedArtifact()!) &&
                       !isHtmlArtifact(selectedArtifact()!) &&
                       !isImageArtifact(selectedArtifact()!) &&
                       !isPdfArtifact(selectedArtifact()!, allArtifacts().find((a) => a.path === selectedArtifact())?.mimeType) &&

@@ -16,6 +16,7 @@ fn context() -> EditContext {
     EditContext {
         author: "Mira".into(),
         date: "2026-09-24T10:00:00Z".into(),
+        tracked: true,
     }
 }
 
@@ -239,4 +240,47 @@ fn a_word_edit_is_offered_and_kept_as_its_changed_words() {
         "{narrowed}"
     );
     assert!(!narrowed.contains("Details"), "{narrowed}");
+}
+
+#[test]
+fn in_a_new_document_an_edit_that_names_a_renumbered_paragraph_needs_the_removal() {
+    let clean = EditContext {
+        tracked: false,
+        ..context()
+    };
+    let source = fixtures::docx();
+    // Two calls: the first removes p@3; the second, written against that
+    // draft, names p@3 again: the paragraph that followed the removed one.
+    let ops = vec![
+        OfficeOp::DeleteParagraph {
+            anchor: "p@3".into(),
+        },
+        OfficeOp::ReplaceParagraphText {
+            anchor: "p@3".into(),
+            text: "Field".into(),
+        },
+    ];
+    let draft = edit::apply(&source, &ops, &clean, Limits::default(), None).unwrap();
+    let offered = review::choices(
+        &source,
+        &ops,
+        &clean,
+        Limits::default(),
+        None,
+        &draft.document,
+    )
+    .unwrap();
+    assert_eq!(offered[1].requires, vec!["0".to_string()], "{offered:?}");
+    let error = review::narrow(
+        &source,
+        &ops,
+        &["1".to_string()],
+        &clean,
+        Limits::default(),
+        None,
+        &draft.document,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("builds on edit 1"), "{error}");
 }

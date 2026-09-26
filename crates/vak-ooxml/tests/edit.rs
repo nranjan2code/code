@@ -16,6 +16,7 @@ fn context() -> EditContext {
     EditContext {
         author: "Mira".into(),
         date: "2026-09-24T10:00:00Z".into(),
+        tracked: true,
     }
 }
 
@@ -1093,16 +1094,66 @@ fn fields_and_other_authors_changes_stay_and_a_change_to_them_is_named() {
         document.contains(&format!("{COUNTERPARTY}<w:ins ")),
         "new text right after another author's insertion goes after it, not into it: {document}"
     );
-    let error = replace(
+    // Countering their change: their inserted "60" is struck inside their
+    // insertion, as Word writes it, and "45" follows their insertion.
+    let applied = replace(
         &source,
         "p@2",
         "Fees are payable within 45 days of invoice.",
     )
-    .unwrap_err()
-    .to_string();
+    .unwrap();
+    let document = part(&applied.bytes, "word/document.xml");
     assert!(
-        error.contains(r#""60""#) && error.contains("tracked change by Counterparty"),
-        "{error}"
+        document.contains(
+            r#"<w:ins w:id="8" w:author="Counterparty" w:date="2026-09-01T00:00:00Z"><w:del w:id="9" w:author="Mira" w:date="2026-09-24T10:00:00Z"><w:r><w:delText xml:space="preserve">60</w:delText></w:r></w:del></w:ins><w:ins w:id="10" w:author="Mira" w:date="2026-09-24T10:00:00Z"><w:r><w:t xml:space="preserve">45</w:t></w:r></w:ins>"#
+        ),
+        "{document}"
+    );
+    assert!(
+        lines(&applied).contains(
+            "Fees are payable within [deleted by Counterparty: 30][deleted by Mira: 60][inserted by Mira: 45] days of invoice."
+        ),
+        "{}",
+        lines(&applied)
+    );
+}
+
+#[test]
+fn another_authors_insertion_is_split_around_new_text_never_nested() {
+    let theirs = r#"<w:ins w:id="5" w:author="Counterparty" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">within sixty business days</w:t></w:r></w:ins>"#;
+    let source = word_document(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Fees are payable </w:t></w:r>{theirs}<w:r><w:t xml:space="preserve"> of invoice.</w:t></w:r></w:p>"#
+    ));
+    let applied = replace(
+        &source,
+        "p@1",
+        "Fees are payable within forty-five business days of invoice.",
+    )
+    .unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    assert!(
+        paragraph.contains(
+            r#"<w:ins w:id="5" w:author="Counterparty" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve">within </w:t></w:r><w:del w:id="6" w:author="Mira" w:date="2026-09-24T10:00:00Z"><w:r><w:delText xml:space="preserve">sixty</w:delText></w:r></w:del></w:ins><w:ins w:id="7" w:author="Mira" w:date="2026-09-24T10:00:00Z"><w:r><w:t xml:space="preserve">forty-five</w:t></w:r></w:ins><w:ins w:id="8" w:author="Counterparty" w:date="2026-09-01T00:00:00Z"><w:r><w:t xml:space="preserve"> business days</w:t></w:r></w:ins>"#
+        ),
+        "their insertion closes before the new text and opens again after it: {paragraph}"
+    );
+    assert!(
+        !paragraph.contains("<w:ins w:id=\"7\" w:author=\"Mira\" w:date=\"2026-09-24T10:00:00Z\"><w:r><w:t xml:space=\"preserve\">forty-five</w:t></w:r></w:ins></w:ins>"),
+        "{paragraph}"
+    );
+    // Taking the change back restores their insertion's text as it was.
+    let withdrawn = replace(
+        &applied.bytes,
+        "p@1",
+        "Fees are payable within sixty business days of invoice.",
+    )
+    .unwrap();
+    assert!(
+        lines(&withdrawn).contains(
+            "[p@1] Fees are payable [inserted by Counterparty: within ][inserted by Counterparty: sixty][inserted by Counterparty:  business days] of invoice."
+        ),
+        "{}",
+        lines(&withdrawn)
     );
 }
 
@@ -1283,5 +1334,124 @@ fn a_paragraph_inside_a_field_begun_earlier_is_guarded_to_its_end() {
         lines(&applied).contains("[p@2] Scope and [inserted by Mira: much ]more"),
         "{}",
         lines(&applied)
+    );
+}
+
+// ---- Tables, new documents -----------------------------------------------------------
+
+#[test]
+fn a_table_cell_is_edited_by_its_paragraphs_anchor() {
+    let applied = replace(&fixtures::docx(), "p@9", "150").unwrap();
+    assert!(
+        lines(&applied).contains(
+            "[tbl@1/r2] [p@8] North | [p@9] [deleted by Mira: 120][inserted by Mira: 150]"
+        ),
+        "{}",
+        lines(&applied)
+    );
+    let located = vak_ooxml::projection::locate(&applied.document, "p@9").unwrap();
+    assert_eq!(
+        applied.document.units[located].anchor, "tbl@1/r2",
+        "a citation of a cell opens its row"
+    );
+}
+
+fn clean() -> EditContext {
+    EditContext {
+        tracked: false,
+        ..context()
+    }
+}
+
+#[test]
+fn a_new_document_is_written_clean() {
+    let source = word_document(concat!(
+        r#"<w:p><w:r><w:t>Memo to [Client name]</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Delete this instruction before sending.</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Body text goes here.</w:t></w:r></w:p>"#,
+    ));
+    let applied = edit::apply(
+        &source,
+        &[
+            OfficeOp::ReplaceParagraphText {
+                anchor: "p@1".into(),
+                text: "Memo to Acme Ltd".into(),
+            },
+            OfficeOp::InsertParagraphAfter {
+                anchor: "p@3".into(),
+                text: "Next steps follow.".into(),
+                style: None,
+            },
+            OfficeOp::DeleteParagraph {
+                anchor: "p@2".into(),
+            },
+        ],
+        &clean(),
+        Limits::default(),
+        None,
+    )
+    .unwrap();
+    let document = part(&applied.bytes, "word/document.xml");
+    assert!(
+        !document.contains("<w:ins") && !document.contains("<w:del"),
+        "nothing in a new document is a tracked change: {document}"
+    );
+    let text = lines(&applied);
+    assert!(text.contains("[p@1] Memo to Acme Ltd"), "{text}");
+    assert!(text.contains("Next steps follow."), "{text}");
+    assert!(!text.contains("Delete this instruction"), "{text}");
+    assert!(
+        applied.results[0].summary.contains("clean change"),
+        "{}",
+        applied.results[0].summary
+    );
+}
+
+#[test]
+fn removing_a_paragraph_from_a_new_document_renumbers_what_follows() {
+    let replace_third = OfficeOp::ReplaceParagraphText {
+        anchor: "p@3".into(),
+        text: "x".into(),
+    };
+    let delete_second = OfficeOp::DeleteParagraph {
+        anchor: "p@2".into(),
+    };
+    let error = edit::check_renumbering(&[delete_second.clone(), replace_third.clone()], &clean())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.starts_with("op 2 (replace_paragraph_text)") && error.contains("renumbers"),
+        "{error}"
+    );
+    assert!(
+        edit::check_renumbering(&[replace_third.clone(), delete_second.clone()], &clean()).is_ok(),
+        "deletions after the ops that name later paragraphs are fine"
+    );
+    assert!(
+        edit::check_renumbering(&[delete_second, replace_third], &context()).is_ok(),
+        "a tracked deletion keeps its paragraph, so nothing moves"
+    );
+}
+
+#[test]
+fn a_new_documents_paragraph_is_not_removed_when_that_would_break_it() {
+    let source = word_document(concat!(
+        r#"<w:p><w:bookmarkStart w:id="0" w:name="terms"/><w:r><w:t>First</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Second</w:t></w:r><w:bookmarkEnd w:id="0"/></w:p>"#,
+    ));
+    let error = edit::apply(
+        &source,
+        &[OfficeOp::DeleteParagraph {
+            anchor: "p@1".into(),
+        }],
+        &clean(),
+        Limits::default(),
+        None,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains("continues into another paragraph"),
+        "{error}"
     );
 }

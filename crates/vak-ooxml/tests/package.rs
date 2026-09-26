@@ -141,7 +141,10 @@ fn word_projection_anchors_and_labels_hidden_content() {
     );
     assert!(lines.contains("⟨DDE field (never executed)⟩"), "{lines}");
     assert!(lines.contains("Source?  ⟨comment by Ana⟩"), "{lines}");
-    assert!(lines.contains("[tbl@1/r2] North | 120"), "{lines}");
+    assert!(
+        lines.contains("[tbl@1/r2] [p@8] North | [p@9] 120"),
+        "a table row names each cell's paragraph, so a cell can be changed: {lines}"
+    );
     assert!(
         !lines.contains('\t'),
         "a tab stop definition is not text: {lines}"
@@ -159,6 +162,11 @@ fn word_projection_anchors_and_labels_hidden_content() {
     );
     assert!(document.stats.contains(&("tracked changes".into(), 2)));
     assert!(document.stats.contains(&("hidden runs".into(), 1)));
+    assert!(
+        document.stats.contains(&("words".into(), 18)),
+        "words are counted as the document reads: no markers, deleted or hidden text, or cell separators: {:?}",
+        document.stats
+    );
 }
 
 #[test]

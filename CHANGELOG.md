@@ -9,9 +9,22 @@
   such an edit made the whole paragraph take its first word's formatting (a
   bold heading word turned the clause bold), dropped its links and removed
   its footnote marks. A paragraph with a cross-reference, or with someone
-  else's tracked changes, can now be edited around those parts, and a change
-  to them is refused with a message naming them. Revising a draft updates the
-  assistant's earlier change instead of refusing the paragraph.
+  else's tracked changes, can now be edited, and a change to the
+  cross-reference itself is refused with a message naming it. Revising a
+  draft updates the assistant's earlier change instead of refusing the
+  paragraph.
+- **Word tables can be edited.** The assistant can change the text in a
+  table's cells, and a citation of a cell opens its row.
+- **You can counter the other side's changes.** Striking or replacing text
+  someone else inserted as a tracked change is itself a tracked change, the
+  way Word writes it, instead of being refused.
+- **New documents are clean.** A document the assistant makes, for example
+  from your template, has no tracked changes in it; only edits to a file you
+  already have are tracked.
+- **Word counts are right.** A file's word count no longer counts the
+  "deleted by" and "inserted by" labels or the lines between table cells.
+- **The Workbench shows Word, Excel and PowerPoint files** in the same view
+  as the Canvas, where it used to say the file could not be previewed.
 
 ## 5.0.0 — 2026-09-26
 

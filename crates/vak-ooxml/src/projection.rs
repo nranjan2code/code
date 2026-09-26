@@ -149,6 +149,16 @@ pub fn locate(document: &Document, anchor: &str) -> Option<usize> {
             }
         }
     }
+    // A paragraph in a Word table cell is cited by its own anchor and
+    // shown in its row.
+    if let Some(index) = document.units.iter().position(|unit| {
+        unit.row_cells
+            .iter()
+            .flatten()
+            .any(|(paragraph, _)| paragraph == anchor)
+    }) {
+        return Some(index);
+    }
     document.units.iter().position(|unit| {
         unit.anchor.starts_with(anchor)
             && matches!(
@@ -192,6 +202,12 @@ fn weight(unit: &Unit) -> usize {
             .iter()
             .map(|(address, value)| address.len() + value.len() + 8)
             .sum::<usize>()
+        + unit
+            .row_cells
+            .iter()
+            .flatten()
+            .map(|(anchor, text)| anchor.len() + text.len() + 8)
+            .sum::<usize>()
 }
 
 fn cut(unit: &Unit, budget: usize) -> Unit {
@@ -208,6 +224,7 @@ fn cut(unit: &Unit, budget: usize) -> Unit {
         unit.text.chars().count()
     ));
     cut.cells.clear();
+    cut.row_cells.clear();
     cut
 }
 

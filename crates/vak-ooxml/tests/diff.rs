@@ -17,6 +17,7 @@ fn edited(bytes: &[u8], ops: Vec<OfficeOp>) -> Vec<u8> {
     let context = EditContext {
         author: "Mira".into(),
         date: "2026-09-24T10:00:00Z".into(),
+        tracked: true,
     };
     edit::apply(bytes, &ops, &context, Limits::default(), None)
         .unwrap()

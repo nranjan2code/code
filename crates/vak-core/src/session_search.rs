@@ -357,6 +357,7 @@ mod tests {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            new_documents: Vec::new(),
         };
 
         let out = tool
@@ -395,6 +396,7 @@ mod tests {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            new_documents: Vec::new(),
         };
         let out = tool
             .execute(&serde_json::json!({"query": "anything at all"}), &ctx)
@@ -472,6 +474,7 @@ mod tests {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            new_documents: Vec::new(),
         };
         let out = tool
             .execute(
@@ -522,6 +525,7 @@ mod tests {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            new_documents: Vec::new(),
         };
         let out = tool
             .execute(

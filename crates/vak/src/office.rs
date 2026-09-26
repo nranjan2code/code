@@ -77,11 +77,19 @@ async fn apply(
     let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_str(&text).map_err(|error| {
         format!("ops are not valid: {error}. Pass a JSON array of ops, each an object with an \"op\" name and only that op's fields")
     })?;
+    // A template makes a new document, written clean; anything else is an
+    // edit of the file, tracked (docs/design/72, R7).
+    let new_file = file
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .and_then(vak_ooxml::Format::from_extension)
+        .is_some_and(|format| format.kind == vak_ooxml::FormatKind::Template);
     let lineage = vak_tools::broker::OfficeLineage {
         source: absolute(file)?,
         base_digest: base_digest.to_string(),
         ops,
         author: vak_tools::office_apply::tracked_change_author(agent),
+        new_file,
     };
     vak_tools::broker::office_apply_to(worker, &lineage, &absolute(out)?).await
 }

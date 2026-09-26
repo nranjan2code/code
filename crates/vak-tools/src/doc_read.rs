@@ -43,7 +43,7 @@ impl Tool for DocReadTool {
     }
 
     fn description(&self) -> &str {
-        "Inspect and extract text, sections, tables, or summaries from documents and data files: Word, Excel, PowerPoint and Visio files (.docx .docm .dotx .xlsx .xlsm .xltx .pptx .pptm .potx .ppsx .vsdx and their template and macro variants), Markdown, plain text, CSV, TSV, JSON, YAML, TOML, INI, ENV, HTML, XML. Office content comes back as anchored lines ([anchor] text) with hidden, deleted, commented and off-slide content labelled; macros are never run. Supports section navigation (a heading, sheet name or slide), outlines, and paginated table views."
+        "Inspect and extract text, sections, tables, or summaries from documents and data files: Word, Excel, PowerPoint and Visio files (.docx .docm .dotx .xlsx .xlsm .xltx .pptx .pptm .potx .ppsx .vsdx and their template and macro variants), Markdown, plain text, CSV, TSV, JSON, YAML, TOML, INI, ENV, HTML, XML. Office content comes back as anchored lines ([anchor] text), a Word table row naming each cell's paragraph anchor, with hidden, deleted, commented and off-slide content labelled; macros are never run. Supports section navigation (a heading, sheet name or slide), outlines, and paginated table views."
     }
 
     fn schema(&self) -> Value {

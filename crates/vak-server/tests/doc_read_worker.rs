@@ -125,3 +125,69 @@ async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
             .contains("[deleted by mira: Steady][inserted by mira: Up].")
     );
 }
+
+/// A revision's task copy holds a new document under its own name; the
+/// runtime tells the worker so, and its Word edits stay clean
+/// (docs/design/72, R7). The list travels with the call, never from the model.
+#[tokio::test]
+async fn the_worker_writes_a_new_document_clean_when_the_runtime_says_so() {
+    use sha2::Digest as _;
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("memo.docx");
+    std::fs::write(&file, vak_ooxml::fixtures::docx()).unwrap();
+    let digest: String = sha2::Sha256::digest(std::fs::read(&file).unwrap())
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let worker = PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker"));
+    let body = |tools: Vec<std::sync::Arc<dyn vak_tools::Tool>>| {
+        let digest = digest.clone();
+        let dir = dir.path().to_path_buf();
+        async move {
+            let tool = tools
+                .into_iter()
+                .find(|tool| tool.name() == "office_apply")
+                .expect("office_apply is a built-in tool");
+            let output = tool
+                .execute(
+                    &json!({
+                        "path": "memo.docx",
+                        "base_digest": digest,
+                        "ops": [{"op": "replace_paragraph_text", "anchor": "p@11", "text": "Up."}]
+                    }),
+                    &ToolContext::new(dir.clone()).with_agent_id("mira"),
+                )
+                .await;
+            assert!(!output.is_error, "{}", output.content);
+            let draft = output
+                .content
+                .split("written to ")
+                .nth(1)
+                .and_then(|rest| rest.split(". ").next())
+                .unwrap()
+                .to_string();
+            let mut package = vak_ooxml::Package::open(
+                std::io::Cursor::new(std::fs::read(dir.join(draft)).unwrap()),
+                vak_ooxml::Limits::default(),
+            )
+            .unwrap();
+            String::from_utf8(package.read_part("word/document.xml").unwrap()).unwrap()
+        }
+    };
+    let tracked = body(vak_tools::brokered_default_tools(worker.clone())).await;
+    assert!(
+        tracked.contains(r#"w:author="mira""#),
+        "an existing file is tracked"
+    );
+    let clean = body(vak_tools::brokered_tools(
+        worker,
+        &["memo.docx".to_string()],
+    ))
+    .await;
+    assert!(
+        !clean.contains(r#"w:author="mira""#),
+        "a file the runtime names as new is written clean"
+    );
+    assert!(clean.contains(">Up</w:t>"), "{clean}");
+}

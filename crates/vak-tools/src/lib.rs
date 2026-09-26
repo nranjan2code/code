@@ -347,11 +347,24 @@ pub fn read_only_tools() -> Vec<std::sync::Arc<dyn Tool>> {
 }
 
 pub fn brokered_default_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync::Arc<dyn Tool>> {
+    brokered_tools(worker_exe, &[])
+}
+
+/// The default tools behind the broker, each told which Office files are
+/// new to the workspace a task copy was made from (see
+/// [`ToolContext::new_documents`]).
+pub fn brokered_tools(
+    worker_exe: std::path::PathBuf,
+    new_documents: &[String],
+) -> Vec<std::sync::Arc<dyn Tool>> {
     default_tools()
         .into_iter()
         .map(|tool| {
-            std::sync::Arc::new(broker::BrokeredTool::new(tool, worker_exe.clone()))
-                as std::sync::Arc<dyn Tool>
+            std::sync::Arc::new(broker::BrokeredTool::new(
+                tool,
+                worker_exe.clone(),
+                new_documents.to_vec(),
+            )) as std::sync::Arc<dyn Tool>
         })
         .collect()
 }
@@ -360,8 +373,11 @@ pub fn brokered_read_only_tools(worker_exe: std::path::PathBuf) -> Vec<std::sync
     read_only_tools()
         .into_iter()
         .map(|tool| {
-            std::sync::Arc::new(broker::BrokeredTool::new(tool, worker_exe.clone()))
-                as std::sync::Arc<dyn Tool>
+            std::sync::Arc::new(broker::BrokeredTool::new(
+                tool,
+                worker_exe.clone(),
+                Vec::new(),
+            )) as std::sync::Arc<dyn Tool>
         })
         .collect()
 }
