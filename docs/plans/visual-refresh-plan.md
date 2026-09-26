@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.9, V3.11 and V3.12 done. V3.10, V3.13 and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.9 and V3.11 to V3.13 done. V3.10 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -282,7 +282,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   typed kind from the server, never matching on the text.
   Done when: a fresh home that sends before connecting sees one plain
   sentence and a Connect button.
-- [ ] **V3.13 One frame per card.** The first answer on a fresh home (a
+- [x] **V3.13 One frame per card.** The first answer on a fresh home (a
   small local model's entity card) shows a "Kind: entity" row and sits in a
   frame inside a frame. Everyday view drops the kind row and draws one
   frame.
@@ -797,3 +797,22 @@ what was not.
   declaration and lost nothing else (`.composer-wrap` differs only by its
   intended hand merge); the snapshot now compares grid rows, areas and
   placement.
+- 2026-09-26: V3.13 done. The first answer's card reaches the page by two
+  paths, and both drew the problem. Adaptive path (a presentation pack,
+  here `seed.entity`): `.adaptive-presentation` had its own border,
+  padding and background around the card's own `canvas-card`, the frame
+  in a frame; it is frameless now, since the only thing it holds is the
+  rendered card. Both paths showed "Kind: entity": the entity-shaped
+  primitives listed every prop as a row, including the `kind` that
+  `AdaptiveTreeView` injects as the card's label (no longer a row), and
+  the universal card listed the model's own `kind` field. A field named
+  kind, type or semantic_type that only restates the card's type is shown
+  with technical details on and left out otherwise; a card with no fields
+  left draws no empty list. Checked in a temporary harness page (the
+  client's Vite dev server, both paths with the heat-pump payload from the
+  V3.4 answer): one bordered frame per card and no field rows at 1440 and
+  390, light and dark, no sideways scroll; with technical details on, the
+  tool path's Kind row returns. Evidence: `after/V3.13-*`. Not checked
+  live against a model answer (the fresh home has no AI service), nor
+  other primitives that sat in the adaptive frame without a frame of
+  their own; those now sit on the page like prose, as V3.2 intends.
