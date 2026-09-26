@@ -76,11 +76,11 @@ jobs:
       - name: verify the macOS artifact
         if: startsWith(matrix.key, 'macos/')
         run: |
-          APP="$(find dist -maxdepth 3 -name 'Vak.app' -type d | head -1)"
+          APP="$(find dist -maxdepth 3 -name 'Vakyartha.app' -type d | head -1)"
           if [ -n "$APP" ]; then
             ./scripts/verify-macos-release.sh "$APP"
           else
-            echo "no Vak.app in dist; the DMG staging tree is transient" >&2
+            echo "no Vakyartha.app in dist; the DMG staging tree is transient" >&2
           fi
 
       - name: integrity manifest

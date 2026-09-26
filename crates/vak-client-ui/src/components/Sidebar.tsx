@@ -67,8 +67,8 @@ export default function Sidebar() {
       <div class="window-drag-strip" data-tauri-drag-region aria-hidden="true" />
       <div class="sb-head" data-tauri-drag-region>
         <div class="brand" aria-label="Vakyartha">
-          <span class="brand-mark"><img src={`${import.meta.env.BASE_URL}vak-icon.png`} alt="" /></span>
-          <span>Vakyartha</span>
+          <span class="brand-mark"><img src={`${import.meta.env.BASE_URL}assets/brand/songbird-colour.svg`} alt="" /></span>
+          <span class="brand-wordmark" aria-hidden="true" />
         </div>
         <div class="sb-head-actions">
           <button type="button" class="icon-button subtle" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>

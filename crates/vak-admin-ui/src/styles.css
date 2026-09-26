@@ -201,6 +201,7 @@ html, body {
   height: 100%;
   object-fit: contain;
 }
+.brand-wordmark { display: block; width: 128px; height: 32px; flex: none; background: currentColor; mask: url("/admin/assets/brand/wordmark-mask.svg") center / contain no-repeat; }
 .sidebar nav { display: flex; flex-direction: column; gap: 2px; }
 .nav-group-label { margin: 13px 10px 4px; color: var(--muted); font-size: 11.5px; font-weight: 600; letter-spacing: .02em; }
 .nav-group-label:first-child { margin-top: 3px; }
@@ -7099,8 +7100,4 @@ button.inbox-meta-tag:hover {
   color: var(--text);
   font-family: var(--font-mono, monospace);
 }
-
-
-
-
 

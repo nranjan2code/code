@@ -17,7 +17,7 @@
 
 </div>
 
-![An editorial illustration of vak moving a task through an auditable ledger, permission gate, sandboxed execution, and verified result](docs/assets/vak-hero.webp)
+![A person and attentive songbird following intention through approval, bounded work and returned evidence](docs/assets/vakyartha-hero.webp)
 
 Vakyartha is an open-source agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core. Engineering, research, writing, data, and operations all run through that core, the same permission gate, and the same ledger.
 
@@ -55,7 +55,7 @@ product than this one claims to be.
 
 | Platform | Artifact |
 |---|---|
-| macOS | `Vak-<version>-<arch>.dmg` — drag `Vak.app` to Applications |
+| macOS | `Vakyartha-<version>-<arch>.dmg` — drag `Vakyartha.app` to Applications |
 | Linux | `vak-<version>-<arch>.tar.gz`, or the bootstrap script below |
 
 The macOS build is not yet signed, so the first launch needs a right-click

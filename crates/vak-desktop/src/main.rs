@@ -1161,7 +1161,7 @@ mod tests {
     #[test]
     fn tray_flag_is_recognised_in_a_handed_over_argv() {
         assert!(is_tray_launch([
-            "/Applications/Vak.app/Contents/MacOS/vak-desktop",
+            "/Applications/Vakyartha.app/Contents/MacOS/vak-desktop",
             TRAY_FLAG
         ]));
         assert!(is_tray_launch(["vak-desktop", "--tray"]));

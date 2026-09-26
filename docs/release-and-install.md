@@ -29,11 +29,11 @@ backend, so on Windows first run would be the same page.
 
 ### macOS
 
-Download `Vak-<version>-<arch>.dmg`, open it, drag `Vak.app` to
+Download `Vakyartha-<version>-<arch>.dmg`, open it, drag `Vakyartha.app` to
 Applications.
 
 **The build is not yet signed by a Developer ID.** macOS will refuse a
-double-click. Right-click `Vak.app` → Open → confirm, once; every launch
+double-click. Right-click `Vakyartha.app` → Open → confirm, once; every launch
 afterwards is normal. `FIRST-OPEN-ON-MACOS.txt` ships beside the DMG saying
 so, because meeting Gatekeeper's refusal with no warning reads as a broken
 download.
@@ -109,7 +109,7 @@ tree, and an unused tag — then builds, then produces artifacts under
 | Artifact | What |
 |---|---|
 | `vak`, `vak-desktop`, `vak-delivery-worker` | the components |
-| `Vak-<version>-<arch>.dmg` | macOS app, signed ad-hoc |
+| `Vakyartha-<version>-<arch>.dmg` | macOS app, signed ad-hoc |
 | `vak-<version>-<arch>.tar.gz` | Linux archive |
 | `install.sh` | the bootstrap script, travelling with the release it installs |
 | `SHA256SUMS` | per-file checksums |
@@ -119,7 +119,7 @@ tree, and an unused tag — then builds, then produces artifacts under
 The macOS bundle is built **here**, not on the installing machine. A bundle
 assembled at install time could never be signed or notarized, because you
 cannot notarize something that does not exist until install. It is produced
-by `self install --prefix …/Vak.app`, the same code path an install uses,
+by `self install --prefix …/Vakyartha.app`, the same code path an install uses,
 so the artifact and the installed tree cannot diverge.
 
 ### In CI

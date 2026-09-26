@@ -1,8 +1,11 @@
 # Plan — visual refresh (Ink and Saffron)
 
-Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
-completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.18 done (V3 complete). V4.2 done (WebP copies; the glyphs moved to V4.6); V4.3 to V4.6 remain.**
+Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V1, V2
+and V3 complete. V4.1's previous woven-V identity has been superseded by the
+Vakyartha Songbird at the maintainer's request (2026-09-26); platform exports
+and all four-color/one-color lockups are regenerated from its SVG master. V4.2
+done (WebP copies; the glyphs moved to V4.6). V4.3 runtime desktop verification
+and V4.6 remain.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -349,11 +352,12 @@ it at 390 as well as 1440, light and dark, like every other item.
 
 ### V4 — Brand assets and desktop chrome
 
-- [x] **V4.1 Master export (approved logo correction).** Use the exact supplied
-  `docs/brand/mark/vak-logo-master.png`; regenerate the desktop, Dock, browser,
-  iOS, Android, tray, client, admin, favicon and website exports. Preserve the
-  paper tile and navy/saffron artwork. The sole theme-aware exception is the
-  macOS menu-bar alpha template.
+- [x] **V4.1 Master export (superseded 2026-09-26).** The previously approved
+  woven-V raster is preserved under `docs/brand/history/`; current source art is
+  `docs/brand/mark/vakyartha-songbird.svg`. Regenerate the desktop, Dock,
+  browser, iOS, Android, tray, client, admin, favicon and website exports from
+  the vector master. The sole theme-aware exception is the macOS menu-bar alpha
+  template.
   Done when: generated exports match the master; the Dock export has native
   padding; tray variants render correctly; and client, admin and website checks
   pass at 1440 × 900 and 390 × 844 in light and dark. Evidence: `after/` files
@@ -367,9 +371,14 @@ it at 390 as well as 1440, light and dark, like every other item.
   the sidebar padded for the traffic lights.
   Done when: checked in the running desktop app on macOS, including window
   drag, double-click to zoom and full screen.
-- [ ] **V4.4 Brand README.** `docs/brand/README.md`: the Ink and Saffron
-  palette, Newsreader, the campaign line as the product line, the
-  transparent master.
+- [x] **V4.4 Brand README and rollout.** `docs/brand/README.md` documents the
+  Songbird meaning, Ink and Saffron, Manrope-outlined public lockups, one-ink
+  print exports, icon variants, and generation workflow. The shared client,
+  admin and website use the full Vakyartha lockup; desktop and mobile exports
+  use the complete bird tile; install/public copy uses Vakyartha.
+  Done when: generator check and client, admin and public-site builds pass;
+  header SVG paths load under their deployed base paths; screenshot review is
+  saved in `after/V4.4-*`.
 - [ ] **V4.6 Character glyphs.** A flat two-colour glyph per character for
   32px and below, in the mark's style. Decided 2026-09-26: each glyph uses
   its character's own two colours (fox orange with cream, the songbird's
@@ -404,6 +413,13 @@ what was not.
   macOS AppKit, Dock ICNS, and tray-template renders checked. Color/trademark
   uniqueness scan was a limited visual web search; no registry search or legal
   conclusion. Remaining V4 work was not started.
+- 2026-09-26: The maintainer selected the Listening Bird concept. Replaced the
+  public woven-V mark with the Vakyartha Songbird vector master; preserved the
+  old logo as history. Regenerated desktop, Dock, Windows, Android, iOS, client,
+  admin, browser, site and print lockups. Moved the product's website header,
+  client sidebar, admin header and login, notification and first-run screen to
+  the full public identity. Runtime screenshots and full builds are still to
+  be recorded; this item remains open until those checks pass.
 - 2026-09-25: V1 landed except V1.12. Built both client bundles and the
   server; checked live in headless Chrome and the browser pane on the 4.1.0
   dev build, against the real configuration (port 8933) and an empty home

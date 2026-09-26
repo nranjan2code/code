@@ -946,10 +946,10 @@ mod tests {
         // Guards the bug this module exists to fix: health::collect must
         // resolve the same manifest path `self install` actually writes
         // to, not a hardcoded Linux-style join.
-        let manifest = install::resolve_manifest_path(Some(PathBuf::from("/Applications/Vak.app")));
+        let manifest = install::resolve_manifest_path(Some(PathBuf::from("/Applications/Vakyartha.app")));
         assert_eq!(
             manifest,
-            PathBuf::from("/Applications/Vak.app/Contents/Resources/install.json")
+            PathBuf::from("/Applications/Vakyartha.app/Contents/Resources/install.json")
         );
     }
 

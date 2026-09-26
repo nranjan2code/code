@@ -11,7 +11,7 @@
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171714" />
-<link rel="icon" type="image/png" href="/app/vak-icon.png" />
+<link rel="icon" type="image/png" href="/app/assets/brand/icon-192.png" />
 <script>
   // Before first paint: adopt the stored theme so the page never flashes the
   // wrong ground, and mark that script is available so the reveal styles may
@@ -145,7 +145,8 @@ ul, ol { margin: 0; padding: 0; list-style: none; }
   flex: none;
 }
 .brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.brand-name { font-size: 15px; font-weight: 620; letter-spacing: -.015em; }
+html[data-theme="light"] .brand-mark img { content: url("/app/assets/brand/songbird-colour.svg"); }
+.brand-name { display: block; width: 128px; height: 32px; flex: none; background: currentColor; mask: url("/app/assets/brand/wordmark-mask.svg") center / contain no-repeat; }
 
 .rail-nav { display: flex; align-items: center; gap: 2px; }
 .rail-nav a {
@@ -1499,9 +1500,9 @@ html.js .reveal.in {
 
 <header class="rail" id="rail">
   <div class="wrap">
-    <a class="brand" href="/">
-      <span class="brand-mark"><img src="/app/vak-icon.png" alt="" /></span>
-      <span class="brand-name">Vakyartha</span>
+    <a class="brand" href="/" aria-label="Vakyartha home">
+      <span class="brand-mark"><img src="/app/assets/brand/songbird-reverse.svg" alt="" /></span>
+      <span class="brand-name" aria-hidden="true"></span>
     </a>
     <nav class="rail-nav" id="railnav" aria-label="Pages">
       <a href="/">Home</a>
@@ -1528,7 +1529,7 @@ html.js .reveal.in {
 </header>
 
 <main id="main">
-<div class="sub-hero"><div class="wrap philosophy-intro"><div><h1>Meaning becomes<br /><span class="soft">useful action.</span></h1><p class="lead">Vakyartha takes its name from the meaning of a complete sentence. The product starts with what you intend, carries that meaning through the work, and returns a result you can understand and inspect.</p></div><div class="philosophy-mark" aria-hidden="true"><img src="/app/vak-icon.png" width="160" height="160" alt="" /><p>वाक्यार्थ / vākyārtha<br /><span>meaning made useful</span></p></div></div></div>
+<div class="sub-hero"><div class="wrap philosophy-intro"><div><h1>Meaning becomes<br /><span class="soft">useful action.</span></h1><p class="lead">Vakyartha takes its name from the meaning of a complete sentence. The product starts with what you intend, carries that meaning through the work, and returns a result you can understand and inspect.</p><p class="section-lead">Its listening bird signals the same standard: understand what a person means before deciding what the system may do.</p></div><div class="philosophy-mark" aria-hidden="true"><img src="/app/assets/brand/icon-512.png" width="160" height="160" alt="" /><p>वाक्यार्थ / vākyārtha<br /><span>meaning made useful</span></p></div></div></div>
 <section><div class="wrap philosophy-body"><div class="section-head"><h2>What the name asks of the product</h2><p class="section-lead">The name is not a claim that Vakyartha is spiritual, omniscient, or a learning-style quiz. It is a design standard: expression should retain meaning as it moves through a system.</p></div><div class="vak-principles"><article><span class="principle-word">01 / carry</span><h3>Carry intention</h3><p>A prompt is more than a string. Vakyartha understands the kind of work, its risk, and the proof it owes before choosing what may happen.</p></article><article><span class="principle-word">02 / preserve</span><h3>Preserve meaning</h3><p>Sessions are append-only. Memory is searchable and editable. Partial work survives cancellation. The path to a result stays visible.</p></article><article><span class="principle-word">03 / govern</span><h3>Give expression boundaries</h3><p>Language can become a command, a message, or a deployment. Permissions, approvals, and sandboxing decide when it may cross that boundary.</p></article><article><span class="principle-word">04 / answer</span><h3>Return evidence</h3><p>Every model dispatch leaves a receipt. A fluent answer is not the same thing as a verified outcome.</p></article></div></div></section>
 <section class="philosophy-loop"><div class="wrap"><div class="loop-line" aria-hidden="true"><span>intention</span><i></i><span>expression</span><i></i><span>understanding</span><i></i><span>authorized action</span><i></i><span>evidence</span><i></i><span>memory</span></div><h2>Language becomes a better instrument<br /><span class="soft">when the whole movement is visible.</span></h2><p class="section-lead">Not cosmic power, but a disciplined bridge between what people mean and what software does.</p><div class="philosophy-actions"><a class="btn primary lg" href="/app">Open the workspace</a><a class="btn lg" href="/security">Inspect the boundaries</a></div></div></section>
 

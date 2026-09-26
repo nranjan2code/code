@@ -344,7 +344,7 @@ function Login() {
   return (
     <div class="login-wrap">
       <form class="login-card" onSubmit={submit}>
-        <div class="login-logo"><img src="/admin/vak-icon.png" alt="" /></div>
+        <div class="login-logo"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></div>
         <h1>Vakyartha admin</h1>
         <p class="hint">Paste the token printed by <code>vak serve</code></p>
         <input
@@ -784,7 +784,7 @@ A connected app hands Vakyartha extra tools — a GitHub client, a database, a b
                                   <span class="eyebrow">Secrets passed in</span>
                                   <Show
                                     when={envKeys().length > 0}
-                                    fallback={<p class="dim">Nothing beyond vak's own environment.</p>}
+                                    fallback={<p class="dim">Nothing beyond Vakyartha's own environment.</p>}
                                   >
                                     <div class="chip-stack">
                                       <For each={envKeys()}>{(k) => <span class="chip mono">{k}</span>}</For>
@@ -4678,7 +4678,7 @@ function CredentialsView(props: { ctx: GatewayCtx }) {
 const ROUTE_SOURCES: Record<string, string> = {
   config: "the config file",
   admin: "set here in the console",
-  default: "vak's built-in default",
+  default: "Vakyartha's built-in default",
   env: "an environment variable",
   cli: "a command-line flag",
 };
@@ -7701,7 +7701,7 @@ export default function App() {
       <Match when={authed() === true}>
         <div class="shell">
           <aside class="sidebar">
-            <div class="brand"><span class="brand-mark"><img src="/admin/vak-icon.png" alt="" /></span> Vakyartha</div>
+            <div class="brand" aria-label="Vakyartha"><span class="brand-mark"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></span><span class="brand-wordmark" aria-hidden="true" /></div>
             <div class="sidebar-scope">
               <ScopeControl />
             </div>

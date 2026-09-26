@@ -41,7 +41,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 
 - Product name: vak.
 - Existing tagline: "An agent you can inspect, constrain, and extend." (Broadened from "A coding agent…" — vak is no longer positioned as coding-only; do not reintroduce the narrower wording.)
-- Existing README hero/surfaces illustrations use a flat editorial illustration style (`docs/assets/vak-hero.webp`, `docs/assets/vak-surfaces.webp`) with badge colors E66A2C (version), 2B2B2B (Rust), 536B58 (license), 384A6B (safety) — treat as existing brand evidence, not yet confirmed as binding design tokens.
+- Existing README hero/surfaces illustrations use a flat editorial illustration style (`docs/assets/vakyartha-hero.webp`, `docs/assets/vak-surfaces.webp`) with badge colors E66A2C (version), 2B2B2B (Rust), 536B58 (license), 384A6B (safety) — treat as existing brand evidence, not yet confirmed as binding design tokens.
 
 ## Evidence on Hand
 

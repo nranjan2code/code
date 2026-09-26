@@ -115,7 +115,7 @@ TPLIST
   fi
 
   # The desktop process owns the menu-bar icon. A separately launchd-owned
-  # tray inside Vak.app prevents Finder from launching the desktop.
+  # tray inside Vakyartha.app prevents Finder from launching the desktop.
   if [[ "${3:-}" == "--with-tray" ]]; then
     launchctl bootout "gui/$(id -u)/com.vak.tray" 2>/dev/null || true
     rm -f "$PLIST_DIR/com.vak.tray.plist"

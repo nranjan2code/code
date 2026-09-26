@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 /// Application bundle name on macOS. Matches `productName` in
 /// `tauri.conf.json`; the desktop bundle and the managed install are the
 /// same directory, so the two spellings must never diverge.
-pub const BUNDLE_NAME: &str = "Vak.app";
+pub const BUNDLE_NAME: &str = "Vakyartha.app";
 
 /// Overrides the install prefix without threading `--prefix` through
 /// every invocation. Useful for staging and for tests.
@@ -109,10 +109,10 @@ mod tests {
 
     #[test]
     fn bundle_prefix_puts_manifest_inside_contents_resources() {
-        let path = manifest_path_for_prefix(Path::new("/Applications/Vak.app"));
+        let path = manifest_path_for_prefix(Path::new("/Applications/Vakyartha.app"));
         assert_eq!(
             path,
-            PathBuf::from("/Applications/Vak.app/Contents/Resources/install.json")
+            PathBuf::from("/Applications/Vakyartha.app/Contents/Resources/install.json")
         );
     }
 

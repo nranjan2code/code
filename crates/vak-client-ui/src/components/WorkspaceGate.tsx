@@ -181,8 +181,8 @@ export default function WorkspaceGate() {
           <Show when={review()} fallback={
             <Show when={browsing()} fallback={
               <>
-                <h1>Meet your everyday agent</h1>
-                <p class="gate-lead">A calm place to ask, plan, create, and get things done.</p>
+                <h1>Meet Vakyartha</h1>
+                <p class="gate-lead">An attentive agent for everyday work. Ask, plan, create, and carry your ideas through.</p>
                 <div class="gate-sample" aria-label="Sample everyday result">
                   <div class="gate-sample-head"><span>Weekend plan</span><span class="gate-sample-badge">Ready</span></div>
                   <p>Three simple steps, with the important details kept together.</p>

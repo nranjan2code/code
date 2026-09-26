@@ -123,7 +123,7 @@ export const activeHost: Host = {
       // never on load, which is the request everyone denies reflexively.
       if (permission === "default") permission = await Notification.requestPermission();
       if (permission !== "granted") return;
-      const notification = new Notification(title, { body, icon: "/app/vak-icon.png" });
+      const notification = new Notification(title, { body, icon: "/app/assets/brand/icon-192.png" });
       // Clicking it must land on the thing it is about. Without this the
       // tab merely surfaces, on whatever session was last open — which for
       // an approval means hunting for the card the alert was about.

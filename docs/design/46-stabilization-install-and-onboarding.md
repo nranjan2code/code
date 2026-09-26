@@ -213,7 +213,7 @@ because there is one implementation of the choice.
 
 | Install | First run |
 |---|---|
-| macOS DMG | launch `Vak.app` → it starts the local setup server → the wizard opens in the app's own window |
+| macOS DMG | launch `Vakyartha.app` → it starts the local setup server → the wizard opens in the app's own window |
 | Linux tarball / package | `vak setup` prints one URL and opens the browser where there is one; `--no-browser` prints and waits |
 | Headless / remote | `vak setup --print-url`, reach it over an SSH tunnel; the token is printed once, to the terminal only |
 | Anyone, any time | `vak setup --terminal` runs the whole thing as prompts |
@@ -395,7 +395,7 @@ Setup is idempotent and derived, so all four of these are the same code path:
 
 | Platform | Primary | Also | Notes |
 |---|---|---|---|
-| macOS (aarch64, x86_64) | `Vak-<version>-<arch>.dmg` containing `Vak.app` | `install.sh` | Bundle built **in the release**, not at install time. Unsigned for now (D2). |
+| macOS (aarch64, x86_64) | `Vakyartha-<version>-<arch>.dmg` containing `Vakyartha.app` | `install.sh` | Bundle built **in the release**, not at install time. Unsigned for now (D2). |
 | Linux (x86_64, aarch64) | `vak-<version>-<arch>.tar.gz` | `install.sh`, later `.deb`/`.rpm` | Package payload unpacks to staging; postinst execs `vak self install`. No unit files in the package — units stay generated. |
 | Windows | — | — | Blocked on platform work (Part VII). Say "macOS and Linux" until then. |
 
@@ -1054,7 +1054,7 @@ unsigned-first-open sequence in plain words (D2).
 **Exit:** a person with no Rust toolchain installs from a downloaded
 artifact on macOS and Linux and completes setup in a browser.
 
-The bundle needed no new implementation: `self install --prefix …/Vak.app`
+The bundle needed no new implementation: `self install --prefix …/Vakyartha.app`
 already materializes one, so building it in the release uses the same code
 path an install uses and the artifact cannot diverge from the installed
 tree. What changed is *when* — at release time, so there is something a
@@ -1062,7 +1062,7 @@ notarization service could accept.
 
 `hdiutil -exclude` does not reliably keep the installer's own scratch out
 of the image, so the DMG is built from a staging root that contains exactly
-`Vak.app` and an `Applications` symlink — verified by mounting the produced
+`Vakyartha.app` and an `Applications` symlink — verified by mounting the produced
 image and listing it.
 
 ### S8 — Release pipeline and evidence

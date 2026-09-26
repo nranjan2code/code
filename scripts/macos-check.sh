@@ -333,19 +333,19 @@ step "an update preserves declared state"
 # --- the app bundle -------------------------------------------------------
 step "the app bundle builds and verifies"
 BUNDLE_HOME="$CHECK_DIR/bundle-home"
-VAK_HOME="$BUNDLE_HOME" "$BUILT" self install --prefix "$CHECK_DIR/Vak.app" --force >/dev/null
-codesign --force --deep --sign - "$CHECK_DIR/Vak.app" 2>/dev/null || true
-"$ROOT_DIR/scripts/verify-macos-release.sh" "$CHECK_DIR/Vak.app" >/dev/null \
+VAK_HOME="$BUNDLE_HOME" "$BUILT" self install --prefix "$CHECK_DIR/Vakyartha.app" --force >/dev/null
+codesign --force --deep --sign - "$CHECK_DIR/Vakyartha.app" 2>/dev/null || true
+"$ROOT_DIR/scripts/verify-macos-release.sh" "$CHECK_DIR/Vakyartha.app" >/dev/null \
     || fail "the app bundle does not verify"
 ok "bundle structure, architecture, dylibs, and seal verify"
 
 # The bundle check above validates packaging, but it must also prove that the
 # executable inside the app is the same release binary that was exercised by
 # the isolated gateway.  This catches stale-app launches (a surprisingly easy
-# failure when a developer has several Vak.app copies installed).  The MCP
+# failure when a developer has several Vakyartha.app copies installed).  The MCP
 # registration is persisted in the isolated home; assert that the bundle
 # executable can read the same state rather than merely checking the HTTP PUT.
-BUNDLE_BIN="$CHECK_DIR/Vak.app/Contents/MacOS/vak"
+BUNDLE_BIN="$CHECK_DIR/Vakyartha.app/Contents/MacOS/vak"
 [[ -x "$BUNDLE_BIN" ]] || fail "bundle has no executable at Contents/MacOS/vak"
 BUNDLE_VERSION="$(VAK_HOME="$VAK_HOME" "$BUNDLE_BIN" --version)"
 BUILT_VERSION="$(VAK_HOME="$VAK_HOME" "$BUILT" --version)"
@@ -360,12 +360,12 @@ ok "bundle executable matches the release binary and retains MCP configuration"
 if command -v hdiutil >/dev/null; then
     DMG_ROOT="$CHECK_DIR/dmgroot"
     mkdir -p "$DMG_ROOT"
-    cp -R "$CHECK_DIR/Vak.app" "$DMG_ROOT/"
+    cp -R "$CHECK_DIR/Vakyartha.app" "$DMG_ROOT/"
     ln -sf /Applications "$DMG_ROOT/Applications"
-    hdiutil create -quiet -volname "Vak check" -srcfolder "$DMG_ROOT" \
+    hdiutil create -quiet -volname "Vakyartha check" -srcfolder "$DMG_ROOT" \
         -ov -format UDZO "$CHECK_DIR/out.dmg"
     hdiutil attach -quiet -nobrowse -mountpoint "$CHECK_DIR/mnt" "$CHECK_DIR/out.dmg"
-    [[ -d "$CHECK_DIR/mnt/Vak.app" ]] || fail "the DMG does not contain Vak.app"
+    [[ -d "$CHECK_DIR/mnt/Vakyartha.app" ]] || fail "the DMG does not contain Vakyartha.app"
     hdiutil detach -quiet "$CHECK_DIR/mnt"
     ok "DMG builds, mounts, and contains the app beside an Applications link"
 fi

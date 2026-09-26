@@ -1,16 +1,26 @@
 {
   "name": "Vakyartha",
   "short_name": "Vakyartha",
-  "description": "An agent you can inspect, constrain, and extend.",
-  "start_url": "/app/",
-  "scope": "/app/",
+  "start_url": "/app",
   "display": "standalone",
-  "orientation": "any",
-  "background_color": "#171714",
-  "theme_color": "#171714",
+  "background_color": "#F6F5F1",
+  "theme_color": "#101D3D",
   "icons": [
-    { "src": "/app/assets/brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "/app/assets/brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/app/assets/brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    {
+      "src": "/app/assets/brand/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/app/assets/brand/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    },
+    {
+      "src": "/app/assets/brand/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

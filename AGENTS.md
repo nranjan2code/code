@@ -199,7 +199,7 @@ after M0 is behaviour yet, and no session starts a later milestone unasked.
   trash (`open_historical_session`, `Core::open_session`, or
   `vak_core::trash`), never by opening its ledger file directly.
 
-### Pending: the visual refresh (V1, V2 and V4.1 done; V3 in progress)
+### Pending: the visual refresh (V1, V2, V3 and V4.4 done; V4 in progress)
 
 The maintainer approved the direction and locked all five of its decisions
 on 2026-09-25, then asked for the logo and platform-icon correction (V4.1)
@@ -213,7 +213,7 @@ in progress, and the rest of V4 follows it.
 - plain words in place of engineering terms in every everyday string;
 - one Show technical details setting, off for new installs, which replaces
   Transcript detail and hides detail, never capability or safety state;
-- the **Ink and Saffron** brand: indigo ink, the mark's saffron as the one
+- the **Ink and Saffron** brand: indigo ink, the Songbird mark's saffron as the one
   accent for live states, a lighter paper, an indigo-night dark theme, and
   four theme choices;
 - fixes for fifteen visible defects found in the 4.0.2 review.
@@ -248,9 +248,10 @@ in progress, and the rest of V4 follows it.
 - Edit a selector's existing rule instead of adding an override later in
   `styles.css`.
 - Keep IDs, paths, byte counts and hashes out of everyday screens.
-- Follow the generated platform exports in `docs/brand/README.md`. The complete
-  tile stays unchanged across themes; only the macOS menu-bar template uses
-  the approved monochrome, tile-free geometry.
+- Follow the generated platform exports in `docs/brand/README.md`. Preserve
+  the Songbird silhouette and complete app tile across themes; light, dark and
+  one-ink lockups come from the SVG master. Only the macOS menu-bar template
+  uses the approved monochrome, tile-free geometry.
 
 ## Non-negotiable invariants
 

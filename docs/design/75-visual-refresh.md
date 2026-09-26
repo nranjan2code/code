@@ -1,8 +1,10 @@
 # 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand
 
-Status: **proposal, 2026-09-25. All five decisions locked by the maintainer
-on 2026-09-25 (Ink and Saffron, Newsreader, technical details off by
-default, four themes, V1 and V2 first); stages V1 to V4 not started.** The
+Status: **implementation record, 2026-09-26. Ink and Saffron, Newsreader,
+technical details off by default, and four themes were locked 2026-09-25.
+V1, V2 and V3 are complete; V4.4 records the maintainer-approved Vakyartha
+Songbird rollout. Desktop runtime proof and character glyph work remain in
+`docs/plans/visual-refresh-plan.md`.** The
 tracker is
 `docs/plans/visual-refresh-plan.md`. The visual reference, with
 before-and-after mockups and every review screenshot, is
@@ -144,7 +146,9 @@ message, with raw IDs:
 
 ### 3.5 The brand pulls in four directions
 
-- The mark is navy and saffron (`docs/brand/mark/vak-logo-master.png`).
+- The current mark is the indigo and saffron Vakyartha Songbird
+  (`docs/brand/mark/vakyartha-songbird.svg`), with the former woven-V master
+  retained in `docs/brand/history/`.
 - The mascot and companions are glossy 3D renders; at 22px in the sidebar
   they lose their faces, and all three of the reviewed agents used the same
   bird, so the list had no identity.

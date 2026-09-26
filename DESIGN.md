@@ -358,9 +358,16 @@ The glossary is doc 75 §7.
 
 ## Brand
 
-- The mark (`docs/brand/mark/vak-logo-master.png`) stays whole: never split,
-  recoloured or given light and dark variants. Platform exports follow
-  `docs/brand/README.md`.
+- The public identity is the Vakyartha Songbird: the open V-shaped wing, the
+  swept crest and the saffron throat, with the complete Vakyartha wordmark
+  wherever the public name needs to be read. Its vector master is
+  `docs/brand/mark/vakyartha-songbird.svg`; generated symbol, wordmark and
+  platform exports follow `docs/brand/README.md`.
+- The app icon uses the complete indigo tile with the bird centred inside it.
+  Use standalone colour, reverse and single-ink bird shapes for surfaces that
+  need those treatments. Never add a tile, shading, bevel or glow to the mark.
+- Use the small bird symbol at 32px and below; larger character portraits are
+  conversation companions, not logo substitutions.
 - The 3D character portraits are for large moments at 64px or more; flat
   glyphs take over at 32px and below.
 - The product line is the campaign line, "Ask. Then go live your day."
