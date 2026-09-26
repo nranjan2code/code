@@ -226,6 +226,7 @@ mod tests {
                 cwd: std::path::PathBuf::from("/tmp"),
                 supersedes: None,
                 thread_id: None,
+                audience_id: None,
             },
             phase: Phase::Active,
             criteria: Vec::new(),

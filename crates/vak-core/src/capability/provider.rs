@@ -67,6 +67,26 @@ pub(crate) fn call_retrieves_external(
     }
 }
 
+/// Whether a built-in tool observes the current state of something — a file,
+/// the repository, a command's output, a page, a live value — decided from
+/// what it declares it serves. Memory, messaging, orchestration and document
+/// production recall or change things; they observe nothing, so a turn that
+/// asked for a current value is not answered by them. An MCP call counts
+/// through [`call_retrieves_external`].
+pub(crate) fn serves_observation(serves: &[String]) -> bool {
+    Domain::parse_list(serves).iter().any(|domain| {
+        matches!(
+            domain,
+            Domain::LiveData
+                | Domain::Web
+                | Domain::Filesystem
+                | Domain::CodeExec
+                | Domain::Vcs
+                | Domain::Observability
+        )
+    })
+}
+
 impl Core {
     /// The registry, created and started on first use.
     ///
@@ -350,12 +370,7 @@ mod tests {
             confidence: 0.9,
             ..vak_intent::Reading::general()
         };
-        let engagement = vak_intent::derive(
-            &reading,
-            &vak_intent::Authority::default(),
-            true,
-            chrono::Utc::now(),
-        );
+        let engagement = vak_intent::derive(&reading, &vak_intent::Authority::default(), true);
         engagement
             .limits
             .required_domains

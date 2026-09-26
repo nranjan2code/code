@@ -1260,14 +1260,12 @@ export interface Posture {
 
 export interface Engagement {
   limits: {
-    capabilities: { kind: "all" } | { kind: "only"; names: string[] };
-    ladder_limit?: number | null;
+    /** Which admitted tools a turn loads; the rest stay one search away. */
+    required_domains: { kind: "all" } | { kind: "empty" } | { kind: "only"; names: string[] };
     required_modalities: string[];
     spend_ceiling_usd?: number | null;
     approval_ceiling: "ask" | "approve-safe" | "auto-approve";
     permission_ceiling: "read-only" | "workspace-write" | "full-access";
-    worker_budget?: number | null;
-    max_turns?: number | null;
     min_satisfaction: Satisfaction;
   };
   posture: Posture;

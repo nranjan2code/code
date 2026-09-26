@@ -10,34 +10,32 @@
 //! | [`Tier::General`] — nothing reached the bar | free | yes |
 //!
 //! A request is resolved as a list of [`Strand`]s (see [`crate::strand`]):
-//! the text is segmented into clauses, each clause is read on its own, and the
-//! turn's engagement is [`Engagement::compose`] over the strands. Everything
-//! that wants one answer for the turn reads the composite [`Reading`].
+//! pasted material is set aside, the rest is segmented into clauses, each
+//! clause that asks for work starts a part, and the clauses around it that
+//! only describe the situation join it as context. The turn's engagement is
+//! [`Engagement::compose`] over the strands. Everything that wants one answer
+//! for the turn reads the composite [`Reading`].
 //!
 //! # Why this module does not dispatch
 //!
 //! Escalating to a model is a provider dispatch, and in vak a dispatch means a
-//! work receipt, a spend-gate admission, a frozen ladder leg, a watchdog and a
-//! cancellation token. All of that machinery lives in `vak-core`, so this
-//! module decides **whether** a paid tier is warranted and hands back a
+//! work receipt, a spend-gate admission, a watchdog and a cancellation token.
+//! All of that machinery lives in `vak-core`, so this module decides
+//! **whether** a paid tier is warranted and hands back a
 //! [`Resolution::Escalate`] carrying the partial reading; the host builds the
 //! prompt with [`classification_prompt`], performs the call, parses the answer
 //! with [`parse_classifications`], and folds it back in with
 //! [`apply_classification`].
-//!
-//! That split also keeps the kernel synchronous and free of provider
-//! dependencies, which is what lets the whole decision layer be unit-tested
-//! without a network or a model.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::authority::Authority;
+use crate::authority::{Authority, Autonomy, Envelope};
 use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Stakes};
-use crate::engage::{Engagement, derive};
+use crate::engage::{Engagement, HilMode, derive};
 use crate::reading::{Confidences, Intent, Provenance, Reading, Tier};
-use crate::signals::{Extraction, Request, Signal, SignalKind, extract};
+use crate::signals::{ClauseRead, Extraction, Request, Signal, SignalKind};
 use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, ThreadFact};
 
 /// Bumped whenever the lexicon, the scoring, or the segmentation changes, so
@@ -46,16 +44,28 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// History: 1 — the original kernel. 2 — word-boundary phrase matching,
 /// sub-floor ordered votes abstain, lexical stakes gated on effectful acts,
 /// strands. 3 — conversational delivery verbs resolve as Answer rather than
-/// workspace authoring. 4 — `live` as the verb "reside" ("we live in the
-/// city") no longer reads as current data or irreversible stakes. The test
-/// `lexicon_digest_matches_resolver_version` pins the tables to this number so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 4;
+/// workspace authoring. 4 — two lines of work took this number before they
+/// met, so a ledger row that says 4 was written by one of them: on `main`,
+/// `live` as the verb "reside" ("we live in the city") stopped reading as
+/// current data or irreversible stakes; on the intent-accuracy branch, the
+/// tier-1 reader was rewritten (clauses read by role, pasted material set
+/// aside, topic nouns no longer raise stakes, recency asks for live data only
+/// beside a request for a fact and never about something local or the
+/// agent's own state, assurance needs something checkable, no horizon from
+/// sequencing words or length, strand ids from a host-minted turn id, stakes
+/// words count when the verb is unknown and a weak part keeps them, the flag
+/// spellings of destructive git commands and common instruction verbs are
+/// read). 5 — the two together: `live` counts as a recency word only in the
+/// sense of *current*, and "go live" is a stakes phrase. The test
+/// `lexicon_digest_matches_resolver_version` pins the tables to this number
+/// so a change to either without the other fails CI.
+pub const RESOLVER_VERSION: u32 = 5;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ResolverConfig {
     /// Master switch. Off resolves everything to the general engagement,
-    /// which is vak's pre-kernel behaviour: every admitted tool advertised,
+    /// which is vak's pre-kernel behaviour: every admitted tool loaded,
     /// nothing narrowed.
     pub enabled: bool,
     /// At or above this, a reading is trusted enough to narrow capability.
@@ -87,9 +97,7 @@ impl Default for ResolverConfig {
 /// A caller stating the reading outright — tier 0.
 ///
 /// Every field is optional; whatever is set overrides the corresponding axis
-/// on every strand and whatever is not falls through to the signal tier. This
-/// is what a `--act` flag, a flow's declared intent, a pinned channel policy,
-/// or a parent handing an engagement to a worker all produce.
+/// on every strand and whatever is not falls through to the signal tier.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Declared {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -134,8 +142,8 @@ impl Declared {
     }
 }
 
-/// What a model tier is asked to return for one strand. Strict JSON, every
-/// field optional so a partial answer is usable rather than discarded.
+/// What a model tier is asked to return for one strand. Every field optional
+/// so a partial answer is usable rather than discarded.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Classification {
     #[serde(default)]
@@ -186,65 +194,54 @@ impl Resolution {
     }
 }
 
+/// Group clauses into parts. A clause that asks for work starts a part;
+/// clauses that only describe the situation, and social talk, are context —
+/// before the first part they lead it, after it they follow the part they
+/// came after. A request with no work clause at all is one part.
+fn group_parts(clauses: &[ClauseRead]) -> Vec<Vec<usize>> {
+    let mut parts: Vec<Vec<usize>> = Vec::new();
+    let mut leading: Vec<usize> = Vec::new();
+    for (index, clause) in clauses.iter().enumerate() {
+        if clause.starts_part() {
+            let mut part = std::mem::take(&mut leading);
+            part.push(index);
+            parts.push(part);
+        } else if let Some(last) = parts.last_mut() {
+            last.push(index);
+        } else {
+            leading.push(index);
+        }
+    }
+    if parts.is_empty() {
+        parts.push(leading);
+    }
+    parts
+}
+
 /// Run tiers 0 and 1.
 ///
-/// Pure: identical inputs — including `now`, which is why it is a parameter
-/// rather than a clock read — always produce an identical result, which is
-/// what makes a recorded decision reconstructable.
+/// Pure: identical inputs always produce an identical result — nothing here
+/// reads a clock — which is what makes a recorded decision reconstructable.
+/// Time enters only where a grant's liveness is judged (`apply_envelopes`),
+/// as a parameter.
 pub fn resolve(
     request: &Request<'_>,
     declared: &Declared,
     authority: &Authority,
     config: &ResolverConfig,
-    now: chrono::DateTime<chrono::Utc>,
 ) -> Resolution {
     if !config.enabled {
         return Resolution::Settled(Intent::general(RESOLVER_VERSION));
     }
 
     // --- segmentation ----------------------------------------------------
-    let cleaned = crate::signals::clean_request_text(request.text);
-    let clauses = crate::strand::segment(&cleaned);
-    let mut parts: Vec<(String, Boundary, Extraction)> = Vec::new();
-    for clause in clauses {
-        let extraction = extract(&Request {
-            text: &clause.text,
-            ..request.clone()
-        });
-        // A clause with no act signal of its own says nothing on its own:
-        // fold it into its neighbour rather than making it a strand.
-        if extraction.act.is_empty()
-            && let Some((text, _, _)) = parts.last_mut()
-        {
-            text.push(' ');
-            text.push_str(&clause.text);
-            let merged = extract(&Request {
-                text,
-                ..request.clone()
-            });
-            if let Some(last) = parts.last_mut() {
-                last.2 = merged;
-            }
-            continue;
-        }
-        parts.push((clause.text, clause.boundary, extraction));
-    }
-    // A leading act-less clause ("do these:") folds forward.
-    if parts.len() > 1 && parts[0].2.act.is_empty() {
-        let (head, _, _) = parts.remove(0);
-        let (text, boundary, _) = &mut parts[0];
-        *text = format!("{head} {text}");
-        *boundary = Boundary::Start;
-        let merged = extract(&Request {
-            text,
-            ..request.clone()
-        });
-        parts[0].2 = merged;
-    }
-    if parts.is_empty() {
-        // Empty or pure scaffolding: one strand of nothing.
-        parts.push((cleaned.clone(), Boundary::Start, extract(request)));
-    }
+    let prepared = crate::signals::prepare(request.text);
+    let clauses: Vec<ClauseRead> = crate::strand::segment(&prepared.instruction)
+        .into_iter()
+        .map(|clause| crate::signals::read_clause(&clause.text, clause.boundary, clause.question))
+        .collect();
+    let enumerated = crate::signals::list_items(&prepared.instruction);
+    let parts = group_parts(&clauses);
 
     // --- per-strand readings ---------------------------------------------
     let turn = request.history.turn_index;
@@ -265,8 +262,30 @@ pub fn resolve(
         });
     }
     let multi = parts.len() > 1;
-    for (index, (text, boundary, extraction)) in parts.iter().enumerate() {
-        let strand_id = format!("s{turn}.{index}");
+    for (index, part) in parts.iter().enumerate() {
+        let reads: Vec<&ClauseRead> = part.iter().map(|&i| &clauses[i]).collect();
+        let extraction =
+            crate::signals::extract_part(request, &reads, &prepared, enumerated, index > 0);
+        let text = reads
+            .iter()
+            .map(|clause| clause.text.as_str())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let boundary = if index == 0 {
+            Boundary::Start
+        } else {
+            reads
+                .iter()
+                .find(|clause| clause.starts_part())
+                .map(|clause| clause.boundary)
+                .unwrap_or(Boundary::Addition)
+        };
+        let strand_id = if request.turn_id.is_empty() {
+            format!("t{turn}.{index}")
+        } else {
+            format!("{}.{index}", request.turn_id)
+        };
         for signal in &extraction.signals {
             let mut signal = signal.clone();
             if multi {
@@ -274,15 +293,8 @@ pub fn resolve(
             }
             signals.push(signal);
         }
-        let (mut reading, weakest) = assemble(extraction, declared);
+        let (reading, weakest) = assemble(&extraction, declared);
         weakest_axes.push(weakest);
-        // `Immediate` means "one reply, no tools". A part of a several-part
-        // request is not one reply, and letting a short clause read as
-        // immediate would cap the whole turn at two model turns and one
-        // ladder leg.
-        if multi && reading.horizon == Horizon::Immediate && declared.horizon.is_none() {
-            reading.horizon = Horizon::Turn;
-        }
 
         let weak = reading.confidence < config.provisional_confidence;
         let may_slice = !weak
@@ -297,21 +309,37 @@ pub fn resolve(
         let (reading, mut engagement) = if weak {
             // Nothing reached the bar for this part. Keep the facts that are
             // observations rather than inferences — attendance is a surface
-            // fact, modalities come from attachments — and give the part
-            // the orienting engagement.
+            // fact, modalities come from attachments — and any risk the text
+            // raised: stakes above the ordinary and an evidence standard are
+            // only ever read from words the request actually contains, and a
+            // reading too weak to narrow capability is never too weak to
+            // raise caution. The part gets the orienting engagement, made at
+            // least as careful as that risk demands; what a human delegated
+            // still applies, because authority does not depend on how well
+            // the request was read.
+            let general = Reading::general();
             let kept = Reading {
                 attendance: reading.attendance,
                 input_modalities: reading.input_modalities.clone(),
                 output_modalities: reading.output_modalities.clone(),
+                stakes: if reading.stakes.rank() > general.stakes.rank() {
+                    reading.stakes
+                } else {
+                    general.stakes
+                },
+                evidence: if reading.evidence.rank() > general.evidence.rank() {
+                    reading.evidence
+                } else {
+                    general.evidence
+                },
                 confidence: reading.confidence,
                 axis_confidence: reading.axis_confidence,
-                ..Reading::general()
+                ..general
             };
-            let mut engagement = Engagement::orienting();
-            engagement.limits.required_modalities = kept.required_modalities();
+            let engagement = Engagement::orienting().meet(&derive(&kept, authority, false));
             (kept, engagement)
         } else {
-            let engagement = derive(&reading, authority, may_slice, now);
+            let engagement = derive(&reading, authority, may_slice);
             (reading, engagement)
         };
         // `slice_capabilities = false` switches capability narrowing off
@@ -338,18 +366,18 @@ pub fn resolve(
         let lineage = lineage_for(
             &reading,
             extraction.deictic,
-            text,
+            &text,
             &request.history.open_threads,
             request.lineage_hint,
         );
         let thread_id = lineage
-            .thread_id()
+            .continued_thread()
             .map(str::to_string)
             .unwrap_or_else(|| strand_id.clone());
         strands.push(Strand {
             strand_id,
             thread_id,
-            text: text.clone(),
+            text,
             reading,
             relation,
             lineage,
@@ -359,15 +387,7 @@ pub fn resolve(
 
     // --- composite -------------------------------------------------------
     let reading = composite_reading(&strands);
-    let mut engagement = Engagement::compose(
-        &strands
-            .iter()
-            .map(|s| s.engagement.clone())
-            .collect::<Vec<_>>(),
-    );
-    if multi {
-        engagement.posture.note = Some(strand_note(&strands));
-    }
+    let engagement = recompose(&strands);
 
     let tier = if declared.coverage() >= 1.0 {
         Tier::Declared
@@ -419,6 +439,21 @@ pub fn resolve(
     } else {
         Resolution::Settled(intent)
     }
+}
+
+/// The turn's engagement from its strands: [`Engagement::compose`], plus the
+/// model-visible note that lists the parts when there are several.
+fn recompose(strands: &[Strand]) -> Engagement {
+    let mut engagement = Engagement::compose(
+        &strands
+            .iter()
+            .map(|strand| strand.engagement.clone())
+            .collect::<Vec<_>>(),
+    );
+    if strands.len() > 1 {
+        engagement.posture.note = Some(strand_note(strands));
+    }
+    engagement
 }
 
 /// Which thread, if any, a strand belongs to.
@@ -527,61 +562,108 @@ fn composite_reading(strands: &[Strand]) -> Reading {
     out
 }
 
-/// The model-visible note for a multi-strand turn: the parts, in order,
-/// with their relations, followed by whatever each part's own engagement
-/// had to say.
+/// How many parts the note names one by one. Beyond this the parts still
+/// exist — every one is read, threaded and governed — but the note says
+/// they continue rather than listing each.
+const LISTED_PARTS: usize = 12;
+
+/// `[1, 2, 3, 7]` → `1–3, 7`.
+fn format_parts(parts: &[usize]) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut index = 0;
+    while index < parts.len() {
+        let start = parts[index];
+        let mut end = start;
+        while index + 1 < parts.len() && parts[index + 1] == end + 1 {
+            index += 1;
+            end = parts[index];
+        }
+        out.push(if end > start {
+            format!("{start}–{end}")
+        } else {
+            start.to_string()
+        });
+        index += 1;
+    }
+    out.join(", ")
+}
+
+/// The model-visible note for a multi-strand turn: how many parts there are,
+/// how they depend on each other, then the guidance their engagements carry —
+/// each line once, naming the parts it applies to.
 ///
 /// Parts are named by their order in the user's own message, never quoted:
 /// this note rides in the per-turn tail, and restating the request there
-/// reads as the user asking again (docs/design/68-context-engine.md §6).
+/// reads as the user asking again (docs/design/68-context-engine.md §6). Nor
+/// are they labelled by act: "Part 2: author" is this runtime's vocabulary,
+/// not the user's, and a small model copied it into its answer as a heading.
+/// Order and dependency are plain sentences, and a part with neither gets no
+/// line at all.
 fn strand_note(strands: &[Strand]) -> String {
     let mut lines = vec![format!(
         "The user's message has {} parts, in the order written. Address each; do not stop after the first.",
         strands.len()
     )];
-    for (index, strand) in strands.iter().enumerate() {
-        let relation = match &strand.relation {
-            StrandRelation::Independent => String::new(),
-            StrandRelation::Sequential { after } => format!(
-                ", after part {}",
-                strands
-                    .iter()
-                    .position(|s| &s.strand_id == after)
-                    .map(|p| p + 1)
-                    .unwrap_or(index)
-            ),
-            StrandRelation::Dependent { on } => format!(
-                ", using the result of part {}",
-                strands
-                    .iter()
-                    .position(|s| &s.strand_id == on)
-                    .map(|p| p + 1)
-                    .unwrap_or(index)
-            ),
-        };
-        let lineage = match &strand.lineage {
-            Lineage::New => "",
-            Lineage::Continues { .. } => "; continues earlier work",
-            Lineage::Corrects { .. } => "; corrects earlier work",
-            Lineage::Replaces { .. } => "; replaces earlier work",
-        };
-        lines.push(format!(
-            "Part {}: {}{relation}{lineage}",
-            index + 1,
-            strand.reading.act.as_str()
-        ));
-    }
-    for (index, strand) in strands.iter().enumerate() {
-        if let Some(note) = &strand.engagement.posture.note {
-            for line in note.lines() {
-                lines.push(format!("Part {}: {line}", index + 1));
+    let position = |id: &str, fallback: usize| {
+        strands
+            .iter()
+            .position(|s| s.strand_id == id)
+            .map(|p| p + 1)
+            .unwrap_or(fallback)
+    };
+    for (index, strand) in strands.iter().enumerate().take(LISTED_PARTS) {
+        let part = index + 1;
+        match &strand.relation {
+            StrandRelation::Independent => {}
+            StrandRelation::Sequential { after } => {
+                lines.push(format!(
+                    "Do part {part} after part {}.",
+                    position(after, index)
+                ));
+            }
+            StrandRelation::Dependent { on } => {
+                lines.push(format!(
+                    "Part {part} uses the result of part {}.",
+                    position(on, index)
+                ));
             }
         }
+        match &strand.lineage {
+            Lineage::New => {}
+            Lineage::Continues { .. } => lines.push(format!("Part {part} continues earlier work.")),
+            Lineage::Corrects { .. } => lines.push(format!("Part {part} corrects earlier work.")),
+            Lineage::Replaces { .. } => lines.push(format!("Part {part} replaces earlier work.")),
+        }
+    }
+    let mut grouped: Vec<(String, Vec<usize>)> = Vec::new();
+    for (index, strand) in strands.iter().enumerate() {
+        let Some(note) = &strand.engagement.posture.note else {
+            continue;
+        };
+        for line in note.lines() {
+            match grouped.iter_mut().find(|(text, _)| text == line) {
+                Some((_, parts)) => parts.push(index + 1),
+                None => grouped.push((line.to_string(), vec![index + 1])),
+            }
+        }
+    }
+    for (line, parts) in grouped {
+        let label = if parts.len() == 1 {
+            format!("For part {}", parts[0])
+        } else {
+            format!("For parts {}", format_parts(&parts))
+        };
+        lines.push(format!("{label}: {line}"));
     }
     lines.join("\n")
 }
 
-/// Turn one clause's votes into a reading, honouring anything the caller
+/// Acts that ask for a fact, and so may ask for its current value.
+fn asks_for_a_fact(act: Act) -> bool {
+    matches!(act, Act::Answer | Act::Locate | Act::Analyze)
+}
+
+/// Turn one part's votes into a reading, honouring anything the caller
 /// declared.
 ///
 /// Returns the reading and the name of the axis that scored worst, which is
@@ -600,13 +682,10 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
         },
     };
     // Confidence in a capability *slice* is confidence that the slice covers
-    // the request — not confidence about which single act won. A request that
-    // is genuinely both a modification and a verification is not ambiguous
-    // once both toolsets are included.
-    //
-    // So: acts within half the winner's weight join the slice, and confidence
-    // is how much of the total act evidence that set accounts for, damped by
-    // how much evidence there was at all.
+    // the request — not confidence about which single act won. Acts within
+    // half the winner's weight join the slice, and confidence is how much of
+    // the total act evidence that set accounts for, damped by how much
+    // evidence there was at all.
     const ACT_BAND: f64 = 0.5;
     let mut alternate_acts: BTreeSet<Act> = BTreeSet::new();
     let mut act_confidence = act_confidence;
@@ -643,14 +722,15 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
 
     // Stakes default upward from the act rather than to a fixed value: an
     // unrecognised request to `deploy` should not read as inert just because
-    // no stakes word appeared next to it.
-    //
-    // Both the request's own stakes words and the environment's (a dirty
-    // working tree) apply only to acts that touch something. A question
-    // about production has no blast radius, and a repository mid-edit does
-    // not make answering a question risky.
+    // no stakes word appeared next to it. Both the request's own stakes words
+    // and the environment's apply to acts that touch something — and to a
+    // request whose verb was not recognised at all, because "force push to
+    // the production branch" is no less dangerous for using a verb the
+    // reader does not know. Only a request recognised as asking, finding or
+    // analysing may mention production without being about to change it.
+    let act_unknown = declared.act.is_none() && extraction.act.winner().is_none();
     let mut stakes_votes: crate::signals::Votes<Stakes> = crate::signals::Votes::default();
-    if act.is_effectful() {
+    if act.is_effectful() || act_unknown {
         for (value, weight) in extraction.stakes_from_words.ranked() {
             stakes_votes.add(value, weight);
         }
@@ -671,8 +751,7 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
             }
             // No stakes language at all. The act's own floor is then the
             // answer, and it is only as trustworthy as the act reading that
-            // produced it — so it inherits that confidence rather than
-            // inventing one.
+            // produced it.
             None => (implied_stakes(act), act_confidence.max(0.5)),
         },
     };
@@ -680,8 +759,7 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
 
     // Absence is informative here, unlike on the other axes: a request with no
     // citation, verification or sign-off language genuinely does have no
-    // special evidentiary standard, so silence reads as a confident
-    // `Evidence::None` rather than a coin flip.
+    // special evidentiary standard.
     let (evidence, evidence_confidence) = match declared.evidence {
         Some(evidence) => (evidence, 1.0),
         None => match extraction.evidence.winner() {
@@ -703,11 +781,21 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
 
     let mut domains: BTreeSet<String> = extraction.domains.iter().cloned().collect();
     // Environment-derived domains (a git repository) apply only to effectful
-    // acts, the same rule `stakes_from_environment` follows just above: a
-    // repository mid-edit does not make answering a question an engineering
-    // task.
+    // acts: a repository mid-edit does not make answering a question an
+    // engineering task.
     if act.is_effectful() {
         domains.extend(extraction.domains_from_environment.iter().cloned());
+    }
+    // A temporal reference asks for a value as it stands now only beside a
+    // request for a fact. "Refactor the current implementation" and "hello,
+    // how are you today" ask for none, and reading them as live-data made the
+    // loop demand a retrieval and replace the answer when none came.
+    if extraction.recency.is_some()
+        && std::iter::once(act)
+            .chain(alternate_acts.iter().copied())
+            .any(asks_for_a_fact)
+    {
+        domains.insert("live-data".into());
     }
     domains.extend(declared.domains.iter().cloned());
 
@@ -763,14 +851,78 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
 pub fn implied_stakes(act: Act) -> Stakes {
     match act {
         Act::Converse | Act::Answer | Act::Locate | Act::Analyze => Stakes::Inert,
-        Act::Author | Act::Modify | Act::Verify | Act::Orchestrate => Stakes::Reversible,
-        // Reaching outside the workspace or rewriting the agent's own rules is
-        // never assumed to be cheap.
-        Act::Operate | Act::Govern => Stakes::Irreversible,
+        // Governing the agent's own configuration, memory and skills changes
+        // state the agent owns and can change back; the permission engine and
+        // the privileged-config rules are what guard it, not a confirmation
+        // prompt on "remember that I prefer tabs".
+        Act::Author | Act::Modify | Act::Verify | Act::Orchestrate | Act::Govern => {
+            Stakes::Reversible
+        }
+        // Reaching outside the workspace is never assumed to be cheap.
+        Act::Operate => Stakes::Irreversible,
+    }
+}
+
+// ----------------------------------------------------------- envelopes ---
+
+/// Narrow an intent by the grants on the commitments its strands serve.
+///
+/// `envelopes` maps a strand id to the envelope of the commitment that strand
+/// is working on. A live envelope lowers the strand's permission ceiling and
+/// spend ceiling — it never raises either — and marks a delegated strand as
+/// working inside its envelope, unless the strand is irreversible or waiting
+/// on a person. What the envelope *pre-authorizes* is decided per action at
+/// the approval gate (`Envelope::covers`), not here.
+pub fn apply_envelopes(
+    intent: Intent,
+    envelopes: &BTreeMap<String, Envelope>,
+    autonomy: Autonomy,
+    now: chrono::DateTime<chrono::Utc>,
+) -> Intent {
+    let mut strands = intent.strands.clone();
+    let mut changed = false;
+    for strand in &mut strands {
+        let Some(envelope) = envelopes
+            .get(&strand.strand_id)
+            .filter(|envelope| envelope.is_live(now))
+        else {
+            continue;
+        };
+        changed = true;
+        let limits = &mut strand.engagement.limits;
+        limits.permission_ceiling = limits.permission_ceiling.meet(envelope.permission_ceiling);
+        let cap = envelope
+            .spend_limit_usd
+            .filter(|cap| cap.is_finite() && *cap >= 0.0);
+        limits.spend_ceiling_usd = match (limits.spend_ceiling_usd, cap) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if autonomy == Autonomy::Delegated
+            && strand.reading.stakes != Stakes::Irreversible
+            && strand.engagement.posture.hil != HilMode::Defer
+        {
+            strand.engagement.posture.hil = HilMode::Envelope;
+        }
+    }
+    if !changed {
+        return intent;
+    }
+    let engagement = recompose(&strands);
+    Intent {
+        reading: intent.reading,
+        strands,
+        engagement,
+        provenance: intent.provenance,
     }
 }
 
 // ------------------------------------------------------------ model tiers ---
+
+/// How much of each part a classifier is shown. Pasted material is already
+/// set aside; this bounds a long instruction so one message cannot turn a
+/// cheap classification into an expensive one.
+const PROMPT_PART_CHARS: usize = 280;
 
 /// The prompt a model tier is sent, built here so its digest is the kernel's
 /// and a change to the wording is visible in every later ledger row.
@@ -793,7 +945,14 @@ pub fn classification_prompt(intent: &Intent) -> String {
         crate::engage::DOMAIN_VOCABULARY.join(", ")
     );
     for (index, strand) in intent.strands.iter().enumerate() {
-        out.push_str(&format!("{}. {}\n", index + 1, strand.text));
+        // One line per part, so a part's own line breaks cannot pose as
+        // further numbered parts.
+        let flat = strand.text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut shown: String = flat.chars().take(PROMPT_PART_CHARS).collect();
+        if flat.chars().count() > PROMPT_PART_CHARS {
+            shown.push('…');
+        }
+        out.push_str(&format!("{}. {shown}\n", index + 1));
     }
     if intent.strands.is_empty() {
         out.push_str("1. (empty)\n");
@@ -801,26 +960,76 @@ pub fn classification_prompt(intent: &Intent) -> String {
     out
 }
 
+/// The answer budget a classification needs for `parts` objects.
+pub fn classification_budget(parts: usize) -> u32 {
+    (100 + 120 * parts.max(1) as u32).min(1_600)
+}
+
+fn classification_from_value(value: &serde_json::Value) -> Option<Classification> {
+    let object = value.as_object()?;
+    let text = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .map(|value| value.trim().to_ascii_lowercase())
+            .filter(|value| !value.is_empty())
+    };
+    let normalize = |value: &str| value.trim().to_ascii_lowercase();
+    let domains = match object.get("domains") {
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(normalize)
+            .filter(|domain| !domain.is_empty())
+            .collect(),
+        Some(serde_json::Value::String(items)) => items
+            .split(',')
+            .map(normalize)
+            .filter(|domain| !domain.is_empty())
+            .collect(),
+        _ => Vec::new(),
+    };
+    let confidence = match object.get("confidence") {
+        Some(serde_json::Value::Number(number)) => number.as_f64(),
+        Some(serde_json::Value::String(number)) => number.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+    .filter(|confidence| confidence.is_finite());
+    Some(Classification {
+        act: text("act"),
+        horizon: text("horizon"),
+        stakes: text("stakes"),
+        evidence: text("evidence"),
+        clarity: text("clarity"),
+        domains,
+        confidence,
+    })
+}
+
 /// Parse a model tier's answer: a JSON array of objects, or a single object
-/// (which then applies to every part). Tolerates a fenced block around it.
+/// (which then applies to every part). The first JSON value in the answer is
+/// read and anything around it — a fence, a sentence of preamble, trailing
+/// prose — is ignored. Field types are read leniently: a domain list may be
+/// one comma-separated string, a confidence may be a quoted number.
 pub fn parse_classifications(text: &str) -> Result<Vec<Classification>, String> {
-    let trimmed = text.trim();
-    let body = trimmed
-        .strip_prefix("```json")
-        .or_else(|| trimmed.strip_prefix("```"))
-        .and_then(|rest| rest.strip_suffix("```"))
-        .map(str::trim)
-        .unwrap_or(trimmed);
-    let start = body
+    let start = text
         .find(['[', '{'])
         .ok_or("no JSON in classifier answer")?;
-    let body = &body[start..];
-    if body.starts_with('[') {
-        serde_json::from_str::<Vec<Classification>>(body).map_err(|e| e.to_string())
-    } else {
-        serde_json::from_str::<Classification>(body)
-            .map(|one| vec![one])
-            .map_err(|e| e.to_string())
+    let mut values =
+        serde_json::Deserializer::from_str(&text[start..]).into_iter::<serde_json::Value>();
+    let value = match values.next() {
+        Some(Ok(value)) => value,
+        Some(Err(error)) => return Err(error.to_string()),
+        None => return Err("no JSON in classifier answer".into()),
+    };
+    match value {
+        serde_json::Value::Array(items) => {
+            Ok(items.iter().filter_map(classification_from_value).collect())
+        }
+        object @ serde_json::Value::Object(_) => {
+            Ok(classification_from_value(&object).into_iter().collect())
+        }
+        _ => Err("classifier answer is neither an object nor an array".into()),
     }
 }
 
@@ -835,10 +1044,11 @@ pub fn parse_classifications(text: &str) -> Result<Vec<Classification>, String> 
 ///
 /// A model may raise stakes or evidence freely; it may not lower either
 /// below what the free tiers concluded, nor lower stakes below what the act
-/// it chose implies. Authority-bearing limits are met with the partial's, so
-/// a classifier can change what a turn *reaches for* but never what it is
-/// *allowed to do* — the caution the kernel arrived at deterministically is
-/// not the model's to talk it out of.
+/// it chose implies. Authority-bearing limits are met with the partial's, and
+/// the posture it derives is met with the free tier's where the free tier
+/// read the part at all — the stop rule, the checkpoint and the human
+/// involvement stay at least as strict — so a classifier can change what a
+/// turn *reaches for* but never what it is *allowed to do*.
 #[allow(clippy::too_many_arguments)]
 pub fn apply_classification(
     partial: Intent,
@@ -848,29 +1058,24 @@ pub fn apply_classification(
     authority: &Authority,
     config: &ResolverConfig,
     cloud: bool,
-    now: chrono::DateTime<chrono::Utc>,
 ) -> Intent {
     let mut strands = partial.strands.clone();
     let mut applied = 0usize;
     if classifications.len() == strands.len() {
         for (strand, classification) in strands.iter_mut().zip(classifications) {
-            applied += apply_to_strand(strand, classification, authority, config, now);
+            applied += apply_to_strand(strand, classification, authority, config);
         }
     } else if !classifications.is_empty() {
-        // The model split the request differently than the segmenter did
-        // (measured live: "zorble …, then flimflam …" came back as two
-        // objects for one strand about half the time). The answer is still
-        // evidence; fold it into one classification on the cautious side —
-        // the highest level on every ordered axis, the union of domains,
-        // the lowest confidence — and apply it to every strand.
+        // The model split the request differently than the segmenter did.
+        // The answer is still evidence; fold it into one classification on
+        // the cautious side and apply it to every strand.
         let folded = fold_classifications(classifications);
         for strand in strands.iter_mut() {
-            applied += apply_to_strand(strand, &folded, authority, config, now);
+            applied += apply_to_strand(strand, &folded, authority, config);
         }
     }
 
     if applied == 0 {
-        // Nothing usable came back. Keep the free-tier result and say so.
         let mut provenance = partial.provenance;
         provenance.escalation_note = Some(format!(
             "{model} returned no usable axes; free-tier reading retained"
@@ -884,15 +1089,7 @@ pub fn apply_classification(
     }
 
     let reading = composite_reading(&strands);
-    let mut engagement = Engagement::compose(
-        &strands
-            .iter()
-            .map(|s| s.engagement.clone())
-            .collect::<Vec<_>>(),
-    );
-    if strands.len() > 1 {
-        engagement.posture.note = Some(strand_note(&strands));
-    }
+    let engagement = recompose(&strands);
 
     let mut provenance = partial.provenance;
     provenance.tier = if cloud {
@@ -988,9 +1185,12 @@ fn apply_to_strand(
     classification: &Classification,
     authority: &Authority,
     config: &ResolverConfig,
-    now: chrono::DateTime<chrono::Utc>,
 ) -> usize {
     let before = strand.reading.clone();
+    // A part the free tiers could not read at all carries the general
+    // reading and the orienting posture; that is not a judgement to be
+    // cautious about, so the classifier's posture replaces it.
+    let free_tier_read_it = before.confidence >= config.provisional_confidence;
     let mut reading = strand.reading.clone();
     let mut applied = 0usize;
 
@@ -999,7 +1199,9 @@ fn apply_to_strand(
             // The free tier's act stays in the slice as an alternate: the
             // model may refine what the part *is*, and the earlier reading
             // was evidence too.
-            reading.alternate_acts.insert(reading.act);
+            if free_tier_read_it {
+                reading.alternate_acts.insert(reading.act);
+            }
             reading.alternate_acts.remove(&act);
         }
         reading.act = act;
@@ -1033,9 +1235,17 @@ fn apply_to_strand(
     if reading.evidence.rank() < before.evidence.rank() {
         reading.evidence = before.evidence;
     }
-    reading
+    // Only names capabilities can declare: a free-form subject tag
+    // ("weather") matches no capability and would key behaviour on a topic.
+    let added = classification
         .domains
-        .extend(classification.domains.iter().cloned());
+        .iter()
+        .filter(|domain| crate::engage::DOMAIN_VOCABULARY.contains(&domain.as_str()))
+        .filter(|domain| reading.domains.insert((*domain).clone()))
+        .count();
+    if added > 0 {
+        applied += 1;
+    }
 
     if applied == 0 {
         return 0;
@@ -1065,42 +1275,38 @@ fn apply_to_strand(
 
     let may_slice =
         config.slice_capabilities && reading.may_slice_capabilities(config.accept_confidence);
-    let fresh = derive(&reading, authority, may_slice, now);
+    let fresh = derive(&reading, authority, may_slice);
     // What the part reaches for is the model's to refine; what it is allowed
     // to do is not.
-    let previous = &strand.engagement.limits;
+    let previous = &strand.engagement;
     let mut limits = fresh.limits.clone();
-    limits.approval_ceiling = limits.approval_ceiling.meet(previous.approval_ceiling);
-    limits.permission_ceiling = limits.permission_ceiling.meet(previous.permission_ceiling);
-    if previous.min_satisfaction.rank() > limits.min_satisfaction.rank() {
-        limits.min_satisfaction = previous.min_satisfaction;
+    limits.approval_ceiling = limits
+        .approval_ceiling
+        .meet(previous.limits.approval_ceiling);
+    limits.permission_ceiling = limits
+        .permission_ceiling
+        .meet(previous.limits.permission_ceiling);
+    if previous.limits.min_satisfaction.rank() > limits.min_satisfaction.rank() {
+        limits.min_satisfaction = previous.limits.min_satisfaction;
     }
     limits.required_modalities = limits
         .required_modalities
-        .union(&previous.required_modalities)
+        .union(&previous.limits.required_modalities)
         .copied()
         .collect();
-    limits.spend_ceiling_usd = match (limits.spend_ceiling_usd, previous.spend_ceiling_usd) {
+    limits.spend_ceiling_usd = match (limits.spend_ceiling_usd, previous.limits.spend_ceiling_usd) {
         (Some(a), Some(b)) => Some(a.min(b)),
         (a, b) => a.or(b),
     };
-    limits.max_turns = match (limits.max_turns, previous.max_turns) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    };
-    limits.worker_budget = match (limits.worker_budget, previous.worker_budget) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
-    };
-    limits.ladder_limit = match (limits.ladder_limit, previous.ladder_limit) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (a, b) => a.or(b),
+    let posture = if free_tier_read_it {
+        let mut posture = fresh.posture.meet(&previous.posture);
+        posture.note = fresh.posture.note.clone();
+        posture
+    } else {
+        fresh.posture
     };
     strand.reading = reading;
-    strand.engagement = Engagement {
-        limits,
-        posture: fresh.posture,
-    };
+    strand.engagement = Engagement { limits, posture };
     applied
 }
 
@@ -1115,7 +1321,6 @@ pub fn prompt_digest(prompt: &str) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::signals::{Surface, WorkspaceFacts};
 
     fn now() -> chrono::DateTime<chrono::Utc> {
         chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
@@ -1126,12 +1331,7 @@ mod tests {
     fn request<'a>(text: &'a str) -> Request<'a> {
         Request {
             text,
-            surface: Surface::Cli,
-            attachments: &[],
-            workspace: WorkspaceFacts::default(),
-            history: Default::default(),
-            attendance_override: None,
-            lineage_hint: None,
+            ..Request::default()
         }
     }
 
@@ -1141,7 +1341,6 @@ mod tests {
             &Declared::default(),
             &Authority::default(),
             &ResolverConfig::default(),
-            now(),
         )
     }
 
@@ -1151,8 +1350,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            4,
-            "61d3d2c6765fc5fdf7609653c74a682fd336ec3076394780094e8f6b3154f48f",
+            5,
+            "b4a8e4771afdfa16f21afc993fbfe8864723a4a5a714c8f438faa01d583748f9",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(
@@ -1180,7 +1379,6 @@ mod tests {
             &Declared::default(),
             &Authority::default(),
             &config,
-            now(),
         );
         let intent = resolution.intent();
         assert_eq!(intent.engagement, Engagement::general());
@@ -1202,7 +1400,6 @@ mod tests {
             &declared,
             &Authority::default(),
             &ResolverConfig::default(),
-            now(),
         );
         let intent = resolution.intent();
         assert_eq!(intent.provenance.tier, Tier::Declared);
@@ -1228,7 +1425,6 @@ mod tests {
             &declared,
             &Authority::default(),
             &ResolverConfig::default(),
-            now(),
         );
         assert!(full.peek().reading.confidence > intent.reading.confidence);
     }
@@ -1253,6 +1449,28 @@ mod tests {
         }
     }
 
+    /// What a human delegated applies whether or not the request was read:
+    /// `manual` asks at every level, even for a part nobody understood.
+    #[test]
+    fn authority_governs_a_part_the_free_tiers_could_not_read() {
+        let manual = Authority {
+            autonomy: Autonomy::Manual,
+            ..Authority::default()
+        };
+        let intent = resolve(
+            &request("zorble the frobnicator"),
+            &Declared::default(),
+            &manual,
+            &ResolverConfig::default(),
+        )
+        .intent();
+        assert_eq!(intent.provenance.tier, Tier::General);
+        assert_eq!(
+            intent.engagement.limits.approval_ceiling,
+            crate::ApprovalCeiling::Ask
+        );
+    }
+
     /// The single most important safety property of the paid tier: a model
     /// cannot talk the runtime out of caution it already arrived at — not by
     /// lowering stakes, not by changing the act, not by lowering evidence.
@@ -1274,13 +1492,14 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             true,
-            now(),
         );
         assert_eq!(intent.reading.stakes, Stakes::Irreversible);
         assert_eq!(
             intent.engagement.limits.approval_ceiling,
             crate::ApprovalCeiling::Ask
         );
+        // Nor by changing the act: the stop rule stays the effect it was.
+        assert_eq!(intent.engagement.posture.stop, crate::StopProfile::Effect);
 
         let partial = resolve_text("make sure the tests pass and prove it").intent();
         assert_eq!(partial.reading.evidence, Evidence::Verified);
@@ -1297,7 +1516,6 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             true,
-            now(),
         );
         assert_eq!(intent.reading.evidence, Evidence::Verified);
         assert_eq!(
@@ -1321,7 +1539,6 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             false,
-            now(),
         );
         assert_eq!(intent.provenance.tier, Tier::LocalModel);
         assert!(!intent.provenance.reproducible);
@@ -1341,7 +1558,6 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             true,
-            now(),
         );
         assert_eq!(after.reading, before.reading);
         assert_eq!(after.engagement, before.engagement);
@@ -1363,7 +1579,6 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             false,
-            now(),
         );
         assert_eq!(
             after.engagement.limits.required_domains,
@@ -1371,10 +1586,33 @@ mod tests {
         );
     }
 
+    /// A domain the classifier names counts as an answer on its own, and
+    /// only names from the shared vocabulary are taken.
     #[test]
-    fn operate_and_govern_are_never_assumed_cheap() {
+    fn classifier_domains_count_and_are_checked_against_the_vocabulary() {
+        let partial = resolve_text("zorble the frobnicator").intent();
+        let after = apply_classification(
+            partial,
+            &[Classification {
+                domains: vec!["web".into(), "weather".into()],
+                confidence: Some(0.9),
+                ..Classification::default()
+            }],
+            "m",
+            "d",
+            &Authority::default(),
+            &ResolverConfig::default(),
+            false,
+        );
+        assert_eq!(after.provenance.tier, Tier::LocalModel);
+        assert!(after.reading.domains.contains("web"));
+        assert!(!after.reading.domains.contains("weather"));
+    }
+
+    #[test]
+    fn operate_is_never_assumed_cheap_and_governing_is_reversible() {
         assert_eq!(implied_stakes(Act::Operate), Stakes::Irreversible);
-        assert_eq!(implied_stakes(Act::Govern), Stakes::Irreversible);
+        assert_eq!(implied_stakes(Act::Govern), Stakes::Reversible);
         assert_eq!(implied_stakes(Act::Answer), Stakes::Inert);
     }
 
@@ -1392,7 +1630,6 @@ mod tests {
             &Declared::default(),
             &Authority::default(),
             &config,
-            now(),
         );
         assert_eq!(
             resolution.peek().engagement.limits.required_domains,
@@ -1444,6 +1681,29 @@ mod tests {
         }
     }
 
+    /// Strand ids come from the host's turn id, so a thread — and the
+    /// commitment keyed by it — never collides with another turn's.
+    #[test]
+    fn strand_ids_come_from_the_turn_id() {
+        let mut req = request("fix the login bug. Also check whether the nightly job ran");
+        req.turn_id = "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b";
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+        assert_eq!(
+            intent.strands[0].strand_id,
+            "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b.0"
+        );
+        assert_eq!(
+            intent.strands[1].thread_id,
+            "0199a1b2-7c3d-7e4f-8a9b-0c1d2e3f4a5b.1"
+        );
+    }
+
     #[test]
     fn conversational_card_delivery_is_an_answer_not_workspace_authoring() {
         for text in [
@@ -1460,6 +1720,7 @@ mod tests {
                 "{text}: {:?}",
                 intent.strands
             );
+            assert!(intent.reading.domains.contains("live-data"), "{text}");
         }
     }
 
@@ -1488,7 +1749,6 @@ mod tests {
             &Declared::default(),
             &Authority::default(),
             &ResolverConfig::default(),
-            now(),
         )
         .intent();
         assert_eq!(
@@ -1500,7 +1760,8 @@ mod tests {
         assert_eq!(intent.strands[0].thread_id, "s0.0");
     }
 
-    /// Corrections and replacements are never inferred from text.
+    /// Corrections and replacements are never inferred from text, and a
+    /// replacement starts a thread of its own.
     #[test]
     fn corrections_only_come_from_an_explicit_hint() {
         let thread = ThreadFact {
@@ -1517,7 +1778,6 @@ mod tests {
             &Declared::default(),
             &Authority::default(),
             &ResolverConfig::default(),
-            now(),
         )
         .intent();
         assert!(matches!(
@@ -1531,7 +1791,6 @@ mod tests {
             &Declared::default(),
             &Authority::default(),
             &ResolverConfig::default(),
-            now(),
         )
         .intent();
         assert_eq!(
@@ -1540,17 +1799,16 @@ mod tests {
                 thread_id: "s0.0".into()
             }
         );
+        assert_eq!(explicit.strands[0].thread_id, explicit.strands[0].strand_id);
     }
 
-    /// The strictest strand governs the turn's limits.
-    /// Capacity fields take the most demanding strand; authority fields the
-    /// strictest.
+    /// A greeting beside real work is context for it, not a part of its own.
     #[test]
-    fn a_greeting_beside_real_work_does_not_cap_its_workers() {
+    fn a_greeting_beside_real_work_is_not_a_part() {
         let intent = resolve_text("hi! then refactor the parser").intent();
-        assert!(intent.strands.len() >= 2, "{:?}", intent.strands);
-        assert_eq!(intent.engagement.limits.worker_budget, None);
-        assert_eq!(intent.engagement.limits.ladder_limit, None);
+        assert_eq!(intent.strands.len(), 1, "{:?}", intent.strands);
+        assert_eq!(intent.reading.act, Act::Modify);
+        assert!(intent.engagement.posture.note.is_none());
     }
 
     #[test]
@@ -1587,7 +1845,6 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             false,
-            now(),
         );
         assert_eq!(answer.strands[0].reading.evidence, Evidence::Cited);
         assert_eq!(answer.strands[1].reading.horizon, Horizon::Session);
@@ -1623,7 +1880,6 @@ mod tests {
             &Authority::default(),
             &ResolverConfig::default(),
             false,
-            now(),
         );
         assert_eq!(answer.provenance.tier, Tier::LocalModel);
         assert_eq!(answer.reading.act, Act::Modify);
@@ -1633,17 +1889,35 @@ mod tests {
     }
 
     #[test]
-    fn classifier_answers_parse_as_array_or_object_with_fences() {
+    fn classifier_answers_parse_leniently() {
         let parsed = parse_classifications("```json\n[{\"act\":\"modify\"}]\n```").unwrap();
         assert_eq!(parsed.len(), 1);
         assert_eq!(parsed[0].act.as_deref(), Some("modify"));
         let parsed =
-            parse_classifications("Sure: {\"act\":\"answer\",\"confidence\":0.5}").unwrap();
+            parse_classifications("Sure: {\"act\":\"Answer\",\"confidence\":0.5} hope that helps")
+                .unwrap();
+        assert_eq!(parsed[0].act.as_deref(), Some("answer"));
         assert_eq!(parsed[0].confidence, Some(0.5));
+        let parsed =
+            parse_classifications("[{\"domains\":\"web, live-data\",\"confidence\":\"0.8\"}]")
+                .unwrap();
+        assert_eq!(parsed[0].domains, vec!["web", "live-data"]);
+        assert_eq!(parsed[0].confidence, Some(0.8));
         assert!(parse_classifications("no json here").is_err());
     }
 
-    /// Regression corpus for the lexical false positives the review found.
+    #[test]
+    fn the_classifier_prompt_bounds_each_part() {
+        let long = format!("explain {}", "the parser in great detail ".repeat(40));
+        let intent = resolve_text(&long).intent();
+        let prompt = classification_prompt(&intent);
+        let part = prompt.lines().find(|line| line.starts_with("1. ")).unwrap();
+        assert!(part.chars().count() <= PROMPT_PART_CHARS + 4, "{part}");
+        assert!(classification_budget(1) >= 200);
+        assert!(classification_budget(50) <= 1_600);
+    }
+
+    /// Regression corpus for the lexical false positives two reviews found.
     #[test]
     fn everyday_requests_do_not_grow_horizons_stakes_or_evidence() {
         let cases: &[(&str, Horizon, Stakes, Evidence)] = &[
@@ -1683,6 +1957,42 @@ mod tests {
                 Stakes::Inert,
                 Evidence::None,
             ),
+            (
+                "rename the Customer struct to Client",
+                Horizon::Turn,
+                Stakes::Reversible,
+                Evidence::None,
+            ),
+            (
+                "fix the payment form validation",
+                Horizon::Turn,
+                Stakes::Reversible,
+                Evidence::None,
+            ),
+            (
+                "remember that I prefer tabs over spaces",
+                Horizon::Turn,
+                Stakes::Reversible,
+                Evidence::None,
+            ),
+            (
+                "what happens whenever I press ctrl-c in the REPL?",
+                Horizon::Turn,
+                Stakes::Inert,
+                Evidence::None,
+            ),
+            (
+                "explain step by step how the borrow checker works",
+                Horizon::Turn,
+                Stakes::Inert,
+                Evidence::None,
+            ),
+            (
+                "write a poem about the sea and make sure it rhymes",
+                Horizon::Turn,
+                Stakes::Reversible,
+                Evidence::None,
+            ),
         ];
         for (text, horizon, stakes, evidence) in cases {
             let intent = resolve_text(text).intent();
@@ -1707,8 +2017,102 @@ mod tests {
         assert_eq!(deploy.reading.stakes, Stakes::Irreversible);
         let nightly = resolve_text("check the cloud bill every day and alert me").intent();
         assert_eq!(nightly.reading.horizon, Horizon::Durable);
+        assert!(nightly.engagement.posture.open_commitment);
         let cited = resolve_text("summarise the paper and cite your sources").intent();
         assert_eq!(cited.reading.evidence, Evidence::Cited);
+    }
+
+    /// Temporal words ask for a live value only beside a request for a fact.
+    #[test]
+    fn live_data_follows_a_request_for_a_fact() {
+        for text in [
+            "what is the current price of copper",
+            "what's the weather in Delhi today",
+            "give me the latest headlines",
+        ] {
+            let intent = resolve_text(text).intent();
+            assert!(intent.reading.domains.contains("live-data"), "{text}");
+        }
+        for text in [
+            "Refactor the current implementation of the parser to use a state machine",
+            "update the README to reflect the latest changes",
+            "fix the live reload bug in the dev server",
+            "hello there, how are you doing today",
+            "what time is it right now",
+        ] {
+            let intent = resolve_text(text).intent();
+            assert!(!intent.reading.domains.contains("live-data"), "{text}");
+        }
+    }
+
+    /// A question about an effect is a question: no effect is demanded.
+    #[test]
+    fn a_question_about_an_effect_demands_no_effect() {
+        let intent = resolve_text("Did the email send?").intent();
+        assert_eq!(intent.reading.act, Act::Answer);
+        assert_eq!(intent.engagement.posture.stop, crate::StopProfile::Message);
+        assert_ne!(intent.reading.stakes, Stakes::Irreversible);
+    }
+
+    /// Pasted material is read as material: one question about a log is one
+    /// part, whatever the log's lines say.
+    #[test]
+    fn a_pasted_log_is_material_not_parts() {
+        let mut text = String::from("why is this service failing? here is the log:\n");
+        for i in 0..300 {
+            let verb = ["check", "update", "send", "delete", "deploy"][i % 5];
+            text.push_str(&format!(
+                "2026-09-26T10:{:02}:{:02}Z INFO worker {verb} job {i} for customer account\n",
+                i / 60,
+                i % 60
+            ));
+        }
+        let intent = resolve_text(&text).intent();
+        assert_eq!(intent.strands.len(), 1, "{}", intent.strands.len());
+        assert_eq!(intent.reading.act, Act::Answer);
+        assert_ne!(intent.reading.stakes, Stakes::Irreversible);
+        assert!(intent.engagement.posture.note.is_none());
+    }
+
+    /// Resolution is linear in the size of the request. A 50 KB paste took
+    /// 105 s in a release build when every fold re-extracted the text.
+    #[test]
+    fn a_large_paste_resolves_quickly() {
+        let mut text = String::from("analyze this data:\n");
+        for i in 0..2_000 {
+            text.push_str(&format!(
+                "{i},{},{},north,widget-{}\n",
+                i * 3,
+                i % 7,
+                i % 13
+            ));
+        }
+        let started = std::time::Instant::now();
+        let intent = resolve_text(&text).intent();
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(intent.reading.act, Act::Analyze);
+    }
+
+    /// Any number of real parts is supported; the note stays bounded.
+    #[test]
+    fn many_parts_are_all_read_and_the_note_stays_bounded() {
+        let mut text = String::from("do these:\n");
+        for i in 0..20 {
+            text.push_str(&format!("{}. fix the parser case {i}\n", i + 1));
+        }
+        let intent = resolve_text(&text).intent();
+        assert_eq!(intent.strands.len(), 20);
+        let note = intent.engagement.posture.note.as_deref().unwrap();
+        assert!(note.contains("20 parts"), "{note}");
+        assert!(note.lines().count() <= 2 * LISTED_PARTS + 4, "{note}");
+        // No part is labelled with the runtime's own act names.
+        for act in Act::ALL {
+            assert!(!note.contains(&format!(": {}", act.as_str())), "{note}");
+        }
     }
 
     /// A below-floor reading keeps what it *observed*: an attached image is a
@@ -1719,20 +2123,13 @@ mod tests {
             modality: Modality::Image,
             name: "x.png".into(),
         }];
-        let mut req = request("post open look tell");
+        let mut req = request("zorble the frobnicator");
         req.attachments = &attachments;
         let config = ResolverConfig {
             provisional_confidence: 0.6,
             ..ResolverConfig::default()
         };
-        let intent = resolve(
-            &req,
-            &Declared::default(),
-            &Authority::default(),
-            &config,
-            now(),
-        )
-        .intent();
+        let intent = resolve(&req, &Declared::default(), &Authority::default(), &config).intent();
         assert_eq!(intent.provenance.tier, Tier::General);
         assert!(intent.reading.input_modalities.contains(&Modality::Image));
         assert!(
@@ -1742,5 +2139,55 @@ mod tests {
                 .required_modalities
                 .contains(&Modality::Image)
         );
+    }
+
+    #[test]
+    fn an_envelope_narrows_the_strands_it_covers() {
+        let mut req = request("refactor the parser");
+        req.turn_id = "turn";
+        let intent = resolve(
+            &req,
+            &Declared::default(),
+            &Authority::default(),
+            &ResolverConfig::default(),
+        )
+        .intent();
+        let envelope = Envelope {
+            envelope_id: "env".into(),
+            granted_by: "operator".into(),
+            granted_at: now(),
+            expires_at: None,
+            spend_limit_usd: Some(2.0),
+            path_scope: Vec::new(),
+            tool_scope: Vec::new(),
+            permission_ceiling: crate::PermissionCeiling::WorkspaceWrite,
+            escalation: crate::Escalation::WaitIndefinitely,
+            revoked_at: None,
+        };
+        let envelopes = BTreeMap::from([("turn.0".to_string(), envelope.clone())]);
+        let narrowed = apply_envelopes(intent.clone(), &envelopes, Autonomy::Delegated, now());
+        assert_eq!(
+            narrowed.engagement.limits.permission_ceiling,
+            crate::PermissionCeiling::WorkspaceWrite
+        );
+        assert_eq!(narrowed.engagement.limits.spend_ceiling_usd, Some(2.0));
+        assert_eq!(narrowed.engagement.posture.hil, HilMode::Envelope);
+        assert!(
+            narrowed
+                .engagement
+                .limits
+                .is_at_most(&intent.engagement.limits)
+        );
+
+        // A revoked grant narrows nothing and grants nothing.
+        let mut revoked = envelope;
+        revoked.revoked_at = Some(now());
+        let untouched = apply_envelopes(
+            intent.clone(),
+            &BTreeMap::from([("turn.0".to_string(), revoked)]),
+            Autonomy::Delegated,
+            now(),
+        );
+        assert_eq!(untouched, intent);
     }
 }

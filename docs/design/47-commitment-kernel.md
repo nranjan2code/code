@@ -1,17 +1,19 @@
 # 47 — The commitment kernel
 
 Status: **all phases shipped and wired; strands and the control plane shipped
-with resolver version 2** (the review that led to them is summarised under
-*What the review changed*).
+with resolver version 2; the tier-1 reader was rewritten and the runtime
+wiring corrected in resolver version 4** (the reviews that led to them are
+summarised under *What the review changed* and *What the second review
+changed*).
 
 | Phase | Delivers | Governs the turn through |
 |---|---|---|
 | I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent_with_escalation` |
-| I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::begin_episodes` — one commitment per thread |
+| I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::plan_episodes` then `begin_episodes` — one commitment per thread |
 | I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` | `IntentRecord` (reading, strands, engagement, note) |
 | I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only the two most recent turns at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
 | I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
-| I5 | envelopes: `vak grant` / `vak revoke`, live grant reaching the turn's authority, revocation honoured on read | `intent::permission_mode` → `cfg.mode`; `spend_ceiling_usd` → the run cap |
+| I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
 | I7 | server endpoints, admin portfolio, composer strip, the `commitments` capability, per-channel autonomy ceiling, delivery cadence/urgency | the gateway reads `posture.delivery` from the turn's intent entry |
 | I8 | misread evidence: escalation-as-measurement, restatement, per-cell accuracy | scoped to the turn's own tool calls; `vak intent show` reports weak cells |
@@ -74,7 +76,7 @@ subsystem.
 
 | Axis | Values | Drives |
 |---|---|---|
-| `act` | `converse` `answer` `locate` `analyze` `author` `modify` `operate` `verify` `orchestrate` `govern` | capability slice, output shape, stop profile |
+| `act` | `converse` `answer` `locate` `analyze` `author` `modify` `operate` `verify` `orchestrate` `govern` | which admitted tools are loaded, output shape, stop profile |
 | `horizon` | `immediate` `turn` `session` `durable` | managed admission, commitment promotion, context profile |
 | `stakes` | `inert` `reversible` `costly` `irreversible` | approval ceiling, checkpoint-before, delivery urgency |
 | `evidence` | `none` `cited` `verified` `audited` | **minimum satisfaction strength to close** |
@@ -120,8 +122,14 @@ Two shapes, and conflating them was a real bug during implementation:
   irreversible reading entirely. Ordered axes now take the highest level with
   real support, which is also the cautious direction on every one of them.
 
-Environment-derived signals (a dirty tree) apply only to effectful acts. A
-repository mid-edit does not make answering a question risky.
+Stakes words ("production", "force push", `rm -rf`, `git reset --hard`) and
+environment-derived signals (a dirty tree) apply to effectful acts and to a
+request whose verb the reader does not recognise — "force push to the
+production branch" is no less dangerous for using a verb the lexicon lacks.
+They do not apply to a request recognised as asking, finding or analysing: a
+repository mid-edit does not make answering a question risky, and "why did
+the production deploy fail?" changes nothing. Stakes come from what an action
+does, never from what it is about ("customer", "payment", "live" are topics).
 
 #### Confidence is per-axis
 
@@ -156,13 +164,30 @@ toolsets. The composite reading kept on `Intent::reading` is the most
 consequential strand widened by the others, for everything that wants one
 answer (the misread ledger, the session index, a commitment's spec).
 
-Segmentation is tier 1, deterministic: sentence boundaries, enumerated items,
-and a short list of sequencing (`then`, `after that`, `finally`) and
-addition (`also`, `additionally`) markers, matched as whole words. Plain
-"and" is not a boundary. A clause with no act signal folds into its
-neighbour. Every strand of a several-part request is read at least as a
-`turn` horizon: "one reply, no tools" cannot describe a part of something
-larger.
+Segmentation is tier 1, deterministic. Pasted material is set aside first —
+fenced code, runs of two or more lines that do not read as a request (a log,
+a CSV, a stack trace), and a single very long raw line — so a 300-line log
+is one part to read about, not 301 requests; it reaches the reading only as
+"there is pasted material". The instruction is then split at sentence
+boundaries, enumerated items, and a short list of sequencing (`then`, `after
+that`, `finally`) and addition (`also`, `additionally`) markers, matched as
+whole words. Plain "and" is not a boundary. Each clause gets a role —
+imperative, question, request, social, or statement — and a part is a
+clause that asks for work with the context clauses around it: "the deploy
+failed, fix it" is one part, and "the deploy failed" alone asks for nothing
+beyond an answer. A statement's words never vote for an act ("the build
+**fails** on CI" reports; it does not ask to verify), a question's verbs
+other than its head count half, a greeting or thanks is social, and a
+request aimed at the requester ("alert me when…", "remind me to…") is an
+answer to them rather than an operation on the world. There is no cap on
+the number of parts, and no signal is taken from length. Every strand of a
+several-part request is read at least as a `turn` horizon: "one reply, no
+tools" cannot describe a part of something larger.
+
+Strand ids are `{turn_id}.{index}`, where the host mints the turn id (a
+UUIDv7) once per turn; a preview that persists nothing gets positional ids.
+Threads, and the commitments keyed by them, are therefore unique across
+turns, sessions and workspaces — positional ids collided on the second turn.
 
 Cross-turn lineage: a strand continues an open thread when it shares the act
 and either points at something ("it", "that") or shares a content word. It
@@ -170,9 +195,15 @@ is `New` otherwise — a wrong `New` costs a duplicate thread, a wrong
 `Continues` merges unrelated work, so the tie goes to `New`. `Corrects` and
 `Replaces` are **never inferred**: only an explicit `/goal fix …` or
 `/goal replace …` produces them, because a wrongly inferred replacement
-discards work. A durable strand opens or continues **its own commitment**
-(`CommitmentSpec.thread_id`), and the model-visible note lists the parts in
-order so the model knows there are *k* things and which are still open.
+discards work. A replacing strand starts a thread of its own. Commitments
+follow threads (`CommitmentSpec.thread_id`), decided before the turn writes
+anything (`commitments::plan_episodes`): a strand on a thread with an open
+commitment works on it whatever its own horizon reads as ("now also check
+staging" is part of the weekly job it continues); a strand that replaces a
+thread with an open commitment opens the successor and supersedes it; any
+other strand opens one only when it is itself durable and confidently read.
+The model-visible note lists the parts in order so the model knows there are
+*k* things and which are still open.
 
 ### Resolution cascade
 
@@ -194,16 +225,30 @@ you do not have.
 The kernel decides **whether** a paid tier is warranted; `vak-core` performs
 it (`Core::resolve_turn_intent_with_escalation`), because a dispatch is a
 dispatch: `WorkPurpose::Classify`, a work receipt on the session, spend-gate
-admission under `max_classify_usd`, an eight-second watchdog under the run's
-cancellation token, and **fail-open** to the free-tier reading with the
-reason recorded in `escalation_note`. A classifier outage must never block
-work. `escalate = "local"` runs on the keyless `ollama` provider with
-`classify_model` (or the effective model when the route is already ollama);
+admission under `max_classify_usd`, a watchdog under the run's cancellation
+token, and **fail-open** to the free-tier reading with the reason recorded
+in `escalation_note` (a parsed answer that set nothing is kept there too,
+bounded to its first 400 characters). A classifier outage must never block
+work. `escalate = "local"` means a model on this machine and runs **only**
+on the keyless `ollama` provider — with `classify_model` (an `ollama/` prefix
+is accepted; a prefix naming another configured provider is refused rather
+than read as a model name) or the effective model when the route is already
+ollama — so a local setting can never send the request text off the machine.
 `escalate = "cloud"` runs on the effective provider, or on `provider/model`
-when `classify_model` names one. The prompt is built by the kernel
-(`classification_prompt`) — one JSON object per strand — so its digest is
-the kernel's, and `parse_classifications` accepts an array or a single
-object. The request asks the model **not** to think (`ChatRequest.think =
+when `classify_model` names one; any paid provider needs a known price to be
+held to, and an unpriced one is refused. The recorded tier names where the
+model actually ran (`local-model` on ollama, `cloud-model` otherwise), not
+which setting asked for it. The prompt is built by the kernel
+(`classification_prompt`) — one JSON object per strand, each part shown on
+one line and capped at 280 characters, pasted material left out — so its
+digest is the kernel's and one long message cannot turn a cheap
+classification into an expensive one. The output budget grows with the
+number of parts (`classification_budget`: 100 + 120 per part, at most 1600
+tokens), because a fixed budget truncated the answer for requests with more
+than a few parts and a truncated array parses as nothing.
+`parse_classifications` reads the first JSON value in the answer, as an
+array or a single object, and ignores unknown values; a domain outside the
+vocabulary is dropped. The request asks the model **not** to think (`ChatRequest.think =
 Some(false)`, Ollama `think`): measured live on `gemma4:e2b-mlx`, the default
 spent its whole output budget in the thinking channel and returned no JSON;
 without thinking it answers in 0.8–4 s. The watchdog is
@@ -229,7 +274,12 @@ may raise a floor, it may not remove a tool.
 What a weak reading gets, with the kernel on, is the **orienting
 engagement**: the general posture and the orientation floor
 (`filesystem`, `memory`) as its domain requirement — an explicit decision,
-never a collapsed top element. `DomainSet::All` keeps its one meaning,
+never a collapsed top element — made at least as careful as any risk the
+text stated. Stakes above the ordinary and an evidence standard are only
+ever read from words the request contains, so a weak part keeps them: a
+reading too weak to narrow capability is never too weak to raise caution,
+and "force push to the production branch" asks first whether or not its
+verb was understood. `DomainSet::All` keeps its one meaning,
 everything, and only a disabled kernel produces it (design 68 Principle 6:
 when a decision cannot be made confidently, send less and give the model a
 way to ask for more). No reading, confident or not, removes a capability:
@@ -247,19 +297,36 @@ when nobody is watching.
 |---|---|---|
 | `manual` | propose only | `ask` at every level |
 | `assisted` | act on reversible things; ask for costly or irreversible | `auto-approve` for inert/reversible, `ask` from costly up |
-| `delegated` | act inside a declared envelope; escalate outside it | `auto-approve` inside a live envelope, `ask` outside |
+| `delegated` | act inside a declared envelope; escalate outside it | `ask` at the turn; each gated action a live envelope covers proceeds |
 | `autonomous` | act freely within the permission mode; report afterwards | stakes alone: `approve-safe` at costly, `ask` at irreversible |
 
 The table is the code (`Authority::approval_ceiling`) and a test pins it.
 
 An **envelope** is pre-authorization *within existing authority* — never a
-grant of new authority. Its `permission_ceiling` can only lower the effective
-mode, through the same `PermissionMode::capped_by` a gateway channel override
-uses. Revocation follows invariant 11: it cancels in-flight work.
+grant of new authority. It belongs to a commitment, so it is not part of the
+turn's `Authority`: which commitment a strand works on is only known once
+the request is read. It reaches a turn twice. First, `apply_envelopes`
+narrows the strands that serve its commitment: its `permission_ceiling`
+lowers their permission ceiling (reaching the mode through the same
+`PermissionMode::capped_by` a gateway channel override uses) and its spend
+limit lowers their spend ceiling; under `delegated` autonomy such a strand
+works in the `Envelope` HIL mode, unless it is irreversible or deferred.
+Second, at the approval gate: for a delegated turn with nothing
+irreversible in it, `intent::envelope_check` lets a gated action through
+when a live envelope covers it — its tool is in the tool scope, if there is
+one, and every path it names is inside the path scope, made
+workspace-relative, with no `..`, absolute or foreign-root path coverable.
+The grant is read from the ledger at every check, so a revocation, an
+expiry, a closed commitment or a spent limit applies at the very next gate.
+An ask raised by an operator's rule or by the circuit breaker is never one a
+grant stands in for.
 
-`intent.autonomy` and `intent.escalate = "cloud"` are **privileged config**,
-stripped for an untrusted project. A cloned repository must not grant itself
-the right to act without asking, nor spend the user's credentials classifying.
+`intent.autonomy`, `intent.escalate = "cloud"`, and switching the kernel or
+its posture off (`intent.enabled = false`, `intent.posture = false`) are
+**privileged config**, stripped for an untrusted project. A cloned repository
+must not grant itself the right to act without asking, spend the user's
+credentials classifying, or remove the approval floor the kernel raises for
+irreversible work.
 
 Irreversible work reaches a human whatever was delegated. A grant to act
 without asking is not a grant to act without anyone ever knowing.
@@ -271,7 +338,7 @@ Chosen by `attendance × stakes × autonomy`.
 | Mode | When | Behaviour |
 |---|---|---|
 | **Interrupt** | interactive, high stakes | block and ask now |
-| **Envelope** | delegated, long-running | proceed inside the grant, escalate outside |
+| **Envelope** | delegated, working on an enveloped commitment | proceed inside the grant, escalate outside |
 | **Review** | reversible and checkpointed | do it, show the diff, offer reversal |
 | **Defer** | unattended, needs a human | suspend into the inbox |
 
@@ -293,9 +360,22 @@ nobody replied is precisely the autonomy this system exists to prevent.
 
 ### The commitment
 
-`horizon ≥ session` promotes a resolution into a durable **commitment** in its
-own append-only ledger, independent of any session. Below that, intents resolve
-and die inside the turn — a simple prompt pays nothing.
+`horizon = durable` — work that outlives the session: a recurrence, a watch,
+"every day" — promotes a resolution into a durable **commitment** in its own
+append-only ledger, independent of any session. Multi-step work inside one
+session runs managed, under a plan, and opens no commitment; below that,
+intents resolve and die inside the turn — a simple prompt pays nothing.
+
+A commitment is held by the Agent that took it on: its ledger is in the
+Agent's home (docs/design/64-agent-owned-platform.md), the `commitments`
+capability reads that ledger, and each commitment records the conversation
+audience that asked for it, so an Agent serving several chats never shows
+one chat what another asked of it. The upkeep tick
+(`commitments::maintain_all`) sweeps every Agent's portfolio, and a predicate
+is checked in the workspace its commitment belongs to — confined to it: the
+check runs in the server process, outside any sandbox, so a criterion that
+names an absolute path, a `..` step or a symlink out of the tree is not
+checked at all.
 
 ```
 Proposed → Active ⇄ Suspended ⇄ Blocked → Satisfying → Closed{verdict}
@@ -322,7 +402,10 @@ confidence:
 
 **Closure invariant:** a commitment may not close `fulfilled` below the
 strength its `evidence` axis demands, and the ledger refuses the event at
-append time. A ledger that can record a lie is not an audit trail.
+append time. A ledger that can record a lie is not an audit trail — so the
+strength a closure records is recomputed from the criteria at append time,
+whatever the caller claimed, and the check-and-append runs under an OS file
+lock that a crashed writer releases with its process.
 
 The model may **propose** criteria; it may never **mark one passed**. Same
 separation of powers as permission-before-dispatch. A failed or undetermined
@@ -402,7 +485,8 @@ Three sources, typed by the transport, never parsed from a body
 
 | Kind | Human | Agent | System |
 |---|---|---|---|
-| status / resume | ✓ | own subtree only | ✓ |
+| status | ✓ | ✓ | ✓ |
+| resume | ✓ | own children only | ✓ |
 | pause / cancel | ✓ | own children only | ✗ |
 | steer | ✓ (any free text) | typed message only | ✗ |
 | replan / add / drop / prioritize | ✓ → new revision | requires human | ✗ |
@@ -418,10 +502,21 @@ explicit command (`parse_command`): a leading slash command — `/stop`,
 the output" steers the running loop between steps; before this it cancelled
 the run. Goal relation follows the same rule (`goal_relation`): only an
 explicit command corrects or replaces the active goal, and a correction
-keeps what was added to the goal while a replacement discards it. The
-earlier text classifiers (`classify_intervention`, `classify_goal_update`)
-are gone: they read "replace the deprecated API call" as a replacement of
-the goal.
+keeps what was added to the goal while a replacement discards it. A message
+after `/stop` starts a new goal rather than adding to cancelled work, and a
+message added to a paused goal resumes it, because the turn carrying it
+runs. Only a goal a person stated (`/goal …`) is shown to the model as the
+primary objective; otherwise the objective is merely the conversation's
+first message, and "hi" is not one. The message that starts a turn and one
+steered into a running turn take the same path (`next_goal_update`), so
+revisions count every update and are never reused. The earlier text
+classifiers (`classify_intervention`, `classify_goal_update`) are gone: they
+read "replace the deprecated API call" as a replacement of the goal.
+
+"Own children only" is a fact about the target, not the caller: an agent may
+control a session only when that session's own header names the agent as
+the one that dispatched it (`InterventionRequest::target_parent_session_id`).
+When the parentage is unknown, the answer is no.
 
 ### Did we read it right?
 
@@ -435,15 +530,22 @@ shrinkage, 30-day TTL). Escalation is measured against the turn's *own*
 tool calls (scanning the whole chain recorded a tool used three turns ago as
 an escalation against today's reading); a request restated verbatim right
 after the previous turn is recorded as `Restated` against the previous
-reading. The loop closes on a person: `vak intent show` lists cells whose
-accuracy has fallen below 0.75 over at least five observations, with the
-capabilities the model asked for.
+reading. A deferred tool used after a reading too weak to decide what was
+loaded is recorded but counts as unknown (`MisreadRow::sliced`): that
+reading loaded only the orientation floor and expected discovery. Cells are
+kept per resolver version, and only the running lexicon is judged. The loop
+closes on a person: `vak intent show` lists the running lexicon's cells
+that something contradicted and whose accuracy has fallen below 0.75 over at
+least five observations, with the capabilities the model asked for.
 
 ## Invariants
 
-1. **Intent narrows, never widens.** An engagement's `Limits` may subtract a
-   capability, shorten the ladder to a prefix, lower a budget, or *raise* an
-   approval floor. Never grant, extend, raise a cap, or lower a floor. `Limits`
+1. **Intent narrows, never widens.** An engagement's `Limits` may lower a
+   budget, lower a permission ceiling, or *raise* an approval floor. Never
+   grant, extend, raise a cap, or lower a floor. A reading decides which
+   admitted tools are loaded, never what is possible: it does not shorten the
+   route ladder, cap the turn budget, or limit delegation — those caps only
+   ever removed capacity from requests the reader got wrong. `Limits`
    is a meet semilattice whose top element reproduces pre-kernel behaviour;
    `meet` is the only composition operator offered and there is deliberately no
    `join`. `Limits.required_domains` is typed as a bounded semilattice `DomainSet`
@@ -454,7 +556,8 @@ capabilities the model asked for.
    exactly as before; intent may only add an approval requirement. Nothing in
    the kernel can authorize anything.
 3. **An envelope is pre-authorization within existing authority**, never a
-   grant. Revocation cancels in-flight work.
+   grant, and never for irreversible work or an operator's ask rule. It is
+   read at every gate, so a revocation applies to the very next one.
 4. **The runtime evaluates satisfaction; the model never does.**
 5. **A commitment may not close above its evidence class.**
 6. **Model-visible means logged.** The intent note gets its own entry type
@@ -465,10 +568,12 @@ capabilities the model asked for.
    lexicon move together: a test pins a digest of every table tier 1 reads
    (and the segmentation vocabulary) to the version, so a lexicon change that
    forgets the bump fails CI instead of silently invalidating every ledger
-   row that claims `reproducible: true`. `now` is an input to `resolve` and
-   `derive`, not a clock read inside them.
-8. **Uncertainty resolves to the general engagement** — byte-for-byte the
-   previous behaviour. Being unsure must never silently remove a tool.
+   row that claims `reproducible: true`. Nothing in `resolve` or `derive`
+   reads a clock; time enters only where a grant's liveness is judged
+   (`apply_envelopes`), as a parameter.
+8. **Uncertainty resolves to the orienting engagement**, never to anything
+   narrower, and never drops risk the text stated. Being unsure must never
+   silently remove a tool or lower a floor.
 9. **Commitments close explicitly**, with a verdict and evidence.
 10. **Unsupported modality fails typed, never silently degrades.** Dropping an
     image because the serving model is text-only is the "everything worked as
@@ -506,12 +611,12 @@ vak-core/intent.rs  the seam: gathers facts, runs the cascade, projects the
 
 ```toml
 [intent]
-enabled = true              # false reproduces pre-kernel behaviour exactly
-accept_confidence = 0.75    # bar for capability slicing
+enabled = true              # false reproduces pre-kernel behaviour exactly (privileged at false)
+accept_confidence = 0.75    # bar for deciding which tools are loaded
 provisional_confidence = 0.45
-slice_capabilities = true   # false switches capability narrowing off entirely
-posture = true              # the approval ceiling (stakes × autonomy) may lower the mode
-escalate = "none"           # none | local | cloud    (privileged at "cloud")
+slice_capabilities = true   # false loads every admitted tool on every turn
+posture = true              # the approval ceiling (stakes × autonomy) may lower the mode (privileged at false)
+escalate = "none"           # none | local (ollama only) | cloud    (privileged at "cloud")
 classify_model = "…"        # model, or provider/model, for the classifier
 max_classify_usd = 0.01
 classify_timeout_secs = 10  # watchdog; an overrun fails open to the free-tier reading
@@ -573,15 +678,94 @@ fixes:
 * `RESOLVER_VERSION` stayed at 1 through eleven lexicon changes. Pinned.
 * The misread ledger scanned the whole session for escalations. Scoped.
 
-Resolver version 4 (2026-09-26): `live` is read by sense. The verb "reside"
-("we live in the city", "my kids live with me", every `lives`/`lived`/
-`living`) votes for nothing; the adjective ("a live score", "is it live", "go
-live") still votes `live-data` and irreversible stakes. The sense comes from
-the neighbouring words only — a subject or auxiliary before it, or a
-residence preposition after it unless a copula or "go" precedes — so it stays
-deterministic and names no topic. Measured live before the fix: a weekend-
-planning request containing "we live in the city" set `live-data`, the
-freshness check refused its plan card, and the person got no plan.
+## What the second review changed
+
+A second review (resolver version 3, 2026-09-26) measured the reader on
+real inputs and followed every derived value to where the runtime used it.
+Resolver version 4 and this change fix what it found.
+
+**The reader.** Tier 1 read every line of a message as a request. A pasted
+53 KB CSV took 105 s to resolve and a 300-line log became 301 strands, one
+of them `irreversible`, with a 26 KB note and a 527 KB intent record. With
+pasted material set aside (see *Strands*), measured in a release build: the
+CSV resolves in 14 ms, the log is one `answer` strand with no note, and a
+20 KB log's intent record is 2.5 KB. Statements no longer vote ("the deploy
+failed" reported, it did not ask to operate), questions no longer read as
+their verbs ("what happens when I press ctrl-c" is an answer), greetings
+and thanks are social, topic words no longer raise stakes, "make sure"
+raises the evidence standard only next to something checkable, horizon
+phrases count only in a clause that asks for work, and no length signal
+remains. The `live-data` domain — "ask for a value observed this turn" — is
+set only for a request that seeks a fact (answer, locate, analyse) with a
+temporal word that is not about something local or a time: "the current
+price of copper" is live data; "the current directory" and "refactor the
+current parser" are not. Destructive requests with an unknown verb keep
+their stakes (see *Axis algebra*). A live run found ordinary instructions
+the verb table lacked — "every day, append the date to log.txt" opened no
+commitment because "append" was unknown — so common instruction verbs were
+added (append, insert, replace, rewrite, merge, commit, revert, move,
+upgrade, calculate, translate, push, upload, compile, lint and others),
+weighted down where the word is often a noun. "Run" and "execute" stay out
+on purpose: "run the tests" is a check, and reading "run" as an operation
+would make it irreversible.
+
+**The wiring.** Envelopes never reached a turn: the grant was looked up by
+the session's managed-work contract id, which is not a commitment id. The
+`commitments` capability read a different ledger from the one turns wrote,
+so the model never saw its own commitments. Strand ids were positional, so
+the second durable request of a session attached to the first one's
+commitment. Every one is fixed as described above. The reading's caps on
+the route ladder, the turn budget and delegation are removed (invariant 1).
+The freshness check (docs/design/68-context-engine.md §7) is satisfied by
+any observation of current state — reading the file, running the command —
+not only by a web retrieval; the stop gate counts an integration's tool
+call and a delegated task as execution; and a worker is held to the outcome
+of its own prompt, clamped to what a read-only worker can do, not to its
+parent's whole request.
+
+**The edges.** Configured thresholds and caps written as `nan` or `inf`
+(valid TOML) fall back to their defaults, because every comparison against
+NaN is false. Runtime scaffolding is never stripped from inside a fenced
+code block. The commitment and misread ledgers skip a corrupt line instead
+of stopping at it.
+
+**The live run** (local `gemma4:e2b-mlx`, 2026-09-26) confirmed the fixes
+above end to end — a force push under `auto-approve` reached an approval
+gate while an `ls` under the same settings did not; a grant let gated calls
+through with no approver, and its revocation stopped the very next one; a
+deferred gate parked its question and suspended the commitment; the model
+read its own commitments — and found five more, all fixed here:
+
+* A card that failed validation counted as an unresolved tool failure, so
+  the stop gate sent complete, correct prose answers back to repair a card
+  the small model could not build, until the turn failed. A card is a
+  presentation of the answer: a failed one is simply not shown, and whether
+  a card was needed is the presentation check's question.
+* The stop gate's generic rule demanded a verification command after every
+  code edit, overriding the reading: "explain calc.py, then add a subtract
+  function" (an authoring stop profile) was sent to run a check its surface
+  could not run. With a reading present, a re-run is owed only when the
+  reading holds the work to a check or the request's words ask for one.
+* The multi-part note labelled parts by act ("Part 2: author"), and the model
+  copied the label into its answer. The note now states order and
+  dependency as plain sentences.
+* The `commitments` capability needed an approver to read the Agent's own
+  portfolio, so "what are you working on?" failed on an unattended surface;
+  it is a read tool now, like `session_search`. And "right now" beside the
+  agent's own state ("what commitments are you holding right now?") read as
+  a live-data question; the agent's own state is local.
+* The verb table lacked common instructions (see *The reader*).
+
+On the `main` line, resolver version 4 separately fixed the sense of `live`:
+the verb "reside" ("we live in the city") carries no recency or stakes,
+while "a live score" asks for a current value and "go live" describes a
+launch. The version 5 resolver combines that reading with the clause-aware
+reader described above.
+
+One finding is left as a decision rather than a fix: under `full-access`
+the permission engine allows every call without asking, so the approval
+floor the kernel raises for irreversible work has nothing to gate there. A
+force push in a `full-access` session still runs unasked.
 
 ## Verification
 

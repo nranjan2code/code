@@ -772,7 +772,7 @@ function IntentSimulator() {
                       : "Direct conversational prose response."}
                   </span>
                   <div class="axis-footer-chip">
-                    <span class="mono dim">subsystem: capability slice</span>
+                    <span class="mono dim">subsystem: tool loading</span>
                   </div>
                 </div>
 
@@ -787,11 +787,15 @@ function IntentSimulator() {
                     <span
                       class="chip"
                       classList={{
-                        "chip-tone-success": horizonRank(exp().reading.horizon) >= 3,
-                        "chip-phrase": horizonRank(exp().reading.horizon) < 3,
+                        "chip-tone-success": horizonRank(exp().reading.horizon) >= 4,
+                        "chip-phrase": horizonRank(exp().reading.horizon) < 4,
                       }}
                     >
-                      {horizonRank(exp().reading.horizon) >= 3 ? "durable" : "ephemeral"}
+                      {horizonRank(exp().reading.horizon) >= 4
+                        ? "durable"
+                        : horizonRank(exp().reading.horizon) === 3
+                        ? "multi-step"
+                        : "ephemeral"}
                     </span>
                   </div>
                   <div class="axis-pip-meter">
@@ -805,9 +809,11 @@ function IntentSimulator() {
                     </For>
                   </div>
                   <span class="axis-desc">
-                    {horizonRank(exp().reading.horizon) >= 3
-                      ? "Opens managed commitment; outlives single turn."
-                      : "Resolves within current turn; zero ledger debt."}
+                    {horizonRank(exp().reading.horizon) >= 4
+                      ? "Opens a durable commitment; outlives the session."
+                      : horizonRank(exp().reading.horizon) === 3
+                      ? "Runs under a plan in this session; opens no commitment."
+                      : "Resolves within the current turn; zero ledger debt."}
                   </span>
                 </div>
 

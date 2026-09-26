@@ -5356,6 +5356,7 @@ async fn send_steering(
         source: control_source_for(&body.source, state.core.surface().slug(), &id),
         target_revision: None,
         target_session_id: Some(id.clone()),
+        target_parent_session_id: target_parent_of(&handle),
     });
     record_activity_or_buffer(
         &handle,
@@ -5826,6 +5827,7 @@ async fn plan_change(
         source: control_source_for(&body.source, state.core.surface().slug(), &id),
         target_revision: Some(revision),
         target_session_id: Some(id.clone()),
+        target_parent_session_id: target_parent_of(&handle),
     });
     let mut admitted_revision = None;
     let mut requirement_diff = None;
@@ -5996,6 +5998,18 @@ fn record_routing_data(
     if let Some(value) = routing.provenance.as_deref() {
         data.insert("routing_provenance".into(), value.into());
     }
+}
+
+/// The session that dispatched this one, from its own header: what "an agent
+/// may control only its own children" is checked against. Unknown while the
+/// ledger is out on a running turn, and unknown refuses an agent's control.
+fn target_parent_of(handle: &SessionHandle) -> Option<String> {
+    handle.session.lock().ok().and_then(|guard| {
+        guard.as_ref().and_then(|log| {
+            log.header()
+                .and_then(|header| header.parent_session_id.clone())
+        })
+    })
 }
 
 fn routing_revision_is_current(handle: &SessionHandle, expected: u64) -> bool {
@@ -8642,36 +8656,17 @@ async fn intent_explain(
         },
     };
 
-    let history = if let Some(sid) = q.session_id.as_deref() {
-        match core.open_session(sid).await {
-            Ok(session) => {
-                let chain = session.chain_to_root();
-                let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
-                    vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
-                    _ => None,
-                });
-                let turn_index = chain
-                    .iter()
-                    .filter(|entry| matches!(entry.payload, vak_session::EntryPayload::Message(_)))
-                    .count();
-                vak_intent::HistoryFacts {
-                    previous_act,
-                    turn_index,
-                    commitment_open: session
-                        .header()
-                        .and_then(|header| header.contract_id.as_ref())
-                        .is_some(),
-                    open_threads: vak_core::intent::open_threads(&session),
-                }
-            }
+    let history = match q.session_id.as_deref() {
+        Some(sid) => match core.open_session(sid).await {
+            Ok(session) => vak_core::intent::history_facts(&session),
             Err(_) => vak_intent::HistoryFacts::default(),
-        }
-    } else {
-        vak_intent::HistoryFacts::default()
+        },
+        None => vak_intent::HistoryFacts::default(),
     };
 
     let resolution = vak_core::intent::resolve_turn(
         &q.prompt,
+        "",
         &surface,
         &[],
         vak_core::intent::workspace_facts(core.cwd()),
@@ -8679,7 +8674,6 @@ async fn intent_explain(
         &declared,
         &core.turn_authority_for(&surface),
         &vak_core::intent::resolver_config(core.config()),
-        chrono::Utc::now(),
     );
     let escalation = match &resolution {
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
@@ -8700,7 +8694,7 @@ async fn intent_explain(
         "history": {
             "turn_index": history.turn_index,
             "previous_act": history.previous_act.map(|a| a.as_str()),
-            "commitment_open": history.commitment_open,
+            "open_threads": history.open_threads.len(),
         },
     }))
     .into_response()
@@ -17967,8 +17961,7 @@ pub fn start_scheduler(state: &AppState) {
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
                 tick.tick().await;
-                let report =
-                    vak_core::commitments::maintain(&st.core.sessions_home(), st.core.cwd()).await;
+                let report = vak_core::commitments::maintain_all(&st.core.shared_data_home()).await;
                 if report.is_empty() {
                     continue;
                 }

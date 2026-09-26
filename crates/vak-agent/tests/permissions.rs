@@ -204,3 +204,109 @@ async fn approved_ask_executes_the_tool() {
         "approved command must have run"
     );
 }
+
+fn first_tool_result(agent: &Agent) -> (String, bool) {
+    futures::executor::block_on(async {
+        agent
+            .session
+            .lock()
+            .await
+            .message_chain()
+            .iter()
+            .flat_map(|(_, m)| m.content.iter())
+            .find_map(|b| match b {
+                ContentBlock::ToolResult {
+                    content, is_error, ..
+                } => Some((content.clone(), *is_error)),
+                _ => None,
+            })
+            .expect("tool result exists")
+    })
+}
+
+/// A live envelope pre-authorizes the calls it covers: the gate that would
+/// have gone to an approver — here, none at all — lets the covered call run.
+#[tokio::test]
+async fn a_covering_envelope_answers_the_gate_without_an_approver() {
+    let marker = tempdir().unwrap();
+    let cmd = format!("touch {}/marker", marker.path().display());
+    let mut agent = multi_setup(
+        vec![bash_call("t1", &cmd), text_msg("ok")],
+        Some(PermissionEngine::default()),
+        None,
+    );
+    agent.config.envelope_check = Some(Arc::new(|tool: &str, _: &serde_json::Value| {
+        (tool == "bash").then(|| "env-1".to_string())
+    }));
+    let outcome = agent
+        .run(
+            "go",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    assert!(
+        marker.path().join("marker").exists(),
+        "a covered command runs inside its envelope"
+    );
+}
+
+/// An envelope that does not cover the call buys nothing, and an ask a rule
+/// raised is never one a grant stands in for.
+#[tokio::test]
+async fn an_envelope_never_answers_an_uncovered_call_or_a_rule() {
+    let uncovered = tempdir().unwrap();
+    let mut agent = multi_setup(
+        vec![
+            bash_call(
+                "t1",
+                &format!("touch {}/marker", uncovered.path().display()),
+            ),
+            text_msg("ok"),
+        ],
+        Some(PermissionEngine::default()),
+        None,
+    );
+    agent.config.envelope_check = Some(Arc::new(|_: &str, _: &serde_json::Value| None));
+    agent
+        .run(
+            "go",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(!uncovered.path().join("marker").exists());
+    assert!(
+        first_tool_result(&agent)
+            .0
+            .contains("no approver available")
+    );
+
+    let ruled = tempdir().unwrap();
+    let mut agent = multi_setup(
+        vec![
+            bash_call("t1", &format!("touch {}/marker", ruled.path().display())),
+            text_msg("ok"),
+        ],
+        Some(PermissionEngine::from_rule_strings(&["?Bash(touch *)".to_string()]).unwrap()),
+        None,
+    );
+    agent.config.envelope_check = Some(Arc::new(|_: &str, _: &serde_json::Value| {
+        Some("env-1".to_string())
+    }));
+    agent
+        .run(
+            "go",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        !ruled.path().join("marker").exists(),
+        "an operator's ask rule reaches a person whatever was granted"
+    );
+}

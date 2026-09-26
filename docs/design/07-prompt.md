@@ -179,6 +179,23 @@ retained.
   vocabulary (`vak_intent::DOMAIN_VOCABULARY`) instead of free-form subject
   tags.
 
+- Unreleased (resolver version 4, docs/design/47-commitment-kernel.md *What
+  the second review changed*): the seed is unchanged; four runtime texts
+  change. The analytical stance no longer ends "cite sources for every
+  factual assertion" — the stance is chosen for analysing code and logs as
+  much as the world, and the evidence standard is its own axis with its own
+  wording, so the stance told a model to cite sources for a stack trace. The
+  intent note no longer labels parts by act ("Part 2: author", which a small
+  model copied into its answer as a heading): it gives the number of parts,
+  then order and dependency as plain sentences ("Do part 2 after part 1."),
+  for at most twelve parts, and per-part guidance as "For part 2: …". It
+  says nothing about pasted material beyond that it is there. The
+  classifier prompt shows each part on
+  one line, capped at 280 characters. The conversation thread says "Primary
+  objective" only for a goal a person stated with `/goal`; before, the first
+  message of every conversation, "hi" included, was presented as the
+  objective of every later turn.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

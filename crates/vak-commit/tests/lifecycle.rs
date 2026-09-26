@@ -459,6 +459,133 @@ fn a_ledger_without_an_opening_event_projects_nothing() {
     assert!(ledger.all().is_empty());
 }
 
+/// A torn or non-UTF-8 line in the middle of the ledger is skipped, and every
+/// event written after it still counts. Stopping at the first bad line would
+/// silently roll every later commitment back to an older state.
+#[test]
+fn a_corrupt_line_hides_nothing_written_after_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = CommitmentLedger::new(dir.path());
+    let id = ledger
+        .open_commitment(spec(Evidence::None, Vec::new()))
+        .unwrap();
+    {
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(ledger.path())
+            .unwrap();
+        file.write_all(b"{\"torn\": \xff\xfe\n").unwrap();
+    }
+    ledger
+        .append(&Event::new(
+            &id,
+            EventKind::Blocked {
+                blocker: "waiting on credentials".into(),
+            },
+        ))
+        .unwrap();
+    let commitment = ledger.get(&id).unwrap().unwrap();
+    assert_eq!(commitment.phase, Phase::Blocked);
+    assert_eq!(
+        commitment.blocker.as_deref(),
+        Some("waiting on credentials")
+    );
+}
+
+/// The strength a closure records is the runtime's, recomputed from the
+/// criteria at append time — a caller cannot write a stronger claim than the
+/// commitment holds, even for a verdict that claims no success.
+#[test]
+fn a_closure_records_the_achieved_strength_not_the_claimed_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = CommitmentLedger::new(dir.path());
+    let id = ledger
+        .open_commitment(spec(
+            Evidence::None,
+            vec![criterion("looked", CriterionKind::Semantic)],
+        ))
+        .unwrap();
+    ledger
+        .append(&Event::new(
+            &id,
+            EventKind::Closed {
+                verdict: Verdict::Partial,
+                strength: Satisfaction::Attested,
+                evidence: Vec::new(),
+                note: "claims an audit that never happened".into(),
+            },
+        ))
+        .unwrap();
+    let closure = ledger.get(&id).unwrap().unwrap().closure.unwrap();
+    assert_eq!(closure.strength, Satisfaction::Asserted);
+}
+
+/// A new episode is somebody working the commitment again, so the blocker
+/// that stopped the previous one no longer describes it.
+#[test]
+fn starting_an_episode_clears_the_previous_blocker() {
+    let dir = tempfile::tempdir().unwrap();
+    let ledger = CommitmentLedger::new(dir.path());
+    let id = ledger
+        .open_commitment(spec(Evidence::None, Vec::new()))
+        .unwrap();
+    for event in [
+        EventKind::EpisodeStarted {
+            episode_id: "e1".into(),
+            session_id: "s1".into(),
+        },
+        EventKind::EpisodeEnded {
+            episode_id: "e1".into(),
+            advancement: Advancement::Blocked {
+                blocker: "cancelled".into(),
+            },
+            spend_usd: 0.0,
+        },
+        EventKind::EpisodeStarted {
+            episode_id: "e2".into(),
+            session_id: "s1".into(),
+        },
+    ] {
+        ledger.append(&Event::new(&id, event)).unwrap();
+    }
+    let commitment = ledger.get(&id).unwrap().unwrap();
+    assert_eq!(commitment.phase, Phase::Active);
+    assert!(commitment.blocker.is_none());
+}
+
+/// Concurrent writers serialize: every append lands, none is lost or torn.
+#[test]
+fn concurrent_appends_all_land() {
+    let dir = tempfile::tempdir().unwrap();
+    let id = CommitmentLedger::new(dir.path())
+        .open_commitment(spec(Evidence::None, Vec::new()))
+        .unwrap();
+    let writers: Vec<_> = (0..8)
+        .map(|writer| {
+            let home = dir.path().to_path_buf();
+            let id = id.clone();
+            std::thread::spawn(move || {
+                let ledger = CommitmentLedger::new(&home);
+                for n in 0..10 {
+                    ledger
+                        .append(&Event::new(
+                            &id,
+                            EventKind::Resumed {
+                                reason: format!("writer {writer} pass {n}"),
+                            },
+                        ))
+                        .unwrap();
+                }
+            })
+        })
+        .collect();
+    for writer in writers {
+        writer.join().unwrap();
+    }
+    assert_eq!(CommitmentLedger::new(dir.path()).events_for(&id).len(), 81);
+}
+
 #[test]
 fn revoking_an_envelope_stops_it_granting_anything() {
     let dir = tempfile::tempdir().unwrap();

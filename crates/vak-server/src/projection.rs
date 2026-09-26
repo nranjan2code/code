@@ -2490,6 +2490,7 @@ mod tests {
             relation: vak_intent::GoalRelation::New,
             request: "say hi".into(),
             supersedes_revision: None,
+            explicit: false,
         })
         .expect("goal update");
         log.append_message(MessageRecord {

@@ -8,20 +8,24 @@
 //! # The projection contract
 //!
 //! Every function here takes a baseline and returns something no wider.
-//! Nothing in this module grants: a capability slice intersects the admitted
-//! packet, an approval ceiling takes the stricter of itself and the configured
-//! mode, a ladder limit truncates a prefix, and a spend ceiling takes the
-//! smaller. `debug_assert`s state the property at each site and
+//! Nothing in this module grants: an approval ceiling takes the stricter of
+//! itself and the configured mode, a permission ceiling caps the mode, and a
+//! spend ceiling takes the smaller. What a reading predicts decides only
+//! which admitted tools are loaded, never what is possible: the route
+//! ladder, the turn budget and delegation are the operator's, whatever the
+//! request looked like. `debug_assert`s state the property at each site and
 //! `tests/intent_projection.rs` proves it.
 //!
-//! Getting a reading wrong must therefore be able to make vak *less* capable
-//! or *more* cautious, and never the reverse.
+//! Getting a reading wrong must therefore be able to make vak *more*
+//! cautious, and never less.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use vak_intent::{
-    ApprovalCeiling, Authority, Autonomy, Declared, Engagement, Intent, Limits, PermissionCeiling,
-    Request, Resolution, ResolverConfig, Surface as IntentSurface, WorkspaceFacts,
+    ApprovalCeiling, Authority, Autonomy, Declared, Engagement, HistoryFacts, Intent, Limits,
+    PermissionCeiling, Request, Resolution, ResolverConfig, Surface as IntentSurface,
+    WorkspaceFacts,
 };
 
 use crate::Surface;
@@ -89,11 +93,38 @@ pub fn workspace_facts(cwd: &std::path::Path) -> WorkspaceFacts {
     WorkspaceFacts {
         is_repo,
         has_uncommitted_changes,
-        recent_paths: Vec::new(),
+    }
+}
+
+/// What the session so far says about the next request: how many messages
+/// it holds, what the last turn was read as, and which threads are open.
+///
+/// One function for the turn and for every preview of it (`vak intent
+/// explain`, `GET /intent/explain`), so a preview reads a request exactly as
+/// the turn would.
+pub fn history_facts(session: &vak_session::SessionLog) -> HistoryFacts {
+    let chain = session.chain_to_root();
+    let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
+        vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
+        _ => None,
+    });
+    let turn_index = chain
+        .iter()
+        .filter(|entry| matches!(entry.payload, vak_session::EntryPayload::Message(_)))
+        .count();
+    HistoryFacts {
+        previous_act,
+        turn_index,
+        open_threads: open_threads(session),
     }
 }
 
 /// Resolve one turn's intent.
+///
+/// `turn_id` is the id the host minted for this turn (a UUIDv7); strand and
+/// thread ids derive from it, so a thread — and the commitment keyed by it —
+/// is unique across turns and sessions. A preview passes `""` and gets
+/// positional ids, which it never persists.
 ///
 /// Returns the resolution rather than an `Intent` so the caller can decide
 /// whether to spend a classification dispatch on an
@@ -101,14 +132,14 @@ pub fn workspace_facts(cwd: &std::path::Path) -> WorkspaceFacts {
 #[allow(clippy::too_many_arguments)]
 pub fn resolve_turn(
     text: &str,
+    turn_id: &str,
     surface: &Surface,
     attachments: &[vak_intent::Attachment],
     workspace: WorkspaceFacts,
-    history: vak_intent::HistoryFacts,
+    history: HistoryFacts,
     declared: &Declared,
     authority: &Authority,
     config: &ResolverConfig,
-    now: chrono::DateTime<chrono::Utc>,
 ) -> Resolution {
     // An explicit `/goal fix` or `/goal replace` is the only way a strand
     // becomes a correction or a replacement of earlier work.
@@ -123,6 +154,7 @@ pub fn resolve_turn(
     };
     let request = Request {
         text: &text,
+        turn_id,
         surface: intent_surface(surface),
         attachments,
         workspace,
@@ -130,7 +162,7 @@ pub fn resolve_turn(
         attendance_override: Some(authority.attendance),
         lineage_hint,
     };
-    vak_intent::resolve(&request, declared, authority, config, now)
+    vak_intent::resolve(&request, declared, authority, config)
 }
 
 /// The threads still open in a session, for strand lineage.
@@ -235,21 +267,6 @@ pub fn permission_mode(
         "intent widened the permission mode"
     );
     result
-}
-
-/// Truncate the frozen route ladder to the engagement's prefix.
-///
-/// A prefix of a frozen ladder is still the frozen ladder: dispatch stays
-/// inside the committed contract, ordering is untouched, and replay reproduces
-/// the same legs in the same order. Extending or reordering would break the
-/// frozen-contract invariant, so neither is offered.
-pub fn limit_ladder<T: Clone>(ladder: &[T], limit: Option<usize>) -> Vec<T> {
-    match limit {
-        // Never truncate to nothing: a ladder with no legs cannot dispatch at
-        // all, which would turn a narrowing into an outage.
-        Some(limit) if limit > 0 => ladder.iter().take(limit).cloned().collect(),
-        _ => ladder.to_vec(),
-    }
 }
 
 /// The spend ceiling for this run: the smaller of the configured cap and the
@@ -392,6 +409,71 @@ impl vak_agent::Approver for DeferringApprover {
     }
 }
 
+/// Pre-authorization from the envelopes on the commitments this turn works
+/// on, consulted at an `Ask` gate (`vak_agent::EnvelopeCheck`).
+///
+/// The grant is read from the ledger on every call, never captured, so a
+/// revocation, an expiry, a closure or an exhausted spend limit takes effect
+/// at the very next gate (invariant 11 applied to delegation). A call is
+/// covered only when every path it names is inside the envelope's scope and
+/// its tool is in the envelope's tool list, if it has one
+/// (`Envelope::covers`). The caller installs this only for a delegated turn
+/// with nothing irreversible in it: irreversible work reaches a human
+/// whatever was delegated (invariant 32).
+pub fn envelope_check(
+    sessions_home: PathBuf,
+    commitment_ids: Vec<String>,
+    workspace: PathBuf,
+) -> vak_agent::EnvelopeCheck {
+    std::sync::Arc::new(move |tool, input| {
+        let ledger = vak_commit::CommitmentLedger::new(&sessions_home);
+        let paths = action_paths(input, &workspace);
+        let now = chrono::Utc::now();
+        commitment_ids.iter().find_map(|id| {
+            let commitment = ledger.get(id).ok().flatten()?;
+            if commitment.phase.is_terminal() {
+                return None;
+            }
+            let envelope = commitment.envelope?;
+            let within_budget = envelope
+                .spend_limit_usd
+                .is_none_or(|limit| limit.is_finite() && commitment.spend_usd < limit);
+            (within_budget && envelope.is_live(now) && envelope.covers(tool, &paths))
+                .then_some(envelope.envelope_id)
+        })
+    })
+}
+
+/// The paths a call names, made workspace-relative where they are inside the
+/// workspace. Anything else is passed through as written, where
+/// `Envelope::covers` treats it as uncoverable.
+fn action_paths(input: &serde_json::Value, workspace: &Path) -> Vec<String> {
+    let mut raw: Vec<&str> = ["path", "file_path"]
+        .iter()
+        .filter_map(|key| input.get(*key).and_then(serde_json::Value::as_str))
+        .collect();
+    if let Some(paths) = input.get("paths").and_then(serde_json::Value::as_array) {
+        raw.extend(paths.iter().filter_map(serde_json::Value::as_str));
+    }
+    let roots: Vec<PathBuf> = [Some(workspace.to_path_buf()), workspace.canonicalize().ok()]
+        .into_iter()
+        .flatten()
+        .collect();
+    raw.into_iter()
+        .map(|path| {
+            let candidate = Path::new(path);
+            if candidate.is_absolute()
+                && let Some(relative) = roots
+                    .iter()
+                    .find_map(|root| candidate.strip_prefix(root).ok())
+            {
+                return relative.to_string_lossy().into_owned();
+            }
+            path.to_string()
+        })
+        .collect()
+}
+
 /// The engagement's contribution to the prompt, as a runtime section.
 ///
 /// Code-owned, like the `Surface:` line: it sits beside the other generated
@@ -463,16 +545,107 @@ mod tests {
         );
     }
 
+    fn grant(
+        home: &Path,
+        workspace: &Path,
+        path_scope: &[&str],
+        tool_scope: &[&str],
+    ) -> (String, vak_intent::Envelope) {
+        let ledger = vak_commit::CommitmentLedger::new(home);
+        let id = ledger
+            .open_commitment(vak_commit::spec_from_reading(
+                "keep the docs current",
+                vak_intent::Reading::general(),
+                Vec::new(),
+                workspace.to_path_buf(),
+                vak_commit::Economics::default(),
+            ))
+            .unwrap();
+        let envelope = vak_intent::Envelope {
+            envelope_id: "env-1".into(),
+            granted_by: "owner".into(),
+            granted_at: chrono::Utc::now(),
+            expires_at: None,
+            spend_limit_usd: None,
+            path_scope: path_scope.iter().map(|s| s.to_string()).collect(),
+            tool_scope: tool_scope.iter().map(|s| s.to_string()).collect(),
+            permission_ceiling: PermissionCeiling::WorkspaceWrite,
+            escalation: vak_intent::Escalation::WaitIndefinitely,
+            revoked_at: None,
+        };
+        ledger
+            .append(&vak_commit::Event::new(
+                &id,
+                vak_commit::EventKind::EnvelopeGranted {
+                    envelope: Box::new(envelope.clone()),
+                },
+            ))
+            .unwrap();
+        (id, envelope)
+    }
+
     #[test]
-    fn a_ladder_limit_takes_a_prefix_and_never_empties_it() {
-        let ladder = vec!["a", "b", "c"];
-        assert_eq!(limit_ladder(&ladder, Some(2)), vec!["a", "b"]);
-        assert_eq!(limit_ladder(&ladder, None), ladder);
-        // A zero limit would make dispatch impossible; a narrowing must not
-        // become an outage.
-        assert_eq!(limit_ladder(&ladder, Some(0)), ladder);
-        // Over-long limits are harmless.
-        assert_eq!(limit_ladder(&ladder, Some(99)), ladder);
+    fn an_envelope_covers_only_what_its_scope_names() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let (id, _) = grant(
+            home.path(),
+            workspace.path(),
+            &["docs/**"],
+            &["write", "edit"],
+        );
+        let check = envelope_check(
+            home.path().to_path_buf(),
+            vec![id],
+            workspace.path().to_path_buf(),
+        );
+        let covered = |tool: &str, input: serde_json::Value| check(tool, &input).is_some();
+        assert!(covered(
+            "edit",
+            serde_json::json!({"path": "docs/guide.md"})
+        ));
+        // An absolute path inside the workspace is the same file.
+        let absolute = workspace.path().join("docs/guide.md");
+        assert!(covered("write", serde_json::json!({"path": absolute})));
+        // Outside the path scope, outside the tool scope, climbing out, or
+        // naming no path at all: not covered, so the gate asks as before.
+        assert!(!covered("edit", serde_json::json!({"path": "src/main.rs"})));
+        assert!(!covered(
+            "bash",
+            serde_json::json!({"command": "rm -rf docs"})
+        ));
+        assert!(!covered(
+            "edit",
+            serde_json::json!({"path": "docs/../.env"})
+        ));
+        assert!(!covered("edit", serde_json::json!({"path": "/etc/hosts"})));
+        assert!(!covered("edit", serde_json::json!({})));
+    }
+
+    /// The grant is read at every gate: a revocation applies to the very next
+    /// call, not to the next session.
+    #[test]
+    fn a_revoked_envelope_stops_covering_at_the_next_gate() {
+        let home = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let (id, envelope) = grant(home.path(), workspace.path(), &[], &[]);
+        let check = envelope_check(
+            home.path().to_path_buf(),
+            vec![id.clone()],
+            workspace.path().to_path_buf(),
+        );
+        let input = serde_json::json!({"path": "notes.md"});
+        assert_eq!(check("write", &input), Some(envelope.envelope_id.clone()));
+        vak_commit::CommitmentLedger::new(home.path())
+            .append(&vak_commit::Event::new(
+                &id,
+                vak_commit::EventKind::EnvelopeRevoked {
+                    envelope_id: envelope.envelope_id,
+                    by: "owner".into(),
+                },
+            ))
+            .unwrap();
+        assert_eq!(check("write", &input), None);
     }
 
     #[test]

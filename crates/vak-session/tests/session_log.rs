@@ -884,6 +884,7 @@ fn conversation_thread_lists_only_directives_dropped_by_compaction() {
         relation: vak_intent::GoalRelation::New,
         request: "initial research on WEF".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(user_msg("initial research on WEF"))
@@ -897,6 +898,7 @@ fn conversation_thread_lists_only_directives_dropped_by_compaction() {
         relation: vak_intent::GoalRelation::AddsTo,
         request: "use python sandbox".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(user_msg("use python sandbox")).unwrap();
@@ -909,6 +911,7 @@ fn conversation_thread_lists_only_directives_dropped_by_compaction() {
         relation: vak_intent::GoalRelation::AddsTo,
         request: "now evaluate global GDP past 5 years".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(user_msg("now evaluate global GDP past 5 years"))

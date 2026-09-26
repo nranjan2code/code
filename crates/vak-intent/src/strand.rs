@@ -52,17 +52,26 @@ pub enum Lineage {
     /// Amends an open thread without discarding it. Only ever set from an
     /// explicit human command, never inferred (docs/design/47, control plane).
     Corrects { thread_id: String },
-    /// Supersedes an open thread. Same rule.
+    /// Supersedes an open thread. Same rule. The replacing strand starts a
+    /// thread of its own; `thread_id` names the one it replaces.
     Replaces { thread_id: String },
 }
 
 impl Lineage {
-    pub fn thread_id(&self) -> Option<&str> {
+    /// The thread this strand carries on, if it carries one on. A
+    /// replacement does not: it supersedes its thread and starts its own.
+    pub fn continued_thread(&self) -> Option<&str> {
         match self {
-            Lineage::New => None,
-            Lineage::Continues { thread_id }
-            | Lineage::Corrects { thread_id }
-            | Lineage::Replaces { thread_id } => Some(thread_id),
+            Lineage::New | Lineage::Replaces { .. } => None,
+            Lineage::Continues { thread_id } | Lineage::Corrects { thread_id } => Some(thread_id),
+        }
+    }
+
+    /// The thread this strand supersedes, if any.
+    pub fn replaced_thread(&self) -> Option<&str> {
+        match self {
+            Lineage::Replaces { thread_id } => Some(thread_id),
+            _ => None,
         }
     }
 }
@@ -70,10 +79,12 @@ impl Lineage {
 /// One piece of work inside a request.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Strand {
-    /// Stable within the session: `s<turn>.<index>`.
+    /// `{turn_id}.{index}`: unique across turns, sessions and workspaces,
+    /// because the host mints the turn id (a UUIDv7).
     pub strand_id: String,
     /// The thread this strand belongs to across turns. Equal to `strand_id`
-    /// for a new thread; inherited for a continuation.
+    /// for a new thread and for a replacement; inherited for a continuation
+    /// or a correction.
     pub thread_id: String,
     /// The clause, verbatim after scaffolding removal.
     pub text: String,
@@ -124,6 +135,8 @@ pub(crate) enum Boundary {
 pub(crate) struct Clause {
     pub text: String,
     pub boundary: Boundary,
+    /// The clause ended with a question mark.
+    pub question: bool,
 }
 
 /// Markers that begin a new clause. Matched as whole words on the lowercase
@@ -162,13 +175,13 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
     let mut clauses: Vec<Clause> = Vec::new();
 
     // Pass 1: hard boundaries — list items, newlines, sentence ends, `;`.
-    let mut pieces: Vec<(String, Boundary)> = Vec::new();
+    let mut pieces: Vec<(String, Boundary, bool)> = Vec::new();
     let mut current = String::new();
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         match c {
             '\n' | ';' => {
-                flush(&mut pieces, &mut current, Boundary::Addition);
+                flush(&mut pieces, &mut current, Boundary::Addition, false);
             }
             '.' | '!' | '?' => {
                 // A terminator followed by whitespace or end ends a sentence;
@@ -189,7 +202,7 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
                         && tail.next() == Some('.')
                 };
                 if ends && !list_marker && !abbreviation {
-                    flush(&mut pieces, &mut current, Boundary::Addition);
+                    flush(&mut pieces, &mut current, Boundary::Addition, c == '?');
                 } else {
                     current.push(c);
                 }
@@ -197,15 +210,17 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
             _ => current.push(c),
         }
     }
-    flush(&mut pieces, &mut current, Boundary::Addition);
+    flush(&mut pieces, &mut current, Boundary::Addition, false);
 
     // Pass 2: soft boundaries inside each piece — sequencing and addition
-    // markers, as whole words.
-    for (index, (piece, boundary)) in pieces.into_iter().enumerate() {
+    // markers, as whole words. A question mark belongs to the last clause of
+    // its sentence.
+    for (index, (piece, boundary, question)) in pieces.into_iter().enumerate() {
         let piece = strip_list_marker(&piece);
-        let mut first = true;
-        for (sub, sub_boundary) in split_on_markers(piece) {
-            let boundary = if first {
+        let subs = split_on_markers(piece);
+        let last = subs.len().saturating_sub(1);
+        for (position, (sub, sub_boundary)) in subs.into_iter().enumerate() {
+            let boundary = if position == 0 {
                 if index == 0 {
                     Boundary::Start
                 } else {
@@ -214,12 +229,12 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
             } else {
                 sub_boundary
             };
-            first = false;
             let trimmed = sub.trim().trim_matches(',').trim();
             if !trimmed.is_empty() {
                 clauses.push(Clause {
                     text: trimmed.to_string(),
                     boundary,
+                    question: question && position == last,
                 });
             }
         }
@@ -230,10 +245,15 @@ pub(crate) fn segment(text: &str) -> Vec<Clause> {
     clauses
 }
 
-fn flush(pieces: &mut Vec<(String, Boundary)>, current: &mut String, boundary: Boundary) {
+fn flush(
+    pieces: &mut Vec<(String, Boundary, bool)>,
+    current: &mut String,
+    boundary: Boundary,
+    question: bool,
+) {
     let trimmed = current.trim();
     if !trimmed.is_empty() {
-        pieces.push((trimmed.to_string(), boundary));
+        pieces.push((trimmed.to_string(), boundary, question));
     }
     current.clear();
 }

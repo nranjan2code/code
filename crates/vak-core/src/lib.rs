@@ -672,10 +672,6 @@ pub struct Core {
     approver_answerable: bool,
 }
 
-fn effective_turn_cap(base: usize, intent_cap: Option<usize>) -> usize {
-    intent_cap.map(|cap| cap.min(base)).unwrap_or(base)
-}
-
 /// A step-limit continuation may finish work saved in its earlier bounded
 /// turn. Carry only a proven write from the *same intent thread*: the latest
 /// run must have stopped at the cap, its write tool must have succeeded, and
@@ -3540,7 +3536,8 @@ impl Core {
         }));
         if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {
-                sessions_home: self.shared_data_home(),
+                sessions_home: self.sessions_home(),
+                audience_id: scope.audience_id.clone(),
             }));
         }
         if self.effective_memory_search_enabled() {
@@ -5281,7 +5278,7 @@ impl Core {
         provider: String,
         model: String,
     ) -> Result<SessionLog, CoreError> {
-        self.start_session_with_route_for(provider, model, None, None)
+        self.start_session_with_route_for(provider, model, None)
             .await
     }
 
@@ -5298,6 +5295,7 @@ impl Core {
     ) -> Result<SessionLog, CoreError> {
         let resolution = intent::resolve_turn(
             prompt,
+            "",
             self.surface(),
             &[],
             intent::workspace_facts(&self.inner.cwd),
@@ -5305,11 +5303,9 @@ impl Core {
             &vak_intent::Declared::default(),
             &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
-            chrono::Utc::now(),
         );
         let demand = resolution.peek().engagement.posture.demand;
-        let route_limit = resolution.peek().engagement.limits.ladder_limit;
-        self.start_session_with_route_for(provider, model, Some(demand), route_limit)
+        self.start_session_with_route_for(provider, model, Some(demand))
             .await
     }
 
@@ -5318,7 +5314,6 @@ impl Core {
         provider: String,
         model: String,
         demand: Option<vak_intent::DemandHint>,
-        route_limit: Option<usize>,
     ) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
@@ -5332,7 +5327,7 @@ impl Core {
             .and_then(|auth| auth.credential_id);
         let needs_tools_or_reasoning =
             demand.is_some_and(|hint| hint.reasoning_required) || !self.tool_names().is_empty();
-        let mut plan = self.plan_route_ladder(
+        let plan = self.plan_route_ladder(
             vak_llm::RouteLeg {
                 provider: provider.clone(),
                 model: model.clone(),
@@ -5344,7 +5339,6 @@ impl Core {
             },
             demand,
         );
-        plan.ladder = intent::limit_ladder(&plan.ladder, route_limit);
         let capabilities = self.admitted_capabilities().await;
         let resolution = self.resolve_prompt(&capabilities);
         let system_prompt = resolution.text;
@@ -5582,44 +5576,7 @@ impl Core {
         vak_intent::Authority {
             autonomy,
             attendance,
-            envelope: None,
         }
-    }
-
-    /// Authority for a turn serving `commitment_id`, including any live grant.
-    ///
-    /// The grant is read fresh rather than cached: revocation must take effect
-    /// at the next authority check rather than at the next session, which is
-    /// invariant 11 applied to delegation. A revoked or expired envelope
-    /// narrows nothing further and grants nothing at all.
-    pub fn turn_authority_for_commitment(
-        &self,
-        surface: &Surface,
-        commitment_id: Option<&str>,
-    ) -> vak_intent::Authority {
-        let mut authority = self.turn_authority_for(surface);
-        if !self.effective_commitment() {
-            return authority;
-        }
-        if let Some(id) = commitment_id {
-            let maybe_commitment = vak_commit::CommitmentLedger::new(&self.sessions_home())
-                .get(id)
-                .ok()
-                .flatten()
-                .or_else(|| {
-                    vak_commit::CommitmentLedger::new(&self.shared_data_home())
-                        .get(id)
-                        .ok()
-                        .flatten()
-                });
-            if let Some(commitment) = maybe_commitment
-                && let Some(envelope) = commitment.envelope
-                && envelope.is_live(chrono::Utc::now())
-            {
-                authority.envelope = Some(envelope);
-            }
-        }
-        authority
     }
 
     /// Resolve this turn's intent from the prompt and the session so far.
@@ -5633,15 +5590,29 @@ impl Core {
         session: &SessionLog,
         prompt: &vak_llm::Message,
     ) -> vak_intent::Intent {
-        self.resolve_turn_free_tiers(session, prompt, chrono::Utc::now())
-            .intent()
+        self.resolve_turn_free_tiers(session, prompt, "").intent()
     }
 
+    /// Whether `reading` decided which admitted tools a turn loaded — the
+    /// kernel slices, and the reading's act was confident enough to — as
+    /// opposed to the orientation floor standing in for a reading too weak
+    /// to decide. Only the former can be contradicted by a deferred tool the
+    /// model then used (`misread::MisreadRow::sliced`).
+    fn reading_sliced(&self, reading: &vak_intent::Reading) -> bool {
+        let intent = &self.inner.config.intent;
+        intent.enabled
+            && intent.slice_capabilities
+            && reading.may_slice_capabilities(intent.accept_confidence)
+    }
+
+    /// The free tiers, under the turn's base authority. A grant on a
+    /// commitment is applied afterwards, once the turn knows which
+    /// commitments its strands work on (`vak_intent::apply_envelopes`).
     fn resolve_turn_free_tiers(
         &self,
         session: &SessionLog,
         prompt: &vak_llm::Message,
-        now: chrono::DateTime<chrono::Utc>,
+        turn_id: &str,
     ) -> vak_intent::Resolution {
         let text = prompt.text_content();
         let attachments: Vec<vak_intent::Attachment> = prompt
@@ -5655,41 +5626,16 @@ impl Core {
                 _ => None,
             })
             .collect();
-
-        let chain = session.chain_to_root();
-        let previous_act = chain.iter().rev().find_map(|entry| match &entry.payload {
-            vak_session::EntryPayload::Intent(record) => Some(record.reading.act),
-            _ => None,
-        });
-        let turn_index = chain
-            .iter()
-            .filter(|entry| matches!(entry.payload, vak_session::EntryPayload::Message(_)))
-            .count();
-        let history = vak_intent::HistoryFacts {
-            previous_act,
-            turn_index,
-            commitment_open: session
-                .header()
-                .and_then(|header| header.contract_id.as_ref())
-                .is_some(),
-            open_threads: intent::open_threads(session),
-        };
-
         intent::resolve_turn(
             &text,
+            turn_id,
             self.surface(),
             &attachments,
             intent::workspace_facts(&self.inner.cwd),
-            history,
+            intent::history_facts(session),
             &vak_intent::Declared::default(),
-            &self.turn_authority_for_commitment(
-                self.surface(),
-                session
-                    .header()
-                    .and_then(|header| header.contract_id.as_deref()),
-            ),
+            &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
-            now,
         )
     }
 
@@ -5702,14 +5648,18 @@ impl Core {
     /// the free-tier reading on any failure. A classifier outage must never
     /// block work, and the partial is never worse than the orienting
     /// engagement.
+    ///
+    /// `escalate = "local"` means a model on this machine: only the keyless
+    /// `ollama` provider serves it, whatever `classify_model` names, so a
+    /// local setting can never send the request text off the machine.
     pub async fn resolve_turn_intent_with_escalation(
         &self,
         session: &mut SessionLog,
         prompt: &vak_llm::Message,
+        turn_id: &str,
         cancel: &CancellationToken,
     ) -> vak_intent::Intent {
-        let now = chrono::Utc::now();
-        let resolution = self.resolve_turn_free_tiers(session, prompt, now);
+        let resolution = self.resolve_turn_free_tiers(session, prompt, turn_id);
         let (partial, reason) = match resolution {
             vak_intent::Resolution::Settled(intent) => return intent,
             vak_intent::Resolution::Escalate { partial, reason } => (partial, reason),
@@ -5733,17 +5683,33 @@ impl Core {
 
         // --- which leg ------------------------------------------------------
         // `classify_model` may be `provider/model` or a bare model name. Local
-        // escalation runs on the keyless `ollama` provider; cloud escalation
-        // on the effective provider unless a provider was named.
+        // escalation runs on the keyless `ollama` provider and nothing else —
+        // an Ollama model name may itself contain `/` (`hf.co/org/model`), so
+        // only a prefix naming another configured provider is refused rather
+        // than read as a model; cloud escalation runs on the effective
+        // provider unless a provider was named.
         let configured = self.inner.config.intent.classify_model.clone();
+        let known_providers = self.provider_names();
         let (provider_name, model) = match (cloud, configured) {
-            (_, Some(spec)) if spec.contains('/') => {
+            (true, Some(spec)) if spec.contains('/') => {
                 let (p, m) = spec.split_once('/').unwrap_or(("", ""));
                 (p.to_string(), m.to_string())
             }
             (true, Some(model)) => (self.effective_provider(), model),
             (true, None) => (self.effective_provider(), self.effective_model()),
-            (false, Some(model)) => ("ollama".to_string(), model),
+            (false, Some(spec)) => match spec.split_once('/') {
+                Some(("ollama", model)) => ("ollama".to_string(), model.to_string()),
+                Some((prefix, _)) if known_providers.iter().any(|p| p == prefix) => {
+                    give_up(
+                        &mut partial,
+                        format!(
+                            "escalate = \"local\" runs only on ollama, but classify_model names {prefix}"
+                        ),
+                    );
+                    return partial;
+                }
+                _ => ("ollama".to_string(), spec),
+            },
             (false, None) => {
                 if self.effective_provider() == "ollama" {
                     ("ollama".to_string(), self.effective_model())
@@ -5778,11 +5744,15 @@ impl Core {
         // --- the request ------------------------------------------------------
         let user_prompt = vak_intent::classification_prompt(&partial);
         let digest = vak_intent::prompt_digest(&user_prompt);
+        // One object per part: a fixed budget truncated the answer for a
+        // request with more than a few parts, and a truncated array parses
+        // as nothing.
+        let output_budget = vak_intent::classification_budget(partial.strands.len());
         let mut request = vak_llm::ChatRequest::new(&model);
         request.system =
             Some("You classify requests for an agent runtime. Answer with JSON only.".to_string());
         request.messages = vec![vak_llm::Message::user_text(user_prompt.clone())];
-        request.max_tokens = 400;
+        request.max_tokens = output_budget;
         // A strict-JSON answer, not a deliberation: measured live on a
         // thinking model, the default spent the whole budget in its thinking
         // channel and returned nothing.
@@ -5797,19 +5767,22 @@ impl Core {
         let gate = self.spend_gate_for(&session_id);
         let planned = vak_llm::Usage {
             input_tokens: (user_prompt.len() / 4) as u64 + 64,
-            output_tokens: 400,
+            output_tokens: u64::from(output_budget),
             ..Default::default()
         };
         let cap = self.inner.config.intent.max_classify_usd;
+        // Every paid dispatch needs a price it can be held to; only the
+        // keyless local provider may run unpriced. A non-finite estimate is
+        // no estimate: `NaN > cap` is false and would wave anything through.
         match gate.estimate_usd(&model, &planned) {
-            Some(est) if est > cap => {
+            Some(est) if !est.is_finite() || est > cap => {
                 give_up(
                     &mut partial,
                     format!("estimated ${est:.4} exceeds max_classify_usd ${cap:.4}"),
                 );
                 return partial;
             }
-            None if cloud => {
+            None if provider_name != "ollama" => {
                 give_up(&mut partial, format!("no price known for {model}"));
                 return partial;
             }
@@ -5899,30 +5872,28 @@ impl Core {
                 return partial;
             }
         };
-        let authority = self.turn_authority_for_commitment(
-            self.surface(),
-            session
-                .header()
-                .and_then(|header| header.contract_id.as_deref()),
-        );
+        // The tier names where the model actually ran, not which setting
+        // asked for it: `escalate = "cloud"` on an Ollama route is local.
+        let ran_off_machine = provider_name != "ollama";
         let mut applied = vak_intent::apply_classification(
             partial,
             &classifications,
             &format!("{provider_name}/{model}"),
             &digest,
-            &authority,
+            &self.turn_authority(),
             &intent::resolver_config(&self.inner.config),
-            cloud,
-            now,
+            ran_off_machine,
         );
         if !matches!(
             applied.provenance.tier,
             vak_intent::Tier::LocalModel | vak_intent::Tier::CloudModel
         ) {
-            // The answer parsed but set nothing: keep it so the ledger says
-            // what the classifier actually said.
+            // The answer parsed but set nothing: keep the start of it so the
+            // ledger says what the classifier actually said.
+            const NOTED_ANSWER_CHARS: usize = 400;
+            let shown: String = answer.chars().take(NOTED_ANSWER_CHARS).collect();
             applied.provenance.escalation_note = Some(format!(
-                "{}; answer: {answer:?}",
+                "{}; answer: {shown:?}",
                 applied
                     .provenance
                     .escalation_note
@@ -6013,11 +5984,37 @@ impl Core {
         // ---- intent resolution (docs/design/47-commitment-kernel.md) ----
         // Runs before anything reads a knob it governs. Everything derived
         // from it narrows: the projections in `crate::intent` take a baseline
-        // and return something no wider, so a misread can make this turn less
-        // capable or more cautious and never the reverse.
+        // and return something no wider, so a misread can make this turn more
+        // cautious and never less.
+        //
+        // The turn id is minted here, once: every strand and thread id this
+        // turn records derives from it, so threads — and the commitments
+        // keyed by them — are unique across turns and sessions.
+        let turn_id = uuid_like();
         let resolved_intent = self
-            .resolve_turn_intent_with_escalation(&mut session, &prompt, &cancel)
+            .resolve_turn_intent_with_escalation(&mut session, &prompt, &turn_id, &cancel)
             .await;
+        // Which commitments this turn works on is decided now, before any
+        // knob is read, because a grant on one of them narrows the strands
+        // that serve it. Nothing is written until the turn is about to run.
+        let turn_authority = self.turn_authority();
+        let episode_plan = commitments::plan_episodes(
+            &self.sessions_home(),
+            &self.inner.config,
+            &resolved_intent,
+            chrono::Utc::now(),
+        );
+        let envelopes = episode_plan.envelopes();
+        let resolved_intent = if envelopes.is_empty() {
+            resolved_intent
+        } else {
+            vak_intent::apply_envelopes(
+                resolved_intent,
+                &envelopes,
+                turn_authority.autonomy,
+                chrono::Utc::now(),
+            )
+        };
         let engagement = resolved_intent.engagement.clone();
         debug_assert!(
             intent::projection_is_narrowing(&engagement.limits),
@@ -6067,6 +6064,12 @@ impl Core {
                 .into_iter()
                 .map(|(name, serves)| (name, serves.iter().map(|d| d.to_string()).collect()))
                 .collect();
+            let observing: std::collections::BTreeSet<String> = tool_serves
+                .iter()
+                .filter(|(_, serves)| capability::provider::serves_observation(serves))
+                .map(|(name, _)| name.clone())
+                .collect();
+            cfg.observation_check = Some(Arc::new(move |name, _input| observing.contains(name)));
             cfg.retrieval_check = Some(Arc::new(move |name, input| {
                 let server = index
                     .lock()
@@ -6248,13 +6251,12 @@ impl Core {
         cfg.provider_name = Some(turn_primary_provider.clone());
         let mut turn_plan =
             self.plan_route_ladder(turn_primary_leg.clone(), Some(engagement.posture.demand));
-        // The engagement's ladder prefix (a greeting does not need a deep
-        // fallback chain) and its modality constraint: a leg that cannot see
-        // is not a valid fallback for a vision turn. With no operator hints
-        // every leg is assumed capable; with hints and no capable leg, the
-        // turn fails typed rather than quietly dropping the image
-        // (invariant 10).
-        turn_plan.ladder = intent::limit_ladder(&turn_plan.ladder, engagement.limits.ladder_limit);
+        // The engagement's modality constraint: a leg that cannot see is not
+        // a valid fallback for a vision turn. With no operator hints every
+        // leg is assumed capable; with hints and no capable leg, the turn
+        // fails typed rather than quietly dropping the image (invariant 10).
+        // The reading never shortens the ladder: a fallback is resilience,
+        // and a misread greeting must not cost a turn its recovery.
         let modality_hints = self.inner.config.route.modality_hints.clone();
         if !engagement.limits.required_modalities.is_empty() && !modality_hints.is_empty() {
             let supports = |model: &str| {
@@ -6547,11 +6549,7 @@ impl Core {
                 mcp_tool_index: Some(cfg.mcp_tool_index.clone()),
                 input_normalizer: cfg.input_normalizer.clone(),
                 read_only_tools,
-                max_turns: effective_turn_cap(
-                    self.effective_max_turns(),
-                    engagement.limits.max_turns,
-                ),
-                worker_budget: engagement.limits.worker_budget,
+                max_turns: self.effective_max_turns(),
                 max_retries: cfg.max_retries,
                 retry_base_backoff_ms: cfg.retry_base_backoff_ms,
                 request_timeout: cfg.request_timeout,
@@ -6857,26 +6855,9 @@ impl Core {
         // the model either, because both come from the same entry.
         let mut session = session;
 
-        let active_goal_revision = session.active_goal_revision();
         // Only an explicit command corrects or replaces the goal; ordinary
         // text adds to it (docs/design/47, control plane).
-        let goal_command = vak_intent::parse_command(&prompt.text_content());
-        let relation = vak_intent::goal_relation(goal_command.as_ref(), active_goal_revision);
-        let goal_update = vak_intent::GoalUpdate {
-            revision: active_goal_revision.unwrap_or(0).saturating_add(1),
-            relation,
-            request: goal_command
-                .as_ref()
-                .and_then(|command| command.text())
-                .map(str::to_string)
-                .unwrap_or_else(|| prompt.text_content()),
-            supersedes_revision: matches!(
-                relation,
-                vak_intent::GoalRelation::Corrects | vak_intent::GoalRelation::Replaces
-            )
-            .then_some(active_goal_revision)
-            .flatten(),
-        };
+        let goal_update = session.next_goal_update(&prompt.text_content());
         if let Err(error) = session.append_goal_update(goal_update) {
             eprintln!("[goal] could not record this request relationship: {error}");
         }
@@ -6886,9 +6867,12 @@ impl Core {
         // against the *previous* reading (misread ledger, I8), not this one.
         if self.inner.config.intent.enabled {
             let chain = session.chain_to_root();
+            // A person's message, whatever metadata it carries (an attachment
+            // is metadata); only a runtime nudge is skipped, by its tag.
             let previous_user_text = chain.iter().rev().find_map(|entry| match &entry.payload {
                 vak_session::EntryPayload::Message(record)
-                    if record.message.role == vak_llm::Role::User && record.meta.is_none() =>
+                    if record.message.role == vak_llm::Role::User
+                        && record.control_kind().is_none() =>
                 {
                     Some(record.message.text_content())
                 }
@@ -6917,6 +6901,7 @@ impl Core {
                     previous.provenance.resolver_version,
                     misread::Outcome::Restated,
                     None,
+                    self.reading_sliced(&previous.reading),
                 );
             }
         }
@@ -6932,15 +6917,39 @@ impl Core {
                     &self.sessions_home(),
                     &self.inner.config,
                     &resolved_intent,
+                    &episode_plan,
                     &prompt.text_content(),
                     &header.session_id,
                     &self.inner.cwd,
-                    header.contract_id.as_deref(),
+                    header
+                        .conversation
+                        .as_ref()
+                        .map(|conversation| conversation.audience_id.as_str()),
                 )
             })
             .unwrap_or_default();
         // The turn's primary commitment: the first durable strand's.
         let episode = episodes.first().cloned();
+
+        // A live grant pre-authorizes the actions it covers, one gate at a
+        // time — only under delegation, and never for a turn with anything
+        // irreversible in it, which reaches a human whatever was delegated.
+        let enveloped = episode_plan.enveloped_commitments();
+        let irreversible = resolved_intent.reading.stakes == vak_intent::Stakes::Irreversible
+            || resolved_intent
+                .strands
+                .iter()
+                .any(|strand| strand.reading.stakes == vak_intent::Stakes::Irreversible);
+        if turn_authority.autonomy == vak_intent::Autonomy::Delegated
+            && !irreversible
+            && !enveloped.is_empty()
+        {
+            cfg.envelope_check = Some(intent::envelope_check(
+                self.sessions_home(),
+                enveloped,
+                self.inner.cwd.clone(),
+            ));
+        }
 
         if self.inner.config.intent.enabled {
             // `ContextProfile::Full`: durable work sees its obligations
@@ -7018,10 +7027,9 @@ impl Core {
         if engagement.posture.gate_fallback == vak_intent::GateFallback::Defer
             && let Some(episode) = &episode
         {
-            let escalation = self
-                .turn_authority_for_commitment(self.surface(), Some(&episode.commitment_id))
-                .envelope
-                .map(|envelope| envelope.escalation)
+            let escalation = envelopes
+                .get(&episode.strand_id)
+                .map(|envelope| envelope.escalation.clone())
                 .unwrap_or_default();
             cfg.approver = Some(std::sync::Arc::new(intent::DeferringApprover::new(
                 cfg.approver.clone(),
@@ -7329,6 +7337,7 @@ impl Core {
                 resolved_intent.provenance.resolver_version,
                 outcome,
                 wanted,
+                self.reading_sliced(&resolved_intent.reading),
             );
         }
 
@@ -10061,13 +10070,6 @@ mod override_deadlock {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod route_control_tests {
     use super::*;
-
-    #[test]
-    fn intent_turn_cap_can_only_narrow_the_runtime_cap() {
-        assert_eq!(effective_turn_cap(40, Some(2)), 2);
-        assert_eq!(effective_turn_cap(1, Some(2)), 1);
-        assert_eq!(effective_turn_cap(40, None), 40);
-    }
 
     #[test]
     fn provider_and_model_are_never_observed_as_a_torn_pair() {

@@ -6,7 +6,6 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -73,9 +72,6 @@ pub struct TaskDeps {
     /// `readonly: true`; children get these plus ReadOnly permission mode.
     pub read_only_tools: Vec<Arc<dyn Tool>>,
     pub max_turns: usize,
-    /// Parent intent budget for child delegation. `Some(0)` is an enforced
-    /// denial; `None` leaves delegation available to the parent policy.
-    pub worker_budget: Option<usize>,
     pub max_retries: u32,
     pub retry_base_backoff_ms: u64,
     pub request_timeout: Option<std::time::Duration>,
@@ -104,7 +100,6 @@ pub struct TaskDeps {
 
 pub struct TaskTool {
     deps: Arc<TaskDeps>,
-    budget_used: AtomicUsize,
 }
 
 #[derive(serde::Deserialize)]
@@ -355,7 +350,6 @@ impl TaskTool {
     pub fn new(deps: TaskDeps) -> Self {
         TaskTool {
             deps: Arc::new(deps),
-            budget_used: AtomicUsize::new(0),
         }
     }
 }
@@ -438,9 +432,6 @@ impl Tool for TaskTool {
 
 impl TaskTool {
     async fn execute_inner(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
-        if self.deps.worker_budget == Some(0) {
-            return ToolOutput::error("worker delegation is not allowed for this turn");
-        }
         let Some(prompt) = args.get("prompt").and_then(|p| p.as_str()) else {
             return ToolOutput::error("missing required parameter: prompt");
         };
@@ -468,19 +459,12 @@ impl TaskTool {
                 "child work item does not exist in the parent's managed contract",
             );
         }
-        if let Some(limit) = self.deps.worker_budget {
-            let used = self.budget_used.fetch_add(1, Ordering::AcqRel);
-            if used >= limit {
-                self.budget_used.fetch_sub(1, Ordering::AcqRel);
-                return ToolOutput::error("worker delegation budget exhausted for this turn");
-            }
-        }
-
         let session_id = next_child_session_id();
         let readonly = args
             .get("readonly")
             .and_then(|r| r.as_bool())
             .unwrap_or(false);
+        let child_outcome = child_outcome(prompt, readonly, self.deps.outcome.as_ref());
         let child_tools: Vec<Arc<dyn Tool>> = if readonly {
             self.deps.read_only_tools.clone()
         } else {
@@ -700,7 +684,7 @@ impl TaskTool {
         cfg.run_retry_base_backoff_ms = self.deps.run_retry_base_backoff_ms;
         cfg.dispatch_ceiling = self.deps.dispatch_ceiling;
         cfg.spend_gate = self.deps.spend_gate.clone();
-        cfg.outcome = self.deps.outcome.clone();
+        cfg.outcome = child_outcome.clone();
         cfg.parallel_tools = true;
         cfg.permission = self.deps.permission.clone();
         cfg.mode = child_mode;
@@ -802,7 +786,7 @@ impl TaskTool {
             .session
             .lock()
             .await
-            .append_child_run_result(child_status, self.deps.outcome.clone());
+            .append_child_run_result(child_status, child_outcome);
         if let Some(events) = &self.deps.events {
             let _ = events
                 .send(crate::AgentEvent::WorkerFinished {
@@ -873,6 +857,47 @@ fn worker_output(session_id: &str, outcome: crate::TurnOutcome, contracted: bool
 
 /// A child session's id, unique by construction.
 ///
+/// The contract a worker is held to: what its own prompt asks for, not the
+/// parent's whole request. A research worker spawned from "fix the bug and
+/// run the tests" was held to the parent's execution requirement and sent
+/// back to act on files its task never asked it to touch. A read-only worker
+/// is clamped further: its contract may not demand an effect or a file its
+/// tools cannot produce. Read with the same tier-1 reader as every turn; the
+/// parent's evidence freshness and turn budget carry over.
+fn child_outcome(
+    prompt: &str,
+    readonly: bool,
+    parent: Option<&vak_intent::OutcomeSpec>,
+) -> Option<vak_intent::OutcomeSpec> {
+    let parent = parent?;
+    let request = vak_intent::Request {
+        text: prompt,
+        surface: vak_intent::Surface::Worker,
+        ..vak_intent::Request::default()
+    };
+    let intent = vak_intent::resolve(
+        &request,
+        &vak_intent::Declared::default(),
+        &vak_intent::Authority::default(),
+        &vak_intent::ResolverConfig::default(),
+    )
+    .intent();
+    let mut spec = vak_intent::OutcomeSpec::from_intent(prompt, &intent);
+    spec.evidence_max_age_secs = parent.evidence_max_age_secs;
+    spec.max_turns = parent.max_turns;
+    if readonly {
+        spec.acts
+            .retain(|act| !act.requires_execution() && !matches!(act, vak_intent::Act::Author));
+        if spec.acts.is_empty() {
+            spec.acts.insert(vak_intent::Act::Analyze);
+        }
+        if spec.stop.rank() > vak_intent::StopProfile::Inspection.rank() {
+            spec.stop = vak_intent::StopProfile::Inspection;
+        }
+    }
+    Some(spec)
+}
+
 /// The id names the child's ledger file, and the file is exclusively locked, so
 /// two children with the same id cannot both exist. The id used to be the
 /// clock's nanoseconds alone; tasks launched in the same wave can read the same
@@ -894,6 +919,54 @@ fn next_child_session_id() -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod registry_tests {
     use super::*;
+
+    fn parent_contract(text: &str) -> vak_intent::OutcomeSpec {
+        let request = vak_intent::Request {
+            text,
+            ..vak_intent::Request::default()
+        };
+        let intent = vak_intent::resolve(
+            &request,
+            &vak_intent::Declared::default(),
+            &vak_intent::Authority::default(),
+            &vak_intent::ResolverConfig::default(),
+        )
+        .intent();
+        vak_intent::OutcomeSpec::from_intent(text, &intent)
+    }
+
+    /// A worker answers for its own task. A research child of an effectful
+    /// request is not held to the parent's execution requirement.
+    #[test]
+    fn a_worker_is_held_to_its_own_task_not_the_parents() {
+        let parent = parent_contract("fix the failing test and run the suite");
+        assert!(parent.requires_execution());
+        let child = child_outcome(
+            "find where the parser handles empty input",
+            false,
+            Some(&parent),
+        )
+        .expect("a parent contract yields a child contract");
+        assert!(!child.requires_execution(), "acts={:?}", child.acts);
+        assert_eq!(child.objective, "find where the parser handles empty input");
+    }
+
+    /// A read-only worker cannot be asked for what its tools cannot do,
+    /// whatever its prompt says.
+    #[test]
+    fn a_read_only_worker_is_never_owed_an_effect() {
+        let parent = parent_contract("fix the failing test");
+        let child = child_outcome(
+            "update the parser and save the notes as notes.md",
+            true,
+            Some(&parent),
+        )
+        .expect("child contract");
+        assert!(!child.requires_execution(), "acts={:?}", child.acts);
+        assert!(child.stop.rank() <= vak_intent::StopProfile::Inspection.rank());
+        // No parent contract, no child contract: nothing to be held to.
+        assert!(child_outcome("anything", false, None).is_none());
+    }
 
     #[test]
     fn duplicate_agent_names_fail_closed() {

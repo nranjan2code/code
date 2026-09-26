@@ -163,7 +163,6 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         max_turns: 5,
         outcome_objective: None,
         outcome: None,
-        worker_budget: None,
         max_retries: 0,
         retry_base_backoff_ms: 0,
         request_timeout: None,

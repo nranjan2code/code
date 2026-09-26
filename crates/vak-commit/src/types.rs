@@ -299,6 +299,12 @@ pub struct CommitmentSpec {
     /// opening a twin (docs/design/47-commitment-kernel.md, strands).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
+    /// The conversation audience that asked for this work
+    /// (docs/design/64-agent-owned-platform.md). An Agent serving several
+    /// chats owes each of them its own obligations, and a portfolio read
+    /// from one chat must not reveal another's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audience_id: Option<String>,
 }
 
 /// One criterion's standing.

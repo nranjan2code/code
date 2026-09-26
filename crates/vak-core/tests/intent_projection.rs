@@ -25,26 +25,85 @@ fn envelope(ceiling: PermissionCeiling) -> Envelope {
     }
 }
 
+fn resolved(text: &str, authority: &Authority) -> vak_intent::Intent {
+    let request = vak_intent::Request {
+        text,
+        turn_id: "0192f5a0-0000-7000-8000-000000000000",
+        surface: vak_intent::Surface::Cli,
+        ..vak_intent::Request::default()
+    };
+    vak_intent::resolve(
+        &request,
+        &vak_intent::Declared::default(),
+        authority,
+        &vak_intent::ResolverConfig::default(),
+    )
+    .intent()
+}
+
 /// The single most important property: no delegation, however broad, lets an
-/// irreversible action past without a human.
+/// irreversible action past without a human — not at the turn's ceiling, and
+/// not after a grant has narrowed its strands.
 #[test]
 fn no_grant_lets_irreversible_work_past_a_human() {
     let now = chrono::Utc::now();
     for autonomy in Autonomy::ALL {
+        let authority = Authority {
+            autonomy,
+            attendance: vak_intent::Attendance::Interactive,
+        };
+        assert_eq!(
+            authority.approval_ceiling(Stakes::Irreversible),
+            ApprovalCeiling::Ask,
+            "{autonomy:?}"
+        );
+        let intent = resolved("force push to the production branch", &authority);
         for ceiling in PermissionCeiling::ALL {
-            let authority = Authority {
-                autonomy,
-                attendance: vak_intent::Attendance::Interactive,
-                envelope: Some(envelope(ceiling)),
-            };
-            for in_envelope in [true, false] {
-                assert_eq!(
-                    authority.approval_ceiling(Stakes::Irreversible, now, in_envelope),
-                    ApprovalCeiling::Ask,
-                    "{autonomy:?}/{ceiling:?} in_envelope={in_envelope}"
-                );
-            }
+            let envelopes = intent
+                .strands
+                .iter()
+                .map(|strand| (strand.strand_id.clone(), envelope(ceiling)))
+                .collect();
+            let narrowed = vak_intent::apply_envelopes(intent.clone(), &envelopes, autonomy, now);
+            assert_eq!(
+                narrowed.engagement.limits.approval_ceiling,
+                ApprovalCeiling::Ask,
+                "{autonomy:?}/{ceiling:?}"
+            );
+            assert_ne!(
+                narrowed.engagement.posture.hil,
+                vak_intent::HilMode::Envelope,
+                "irreversible work never proceeds inside an envelope"
+            );
         }
+    }
+}
+
+/// A grant only ever narrows the turn it applies to.
+#[test]
+fn a_grant_narrows_and_never_widens_the_turn() {
+    let now = chrono::Utc::now();
+    let authority = Authority {
+        autonomy: Autonomy::Delegated,
+        attendance: vak_intent::Attendance::Interactive,
+    };
+    let intent = resolved("refactor the parser module", &authority);
+    for ceiling in PermissionCeiling::ALL {
+        let envelopes = intent
+            .strands
+            .iter()
+            .map(|strand| (strand.strand_id.clone(), envelope(ceiling)))
+            .collect();
+        let narrowed =
+            vak_intent::apply_envelopes(intent.clone(), &envelopes, Autonomy::Delegated, now);
+        assert!(
+            narrowed
+                .engagement
+                .limits
+                .is_at_most(&intent.engagement.limits),
+            "{ceiling:?} widened the turn"
+        );
+        assert_eq!(narrowed.engagement.limits.spend_ceiling_usd, Some(5.0));
     }
 }
 
@@ -117,28 +176,31 @@ fn a_reading_partitions_the_admitted_tools_and_never_adds_or_drops_one() {
 }
 
 /// A revoked grant stops narrowing and does not leave a remembered widening
-/// behind. Revocation is checked on read, so it lands at the next authority
-/// check rather than the next session.
+/// behind, and delegation alone buys nothing at the turn level: the gate lets
+/// through only what a live grant covers, action by action.
 #[test]
 fn a_revoked_grant_grants_nothing() {
     let now = chrono::Utc::now();
-    let mut revoked = envelope(PermissionCeiling::WorkspaceWrite);
-    revoked.revoked_at = Some(now);
     let authority = Authority {
         autonomy: Autonomy::Delegated,
         attendance: vak_intent::Attendance::Supervised,
-        envelope: Some(revoked),
     };
     assert_eq!(
-        authority.permission_ceiling(now),
-        PermissionCeiling::FullAccess,
-        "a revoked grant must impose no ceiling, and confer none either"
-    );
-    assert_eq!(authority.spend_limit_usd(now), None);
-    // And delegation buys nothing once the grant is gone.
-    assert_eq!(
-        authority.approval_ceiling(Stakes::Reversible, now, true),
+        authority.approval_ceiling(Stakes::Reversible),
         ApprovalCeiling::Ask
+    );
+    let intent = resolved("refactor the parser module", &authority);
+    let mut revoked = envelope(PermissionCeiling::ReadOnly);
+    revoked.revoked_at = Some(now);
+    let envelopes = intent
+        .strands
+        .iter()
+        .map(|strand| (strand.strand_id.clone(), revoked.clone()))
+        .collect();
+    assert_eq!(
+        vak_intent::apply_envelopes(intent.clone(), &envelopes, Autonomy::Delegated, now),
+        intent,
+        "a revoked grant must impose no ceiling, and confer nothing either"
     );
 }
 
@@ -150,19 +212,6 @@ fn a_silent_default_is_refused_for_irreversible_work() {
     assert!(policy.permitted_for(Stakes::Reversible));
     assert!(policy.permitted_for(Stakes::Costly));
     assert!(!policy.permitted_for(Stakes::Irreversible));
-}
-
-/// Ladder narrowing takes a prefix of the frozen ladder and never empties it:
-/// a narrowing must not become an outage.
-#[test]
-fn a_ladder_prefix_never_empties_the_ladder() {
-    let ladder = vec!["primary", "second", "third"];
-    assert_eq!(
-        intent::limit_ladder(&ladder, Some(2)),
-        vec!["primary", "second"]
-    );
-    assert_eq!(intent::limit_ladder(&ladder, Some(0)), ladder);
-    assert_eq!(intent::limit_ladder(&ladder, None), ladder);
 }
 
 /// `vak-config` ranks autonomy names without depending on the intent kernel,

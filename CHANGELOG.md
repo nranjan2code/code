@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- **Requests are read more accurately, and what is decided takes effect.**
+  A review of how a message is understood, then a live run with a local
+  model, found and fixed:
+  - Pasted logs, spreadsheets and code are read as material, not as
+    instructions: a 300-line log is no longer 301 requests, and a large
+    paste is read in milliseconds instead of minutes.
+  - Statements, questions and greetings are told apart from instructions;
+    words like "customer" or "payment" no longer make an edit look risky;
+    and "current" asks for fresh data only when you want a fact about the
+    world, not "the current directory".
+  - A destructive request asks first even in unusual wording ("force push to
+    the production branch", `rm -rf`, `git reset --hard`), and more everyday
+    instructions are understood (append, replace, merge, commit, revert,
+    push and others).
+  - Grants on long-running work now apply: what `vak grant` covers goes
+    ahead without asking, and `vak revoke` takes effect at the next step.
+    Before, a grant never reached the work.
+  - The assistant can see its own long-running work when asked, and one
+    chat never sees work another chat asked for.
+  - A correct answer is no longer thrown away because an optional card
+    failed, and an edit is no longer sent back for a check nobody asked for.
+  - A message after `/stop` starts over instead of adding to the stopped
+    work, and "hi" is no longer treated as the goal of the conversation.
+
+  One thing is left as a decision: in Full access nothing asks for
+  approval, so a destructive request still runs unasked there.
 - **Office documents: the loop is closed.** Asking about, redlining and
   reviewing Word, Excel and PowerPoint files was run end to end with a real
   model, and what that turned up is fixed:

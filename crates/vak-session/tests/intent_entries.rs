@@ -176,6 +176,7 @@ fn goal_projection_ignores_control_updates_when_finding_active_work() {
         relation: vak_intent::GoalRelation::New,
         request: "build the report".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_goal_update(vak_intent::GoalUpdate {
@@ -183,12 +184,17 @@ fn goal_projection_ignores_control_updates_when_finding_active_work() {
         relation: vak_intent::GoalRelation::Status,
         request: "what is the status?".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
-    assert_eq!(log.active_goal_revision(), Some(1));
     let state = log.goal_state().expect("goal state exists");
     assert_eq!(state.objective, "build the report");
     assert_eq!(state.revision, 2);
+    // A status check is not work: the next message adds to the goal, and its
+    // revision follows the status update rather than reusing it.
+    let next = log.next_goal_update("include the regional split");
+    assert_eq!(next.relation, vak_intent::GoalRelation::AddsTo);
+    assert_eq!(next.revision, 3);
     drop(log);
     let reopened = SessionLog::open(path).unwrap();
     assert_eq!(reopened.goal_state(), Some(state));

@@ -16,7 +16,7 @@
 //! zero. A reading nobody corrected is not thereby proven right.
 
 use std::collections::{BTreeSet, HashMap};
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -87,6 +87,12 @@ pub struct MisreadRow {
     /// the exact lexicon or slice entry to change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wanted: Option<String>,
+    /// Whether the reading was confident enough to decide what was loaded.
+    /// A weak reading loads only the orientation floor and expects the model
+    /// to discover the rest, so a deferred tool used after one is the
+    /// system working as designed, not the reading being wrong.
+    #[serde(default)]
+    pub sliced: bool,
 }
 
 /// Append-only observations about intent readings.
@@ -98,9 +104,13 @@ pub struct MisreadLedger {
     path: PathBuf,
 }
 
-/// Accuracy for one `(act, stakes)` cell.
+/// Accuracy for one `(resolver version, act, stakes)` cell.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CellAccuracy {
+    /// The lexicon that produced these readings. A lexicon is only judged
+    /// on its own readings: rows written before a change say nothing about
+    /// the reader that replaced it.
+    pub resolver_version: u32,
     pub act: String,
     pub stakes: String,
     pub held: u64,
@@ -147,6 +157,7 @@ impl MisreadLedger {
         resolver_version: u32,
         outcome: Outcome,
         wanted: Option<String>,
+        sliced: bool,
     ) {
         let row = MisreadRow {
             ts: chrono::Utc::now(),
@@ -156,6 +167,7 @@ impl MisreadLedger {
             resolver_version,
             outcome: outcome.as_str().to_string(),
             wanted,
+            sliced,
         };
         let Ok(line) = serde_json::to_string(&row) else {
             return;
@@ -173,36 +185,41 @@ impl MisreadLedger {
         }
     }
 
-    /// TTL-filtered rows. Corrupt lines are skipped rather than trusted.
+    /// TTL-filtered rows. A corrupt line — torn, not UTF-8, or not a row —
+    /// is skipped rather than trusted, and never ends the read.
     pub fn rows(&self) -> Vec<MisreadRow> {
         let cutoff = chrono::Utc::now() - chrono::Duration::days(TTL_DAYS);
-        let Ok(file) = std::fs::File::open(&self.path) else {
+        let Ok(bytes) = std::fs::read(&self.path) else {
             return Vec::new();
         };
-        BufReader::new(file)
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str::<MisreadRow>(&line).ok())
+        bytes
+            .split(|byte| *byte == b'\n')
+            .filter_map(|line| serde_json::from_slice::<MisreadRow>(line).ok())
             .filter(|row| row.ts >= cutoff)
             .collect()
     }
 
-    /// Accuracy per `(act, stakes)` cell, weakest first.
+    /// Accuracy per `(resolver version, act, stakes)` cell, weakest first.
     ///
     /// Ordering by weakest is the point: this report exists to say where the
-    /// lexicon needs work, not to produce a flattering aggregate.
+    /// lexicon needs work, not to produce a flattering aggregate. A deferred
+    /// tool used after a reading that decided nothing — too weak to slice —
+    /// counts as unknown: the reading never claimed to know.
     pub fn accuracy(&self) -> Vec<CellAccuracy> {
-        let mut cells: HashMap<(String, String), CellAccuracy> = HashMap::new();
-        let mut wanted: HashMap<(String, String), HashMap<String, u64>> = HashMap::new();
+        type Key = (u32, String, String);
+        let mut cells: HashMap<Key, CellAccuracy> = HashMap::new();
+        let mut wanted: HashMap<Key, HashMap<String, u64>> = HashMap::new();
         for row in self.rows() {
-            let key = (row.act.clone(), row.stakes.clone());
+            let key = (row.resolver_version, row.act.clone(), row.stakes.clone());
             let cell = cells.entry(key.clone()).or_insert_with(|| CellAccuracy {
+                resolver_version: row.resolver_version,
                 act: row.act.clone(),
                 stakes: row.stakes.clone(),
                 ..CellAccuracy::default()
             });
             match row.outcome.as_str() {
                 "held" => cell.held += 1,
+                "escalated" if !row.sliced => cell.unknown += 1,
                 "escalated" | "overridden" | "restated" => cell.contradicted += 1,
                 _ => cell.unknown += 1,
             }
@@ -225,6 +242,7 @@ impl MisreadLedger {
             a.accuracy()
                 .partial_cmp(&b.accuracy())
                 .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| b.resolver_version.cmp(&a.resolver_version))
                 .then_with(|| a.act.cmp(&b.act))
                 .then_with(|| a.stakes.cmp(&b.stakes))
         });
@@ -248,16 +266,24 @@ pub fn escalated_capability(
         .cloned()
 }
 
-/// Acts whose readings are contradicted often enough to be worth a look.
+/// Acts whose readings, by the lexicon running now, are contradicted often
+/// enough to be worth a look.
 ///
 /// Requires a real sample: a cell with two observations says nothing, and
 /// reporting it as a problem would send someone to rewrite a lexicon entry on
-/// the strength of a coin flip.
+/// the strength of a coin flip. A cell nothing contradicted is not weak,
+/// however many unknowns shrink its score. Cells from an earlier lexicon are
+/// left out: they describe a reader that no longer runs.
 pub fn weak_cells(ledger: &MisreadLedger, min_observations: u64) -> Vec<CellAccuracy> {
     ledger
         .accuracy()
         .into_iter()
-        .filter(|cell| cell.observations() >= min_observations && cell.accuracy() < 0.75)
+        .filter(|cell| cell.resolver_version == vak_intent::RESOLVER_VERSION)
+        .filter(|cell| {
+            cell.contradicted > 0
+                && cell.observations() >= min_observations
+                && cell.accuracy() < 0.75
+        })
         .collect()
 }
 
@@ -313,16 +339,35 @@ mod tests {
         }
     }
 
+    /// A row from the running lexicon, on a reading confident enough to
+    /// have decided what was loaded.
+    fn record(
+        ledger: &MisreadLedger,
+        act: Act,
+        stakes: Stakes,
+        outcome: Outcome,
+        wanted: Option<&str>,
+    ) {
+        ledger.record(
+            &reading(act, stakes),
+            Tier::Signals,
+            vak_intent::RESOLVER_VERSION,
+            outcome,
+            wanted.map(str::to_string),
+            true,
+        );
+    }
+
     #[test]
     fn accuracy_is_shrunk_so_a_tiny_sample_is_not_certainty() {
         let dir = tempfile::tempdir().unwrap();
         let ledger = MisreadLedger::new(dir.path());
-        ledger.record(
-            &reading(Act::Modify, Stakes::Reversible),
-            Tier::Signals,
-            1,
+        record(
+            &ledger,
+            Act::Modify,
+            Stakes::Reversible,
             Outcome::Escalated,
-            Some("bash".into()),
+            Some("bash"),
         );
         let cells = ledger.accuracy();
         assert_eq!(cells.len(), 1);
@@ -337,20 +382,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ledger = MisreadLedger::new(dir.path());
         for _ in 0..3 {
-            ledger.record(
-                &reading(Act::Answer, Stakes::Inert),
-                Tier::Signals,
-                1,
+            record(
+                &ledger,
+                Act::Answer,
+                Stakes::Inert,
                 Outcome::Escalated,
-                Some("webfetch".into()),
+                Some("webfetch"),
             );
         }
-        ledger.record(
-            &reading(Act::Answer, Stakes::Inert),
-            Tier::Signals,
-            1,
+        record(
+            &ledger,
+            Act::Answer,
+            Stakes::Inert,
             Outcome::Escalated,
-            Some("bash".into()),
+            Some("bash"),
         );
         let cells = ledger.accuracy();
         assert_eq!(cells[0].wanted.first().unwrap().0, "webfetch");
@@ -361,20 +406,20 @@ mod tests {
     fn weak_cells_need_a_real_sample_before_they_are_reported() {
         let dir = tempfile::tempdir().unwrap();
         let ledger = MisreadLedger::new(dir.path());
-        ledger.record(
-            &reading(Act::Operate, Stakes::Irreversible),
-            Tier::Signals,
-            1,
+        record(
+            &ledger,
+            Act::Operate,
+            Stakes::Irreversible,
             Outcome::Escalated,
             None,
         );
         // One observation is not evidence of a weak cell.
         assert!(weak_cells(&ledger, 5).is_empty());
         for _ in 0..6 {
-            ledger.record(
-                &reading(Act::Operate, Stakes::Irreversible),
-                Tier::Signals,
-                1,
+            record(
+                &ledger,
+                Act::Operate,
+                Stakes::Irreversible,
                 Outcome::Escalated,
                 None,
             );
@@ -387,26 +432,62 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let ledger = MisreadLedger::new(dir.path());
         for _ in 0..20 {
-            ledger.record(
-                &reading(Act::Answer, Stakes::Inert),
-                Tier::Signals,
-                1,
-                Outcome::Held,
-                None,
-            );
+            record(&ledger, Act::Answer, Stakes::Inert, Outcome::Held, None);
         }
         assert!(weak_cells(&ledger, 5).is_empty());
         assert!(ledger.accuracy()[0].accuracy() > 0.9);
+    }
+
+    /// A weak reading loads only the orientation floor and leaves the rest to
+    /// discovery, so a deferred tool used after one is not a misread.
+    #[test]
+    fn discovery_after_a_weak_reading_does_not_count_against_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = MisreadLedger::new(dir.path());
+        for _ in 0..8 {
+            ledger.record(
+                &reading(Act::Answer, Stakes::Inert),
+                Tier::General,
+                vak_intent::RESOLVER_VERSION,
+                Outcome::Escalated,
+                Some("bash".into()),
+                false,
+            );
+        }
+        let cells = ledger.accuracy();
+        assert_eq!(cells[0].contradicted, 0);
+        assert_eq!(cells[0].unknown, 8);
+        assert!(weak_cells(&ledger, 5).is_empty());
+    }
+
+    /// A lexicon is judged only on its own readings: rows an earlier reader
+    /// wrote say nothing about the one running now.
+    #[test]
+    fn an_earlier_lexicon_does_not_score_the_current_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = MisreadLedger::new(dir.path());
+        for _ in 0..8 {
+            ledger.record(
+                &reading(Act::Modify, Stakes::Reversible),
+                Tier::Signals,
+                vak_intent::RESOLVER_VERSION - 1,
+                Outcome::Escalated,
+                Some("bash".into()),
+                true,
+            );
+        }
+        assert_eq!(ledger.accuracy().len(), 1);
+        assert!(weak_cells(&ledger, 5).is_empty());
     }
 
     #[test]
     fn corrupt_rows_are_skipped_rather_than_trusted() {
         let dir = tempfile::tempdir().unwrap();
         let ledger = MisreadLedger::new(dir.path());
-        ledger.record(
-            &reading(Act::Modify, Stakes::Reversible),
-            Tier::Signals,
-            1,
+        record(
+            &ledger,
+            Act::Modify,
+            Stakes::Reversible,
             Outcome::Held,
             None,
         );
@@ -415,7 +496,16 @@ mod tests {
             .open(ledger.path())
             .unwrap();
         writeln!(file, "not json at all").unwrap();
+        file.write_all(b"{\"torn\": \xff\n").unwrap();
         drop(file);
-        assert_eq!(ledger.rows().len(), 1);
+        // A bad line never ends the read: the row after it still counts.
+        record(
+            &ledger,
+            Act::Modify,
+            Stakes::Reversible,
+            Outcome::Held,
+            None,
+        );
+        assert_eq!(ledger.rows().len(), 2);
     }
 }

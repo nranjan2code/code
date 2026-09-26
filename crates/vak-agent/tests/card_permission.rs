@@ -206,6 +206,116 @@ fn a_tool_the_host_did_not_declare_as_presenting_still_needs_approval() {
     );
 }
 
+/// A card whose schema the model cannot satisfy.
+struct StrictCardTool;
+
+#[async_trait]
+impl Tool for StrictCardTool {
+    fn name(&self) -> &str {
+        "emit_metric_card"
+    }
+    fn description(&self) -> &str {
+        "test stand-in with a required payload"
+    }
+    fn schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {"payload": {"type": "object"}},
+            "required": ["payload"]
+        })
+    }
+    fn presents_cards(&self) -> bool {
+        true
+    }
+    async fn execute(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("Card displayed to the user.")
+    }
+}
+
+/// A card is a presentation of the answer, not part of the work. One that
+/// fails validation is simply not shown; a complete prose answer after it
+/// ends the turn instead of being sent back to repair the card. Measured
+/// live: a small model could not build the card's arguments, and the stop
+/// gate's demand to repair it turned a correct, sourced answer into a
+/// failed turn.
+#[tokio::test]
+async fn a_failed_card_does_not_hold_back_a_complete_answer() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&home).unwrap();
+    let header = SessionHeader {
+        agent: None,
+        session_id: "card-failed".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0".into(),
+            provider: "scripted".into(),
+            model: "test-model".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "workspace-write".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let log = SessionLog::create(
+        SessionPath::new_session_file(&home, dir.path(), "card-failed"),
+        header,
+    )
+    .unwrap();
+    let mut cfg = AgentConfig::new("sys");
+    cfg.model = "test-model".into();
+    cfg.mode = Mode::WorkspaceWrite;
+    cfg.permission = Some(Arc::new(
+        PermissionEngine::default().with_presenting_tools(["emit_metric_card".to_string()]),
+    ));
+    cfg.tools = vec![Arc::new(StrictCardTool)];
+    let answer = "Copper trades at about $6.70 per pound, according to the exchange quote.";
+    let mut agent = Agent::new(
+        Arc::new(Scripted(Mutex::new(VecDeque::from([
+            msg(
+                vec![ContentBlock::ToolUse {
+                    id: "c0".into(),
+                    name: "emit_metric_card".into(),
+                    input: serde_json::json!({"metric_data": [1, 2]}),
+                }],
+                StopReason::ToolUse,
+            ),
+            msg(vec![ContentBlock::text(answer)], StopReason::EndTurn),
+        ])))),
+        log,
+        cfg,
+    );
+    let outcome = agent
+        .run(
+            "what is copper trading at",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(256).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content() == answer),
+        "{outcome:?}"
+    );
+    let nudged = agent
+        .session
+        .lock()
+        .await
+        .message_chain()
+        .iter()
+        .flat_map(|(_, message)| message.content.iter())
+        .any(|block| matches!(block, ContentBlock::Text { text } if text.contains("[stop-guard]")));
+    assert!(!nudged, "the answer was sent back to repair a card");
+}
+
 #[tokio::test]
 async fn an_identical_card_call_is_a_quiet_no_op_not_a_prompt_or_a_failure() {
     // First call runs; the repeat is acked without running, is not an error (which would

@@ -290,34 +290,26 @@ impl SessionLog {
         self.append(Entry::new(parent, EntryPayload::GoalUpdate(update)))
     }
 
-    pub fn latest_goal_update(&self) -> Option<&vak_intent::GoalUpdate> {
-        self.entries
-            .iter()
+    /// The latest goal update on the active branch. An update on a branch
+    /// the conversation left behind is not part of its goal.
+    pub fn latest_goal_update(&self) -> Option<vak_intent::GoalUpdate> {
+        self.chain_to_root()
+            .into_iter()
             .rev()
             .find_map(|entry| match &entry.payload {
-                EntryPayload::GoalUpdate(update) => Some(update),
+                EntryPayload::GoalUpdate(update) => Some(update.clone()),
                 _ => None,
             })
     }
 
-    pub fn active_goal_revision(&self) -> Option<u64> {
-        self.entries
-            .iter()
-            .rev()
-            .find_map(|entry| match &entry.payload {
-                EntryPayload::GoalUpdate(update)
-                    if matches!(
-                        update.relation,
-                        vak_intent::GoalRelation::New
-                            | vak_intent::GoalRelation::AddsTo
-                            | vak_intent::GoalRelation::Corrects
-                            | vak_intent::GoalRelation::Replaces
-                    ) =>
-                {
-                    Some(update.revision)
-                }
-                _ => None,
-            })
+    /// How `text` relates to this conversation's goal, as the next update to
+    /// append (`vak_intent::next_goal_update`).
+    pub fn next_goal_update(&self, text: &str) -> vak_intent::GoalUpdate {
+        vak_intent::next_goal_update(
+            text,
+            self.goal_state().as_ref(),
+            self.latest_goal_update().map(|update| update.revision),
+        )
     }
 
     pub fn goal_state(&self) -> Option<vak_intent::GoalState> {
@@ -1852,11 +1844,15 @@ impl SessionLog {
         let current_domains = self.latest_reading().map(|r| r.domains);
         let index = TurnIndex::from_log(self);
 
-        let mut thread = format!(
-            "<conversation_thread revision=\"{}\">\nPrimary objective: {}\nUser request timeline across turns:\n",
-            goal.revision,
-            goal.objective.trim()
-        );
+        // Only a goal a person stated is presented as the objective. The
+        // first message of a conversation is not one by default: rendering
+        // "hi" as the primary objective of every later turn misdirects the
+        // model more than it orients it.
+        let mut thread = format!("<conversation_thread revision=\"{}\">\n", goal.revision);
+        if goal.explicit {
+            thread.push_str(&format!("Primary objective: {}\n", goal.objective.trim()));
+        }
+        thread.push_str("User request timeline across turns:\n");
         for (num, req) in filtered {
             let preview = if req.len() > 200 {
                 let head = req

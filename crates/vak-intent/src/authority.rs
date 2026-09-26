@@ -304,62 +304,7 @@ pub struct Envelope {
     pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityKind {
-    Presentation,
-    Skill,
-    EvidenceAdapter,
-    Hook,
-    Tool,
-    Evaluator,
-    EnvironmentProvision,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CapabilityDecision {
-    AutoAdmit,
-    RequiresHuman,
-    Rejected,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CapabilityRequest {
-    pub kind: CapabilityKind,
-    pub tool: String,
-    #[serde(default)]
-    pub paths: Vec<String>,
-    #[serde(default)]
-    pub uses_network: bool,
-    #[serde(default)]
-    pub uses_secrets: bool,
-    #[serde(default)]
-    pub external_effect: bool,
-}
-
 impl Envelope {
-    pub fn classify_capability(
-        &self,
-        request: &CapabilityRequest,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> CapabilityDecision {
-        if !self.is_live(now) || !self.covers(&request.tool, &request.paths) {
-            return CapabilityDecision::RequiresHuman;
-        }
-        if request.uses_network || request.uses_secrets || request.external_effect {
-            return CapabilityDecision::RequiresHuman;
-        }
-        match request.kind {
-            CapabilityKind::Presentation
-            | CapabilityKind::Skill
-            | CapabilityKind::EvidenceAdapter
-            | CapabilityKind::Evaluator
-            | CapabilityKind::EnvironmentProvision => CapabilityDecision::AutoAdmit,
-            CapabilityKind::Hook | CapabilityKind::Tool => CapabilityDecision::RequiresHuman,
-        }
-    }
-
     /// Whether the envelope is in force at `now`.
     ///
     /// Revocation and expiry are checked here rather than at the call sites so
@@ -390,10 +335,31 @@ impl Envelope {
             return true;
         }
         !paths.is_empty()
-            && paths
-                .iter()
-                .all(|path| self.path_scope.iter().any(|glob| glob_covers(glob, path)))
+            && paths.iter().all(|path| {
+                workspace_relative(path)
+                    .is_some_and(|path| self.path_scope.iter().any(|glob| glob_covers(glob, &path)))
+            })
     }
+}
+
+/// A path the scope can be matched against: workspace-relative, with no
+/// parent-directory step. `src/../.env` would otherwise match `src/**`
+/// byte by byte, so anything that climbs, is absolute, or uses a Windows
+/// separator is not coverable at all.
+fn workspace_relative(path: &str) -> Option<String> {
+    let path = path.trim();
+    if path.is_empty() || path.starts_with('/') || path.contains('\\') || path.contains(':') {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "" | "." => {}
+            ".." => return None,
+            part => parts.push(part),
+        }
+    }
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 /// Minimal `*`/`**` glob matching for envelope path scopes.
@@ -440,13 +406,16 @@ fn glob_covers(pattern: &str, path: &str) -> bool {
 }
 
 /// The composed authority for a unit of work.
+///
+/// A grant on a commitment is not part of it: which commitment a strand
+/// works on is only known after the request is read, so an envelope narrows
+/// the strands that serve its commitment (`apply_envelopes`) and covers
+/// individual actions at the approval gate (`Envelope::covers`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Authority {
     pub autonomy: Autonomy,
     /// Observed, not granted.
     pub attendance: Attendance,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub envelope: Option<Envelope>,
 }
 
 impl Default for Authority {
@@ -454,7 +423,6 @@ impl Default for Authority {
         Authority {
             autonomy: Autonomy::Assisted,
             attendance: Attendance::Interactive,
-            envelope: None,
         }
     }
 }
@@ -463,18 +431,14 @@ impl Authority {
     /// The cap this authority places on approval permissiveness for an action
     /// at `stakes`.
     ///
-    /// `in_envelope` is whether the specific action falls inside the live
-    /// grant. Outside it, delegation buys nothing — which is the entire point
-    /// of declaring a boundary.
+    /// Delegation buys nothing here: a turn's ceiling is fixed before anyone
+    /// knows which actions it will take, so `delegated` asks, and the gate
+    /// lets through only the actions a live envelope covers — outside the
+    /// boundary, delegation buys nothing, which is the point of declaring it.
     ///
     /// The result is a *ceiling*: `vak-core` takes the stricter of this and
     /// the configured `ApprovalMode`. Nothing here can loosen configuration.
-    pub fn approval_ceiling(
-        &self,
-        stakes: Stakes,
-        now: chrono::DateTime<chrono::Utc>,
-        in_envelope: bool,
-    ) -> ApprovalCeiling {
+    pub fn approval_ceiling(&self, stakes: Stakes) -> ApprovalCeiling {
         let by_stakes = match stakes {
             Stakes::Inert | Stakes::Reversible => ApprovalCeiling::AutoApprove,
             Stakes::Costly => ApprovalCeiling::ApproveSafe,
@@ -498,35 +462,10 @@ impl Authority {
                     ApprovalCeiling::AutoApprove
                 }
             }
-            Autonomy::Delegated => {
-                // in_envelope says the action falls within the grant's scope;
-                // the grant must also be live. A revoked or expired envelope
-                // buys nothing — delegation without a valid grant fails closed.
-                let envelope_live = self
-                    .envelope
-                    .as_ref()
-                    .is_some_and(|envelope| envelope.is_live(now));
-                if in_envelope && envelope_live {
-                    ApprovalCeiling::AutoApprove
-                } else {
-                    ApprovalCeiling::Ask
-                }
-            }
+            Autonomy::Delegated => ApprovalCeiling::Ask,
             Autonomy::Autonomous => ApprovalCeiling::AutoApprove,
         };
         by_stakes.meet(by_autonomy)
-    }
-
-    /// The permission ceiling this authority imposes, if any.
-    pub fn permission_ceiling(&self, now: chrono::DateTime<chrono::Utc>) -> PermissionCeiling {
-        match &self.envelope {
-            Some(envelope) if envelope.is_live(now) => envelope.permission_ceiling,
-            // A revoked or expired envelope narrows nothing further; the
-            // configured mode and the engine remain in force. It must not
-            // *widen* anything either, which is why this is the neutral top
-            // element rather than a remembered value.
-            _ => PermissionCeiling::FullAccess,
-        }
     }
 
     /// What to do with a gate that was raised and cannot be answered here.
@@ -545,14 +484,6 @@ impl Authority {
         } else {
             GateFallback::Deny
         }
-    }
-
-    /// The lifetime spend cap, if the envelope declares one and is live.
-    pub fn spend_limit_usd(&self, now: chrono::DateTime<chrono::Utc>) -> Option<f64> {
-        self.envelope
-            .as_ref()
-            .filter(|envelope| envelope.is_live(now))
-            .and_then(|envelope| envelope.spend_limit_usd)
     }
 }
 
@@ -585,19 +516,12 @@ mod tests {
                 let authority = Authority {
                     autonomy,
                     attendance,
-                    envelope: Some(envelope()),
                 };
-                for in_envelope in [true, false] {
-                    assert_eq!(
-                        authority.approval_ceiling(
-                            Stakes::Irreversible,
-                            chrono::Utc::now(),
-                            in_envelope
-                        ),
-                        ApprovalCeiling::Ask,
-                        "autonomy={autonomy:?} in_envelope={in_envelope}"
-                    );
-                }
+                assert_eq!(
+                    authority.approval_ceiling(Stakes::Irreversible),
+                    ApprovalCeiling::Ask,
+                    "autonomy={autonomy:?}"
+                );
             }
         }
     }
@@ -606,18 +530,17 @@ mod tests {
     /// without a gate and asks before anything costly.
     #[test]
     fn assisted_auto_approves_reversible_and_asks_for_costly() {
-        let now = chrono::Utc::now();
         let assisted = Authority::default();
         assert_eq!(
-            assisted.approval_ceiling(Stakes::Inert, now, false),
+            assisted.approval_ceiling(Stakes::Inert),
             ApprovalCeiling::AutoApprove
         );
         assert_eq!(
-            assisted.approval_ceiling(Stakes::Reversible, now, false),
+            assisted.approval_ceiling(Stakes::Reversible),
             ApprovalCeiling::AutoApprove
         );
         assert_eq!(
-            assisted.approval_ceiling(Stakes::Costly, now, false),
+            assisted.approval_ceiling(Stakes::Costly),
             ApprovalCeiling::Ask
         );
         let autonomous = Authority {
@@ -625,26 +548,22 @@ mod tests {
             ..Authority::default()
         };
         assert_eq!(
-            autonomous.approval_ceiling(Stakes::Costly, now, false),
+            autonomous.approval_ceiling(Stakes::Costly),
             ApprovalCeiling::ApproveSafe
         );
     }
 
+    /// A turn under delegation asks: only the actions a live envelope covers
+    /// get through, and that is decided per action at the gate.
     #[test]
-    fn delegation_buys_nothing_outside_the_envelope() {
+    fn delegation_alone_buys_nothing_at_the_turn_level() {
         let authority = Authority {
             autonomy: Autonomy::Delegated,
             attendance: Attendance::Supervised,
-            envelope: Some(envelope()),
         };
-        assert_eq!(
-            authority.approval_ceiling(Stakes::Reversible, chrono::Utc::now(), true),
-            ApprovalCeiling::AutoApprove
-        );
-        assert_eq!(
-            authority.approval_ceiling(Stakes::Reversible, chrono::Utc::now(), false),
-            ApprovalCeiling::Ask
-        );
+        for stakes in [Stakes::Inert, Stakes::Reversible, Stakes::Costly] {
+            assert_eq!(authority.approval_ceiling(stakes), ApprovalCeiling::Ask);
+        }
     }
 
     #[test]
@@ -658,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn revoked_and_expired_envelopes_stop_narrowing_and_never_widen() {
+    fn revoked_and_expired_envelopes_are_not_live() {
         let now = chrono::Utc::now();
         let mut revoked = envelope();
         revoked.revoked_at = Some(now);
@@ -667,18 +586,7 @@ mod tests {
         let mut expired = envelope();
         expired.expires_at = Some(now - chrono::Duration::hours(1));
         assert!(!expired.is_live(now));
-
-        let authority = Authority {
-            autonomy: Autonomy::Delegated,
-            attendance: Attendance::Supervised,
-            envelope: Some(revoked),
-        };
-        // No remembered ceiling survives revocation, and no spend grant does.
-        assert_eq!(
-            authority.permission_ceiling(now),
-            PermissionCeiling::FullAccess
-        );
-        assert_eq!(authority.spend_limit_usd(now), None);
+        assert!(envelope().is_live(now));
     }
 
     #[test]
@@ -694,6 +602,11 @@ mod tests {
         assert!(!envelope.covers("edit", &["src/main.rs".into(), "docs/x.md".into()]));
         // A scoped envelope with nothing to check cannot prove coverage.
         assert!(!envelope.covers("edit", &[]));
+        // A path that climbs out of the scope, or is absolute, is not
+        // covered by a pattern it happens to start with.
+        assert!(!envelope.covers("edit", &["src/../.env".into()]));
+        assert!(!envelope.covers("edit", &["/etc/src/main.rs".into()]));
+        assert!(envelope.covers("edit", &["./src/main.rs".into()]));
     }
 
     #[test]
@@ -701,7 +614,6 @@ mod tests {
         let authority = Authority {
             autonomy: Autonomy::Delegated,
             attendance: Attendance::Unattended,
-            envelope: None,
         };
         assert_eq!(
             authority.gate_fallback(Horizon::Durable),
