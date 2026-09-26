@@ -90,6 +90,19 @@ function withAgent(url: string, agent?: string): string {
   return `${url}${sep}agent=${encodeURIComponent(agent)}`;
 }
 
+/** A refusal from the server, with its typed `kind` when it has one, so a
+ * caller can act on what went wrong without reading the message. */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number, readonly kind?: string) {
+    super(message);
+  }
+}
+
+function refusal(res: Response, parsed: unknown): ApiError {
+  const body = parsed as { error?: string; kind?: string } | null;
+  return new ApiError(body?.error ?? `${res.status} ${res.statusText}`, res.status, body?.kind);
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -113,9 +126,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     if (res.status === 401) onUnauthorized?.();
-    const msg =
-      (parsed as { error?: string })?.error ?? `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw refusal(res, parsed);
   }
   return parsed as T;
 }
@@ -1346,9 +1357,7 @@ export async function speak(
     } catch {
       parsed = text;
     }
-    const msg =
-      (parsed as { error?: string })?.error ?? `${res.status} ${res.statusText}`;
-    throw new Error(msg);
+    throw refusal(res, parsed);
   }
   return res.blob();
 }

@@ -4,6 +4,7 @@ import { watchSession, watchStatus } from "./streamHub";
 import {
   activeId,
   appendSystem,
+  appendNeedsAiService,
   sessions,
   appendUser,
   applyEvent,
@@ -678,7 +679,8 @@ export async function sendPrompt(
       }
     }
   } catch (e) {
-    appendSystem(id, `error: ${e instanceof Error ? e.message : String(e)}`);
+    if (e instanceof api.ApiError && e.kind === "no_ai_service") appendNeedsAiService(id);
+    else appendSystem(id, `error: ${e instanceof Error ? e.message : String(e)}`);
     if (propagateError) throw e;
   }
 }

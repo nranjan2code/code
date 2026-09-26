@@ -4400,15 +4400,21 @@ pub(crate) fn mpsc_to_broadcast(tx: events::EventBus) -> mpsc::Sender<AgentEvent
 /// reads `.error` as the human-readable string every other endpoint puts
 /// there, so a two-field body would have shown the user the machine code
 /// ("provider_unavailable") instead of the message that says what to fix.
+///
+/// A missing credential also carries `"kind": "no_ai_service"`, so a client
+/// can offer to connect one without matching on the message text; `error`
+/// stays the precise message an operator or the CLI needs.
 fn provider_unavailable(err: vak_core::CoreError) -> axum::response::Response {
     use axum::response::IntoResponse;
     let detail = err.to_string();
     eprintln!("[run] refused: {detail}");
-    (
-        StatusCode::SERVICE_UNAVAILABLE,
-        axum::Json(serde_json::json!({ "error": detail })),
-    )
-        .into_response()
+    let body = match err {
+        vak_core::CoreError::MissingAuth { .. } => {
+            serde_json::json!({ "error": detail, "kind": "no_ai_service" })
+        }
+        _ => serde_json::json!({ "error": detail }),
+    };
+    (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response()
 }
 
 /// `run_prompt`, `side_chat`, and `start_bestofn` all fall back to
@@ -4448,16 +4454,16 @@ mod provider_unavailable_tests {
         );
 
         let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is JSON");
-        // Single `error` field carrying the human-readable message, same
-        // shape as every other handler in this file — not a machine code
-        // in `error` with the message hidden in a `detail` the frontend
-        // never reads.
+        // `error` carries the human-readable message, same as every other
+        // handler in this file — not a machine code with the message hidden
+        // in a `detail` the frontend never reads — and `kind` types it.
         let fields: Vec<&String> = body.as_object().expect("object body").keys().collect();
         assert_eq!(
             fields,
-            vec!["error"],
-            "body must have exactly the `error` field"
+            vec!["error", "kind"],
+            "body must have the `error` message and its `kind`"
         );
+        assert_eq!(body["kind"], "no_ai_service");
         let message = body["error"].as_str().expect("error is a string");
         assert!(
             message.contains("ANTHROPIC_API_KEY"),
@@ -4467,6 +4473,21 @@ mod provider_unavailable_tests {
             message.contains("anthropic"),
             "message must name the provider, got: {message}"
         );
+    }
+
+    #[tokio::test]
+    async fn only_a_missing_credential_is_typed_as_no_ai_service() {
+        let err = vak_core::CoreError::InvalidConfig("bad route".into());
+        let bytes = provider_unavailable(err)
+            .into_response()
+            .into_body()
+            .collect()
+            .await
+            .expect("body readable")
+            .to_bytes();
+        let body: serde_json::Value = serde_json::from_slice(&bytes).expect("body is JSON");
+        let fields: Vec<&String> = body.as_object().expect("object body").keys().collect();
+        assert_eq!(fields, vec!["error"], "other refusals carry no kind");
     }
 }
 

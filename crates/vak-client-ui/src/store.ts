@@ -42,7 +42,7 @@ export type Item =
       resolved: null | "allowed" | "denied" | "gone";
     }
   | { kind: "worker"; label: string; lines: string[]; open: boolean; isError: boolean }
-  | { kind: "system"; text: string };
+  | { kind: "system"; text: string; needs?: "ai-service" };
 
 export const [backend, setBackend] = createSignal<BackendInfo>({ ready: false, recent_workspaces: [] });
 export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
@@ -1464,6 +1464,12 @@ export function appendUser(id: string, text: string, files?: api.InboxFile[], bu
 
 export function appendSystem(id: string, text: string, bucket: Bucket = "main") {
   note(bucket, id, text);
+}
+
+/** A message could not start because no AI service is connected
+ * (the server's typed `no_ai_service` refusal). */
+export function appendNeedsAiService(id: string, bucket: Bucket = "main") {
+  pushItem(bucket, id, { kind: "system", text: "No AI service is connected yet, so this message wasn't sent.", needs: "ai-service" });
 }
 
 export function markRunning(id: string, on: boolean, bucket: Bucket = "main") {
