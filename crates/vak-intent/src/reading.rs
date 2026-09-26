@@ -127,12 +127,15 @@ pub struct Reading {
     /// them; everything else (output shape, stop profile) follows `act`.
     #[serde(default)]
     pub alternate_acts: BTreeSet<Act>,
-    /// Open-vocabulary subject tags. Used for skill affinity and telemetry
-    /// only — deliberately never for control flow, so adding a domain can
-    /// never change what the runtime is allowed to do.
+    /// Capability domains the request needs (the shared vocabulary in
+    /// [`crate::engage::DOMAIN_VOCABULARY`]) plus a few environment tags.
+    /// They decide which admitted tools are loaded, and `live-data` asks the
+    /// agent loop to observe a current value this turn before answering.
+    /// They never change what the runtime is *allowed* to do: admission and
+    /// permission ignore them.
     #[serde(default)]
     pub domains: BTreeSet<String>,
-    /// [0,1]. Below the configured floor the general engagement applies.
+    /// [0,1]. Below the configured floor the orienting engagement applies.
     /// Equal to `axis_confidence.overall()`.
     pub confidence: f64,
     /// Per-axis confidence, so each projection can gate on the axis it
@@ -237,8 +240,10 @@ pub struct Intent {
     /// commitment's spec — reads this; everything that cares which part of
     /// the request said what reads `strands`.
     pub reading: Reading,
-    /// The parts of the request, in textual order. Never empty; a request
-    /// that is one thing has one strand whose reading equals `reading`.
+    /// The parts of the request, in textual order. A resolved request has at
+    /// least one; a request that is one thing has one strand whose reading
+    /// equals `reading`. Only a disabled kernel's [`Intent::general`] has
+    /// none.
     #[serde(default)]
     pub strands: Vec<crate::strand::Strand>,
     /// `Engagement::compose` over the strands.
@@ -247,7 +252,9 @@ pub struct Intent {
 }
 
 impl Intent {
-    /// The intent that changes nothing — vak's behaviour before this kernel.
+    /// The intent that changes nothing — vak's behaviour before this kernel,
+    /// and what a disabled kernel produces. It has no strands: nothing was
+    /// read, so nothing can open a thread or a commitment.
     pub fn general(resolver_version: u32) -> Self {
         Intent {
             reading: Reading::general(),
@@ -255,43 +262,6 @@ impl Intent {
             engagement: crate::Engagement::general(),
             provenance: Provenance::new(Tier::General, resolver_version, Vec::new()),
         }
-    }
-
-    /// The strand the composite reading was built around.
-    pub fn primary(&self) -> Option<&crate::strand::Strand> {
-        self.strands.iter().max_by_key(|strand| {
-            (
-                strand.reading.stakes.rank(),
-                strand.reading.acts().iter().any(|act| act.is_effectful()),
-                (strand.reading.confidence * 1000.0) as u32,
-            )
-        })
-    }
-
-    /// Strands that open (or continue) a durable thread of their own.
-    pub fn durable_strands(&self) -> impl Iterator<Item = &crate::strand::Strand> {
-        self.strands
-            .iter()
-            .filter(|strand| strand.engagement.posture.open_commitment)
-    }
-
-    /// The strands, or the composite reading as a single strand when none
-    /// were recorded — an intent built by hand, or one from a ledger row
-    /// written before strands existed. Consumers that work per strand use
-    /// this so the one-strand case needs no special path.
-    pub fn strands_or_composite(&self) -> Vec<crate::strand::Strand> {
-        if !self.strands.is_empty() {
-            return self.strands.clone();
-        }
-        vec![crate::strand::Strand {
-            strand_id: "s0.0".into(),
-            thread_id: "s0.0".into(),
-            text: String::new(),
-            reading: self.reading.clone(),
-            relation: crate::strand::StrandRelation::Independent,
-            lineage: crate::strand::Lineage::New,
-            engagement: self.engagement.clone(),
-        }]
     }
 
     /// The block of text this intent contributes to the model's context, if

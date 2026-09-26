@@ -84,6 +84,10 @@ pub struct ReceiptSummary {
     /// Inspections that actually returned successfully. A prior saved file
     /// only counts after one of these in the continuation turn.
     pub successful_inspections: u32,
+    /// Work that succeeded outside the built-in tools: an integration's tool
+    /// invoked through `mcp` (`action = "call"`) or a delegated `task`,
+    /// whose worker keeps its own receipts. Counted on success only.
+    pub external_effects: u32,
     /// Most recent unresolved tool failure, if any.
     pub unresolved_error: Option<(String, String)>,
 }
@@ -92,6 +96,7 @@ impl ReceiptSummary {
     pub fn has_execution_receipt(&self) -> bool {
         self.substantive_bash_calls > 0
             || self.files_modified > 0
+            || self.external_effects > 0
             || (self.continued_saved_file && self.successful_inspections > 0)
     }
 
@@ -484,7 +489,20 @@ impl StopPolicy {
                 // are NOT falsely blocked on non-existent bash commands.
             }
 
-            if verification_stale && (receipts.code_files_modified > 0 || demands_code) {
+            // A re-run is owed only when a check was asked for: by the
+            // reading, which decides what completion requires, or by the
+            // request's own words. An edit alone does not owe one — "add a
+            // subtract function" asked for the function — and demanding a
+            // check the surface could not run (a shell needing an approver
+            // nobody could be) looped a live turn until the block cap.
+            let check_owed = outcome.is_none_or(|spec| {
+                spec.stop == vak_intent::StopProfile::Verification || spec.requires_execution()
+            }) || demands_code
+                || Self::demands_verification(prompt);
+            if verification_stale
+                && check_owed
+                && (receipts.code_files_modified > 0 || demands_code)
+            {
                 return Some(BlockReason::VerificationStale);
             }
         }
@@ -702,6 +720,62 @@ mod tests {
         ));
     }
 
+    /// An edit the reading did not hold to a check owes none: authoring a
+    /// function into a code file is done when the function is there.
+    #[test]
+    fn an_edit_owes_no_check_the_reading_did_not_ask_for() {
+        let p = StopPolicy::default();
+        let authoring = vak_intent::OutcomeSpec::from_reading(
+            "explain what calc.py does, then add a subtract function to it",
+            &vak_intent::Reading {
+                act: vak_intent::Act::Author,
+                ..vak_intent::Reading::general()
+            },
+            4,
+        );
+        let edited = ReceiptSummary {
+            total_tool_calls: 1,
+            successful_tool_calls: 1,
+            files_modified: 1,
+            code_files_modified: 1,
+            ..Default::default()
+        };
+        assert_eq!(
+            p.evaluate_receipts(
+                "explain what calc.py does, then add a subtract function to it",
+                "calc.py now defines add and subtract.",
+                Some(&authoring),
+                &edited,
+                true,
+            ),
+            None
+        );
+        // A fix is held to a check: it modifies code the reading expects to
+        // be proven.
+        let fixing = vak_intent::OutcomeSpec::from_reading(
+            "fix the off-by-one in calc.py",
+            &vak_intent::Reading {
+                act: vak_intent::Act::Modify,
+                ..vak_intent::Reading::general()
+            },
+            4,
+        );
+        let fixed = ReceiptSummary {
+            substantive_bash_calls: 1,
+            ..edited
+        };
+        assert_eq!(
+            p.evaluate_receipts(
+                "fix the off-by-one in calc.py",
+                "Fixed.",
+                Some(&fixing),
+                &fixed,
+                true,
+            ),
+            Some(BlockReason::VerificationStale)
+        );
+    }
+
     #[test]
     fn stale_verification_blocks_after_a_file_change() {
         let p = StopPolicy::default();
@@ -788,6 +862,26 @@ mod tests {
                 "Created and verified.",
                 Some(&spec),
                 &with_bash,
+                false
+            ),
+            None
+        );
+
+        // Work done through an integration or a delegated worker is
+        // execution too: the stop gate must not demand a shell receipt for
+        // an email an MCP server sent.
+        let external = ReceiptSummary {
+            external_effects: 1,
+            successful_tool_calls: 1,
+            ..Default::default()
+        };
+        assert!(external.has_execution_receipt());
+        assert_eq!(
+            p.evaluate_receipts(
+                "create an svg animation",
+                "Created and verified.",
+                Some(&spec),
+                &external,
                 false
             ),
             None

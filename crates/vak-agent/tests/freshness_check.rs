@@ -573,3 +573,71 @@ async fn a_second_stale_card_fails_closed_with_an_honest_answer() {
     assert!(last_is_answer, "the fail-closed answer must be logged");
     assert_eq!(carded, 1, "the turn closes with a TurnCard");
 }
+
+struct FakeListTool;
+
+#[async_trait]
+impl Tool for FakeListTool {
+    fn name(&self) -> &str {
+        "glob"
+    }
+    fn description(&self) -> &str {
+        "fake directory listing for tests"
+    }
+    fn schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {"pattern": {"type": "string"}}})
+    }
+    async fn execute(&self, _args: &Value, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::ok("Cargo.toml\nsrc/main.rs\n")
+    }
+}
+
+/// A current value in the workspace is observed by looking at the workspace:
+/// "what's in the current directory?" is answered by listing it. A local
+/// observation satisfies the freshness check exactly as a retrieval does,
+/// with no demand for a web search that could not answer it.
+#[tokio::test]
+async fn a_local_observation_satisfies_the_freshness_check() {
+    let dir = tempdir().unwrap();
+    let list_call = AssistantMessage {
+        content: vec![ContentBlock::ToolUse {
+            id: "g1".into(),
+            name: "glob".into(),
+            input: serde_json::json!({"pattern": "*"}),
+        }],
+        stop_reason: StopReason::ToolUse,
+        usage: Usage::default(),
+        model: "test-model".into(),
+        response_id: None,
+    };
+    let mut agent = build_agent(
+        &dir,
+        "freshness-local",
+        vec![
+            list_call,
+            text_msg("The current directory holds Cargo.toml and src/main.rs."),
+        ],
+        true,
+    )
+    .await;
+    agent.config.tools.push(Arc::new(FakeListTool));
+    agent.config.observation_check = Some(Arc::new(|name: &str, _: &Value| name == "glob"));
+    let outcome = agent
+        .run(
+            "what's in the current directory?",
+            &Default::default(),
+            CancellationToken::new(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(&outcome, TurnOutcome::Completed { response } if response.text_content().contains("Cargo.toml")),
+        "got {outcome:?}"
+    );
+    assert!(
+        !user_texts(&agent)
+            .iter()
+            .any(|t| t.starts_with("[freshness-check]")),
+        "a listing is an observation; no redo was owed"
+    );
+}

@@ -53,6 +53,35 @@ fn session_search_is_a_read() {
     }
 }
 
+/// Reading the Agent's own portfolio changes nothing. Found in a live run:
+/// "what commitments are you holding?" on an unattended surface was refused
+/// because the read needed an approver nobody could be.
+#[test]
+fn commitments_is_a_read() {
+    let engine = PermissionEngine::default();
+    for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+        let d = engine.evaluate(
+            "commitments",
+            &json!({"include_closed": true}),
+            mode,
+            std::path::Path::new("/ws"),
+        );
+        assert!(
+            matches!(d, vak_permission::Decision::Allow),
+            "{mode:?}: {d:?}"
+        );
+    }
+    // An operator's rule still wins.
+    let engine = PermissionEngine::from_rule_strings(&["-commitments".to_string()]).unwrap();
+    let d = engine.evaluate(
+        "commitments",
+        &json!({}),
+        Mode::WorkspaceWrite,
+        std::path::Path::new("/ws"),
+    );
+    assert!(matches!(d, vak_permission::Decision::Deny { .. }), "{d:?}");
+}
+
 #[test]
 fn explicit_deny_rule_still_beats_learning_allowance() {
     // Severity aggregation: a user's deny rule outranks the built-in

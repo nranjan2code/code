@@ -334,6 +334,12 @@ pub struct AgentConfig {
     pub revocation_check: Option<RevocationCheck>,
     pub presentation_check: Option<PresentationCheck>,
     pub retrieval_check: Option<RetrievalCheck>,
+    /// What satisfies the freshness check: any call that observed current
+    /// state this run. See `ObservationCheck`. Absent, only retrieval counts.
+    pub observation_check: Option<ObservationCheck>,
+    /// Pre-authorization from a live envelope, consulted at an `Ask` gate
+    /// before the approver. See `EnvelopeCheck`. Absent, every gate asks.
+    pub envelope_check: Option<EnvelopeCheck>,
     /// Writes a `Presentation` ledger entry at the moment a card validates.
     /// See `PresentationRebuild`. `None` disables the write (the ack stays
     /// the tool's own generic text — no id to embed).
@@ -442,6 +448,22 @@ pub struct PresentationNudge {
 /// inert.
 pub type RetrievalCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
 
+/// Whether a call observes the current state of something — a file, a
+/// repository, a running service, a web page — as opposed to recalling what
+/// the conversation or memory already holds. Supplied by `Core` from what each
+/// capability declares it serves. The freshness check is satisfied by any
+/// such call: "what's in the current directory?" is answered by listing it,
+/// not by a web search, and demanding a retrieval there replaced correct
+/// answers with "I could not retrieve a current value".
+pub type ObservationCheck = Arc<dyn Fn(&str, &serde_json::Value) -> bool + Send + Sync>;
+
+/// Whether a gated call falls inside a live envelope the human granted,
+/// returning that envelope's id. Supplied by `Core` only for a `delegated`
+/// turn whose work is not irreversible, and the grant is read fresh on every
+/// call, so a revocation applies to the very next gate. Never consulted for
+/// an `Ask` a rule or the circuit breaker raised.
+pub type EnvelopeCheck = Arc<dyn Fn(&str, &serde_json::Value) -> Option<String> + Send + Sync>;
+
 /// Re-validates a card call from its own arguments and returns the info
 /// needed to write its `Presentation` entry, or `None` if it no longer
 /// validates (unreachable in practice: `execute()` already validated it
@@ -481,6 +503,8 @@ impl AgentConfig {
             revocation_check: None,
             presentation_check: None,
             retrieval_check: None,
+            observation_check: None,
+            envelope_check: None,
             presentation_rebuild: None,
             hook_recorder: None,
             tool_activity_recorder: None,
@@ -1479,12 +1503,15 @@ impl Agent {
         // very next turn ignored the result instead of grounding on it.
         let mut pending_grounding_check: Option<Vec<String>> = None;
         let mut grounding_repair_attempted = false;
-        // Whether any retrieval-shaped call succeeded at any point in this
-        // run, for the freshness check: a directive whose reading carries
-        // the `live-data` domain (temporal deixis — "current", "right now")
-        // asks for a value retrieved this turn, and an answer or card that
-        // arrives without one is repeating what an earlier turn found.
-        let mut retrieval_succeeded_this_run = false;
+        // Whether any call that observes current state succeeded at any
+        // point in this run, for the freshness check: a directive whose
+        // reading carries the `live-data` domain (temporal deixis —
+        // "current", "right now") asks for a value observed this turn, and
+        // an answer or card that arrives without one is repeating what an
+        // earlier turn found. A retrieval counts, and so does any other
+        // observation (`AgentConfig::observation_check`): reading the file
+        // or running the command is how a local "current" value is found.
+        let mut observed_this_run = false;
         let mut freshness_repair_attempted = false;
         let mut empty_step_repair_attempted = false;
         let mut card_repeat_streak: u32 = 0;
@@ -1587,32 +1614,9 @@ impl Agent {
                             };
                         }
                     };
-                    let raw = message.text_content();
-                    let active_revision = session.active_goal_revision();
                     // Only an explicit command changes the goal's shape; free
                     // text adds to it (docs/design/47, control plane).
-                    let command = vak_intent::parse_command(&raw);
-                    let relation = vak_intent::goal_relation(command.as_ref(), active_revision);
-                    let request = command
-                        .as_ref()
-                        .and_then(|c| c.text())
-                        .map(str::to_string)
-                        .unwrap_or(raw);
-                    let update = vak_intent::GoalUpdate {
-                        revision: session
-                            .latest_goal_update()
-                            .map(|update| update.revision)
-                            .unwrap_or(0)
-                            .saturating_add(1),
-                        relation,
-                        request: request.clone(),
-                        supersedes_revision: matches!(
-                            relation,
-                            vak_intent::GoalRelation::Corrects | vak_intent::GoalRelation::Replaces
-                        )
-                        .then_some(active_revision)
-                        .flatten(),
-                    };
+                    let update = session.next_goal_update(&message.text_content());
                     if let Err(error) = session.append_goal_update(update) {
                         return TurnOutcome::Failed {
                             error: LlmError::Network(format!("goal update write failed: {error}")),
@@ -2228,7 +2232,7 @@ impl Agent {
                 // repeat of an earlier turn's data. One bounded redo naming
                 // the gap; the model may decline by saying it has no live
                 // data, which the grounding phrases below already accept.
-                if wants_live_data && !retrieval_succeeded_this_run {
+                if wants_live_data && !observed_this_run {
                     let admits_no_data = admits_no_data(&response.text_content());
                     if !admits_no_data && freshness_repair_attempted {
                         // Repaired once already and still nothing retrieved
@@ -2624,7 +2628,7 @@ impl Agent {
                     if !self.tool_presents_cards(&call.name) {
                         return true;
                     }
-                    if wants_live_data && !retrieval_succeeded_this_run {
+                    if wants_live_data && !observed_this_run {
                         gated.push((call.clone(), CardGate::Fresh));
                         return false;
                     }
@@ -2811,8 +2815,17 @@ impl Agent {
                     ToolRunOutput::Err(_) => None,
                 })
                 .collect();
+            if !observed_this_run {
+                observed_this_run = !retrieval_tool_names.is_empty()
+                    || results.iter().any(|(id, out)| {
+                        matches!(out, ToolRunOutput::Ok(_))
+                            && self.config.observation_check.as_ref().is_some_and(|check| {
+                                let name = call_names.get(id).map(|s| s.as_str()).unwrap_or("");
+                                call_inputs.get(id).is_some_and(|input| check(name, input))
+                            })
+                    });
+            }
             if !retrieval_tool_names.is_empty() {
-                retrieval_succeeded_this_run = true;
                 // Every retrieval this batch returned, as its result block
                 // carries it: judging a card or an answer against only the
                 // first result, or the first part of one, flagged answers
@@ -2972,6 +2985,16 @@ impl Agent {
                         if inspection_ids.contains(id) {
                             receipts.successful_inspections += 1;
                         }
+                        let external = match call_names.get(id).map(String::as_str) {
+                            Some("task") => true,
+                            Some("mcp") => call_inputs.get(id).is_some_and(|input| {
+                                input.get("action").and_then(Value::as_str) == Some("call")
+                            }),
+                            _ => false,
+                        };
+                        if external {
+                            receipts.external_effects += 1;
+                        }
                         if let Some((_, cmd)) = bash_pairs.iter().find(|(bid, _)| bid == id)
                             && !self.obligations.iter().any(|o| o == cmd)
                         {
@@ -3017,23 +3040,36 @@ impl Agent {
             // batch wins (first one, in issued order) over any success in
             // the same batch; only a batch with NO errors clears a
             // previous batch's still-unresolved failure.
-            let batch_error = results.iter().find_map(|(id, out)| match out {
+            //
+            // A card is a presentation of the answer, not part of the work:
+            // one that failed validation is simply not shown, and the answer
+            // is judged on what it says. Whether the turn needed a card is
+            // the presentation check's question, with its own bounded nudge.
+            // Counting a failed card as unresolved sent complete, correct
+            // prose answers back to repair a card a small model could not
+            // build, until the turn failed with the answer discarded
+            // (measured live on gemma4:e2b-mlx). A batch of cards alone
+            // neither sets nor clears the failure state.
+            let counted: Vec<&(String, ToolRunOutput)> = results
+                .iter()
+                .filter(|(id, _)| {
+                    call_names
+                        .get(id)
+                        .is_none_or(|name| !self.tool_presents_cards(name))
+                })
+                .collect();
+            let batch_error = counted.iter().find_map(|(id, out)| match out {
                 ToolRunOutput::Err(err) => Some((
                     call_names.get(id).cloned().unwrap_or_else(|| id.clone()),
                     err.clone(),
                 )),
                 ToolRunOutput::Ok(_) => None,
             });
-            receipts.unresolved_error = batch_error.or_else(|| {
-                if results
-                    .iter()
-                    .all(|(_, out)| matches!(out, ToolRunOutput::Ok(_)))
-                {
-                    None
-                } else {
-                    receipts.unresolved_error.clone()
-                }
-            });
+            receipts.unresolved_error = match batch_error {
+                Some(error) => Some(error),
+                None if counted.is_empty() => receipts.unresolved_error.clone(),
+                None => None,
+            };
             let blocks = results
                 .into_iter()
                 .map(|(id, out)| match out {
@@ -6645,6 +6681,28 @@ async fn authorize(
                 config.sandbox.is_some(),
                 cwd,
             ) {
+                if config
+                    .revocation_check
+                    .as_ref()
+                    .is_some_and(|check| check(&call.name, &call.input))
+                {
+                    return Err(format!(
+                        "capability `{}` was revoked during this turn",
+                        call.name
+                    ));
+                }
+                return Ok(());
+            }
+            // A live envelope pre-authorizes what it covers — within the
+            // authority already in force, never beyond it. An ask a rule or
+            // the circuit breaker raised is not one a grant stands in for.
+            if !matches!(source, AskSource::Rule | AskSource::CircuitBreaker)
+                && config
+                    .envelope_check
+                    .as_ref()
+                    .and_then(|check| check(&call.name, &call.input))
+                    .is_some()
+            {
                 if config
                     .revocation_check
                     .as_ref()

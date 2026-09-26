@@ -262,14 +262,50 @@ fn find_open_tag(text: &str, tag: &str) -> Option<usize> {
     None
 }
 
+/// Whether a line opens or closes a fenced code block.
+fn is_fence(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.starts_with("```") || trimmed.starts_with("~~~")
+}
+
 /// The text with all scaffolding removed and outer blank lines trimmed.
+///
+/// Fenced code is content, whatever it contains, and passes through
+/// verbatim: a block that shows an `<intent>` element, a line reading `vak`
+/// or `Outcome: ok` is part of the answer, and removing it silently
+/// corrupts code a person will copy. Only the prose between fences is
+/// cleaned; an unterminated fence runs to the end of the text.
 pub fn clean_scaffolding(text: &str) -> String {
     let had_trailing_newline = text.ends_with('\n');
-    let stripped = strip_control_blocks(text);
-    let mut lines = stripped
-        .lines()
-        .filter(|line| !is_scaffolding_line(line))
-        .collect::<Vec<_>>();
+    let mut lines: Vec<String> = Vec::new();
+    let mut prose = String::new();
+    let mut in_code = false;
+    let flush = |prose: &mut String, lines: &mut Vec<String>| {
+        let stripped = strip_control_blocks(prose);
+        lines.extend(
+            stripped
+                .lines()
+                .filter(|line| !is_scaffolding_line(line))
+                .map(str::to_string),
+        );
+        prose.clear();
+    };
+    for line in text.lines() {
+        if in_code {
+            lines.push(line.to_string());
+            if is_fence(line) {
+                in_code = false;
+            }
+        } else if is_fence(line) {
+            flush(&mut prose, &mut lines);
+            lines.push(line.to_string());
+            in_code = true;
+        } else {
+            prose.push_str(line);
+            prose.push('\n');
+        }
+    }
+    flush(&mut prose, &mut lines);
     while let Some(first) = lines.first() {
         if first.trim().is_empty() {
             lines.remove(0);
@@ -315,6 +351,24 @@ mod tests {
             markers
                 .iter()
                 .all(|m| m.starts_with('[') && m.ends_with(']'))
+        );
+    }
+
+    /// Code a person will copy is never edited: inside a fence, a line that
+    /// looks like runtime narration or a context tag is content.
+    #[test]
+    fn fenced_code_passes_through_verbatim() {
+        let text = "Run this:\n```\nvak\nOutcome: ok\n<intent>\n```\nSurface: cli\nDone.";
+        assert_eq!(
+            clean_scaffolding(text),
+            "Run this:\n```\nvak\nOutcome: ok\n<intent>\n```\nDone."
+        );
+        // An unterminated fence runs to the end, and the prose before it is
+        // still cleaned.
+        let open = "<intent>note</intent>Answer:\n~~~html\n<intent class=\"x\">";
+        assert_eq!(
+            clean_scaffolding(open),
+            "Answer:\n~~~html\n<intent class=\"x\">"
         );
     }
 

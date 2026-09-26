@@ -32,7 +32,11 @@ pub struct PermissionEngine {
     presenting: Vec<String>,
 }
 
-const READ_TOOLS: [&str; 8] = [
+/// Tools that read and change nothing. `commitments` reads the Agent's own
+/// portfolio, like `session_search` reads its own history: a model that must
+/// ask a person before it may look at its own obligations cannot answer
+/// "what are you working on?" on an unattended surface at all.
+const READ_TOOLS: [&str; 9] = [
     "read",
     "doc_read",
     "glob",
@@ -41,6 +45,7 @@ const READ_TOOLS: [&str; 8] = [
     "search",
     "session_search",
     "skill",
+    "commitments",
 ];
 const PATH_SCOPED_READ_TOOLS: [&str; 5] = ["read", "doc_read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 3] = ["write", "edit", "office_apply"];

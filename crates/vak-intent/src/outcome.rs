@@ -247,10 +247,14 @@ pub struct InterventionRequest {
     pub text: String,
     pub source: ControlSource,
     pub target_revision: Option<u64>,
-    /// For an agent source: the session the intervention is aimed at, so
-    /// "own children only" can be checked.
+    /// The session the intervention is aimed at.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target_session_id: Option<String>,
+    /// The session that dispatched the target, from the target's own header.
+    /// An agent may control a session only when it is that parent: "own
+    /// children only" is a fact about the target, not about the caller.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_parent_session_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -277,11 +281,17 @@ pub struct InterventionEvaluation {
 pub fn evaluate_intervention(request: InterventionRequest) -> InterventionEvaluation {
     use InterventionDecision as D;
     use InterventionKind as K;
+    // Its own child: the target names this agent as the session that
+    // dispatched it. Any other session — a sibling, another agent's run, a
+    // person's — is not the agent's to stop.
     let own_subtree = match &request.source {
-        ControlSource::Agent { session_id, .. } => request
-            .target_session_id
-            .as_deref()
-            .is_some_and(|target| target != session_id),
+        ControlSource::Agent { session_id, .. } => {
+            request.target_parent_session_id.as_deref() == Some(session_id.as_str())
+                && request
+                    .target_session_id
+                    .as_deref()
+                    .is_some_and(|target| target != session_id)
+        }
         _ => false,
     };
     let (decision, reason, creates_revision): (D, &str, bool) =
@@ -971,7 +981,20 @@ pub fn evaluate_requirements_with_state(
 impl OutcomeSpec {
     /// A named file deliverable cannot be established by prose alone. This
     /// conservative signal only affects outcome assessment; it grants no tool.
+    ///
+    /// Only a request with a part that produces something — authoring,
+    /// modifying, operating — can owe a file: "explain how to write a
+    /// README.md" names a file and asks for an explanation, and demanding a
+    /// write for it made the stop gate send a correct answer back for a
+    /// file nobody asked for.
     pub fn saved_file_target(&self) -> Option<String> {
+        if !self
+            .acts
+            .iter()
+            .any(|act| matches!(act, Act::Author | Act::Modify | Act::Operate))
+        {
+            return None;
+        }
         let request = self.objective.to_ascii_lowercase();
         let asks_to_write = [
             "create ",
@@ -1050,13 +1073,9 @@ impl OutcomeSpec {
         }
     }
 
-    /// The baseline contract with the engagement's own stop rule.
-    ///
-    /// The engagement's `max_turns` is deliberately *not* projected here:
-    /// the agent loop's turn counter includes tool round-trips, so a cap
-    /// meant as "one reply" would end a short request that legitimately
-    /// needs two tool calls and an answer. That cap governs worker budgets
-    /// through `Limits::max_turns` instead.
+    /// The baseline contract with the engagement's own stop rule and the
+    /// primary act of every part. A reading never sets `max_turns`: the turn
+    /// budget is the operator's, whatever the request looked like.
     pub fn from_intent(objective: impl Into<String>, intent: &crate::Intent) -> Self {
         let mut spec = Self::from_reading(
             objective,
@@ -1167,16 +1186,25 @@ mod tests {
 
     #[test]
     fn named_saved_file_requires_evidence_but_an_inline_plan_does_not() {
+        let authoring = Reading {
+            act: Act::Author,
+            ..Reading::general()
+        };
         let file = OutcomeSpec::from_reading(
             "Create an invitation in this workspace as invitation.html",
-            &Reading::general(),
+            &authoring,
             1,
         );
         assert!(file.expects_saved_file());
-        let plan = OutcomeSpec::from_reading("Create a two-day lunch plan", &Reading::general(), 1);
+        let plan = OutcomeSpec::from_reading("Create a two-day lunch plan", &authoring, 1);
         assert!(!plan.expects_saved_file());
         let inspection = OutcomeSpec::from_reading("Explain README.md", &Reading::general(), 1);
         assert!(!inspection.expects_saved_file());
+        // Naming a file inside a question is not asking for one.
+        let explanation =
+            OutcomeSpec::from_reading("explain how to write a README.md", &Reading::general(), 1);
+        assert!(!explanation.expects_saved_file());
+        assert!(!explanation.requires_execution());
     }
 
     #[test]
@@ -1475,6 +1503,7 @@ mod tests {
             source,
             target_revision: Some(1),
             target_session_id: Some("child".into()),
+            target_parent_session_id: Some("parent".into()),
         }
     }
 
@@ -1518,6 +1547,14 @@ mod tests {
         // An agent trying to control the session it lives in — or one that
         // is not its child — is refused.
         assert_eq!(decide(K::Cancel, agent("child")), D::Rejected);
+        assert_eq!(decide(K::Cancel, agent("sibling")), D::Rejected);
+        assert_eq!(decide(K::Pause, agent("stranger")), D::Rejected);
+        assert_eq!(decide(K::Resume, agent("stranger")), D::Rejected);
+        // Without the target's parentage there is nothing to prove, so the
+        // answer is no.
+        let mut unknown_parent = intervention(K::Cancel, agent("parent"));
+        unknown_parent.target_parent_session_id = None;
+        assert_eq!(evaluate_intervention(unknown_parent).decision, D::Rejected);
         assert_eq!(decide(K::Replan, agent("parent")), D::RequiresHuman);
         assert_eq!(decide(K::Approve, agent("parent")), D::Rejected);
 

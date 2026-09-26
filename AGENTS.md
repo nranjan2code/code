@@ -631,9 +631,10 @@ in progress, and the rest of V4 follows it.
     harness, which means the host defines a vocabulary and capabilities are
     data classified against it, never a table of instance names.
 32. **Intent narrows, never widens** (docs/design/47-commitment-kernel.md).
-    A resolved engagement may subtract a capability, shorten the frozen ladder
-    to a prefix, lower a budget, or *raise* an approval floor. It may never
-    grant a tool, extend or reorder a ladder, raise a cap, or lower a floor.
+    A resolved engagement may lower a budget, lower a permission ceiling, or
+    *raise* an approval floor. It may never grant a tool, touch the route
+    ladder, cap the turn budget or delegation, raise a cap, or lower a floor:
+    those caps only ever removed capacity from requests the reader got wrong.
     This is a property of the types rather than a rule to remember: `Limits`
     is a meet semilattice whose top element reproduces pre-kernel behaviour,
     `Limits::meet` is the only composition operator offered, `is_at_most`
@@ -651,11 +652,14 @@ in progress, and the rest of V4 follows it.
     lineage); the turn's engagement meets every authority-bearing limit
     across them and unions their domains. Resolver tiers 2/3 may raise
     stakes or evidence and never lower either; their limits meet the free
-    tier's. The tier-1 lexicon is pinned to `RESOLVER_VERSION` by a digest
-    test, and `now` is an input to `resolve`/`derive`, never a clock read
-    inside them. An envelope is pre-authorization *within* existing
-    authority, never a grant of new authority, and irreversible work reaches
-    a human whatever was delegated. Control authority comes from the
+    tier's. A weak reading keeps the risk its words stated: it is never too
+    weak to raise caution. The tier-1 lexicon is pinned to `RESOLVER_VERSION`
+    by a digest test, and nothing in `resolve`/`derive` reads a clock. An
+    envelope is pre-authorization *within* existing authority, never a grant
+    of new authority: it narrows the strands that serve its commitment and
+    covers actions one gate at a time, read fresh at each, and irreversible
+    work and an operator's ask rule reach a human whatever was delegated.
+    Control authority comes from the
     channel, never from text: `ControlSource` is stamped by the transport,
     human free text is always steering, and only an explicit command
     (`/stop`, `/pause`, `/goal replace …`, a bare `stop`) is control.

@@ -2609,7 +2609,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, plugins.network_allow, server.bus";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2672,6 +2672,16 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             }
             if fc.intent.escalate.as_deref() == Some("cloud") {
                 fc.intent.escalate = None;
+            }
+            // Switching the kernel or its posture off removes the approval
+            // floor it raises — "force push to production" asks even under
+            // auto-approve only while both are on — so turning either off is
+            // disabling a protection, which is as privileged as granting.
+            if fc.intent.enabled == Some(false) {
+                fc.intent.enabled = None;
+            }
+            if fc.intent.posture == Some(false) {
+                fc.intent.posture = None;
             }
             // Network exposure is not a project's decision to make. `bind`
             // chooses which interface answers, `trusted_hosts` relaxes the
@@ -2929,17 +2939,40 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
     cfg.intent.enabled = merged.intent.enabled.unwrap_or(true);
     // Clamped rather than rejected: a nonsensical threshold should not stop
     // the runtime, and the clamp keeps the ordering invariant that
-    // `provisional <= accept` even if an operator inverts them.
-    cfg.intent.accept_confidence = merged
-        .intent
-        .accept_confidence
-        .unwrap_or(0.75)
-        .clamp(0.0, 1.0);
-    cfg.intent.provisional_confidence = merged
-        .intent
-        .provisional_confidence
-        .unwrap_or(0.45)
-        .clamp(0.0, cfg.intent.accept_confidence);
+    // `provisional <= accept` even if an operator inverts them. TOML can
+    // spell `nan` and `inf`, and `clamp` passes NaN straight through, where
+    // every comparison against it is false — so a non-finite value is
+    // replaced by the default before it is clamped.
+    let mut finite = |value: Option<f64>, default: f64, key: &str| match value {
+        Some(value) if !value.is_finite() => {
+            cfg.warnings.push(format!(
+                "{key} = {value} is not a finite number; using {default}"
+            ));
+            default
+        }
+        other => other.unwrap_or(default),
+    };
+    let accept = finite(
+        merged.intent.accept_confidence,
+        0.75,
+        "intent.accept_confidence",
+    );
+    let provisional = finite(
+        merged.intent.provisional_confidence,
+        0.45,
+        "intent.provisional_confidence",
+    );
+    let max_classify = finite(
+        merged.intent.max_classify_usd,
+        0.01,
+        "intent.max_classify_usd",
+    );
+    let lifetime_budget = merged
+        .commitment
+        .lifetime_budget_usd
+        .map(|budget| finite(Some(budget), 0.0, "commitment.lifetime_budget_usd"));
+    cfg.intent.accept_confidence = accept.clamp(0.0, 1.0);
+    cfg.intent.provisional_confidence = provisional.clamp(0.0, cfg.intent.accept_confidence);
     cfg.intent.slice_capabilities = merged.intent.slice_capabilities.unwrap_or(true);
     cfg.intent.posture = merged.intent.posture.unwrap_or(true);
     cfg.intent.escalate = match merged.intent.escalate.as_deref() {
@@ -2959,11 +2992,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         .classify_model
         .clone()
         .filter(|model| !model.trim().is_empty());
-    cfg.intent.max_classify_usd = merged
-        .intent
-        .max_classify_usd
-        .unwrap_or(0.01)
-        .clamp(0.0, 1.0);
+    cfg.intent.max_classify_usd = max_classify.clamp(0.0, 1.0);
     cfg.intent.classify_timeout_secs = merged
         .intent
         .classify_timeout_secs
@@ -2986,10 +3015,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
 
     // --- durable commitments ---
     cfg.commitment.enabled = merged.commitment.enabled.unwrap_or(true);
-    cfg.commitment.lifetime_budget_usd = merged
-        .commitment
-        .lifetime_budget_usd
-        .filter(|budget| *budget > 0.0);
+    cfg.commitment.lifetime_budget_usd = lifetime_budget.filter(|budget| *budget > 0.0);
     cfg.commitment.stall_limit = merged.commitment.stall_limit.unwrap_or(3).clamp(1, 100);
     cfg.commitment.review_every_hours = merged
         .commitment
@@ -4601,6 +4627,46 @@ mod tests {
         let trusted = load_with_trust(dir.path(), true).unwrap();
         assert_eq!(trusted.intent.autonomy, "autonomous");
         assert_eq!(trusted.intent.escalate, "cloud");
+    }
+
+    /// Switching the kernel or its posture off removes the approval floor it
+    /// raises for irreversible work; a cloned repository may not do that to
+    /// itself, and a trusted one still may.
+    #[test]
+    fn an_untrusted_project_cannot_switch_the_intent_floor_off() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(dir.path(), "[intent]\nenabled = false\nposture = false\n");
+        let cfg = load_with_trust(dir.path(), false).unwrap();
+        assert!(cfg.intent.enabled);
+        assert!(cfg.intent.posture);
+        let trusted = load_with_trust(dir.path(), true).unwrap();
+        assert!(!trusted.intent.enabled);
+        assert!(!trusted.intent.posture);
+    }
+
+    /// TOML can spell `nan` and `inf`. A threshold or a cap every comparison
+    /// is false against would silently switch its check off, so a
+    /// non-finite value falls back to the default with a warning.
+    #[test]
+    fn non_finite_intent_numbers_fall_back_to_their_defaults() {
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[intent]\naccept_confidence = nan\nprovisional_confidence = inf\n\
+             max_classify_usd = nan\n[commitment]\nlifetime_budget_usd = nan\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.intent.accept_confidence, 0.75);
+        assert_eq!(cfg.intent.provisional_confidence, 0.45);
+        assert_eq!(cfg.intent.max_classify_usd, 0.01);
+        assert_eq!(cfg.commitment.lifetime_budget_usd, None);
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("intent.accept_confidence")),
+            "{:?}",
+            cfg.warnings
+        );
     }
 
     #[test]

@@ -21,7 +21,21 @@ use serde_json::{Value, json};
 use vak_commit::{CommitmentLedger, SchedulerContext, rank};
 
 pub struct CommitmentsTool {
+    /// The Agent's own home: commitments are held by the Agent that took
+    /// them on (docs/design/64-agent-owned-platform.md).
     pub sessions_home: std::path::PathBuf,
+    /// The conversation audience asking. When set, only commitments that
+    /// audience asked for are visible: an Agent serving several chats never
+    /// shows one chat what another asked of it.
+    pub audience_id: Option<String>,
+}
+
+impl CommitmentsTool {
+    fn visible(&self, commitment: &vak_commit::Commitment) -> bool {
+        self.audience_id
+            .as_deref()
+            .is_none_or(|audience| commitment.spec.audience_id.as_deref() == Some(audience))
+    }
 }
 
 #[async_trait::async_trait]
@@ -74,6 +88,7 @@ impl vak_tools::Tool for CommitmentsTool {
             let all = ledger.all();
             let matches: Vec<_> = all
                 .iter()
+                .filter(|c| self.visible(c))
                 .filter(|c| c.commitment_id == id || c.commitment_id.starts_with(id))
                 .collect();
             return match matches.as_slice() {
@@ -88,11 +103,14 @@ impl vak_tools::Tool for CommitmentsTool {
             };
         }
 
-        let commitments = if include_closed {
+        let commitments: Vec<_> = if include_closed {
             ledger.all()
         } else {
             ledger.open()
-        };
+        }
+        .into_iter()
+        .filter(|commitment| self.visible(commitment))
+        .collect();
         if commitments.is_empty() {
             return vak_tools::ToolOutput::ok(
                 "No commitments. Nothing asked of this agent so far has needed to \
@@ -229,6 +247,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tool = CommitmentsTool {
             sessions_home: dir.path().to_path_buf(),
+            audience_id: None,
         };
         let out = tool.execute(&json!({}), &ctx()).await;
         assert!(!out.is_error);
@@ -243,6 +262,7 @@ mod tests {
         open(dir.path(), Evidence::Verified);
         let tool = CommitmentsTool {
             sessions_home: dir.path().to_path_buf(),
+            audience_id: None,
         };
         let out = tool.execute(&json!({}), &ctx()).await;
         assert!(
@@ -273,6 +293,7 @@ mod tests {
             .unwrap();
         let tool = CommitmentsTool {
             sessions_home: dir.path().to_path_buf(),
+            audience_id: None,
         };
         let out = tool.execute(&json!({ "id": &id[..8] }), &ctx()).await;
         assert!(out.content.contains("cargo test passes"));
@@ -286,6 +307,7 @@ mod tests {
         open(dir.path(), Evidence::None);
         let tool = CommitmentsTool {
             sessions_home: dir.path().to_path_buf(),
+            audience_id: None,
         };
         // uuid v7 ids share a time-ordered prefix, so a one-character prefix
         // is genuinely ambiguous here.
@@ -294,11 +316,55 @@ mod tests {
         assert!(out.content.contains("longer prefix"));
     }
 
+    /// An Agent serving two chats never shows one what the other asked of it,
+    /// by listing or by id.
+    #[tokio::test]
+    async fn one_audience_never_sees_anothers_commitments() {
+        let dir = tempfile::tempdir().unwrap();
+        let ledger = CommitmentLedger::new(dir.path());
+        let mut spec = vak_commit::spec_from_reading(
+            "renew the lease for the other chat",
+            Reading {
+                horizon: Horizon::Durable,
+                ..Reading::general()
+            },
+            Vec::new(),
+            dir.path().to_path_buf(),
+            Economics::default(),
+        );
+        spec.audience_id = Some("telegram:other".into());
+        let theirs = ledger.open_commitment(spec).unwrap();
+        let tool = CommitmentsTool {
+            sessions_home: dir.path().to_path_buf(),
+            audience_id: Some("telegram:mine".into()),
+        };
+        let listed = tool.execute(&json!({}), &ctx()).await;
+        assert!(
+            listed.content.contains("No commitments"),
+            "{}",
+            listed.content
+        );
+        let by_id = tool.execute(&json!({ "id": theirs }), &ctx()).await;
+        assert!(by_id.is_error);
+
+        let owner = CommitmentsTool {
+            sessions_home: dir.path().to_path_buf(),
+            audience_id: Some("telegram:other".into()),
+        };
+        let listed = owner.execute(&json!({}), &ctx()).await;
+        assert!(
+            listed.content.contains("renew the lease"),
+            "{}",
+            listed.content
+        );
+    }
+
     #[tokio::test]
     async fn an_unknown_id_is_an_error_value_not_a_panic() {
         let dir = tempfile::tempdir().unwrap();
         let tool = CommitmentsTool {
             sessions_home: dir.path().to_path_buf(),
+            audience_id: None,
         };
         let out = tool.execute(&json!({ "id": "nope" }), &ctx()).await;
         assert!(out.is_error);

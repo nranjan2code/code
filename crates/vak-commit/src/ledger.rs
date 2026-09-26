@@ -9,7 +9,7 @@
 //! claiming success is refused unless the evidence actually supports it. A
 //! ledger that can record a lie is not an audit trail.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -144,15 +144,11 @@ pub enum LedgerError {
     Closure(#[from] ClosureRefusal),
 }
 
-/// Held while one check-and-append runs; removes the lock file on drop.
+/// Held while one check-and-append runs. The OS releases the lock when the
+/// file closes — on drop, and when a process dies holding it — so there is
+/// no stale lock to detect and none to break.
 struct LedgerLock {
-    path: std::path::PathBuf,
-}
-
-impl Drop for LedgerLock {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
+    _file: std::fs::File,
 }
 
 /// Append-only JSONL of commitment events, one file per home.
@@ -180,9 +176,13 @@ impl CommitmentLedger {
     /// The check happens here rather than in a caller because there are many
     /// callers and exactly one ledger: a rule enforced at the write boundary
     /// cannot be bypassed by a surface that forgot about it. The check and
-    /// the append happen under a lock file, so two writers — a running turn
-    /// and `vak commit close`, or the upkeep tick — cannot both read
+    /// the append happen under an exclusive lock, so two writers — a running
+    /// turn and `vak commit close`, or the upkeep tick — cannot both read
     /// "not closed" and both close it.
+    ///
+    /// A closure's strength is the runtime's to state, not the caller's: it
+    /// is recomputed here from the criteria as they stand, so a `Closed`
+    /// event can never record stronger evidence than the commitment holds.
     pub fn append(&self, event: &Event) -> Result<(), LedgerError> {
         let _guard = self.lock()?;
         let current = self
@@ -193,42 +193,31 @@ impl CommitmentLedger {
         }
         if let EventKind::Closed { verdict, .. } = &event.kind {
             // The closure invariant, as a hard error rather than a lint.
-            current.may_close(*verdict)?;
+            let achieved = current.may_close(*verdict)?;
+            let mut event = event.clone();
+            if let EventKind::Closed { strength, .. } = &mut event.kind {
+                *strength = achieved;
+            }
+            return self.append_unchecked(&event);
         }
         self.append_unchecked(event)
     }
 
     /// A cross-process lock on the ledger, held for one check-and-append.
-    /// `create_new` is atomic on every filesystem vak runs on; a stale lock
-    /// from a crashed process is broken after the wait.
+    /// The lock file itself is never removed: deleting it while another
+    /// writer waits on it would hand the two of them different files.
     fn lock(&self) -> Result<LedgerLock, LedgerError> {
         let path = self.path.with_extension("lock");
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let try_lock = || {
-            std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)
-        };
-        for _ in 0..400u32 {
-            match try_lock() {
-                Ok(_) => return Ok(LedgerLock { path }),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-                Err(error) => return Err(LedgerError::Io(error)),
-            }
-        }
-        // Two seconds is far longer than any append takes; a lock held that
-        // long belongs to a process that died holding it. Break it and try
-        // once more.
-        let _ = std::fs::remove_file(&path);
-        match try_lock() {
-            Ok(_) => Ok(LedgerLock { path }),
-            Err(error) => Err(LedgerError::Io(error)),
-        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&path)?;
+        file.lock()?;
+        Ok(LedgerLock { _file: file })
     }
 
     /// Append without the closure check. Used by the projector's own tests and
@@ -246,16 +235,17 @@ impl CommitmentLedger {
         Ok(())
     }
 
-    /// Every event, oldest first. Corrupt lines are skipped rather than
-    /// trusted — a malformed row must never silently become a state change.
+    /// Every event, oldest first. A corrupt line — torn, not UTF-8, or not
+    /// an event — is skipped rather than trusted, and never ends the read:
+    /// a malformed row must not become a state change, and must not hide
+    /// every row written after it either.
     pub fn events(&self) -> Vec<Event> {
-        let Ok(file) = std::fs::File::open(&self.path) else {
+        let Ok(bytes) = std::fs::read(&self.path) else {
             return Vec::new();
         };
-        BufReader::new(file)
-            .lines()
-            .map_while(Result::ok)
-            .filter_map(|line| serde_json::from_str::<Event>(&line).ok())
+        bytes
+            .split(|byte| *byte == b'\n')
+            .filter_map(|line| serde_json::from_slice::<Event>(line).ok())
             .collect()
     }
 
@@ -369,8 +359,11 @@ pub fn project(events: &[Event]) -> Option<Commitment> {
                 episode_id,
                 session_id,
             } => {
+                // A new episode is someone working it again: whatever
+                // blocked or suspended the last one is no longer the state.
                 commitment.phase = Phase::Active;
                 commitment.suspension = None;
+                commitment.blocker = None;
                 commitment.episodes.push(Episode {
                     episode_id: episode_id.clone(),
                     session_id: session_id.clone(),
@@ -513,5 +506,6 @@ pub fn spec_from_reading(
         cwd,
         supersedes: None,
         thread_id: None,
+        audience_id: None,
     }
 }

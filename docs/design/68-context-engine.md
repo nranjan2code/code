@@ -383,8 +383,17 @@ tolerate topic changes:
   the superseded directives as "earlier, now paused". No cut, a re-weighting.
 - **Stale data** (the directive asks for a value as it stands now — temporal
   deixis such as "current", "right now", "today", "latest" sets the
-  `live-data` domain on the reading — and no retrieval-shaped call succeeded
-  in the run): the answer or card can only repeat an earlier turn's figure.
+  `live-data` domain on the reading, but only in a request that seeks a fact
+  (answer, locate, analyse) and not beside something local or a time: "the
+  current price of copper" is live data, "the current directory" and
+  "refactor the current parser" are not — and no call that observes current
+  state succeeded in the run): the answer or card can only repeat an earlier
+  turn's figure. An observation is any call whose capability declares that
+  it reads the world as it is now — a retrieval, and equally reading a file,
+  listing a directory or running a command (`AgentConfig::observation_check`,
+  built from `serves`): demanding a web search for "what is on the current
+  branch" replaced correct answers with "I could not retrieve a current
+  value".
   A card call is intercepted before execution and answered with a
   `[freshness-check]` error value the model repairs by retrieving first; a
   prose answer gets the same as one redo nudge. An explicit "no live data"

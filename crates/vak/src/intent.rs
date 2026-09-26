@@ -79,11 +79,21 @@ fn show_policy(core: &Core) -> i32 {
     // loop closes on a person rather than on nothing.
     let ledger = vak_core::misread::MisreadLedger::new(&core.sessions_home());
     let cells = ledger.accuracy();
-    let observed: u64 = cells.iter().map(|cell| cell.observations()).sum();
-    println!("  readings observed    {observed}");
+    let observed: u64 = cells
+        .iter()
+        .filter(|cell| cell.resolver_version == vak_intent::RESOLVER_VERSION)
+        .map(|cell| cell.observations())
+        .sum();
+    println!(
+        "  readings observed    {observed} (resolver v{})",
+        vak_intent::RESOLVER_VERSION
+    );
     let weak = vak_core::misread::weak_cells(&ledger, 5);
     if weak.is_empty() {
-        println!("  weak cells           none (fewer than 5 observations, or accuracy ≥ 0.75)");
+        println!(
+            "  weak cells           none (nothing contradicted, fewer than 5 observations, \
+             or accuracy ≥ 0.75)"
+        );
     } else {
         for cell in weak {
             let wanted = cell
@@ -176,6 +186,7 @@ fn explain(
     let authority = core.turn_authority_for(&core_surface);
     let resolution = vak_core::intent::resolve_turn(
         prompt,
+        "",
         &core_surface,
         &[],
         vak_core::intent::workspace_facts(core.cwd()),
@@ -183,7 +194,6 @@ fn explain(
         &declared,
         &authority,
         &vak_core::intent::resolver_config(core.config()),
-        chrono::Utc::now(),
     );
     let escalation = match &resolution {
         vak_intent::Resolution::Escalate { reason, .. } => Some(reason.clone()),
@@ -667,6 +677,12 @@ pub(crate) fn run_grant(
             return 2;
         }
     };
+    // A limit that is not a finite, non-negative amount is no limit: `NaN`
+    // compares false against every spend and would silently remove it.
+    if spend_usd.is_some_and(|cap| !cap.is_finite() || cap < 0.0) {
+        eprintln!("error: --spend-usd must be a finite amount of zero or more");
+        return 2;
+    }
     // Assuming a default for an irreversible action because nobody replied is
     // the exact autonomy this system exists to prevent, so the refusal is
     // enforced rather than documented.
@@ -680,7 +696,7 @@ pub(crate) fn run_grant(
     }
 
     let envelope = vak_intent::Envelope {
-        envelope_id: format!("env-{}", chrono::Utc::now().timestamp_millis()),
+        envelope_id: uuid::Uuid::now_v7().to_string(),
         granted_by: std::env::var("USER").unwrap_or_else(|_| "operator".into()),
         granted_at: chrono::Utc::now(),
         expires_at: hours.map(|h| chrono::Utc::now() + chrono::Duration::hours(h)),

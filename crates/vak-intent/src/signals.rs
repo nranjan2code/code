@@ -8,11 +8,31 @@
 //! this tier is not.
 //!
 //! Signals *vote*, they do not decide. Each observation contributes weight to
-//! one or more axis values, the resolver takes the argmax per axis, and
-//! confidence comes from the margin between the winner and the runner-up. A
-//! request that produces no signals therefore lands at low confidence and
-//! falls back to the general engagement, which is exactly the desired
+//! one or more axis values, and [`Votes::winner`] turns the tally into a
+//! reading. A request that produces no signals lands at low confidence and
+//! falls back to the orienting engagement, which is exactly the desired
 //! behaviour for input this lexicon has never seen.
+//!
+//! # What may vote
+//!
+//! Words vote only from the part of the message that is a request. Two
+//! things are set aside first:
+//!
+//! * **Pasted material** — fenced code, and runs of lines that are not prose
+//!   (log lines, CSV rows, stack frames, indented code). A log line that says
+//!   "worker deploy job 12 for customer account" is data, not an instruction
+//!   to deploy anything; before this rule a 300-line log produced 301
+//!   "parts", an irreversible reading and a 26 KB note.
+//! * **Statements** — a clause that starts with its subject ("the deploy
+//!   failed", "it crashes on empty input") describes the situation; its
+//!   nouns are not verbs. Such a clause keeps its stakes, evidence and
+//!   recency words as context, but casts no act vote.
+//!
+//! What remains is read by clause role: an imperative ("fix the parser"), a
+//! question ("did the email send?"), a request phrased as a wish ("I want
+//! the parser refactored"), or social talk ("thanks!").
+
+use std::sync::LazyLock;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,7 +45,7 @@ use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Modality, Stakes}
 pub enum SignalKind {
     /// A word or phrase in the request.
     Lexical,
-    /// Shape of the text: length, code fences, paths, URLs.
+    /// Shape of the text: code fences, paths, URLs, pasted material.
     Structural,
     /// Reference to something not in the request ("this file", "that error").
     Deictic,
@@ -127,8 +147,6 @@ impl Surface {
             "chat" | "telegram" | "discord" | "slack" | "gateway" => Some(Surface::Chat),
             "cron" | "task" | "schedule" | "watchdog" => Some(Surface::Cron),
             "heartbeat" => Some(Surface::Heartbeat),
-            // "subagent" is kept for callers (saved scripts, dashboards,
-            // muscle memory) built against the pre-rename surface name.
             "worker" | "child" | "subagent" => Some(Surface::Worker),
             _ => None,
         }
@@ -164,9 +182,6 @@ pub struct WorkspaceFacts {
     /// Uncommitted changes present. Raises stakes: work here is recoverable
     /// only if a checkpoint is taken, because git alone will not save it.
     pub has_uncommitted_changes: bool,
-    /// Paths touched recently, used to resolve deictic references.
-    #[serde(default)]
-    pub recent_paths: Vec<String>,
 }
 
 /// Facts about the conversation so far.
@@ -175,10 +190,9 @@ pub struct HistoryFacts {
     /// What the previous turn was read as, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub previous_act: Option<Act>,
-    /// Index of this turn within the session; 0 is the first.
+    /// How many messages the conversation held before this request; `0`
+    /// means this is its first.
     pub turn_index: usize,
-    /// A commitment is already open and this request may belong to it.
-    pub commitment_open: bool,
     /// Threads from earlier turns that are still open, for strand lineage.
     #[serde(default)]
     pub open_threads: Vec<crate::strand::ThreadFact>,
@@ -188,6 +202,11 @@ pub struct HistoryFacts {
 #[derive(Debug, Clone, Default)]
 pub struct Request<'a> {
     pub text: &'a str,
+    /// A unique id the host mints for this turn (a UUIDv7). Strand ids are
+    /// `{turn_id}.{index}`, so a thread — and the commitment keyed by it — is
+    /// unique across turns, sessions and workspaces. Empty only in tests and
+    /// previews, where a positional id stands in.
+    pub turn_id: &'a str,
     pub surface: Surface,
     pub attachments: &'a [Attachment],
     pub workspace: WorkspaceFacts,
@@ -201,21 +220,14 @@ pub struct Request<'a> {
 
 // ------------------------------------------------------------- lexicon ---
 
-/// Verbs that indicate an act. One verb may vote for several acts; the
-/// argmax across all signals decides.
+/// Verbs that indicate an act. One verb may vote for several acts; the tally
+/// across all signals decides.
 ///
 /// Kept deliberately small and general. This is a *prior*, not a classifier:
 /// its job is to be right often enough on plain requests that the paid tiers
 /// stay rare, and to abstain rather than guess on anything unusual.
 const ACT_VERBS: &[(&str, Act, f64)] = &[
-    // Converse
-    ("hi", Act::Converse, 1.0),
-    ("hello", Act::Converse, 1.0),
-    ("hey", Act::Converse, 1.0),
-    ("thanks", Act::Converse, 1.0),
-    ("thank", Act::Converse, 0.8),
-    ("bye", Act::Converse, 1.0),
-    // Answer
+    // Answer. The wh-words are here because a question's head is one.
     ("what", Act::Answer, 0.8),
     ("why", Act::Answer, 0.8),
     ("how", Act::Answer, 0.8),
@@ -225,12 +237,14 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("summarise", Act::Answer, 0.7),
     ("tell", Act::Answer, 0.5),
     // Conversational delivery verbs describe the answer the user wants in
-    // this chat; they do not imply a workspace artifact. This distinction is
-    // especially important for clauses such as "give me the latest news" or
-    // "present it as a card": treating the presentation verb as Author makes
-    // the stop gate demand a file/edit receipt for an ordinary answer.
+    // this chat; they do not imply a workspace artifact. Treating
+    // "present it as a card" as Author made the stop gate demand a file or
+    // edit receipt for an ordinary answer.
     ("give", Act::Answer, 0.8),
     ("present", Act::Answer, 0.7),
+    ("translate", Act::Answer, 0.7),
+    ("define", Act::Answer, 0.7),
+    ("clarify", Act::Answer, 0.6),
     // Locate
     ("find", Act::Locate, 0.9),
     ("search", Act::Locate, 0.9),
@@ -240,6 +254,8 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("grep", Act::Locate, 1.0),
     ("look", Act::Locate, 0.5),
     ("show", Act::Locate, 0.7),
+    // Browsing reads the web; it does not act on it.
+    ("browse", Act::Locate, 0.6),
     // Analyze
     ("analyze", Act::Analyze, 1.0),
     ("analyse", Act::Analyze, 1.0),
@@ -250,6 +266,12 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("assess", Act::Analyze, 0.8),
     ("diagnose", Act::Analyze, 0.8),
     ("review", Act::Analyze, 0.7),
+    ("calculate", Act::Analyze, 0.8),
+    ("compute", Act::Analyze, 0.7),
+    ("measure", Act::Analyze, 0.7),
+    ("estimate", Act::Analyze, 0.7),
+    ("inspect", Act::Analyze, 0.7),
+    ("examine", Act::Analyze, 0.8),
     // Author
     ("write", Act::Author, 0.8),
     ("draft", Act::Author, 0.9),
@@ -272,9 +294,38 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("migrate", Act::Modify, 0.8),
     ("patch", Act::Modify, 0.8),
     ("debug", Act::Modify, 0.7),
-    // Operate. Several of these are common nouns too ("a blog post", "the
-    // release plan"), so they carry less weight than an unambiguous verb and
-    // rely on the leading-position bonus when they really are the action.
+    ("modify", Act::Modify, 0.9),
+    ("append", Act::Modify, 0.9),
+    ("prepend", Act::Modify, 0.9),
+    ("insert", Act::Modify, 0.8),
+    ("replace", Act::Modify, 0.8),
+    ("rewrite", Act::Modify, 0.8),
+    ("reformat", Act::Modify, 0.9),
+    ("convert", Act::Modify, 0.7),
+    ("tidy", Act::Modify, 0.7),
+    ("optimize", Act::Modify, 0.8),
+    ("optimise", Act::Modify, 0.8),
+    ("upgrade", Act::Modify, 0.8),
+    ("downgrade", Act::Modify, 0.8),
+    ("revert", Act::Modify, 0.9),
+    ("rebase", Act::Modify, 0.9),
+    ("merge", Act::Modify, 0.7),
+    // Commits and moves are local and undoable; both are also nouns
+    // ("the last commit"), so they carry less weight than a pure verb.
+    ("commit", Act::Modify, 0.6),
+    ("move", Act::Modify, 0.6),
+    ("reorder", Act::Modify, 0.8),
+    ("rearrange", Act::Modify, 0.8),
+    ("amend", Act::Modify, 0.8),
+    ("revise", Act::Modify, 0.8),
+    ("tweak", Act::Modify, 0.8),
+    ("uncomment", Act::Modify, 0.9),
+    ("enable", Act::Modify, 0.6),
+    ("disable", Act::Modify, 0.6),
+    // Operate: reaching outside the workspace. Several of these are common
+    // nouns too ("a blog post", "the release plan"), so they carry less
+    // weight than an unambiguous verb and rely on the head-position bonus
+    // when they really are the action.
     ("deploy", Act::Operate, 0.8),
     ("release", Act::Operate, 0.6),
     ("publish", Act::Operate, 0.9),
@@ -284,13 +335,22 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("install", Act::Operate, 0.8),
     ("restart", Act::Operate, 0.8),
     ("schedule", Act::Operate, 0.7),
-    ("watch", Act::Operate, 0.7),
-    ("monitor", Act::Operate, 0.8),
     ("click", Act::Operate, 0.8),
-    ("open", Act::Operate, 0.3),
-    ("browse", Act::Operate, 0.6),
     ("pay", Act::Operate, 0.9),
-    // Verify
+    ("notify", Act::Operate, 0.9),
+    ("remind", Act::Operate, 0.9),
+    ("alert", Act::Operate, 0.8),
+    // Pushing, uploading and buying reach someone else's system and cannot
+    // be quietly taken back. "Run" and "execute" are deliberately absent:
+    // "run the tests" is a check, and reading it as an operation would make
+    // it irreversible.
+    ("push", Act::Operate, 0.6),
+    ("upload", Act::Operate, 0.8),
+    ("submit", Act::Operate, 0.7),
+    ("purchase", Act::Operate, 0.9),
+    ("buy", Act::Operate, 0.8),
+    // Verify. Watching and monitoring observe; they change nothing, so they
+    // are checks rather than operations on the world.
     ("test", Act::Verify, 0.8),
     ("verify", Act::Verify, 1.0),
     ("check", Act::Verify, 0.8),
@@ -298,6 +358,10 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("confirm", Act::Verify, 0.7),
     ("audit", Act::Verify, 0.8),
     ("reproduce", Act::Verify, 0.8),
+    ("watch", Act::Verify, 0.7),
+    ("monitor", Act::Verify, 0.8),
+    ("compile", Act::Verify, 0.7),
+    ("lint", Act::Verify, 0.8),
     // Orchestrate
     ("orchestrate", Act::Orchestrate, 1.0),
     ("coordinate", Act::Orchestrate, 0.8),
@@ -312,28 +376,237 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("settings", Act::Govern, 0.6),
 ];
 
-/// Words that raise stakes when the act touches something.
-///
-/// Like the environment-derived votes, these apply only to effectful acts
-/// (see [`Extraction::stakes_from_words`]): "where does this config live"
-/// and "explain the customer model" are questions, and a question about
-/// production has no blast radius. Before this gate they read as
-/// `irreversible`, capped approval at `ask`, and told the model to confirm
-/// a step that cannot be undone.
+/// Greetings and thanks. Not verbs, so they never take the imperative bonus:
+/// "hey, what did we decide yesterday?" is a question with a greeting in
+/// front of it, and reading it as `converse` gave it minimal context.
+const SOCIAL_WORDS: &[(&str, f64)] = &[
+    ("hi", 1.0),
+    ("hello", 1.0),
+    ("hey", 1.0),
+    ("hiya", 1.0),
+    ("yo", 0.8),
+    ("thanks", 1.0),
+    ("thank", 0.8),
+    ("thx", 0.8),
+    ("cheers", 0.8),
+    ("bye", 1.0),
+    ("goodbye", 1.0),
+];
+
+/// Whole social phrases. Their words are consumed, so the `how` in "how are
+/// you" does not also vote for a factual answer.
+const SOCIAL_PHRASES: &[(&str, f64)] = &[
+    ("how are you", 1.3),
+    ("how is it going", 1.3),
+    ("how s it going", 1.3),
+    ("what s up", 1.3),
+    ("good morning", 1.3),
+    ("good afternoon", 1.3),
+    ("good evening", 1.3),
+    ("good night", 1.3),
+    ("nice to meet you", 1.3),
+    ("nice to see you", 1.3),
+    ("long time no see", 1.3),
+    ("see you later", 1.3),
+    ("see you soon", 1.3),
+    ("thank you", 1.0),
+];
+
+/// Acknowledgements stripped from the front of a clause. They carry no
+/// request of their own; alone they are social.
+const ACKNOWLEDGEMENTS: &[&str] = &["ok", "okay", "cool", "great", "sure", "alright", "right"];
+
+/// Polite and conversational openers stripped so the operational verb lands
+/// in head position.
+const PREAMBLES: &[&str] = &[
+    "could you please",
+    "can you please",
+    "would you please",
+    "would you mind",
+    "could you",
+    "can you",
+    "would you",
+    "will you",
+    "can u",
+    "can we",
+    "could we",
+    "please",
+    "pls",
+    "plz",
+    "kindly",
+    "just",
+    "go ahead and",
+    "help me to",
+    "help me",
+    "i would like you to",
+    "i d like you to",
+    "i want you to",
+    "i need you to",
+    "i want to",
+    "i need to",
+    "we need to",
+    "let s",
+    "lets",
+];
+
+/// Sequencing words at the front of a clause. Structure, not verbs.
+const LEAD_FILLERS: &[&str] = &[
+    "first", "firstly", "second", "secondly", "third", "thirdly", "next", "now", "then", "finally",
+    "lastly", "also", "and", "so", "actually", "well", "hmm", "oh", "btw",
+];
+
+/// Openers that make a statement a request: "I want the parser refactored",
+/// "what I need is for you to refactor the module". Their words are
+/// consumed: the `what` of a pseudo-cleft does not ask a question.
+const DESIRE_PREFIXES: &[&str] = &[
+    "what i need",
+    "what we need",
+    "what i want",
+    "what we want",
+    "what i d like",
+    "all i need",
+    "i want",
+    "i d like",
+    "i would like",
+    "we want",
+    "we d like",
+    "we would like",
+    "i need",
+    "we need",
+    "i wish",
+];
+
+/// Who the requester is. "Alert me", "send me the report": delivering a
+/// result to the person asking is an answer, not an irreversible operation
+/// on someone else.
+const REQUESTER: &[&str] = &["me", "us", "myself", "ourselves"];
+
+/// A question's head: wh-words vote through [`ACT_VERBS`]; these auxiliaries
+/// open a question when a subject follows ("did the email send", "can I
+/// deploy on Friday", "is it done").
+const AUX_WORDS: &[&str] = &[
+    "is", "are", "was", "were", "am", "does", "did", "has", "have", "had", "can", "could", "will",
+    "would", "should", "shall", "may", "might", "isn", "aren", "wasn", "weren", "doesn", "didn",
+    "hasn", "haven", "hadn", "couldn", "wouldn", "shouldn", "won", "do",
+];
+const WH_WORDS: &[&str] = &[
+    "what", "why", "how", "where", "when", "which", "who", "whom", "whose",
+];
+
+/// Words that follow an auxiliary in a question. `do` asks only before a
+/// person ("do you know"), because "do this every day" is an instruction.
+const QUESTION_SUBJECTS: &[&str] = &[
+    "i",
+    "you",
+    "we",
+    "they",
+    "he",
+    "she",
+    "it",
+    "this",
+    "that",
+    "these",
+    "those",
+    "the",
+    "there",
+    "my",
+    "our",
+    "your",
+    "their",
+    "his",
+    "her",
+    "its",
+    "any",
+    "anyone",
+    "anything",
+    "anybody",
+    "everyone",
+    "everything",
+    "someone",
+    "something",
+    "all",
+    "each",
+    "every",
+];
+const PERSONS: &[&str] = &["i", "you", "we", "they", "he", "she"];
+
+/// Verbs that, in second place, make the first word a subject: "build fails
+/// on CI", "deploy failed", "value moved here". A statement describes the
+/// situation; its first word is not an instruction even when it could be a
+/// verb somewhere else.
+const STATEMENT_VERBS: &[&str] = &[
+    "is", "are", "was", "were", "has", "have", "had", "does", "did", "doesn", "didn", "isn",
+    "wasn", "won", "can", "cannot", "should", "will", "would", "fails", "failed", "failing",
+    "occurs", "occurred", "happens", "happened", "crashes", "crashed", "crashing", "breaks",
+    "broke", "broken", "works", "worked", "returns", "returned", "throws", "threw", "shows",
+    "showed", "says", "said", "seems", "seemed", "looks", "looked", "keeps", "kept", "stopped",
+    "started", "hangs", "hung", "errors", "errored", "times", "timed", "panics", "panicked",
+    "moved", "passes", "passed", "runs", "ran", "went", "gets", "got",
+];
+
+/// A clause that starts with one of these is a statement unless a verb heads
+/// one of its sub-clauses: "it crashes on empty input", "the deploy failed".
+const SUBJECT_STARTERS: &[&str] = &[
+    "i",
+    "we",
+    "you",
+    "they",
+    "he",
+    "she",
+    "it",
+    "this",
+    "that",
+    "these",
+    "those",
+    "the",
+    "a",
+    "an",
+    "my",
+    "our",
+    "your",
+    "their",
+    "his",
+    "her",
+    "its",
+    "there",
+    "here",
+    "some",
+    "all",
+    "each",
+    "every",
+    "no",
+    "none",
+    "one",
+    "someone",
+    "something",
+    "everyone",
+    "everything",
+    "nothing",
+    "nobody",
+    "anyone",
+    "anything",
+];
+
+/// Words that raise stakes when the act touches something. They name the
+/// target environment or the nature of the operation, never a topic:
+/// "customer", "payment", "live" and "everyone" read "rename the Customer
+/// struct" and "fix the payment form validation" as irreversible, capped
+/// approval at `ask`, and told the model to confirm an edit.
 const STAKES_WORDS: &[(&str, Stakes, f64)] = &[
     ("production", Stakes::Irreversible, 1.0),
     ("prod", Stakes::Irreversible, 0.8),
-    ("live", Stakes::Irreversible, 0.5),
-    ("customer", Stakes::Irreversible, 0.7),
-    ("customers", Stakes::Irreversible, 0.7),
-    ("payment", Stakes::Irreversible, 0.9),
-    ("invoice", Stakes::Irreversible, 0.7),
     ("irreversible", Stakes::Irreversible, 1.0),
+    ("irreversibly", Stakes::Irreversible, 1.0),
     ("permanently", Stakes::Irreversible, 0.9),
-    ("everyone", Stakes::Irreversible, 0.6),
-    ("expensive", Stakes::Costly, 0.7),
-    ("budget", Stakes::Costly, 0.6),
-    ("quota", Stakes::Costly, 0.6),
+    ("force push", Stakes::Irreversible, 0.9),
+    // The flag spellings of the same commands: `git push --force`,
+    // `git push -f`, `git reset --hard` discard history or uncommitted work.
+    ("push force", Stakes::Irreversible, 0.9),
+    ("push f", Stakes::Irreversible, 0.9),
+    ("reset hard", Stakes::Irreversible, 0.9),
+    ("rm rf", Stakes::Irreversible, 1.0),
+    ("drop table", Stakes::Irreversible, 0.9),
+    ("drop database", Stakes::Irreversible, 1.0),
 ];
 
 /// Words that raise the evidence standard.
@@ -341,33 +614,56 @@ const EVIDENCE_WORDS: &[(&str, Evidence, f64)] = &[
     ("cite", Evidence::Cited, 1.0),
     ("cites", Evidence::Cited, 0.9),
     ("citation", Evidence::Cited, 1.0),
+    ("citations", Evidence::Cited, 1.0),
     // Matched exactly (see `EXACT_EVIDENCE_WORDS`): inflection would fold
     // "source code" into it.
     ("sources", Evidence::Cited, 0.8),
-    // `source` alone is not here: "source code", "the source file" and
-    // "open source" are everyday phrases with no evidentiary meaning, and
-    // a 0.4 vote that only ever won by default read every one of them as
-    // a citation requirement.
     ("evidence", Evidence::Cited, 0.6),
     ("prove", Evidence::Verified, 0.8),
     ("proof", Evidence::Verified, 0.7),
-    ("make sure", Evidence::Verified, 0.8),
-    ("ensure", Evidence::Verified, 0.7),
     ("passing", Evidence::Verified, 0.7),
-    ("audited", Evidence::Audited, 1.0),
     ("sign off", Evidence::Audited, 0.9),
-    ("acceptance", Evidence::Audited, 0.8),
+    ("signed off", Evidence::Audited, 0.9),
+    ("acceptance test", Evidence::Audited, 0.8),
+    ("acceptance testing", Evidence::Audited, 0.8),
 ];
 
 /// Evidence words whose inflections mean something else. `sources` must not
 /// match `source` — "the source code" is not a citation request.
 const EXACT_EVIDENCE_WORDS: &[&str] = &["sources"];
 
+/// "Make sure" and "ensure" demand machine-checkable proof only when the
+/// thing to be sure of is checkable: "make sure the tests pass" is a
+/// predicate, "make sure it rhymes" is a style instruction, and reading the
+/// latter as `verified` made the stop gate demand a shell receipt for a poem.
+const ASSURANCE_PHRASES: &[(&str, f64)] = &[("make sure", 0.8), ("ensure", 0.7)];
+const CHECKABLE_WORDS: &[&str] = &[
+    "test",
+    "tests",
+    "testing",
+    "pass",
+    "passes",
+    "passing",
+    "build",
+    "builds",
+    "compile",
+    "compiles",
+    "compiling",
+    "lint",
+    "ci",
+    "green",
+    "works",
+    "working",
+    "run",
+    "runs",
+];
+
 /// Temporal deixis: the request asks for a value as it stands *now*, which
-/// no model knows from training and which must therefore be retrieved on
-/// this turn (`live-data` domain, docs/design/68-context-engine.md §7 and
-/// `capability/domain.rs`). These are references to time, not to any topic
-/// — a topic word is never a routing key here.
+/// no model knows from training and which must therefore be observed on this
+/// turn (`live-data` domain, docs/design/68-context-engine.md §7). References
+/// to time, never to a topic. Whether it applies also depends on the act —
+/// only a request for a fact asks for a current value — which the resolver
+/// decides once the act is known.
 const RECENCY_PHRASES: &[(&str, f64)] = &[
     ("right now", 1.0),
     ("currently", 0.9),
@@ -379,28 +675,111 @@ const RECENCY_PHRASES: &[(&str, f64)] = &[
     ("this morning", 0.8),
     ("this week", 0.5),
     ("latest", 0.7),
-    ("real-time", 1.0),
     ("real time", 0.8),
-    ("live", 0.5),
     ("at the moment", 0.9),
     ("up to date", 0.7),
-    ("up-to-date", 0.7),
 ];
 
-/// Phrases implying the work outlives this turn.
+/// Nouns that make a recency word local rather than live: "the current
+/// directory", "the latest changes", "live reload". The workspace, the
+/// conversation and the running session are observed with local tools and
+/// hold no value a model could carry over stale from training.
+const LOCAL_NOUNS: &[&str] = &[
+    "directory",
+    "dir",
+    "folder",
+    "file",
+    "files",
+    "path",
+    "branch",
+    "commit",
+    "commits",
+    "diff",
+    "changes",
+    "change",
+    "working",
+    "workspace",
+    "project",
+    "repo",
+    "repository",
+    "codebase",
+    "code",
+    "implementation",
+    "function",
+    "method",
+    "class",
+    "module",
+    "line",
+    "lines",
+    "cursor",
+    "selection",
+    "tab",
+    "window",
+    "page",
+    "screen",
+    "session",
+    "conversation",
+    "chat",
+    "thread",
+    "context",
+    "task",
+    "plan",
+    "step",
+    "turn",
+    "user",
+    "config",
+    "configuration",
+    "settings",
+    "setup",
+    "build",
+    "test",
+    "tests",
+    "reload",
+    "preview",
+    "server",
+    "share",
+    "coding",
+    "edit",
+    "editing",
+    "demo",
+    "mode",
+    "state",
+    // The agent's own state is read with its own tools, not retrieved from
+    // the world: "what are you holding right now", "your current plan".
+    "you",
+    "your",
+    "yours",
+    "yourself",
+    "commitment",
+    "commitments",
+    "tasks",
+    "plans",
+    "inbox",
+    "memory",
+    "notes",
+    "reminders",
+];
+
+/// The runtime tells the model the time and date on every turn, so asking
+/// for them needs no retrieval.
+const TIME_WORDS: &[&str] = &[
+    "time", "date", "day", "weekday", "clock", "timezone", "hour", "year", "month",
+];
+
+/// Phrases implying the work outlives this turn. Sequencing words ("then",
+/// "after that") are not here: they separate the parts of one request, which
+/// is what strands are for, not a claim that the work spans sessions.
 const HORIZON_PHRASES: &[(&str, Horizon, f64)] = &[
     ("every day", Horizon::Durable, 1.0),
     ("every night", Horizon::Durable, 1.0),
     ("every morning", Horizon::Durable, 1.0),
+    ("every evening", Horizon::Durable, 1.0),
     ("every month", Horizon::Durable, 1.0),
-    ("each day", Horizon::Durable, 1.0),
-    ("each week", Horizon::Durable, 1.0),
-    ("nightly", Horizon::Durable, 0.9),
-    ("monthly", Horizon::Durable, 0.9),
-    ("continuously", Horizon::Durable, 0.9),
-    ("whenever", Horizon::Durable, 0.7),
     ("every week", Horizon::Durable, 1.0),
     ("every hour", Horizon::Durable, 1.0),
+    ("each day", Horizon::Durable, 1.0),
+    ("each week", Horizon::Durable, 1.0),
+    ("each month", Horizon::Durable, 1.0),
     ("every monday", Horizon::Durable, 1.0),
     ("every tuesday", Horizon::Durable, 1.0),
     ("every wednesday", Horizon::Durable, 1.0),
@@ -410,21 +789,19 @@ const HORIZON_PHRASES: &[(&str, Horizon, f64)] = &[
     ("every sunday", Horizon::Durable, 1.0),
     ("every weekday", Horizon::Durable, 1.0),
     ("every weekend", Horizon::Durable, 1.0),
+    ("nightly", Horizon::Durable, 0.9),
+    ("monthly", Horizon::Durable, 0.9),
     ("daily", Horizon::Durable, 0.9),
     ("weekly", Horizon::Durable, 0.9),
     ("hourly", Horizon::Durable, 0.9),
+    ("continuously", Horizon::Durable, 0.9),
+    ("whenever", Horizon::Durable, 0.7),
     ("keep watching", Horizon::Durable, 1.0),
     ("keep an eye", Horizon::Durable, 0.9),
     ("from now on", Horizon::Durable, 0.9),
     ("ongoing", Horizon::Durable, 0.8),
     ("until", Horizon::Durable, 0.4),
     ("over the next", Horizon::Durable, 0.7),
-    ("step by step", Horizon::Session, 0.7),
-    ("then", Horizon::Session, 0.3),
-    ("after that", Horizon::Session, 0.6),
-    ("and then", Horizon::Session, 0.6),
-    ("first", Horizon::Session, 0.3),
-    ("finally", Horizon::Session, 0.4),
 ];
 
 /// Recurrence words that are adjectives after a determiner ("the nightly
@@ -438,6 +815,18 @@ const DETERMINERS: &[&str] = &[
 pub(crate) const DEICTIC_WORDS: &[&str] = &[
     "this", "that", "it", "these", "those", "here", "there", "again", "same",
 ];
+
+/// Pronouns that leave a request with no object of its own when they end
+/// it: "fix it", "deploy that". "Write a function that parses dates" uses
+/// `that` as a relative pronoun and points at nothing.
+const BARE_PRONOUNS: &[&str] = &["it", "this", "that", "these", "those"];
+
+/// Words before a verb that still leave it heading its clause.
+const HEAD_PREDECESSORS: &[&str] = &[
+    "and", "then", "also", "plus", "next", "after", "or", "now", "please", "first", "finally", "so",
+];
+
+const IMPERATIVE_BONUS: f64 = 1.6;
 
 // ------------------------------------------------------------ scoring ---
 
@@ -457,10 +846,6 @@ pub trait AxisValue: Copy + PartialEq {
     /// `answer` are rival explanations, and evidence for one really is evidence
     /// against the other. `Stakes` is *ordered*: a signal saying "reversible"
     /// does not argue against "irreversible", it agrees with it more weakly.
-    /// Scoring an ordered axis by argmax over rivals made corroborating
-    /// evidence *reduce* confidence — a dirty working tree voting `reversible`
-    /// dragged "deploy to production" below the acceptance floor and dropped
-    /// it to the general engagement, losing the irreversible reading entirely.
     fn axis_rank(self) -> Option<u8> {
         None
     }
@@ -541,8 +926,8 @@ impl<T: AxisValue> Votes<T> {
     }
 
     /// Minimum weight before a signal may escalate an ordered axis. Filters
-    /// out the incidental 0.3-weight hints so a stray conjunction cannot
-    /// promote a one-liner to durable multi-day work.
+    /// out the incidental 0.3-weight hints so a stray word cannot promote a
+    /// one-liner to durable multi-day work.
     pub(crate) const ESCALATION_FLOOR: f64 = 0.5;
 
     /// Every value scoring within `band` of the winner, strongest first.
@@ -562,9 +947,9 @@ impl<T: AxisValue> Votes<T> {
         ranked
             .into_iter()
             .filter(|(_, weight)| {
-                // The winner is always retained.
-                // Contenders must meet the absolute signal floor (ESCALATION_FLOOR = 0.5) to reject sub-0.5 noise,
-                // and either fall within the relative band of the winner OR carry strong independent signal (>= 1.0).
+                // The winner is always retained. Others must clear the
+                // absolute floor, and either sit within the band of the
+                // winner or carry strong independent signal.
                 *weight >= best
                     || (*weight >= Self::ESCALATION_FLOOR
                         && (*weight >= best * (1.0 - band) || *weight >= 1.0))
@@ -578,14 +963,11 @@ impl<T: AxisValue> Votes<T> {
     /// Two rules, because the axes are not all the same shape:
     ///
     /// * **Categorical** (`Act`, `Clarity`): argmax with confidence from the
-    ///   margin over the runner-up. "Two readings scored 5.0 each" is genuine
-    ///   ambiguity worth escalating; "one scored 0.6 and nothing else scored"
-    ///   is a weak but unambiguous read.
+    ///   margin over the runner-up.
     /// * **Ordered** (`Stakes`, `Horizon`, `Evidence`): the highest level with
     ///   real support wins, and lower levels corroborate rather than compete.
-    ///   Confidence comes from that level's own weight. Taking the maximum is
-    ///   also the safe direction on every ordered axis here — more caution,
-    ///   a stricter proof standard, a longer horizon.
+    ///   Taking the maximum is also the safe direction on every ordered axis
+    ///   here — more caution, a stricter proof standard, a longer horizon.
     pub fn winner(&self) -> Option<(T, f64)> {
         let ranked = self.ranked();
         let (best, best_score) = ranked.first().copied()?;
@@ -593,14 +975,8 @@ impl<T: AxisValue> Votes<T> {
             return None;
         }
         if best.axis_rank().is_some() {
-            // Everything below the escalation floor abstains. The previous
-            // rule fell back to the strongest sub-floor vote and then
-            // scored it from a 0.7 baseline, so a lone 0.3 `then` produced a
-            // `session` horizon at 0.76 confidence — above the acceptance
-            // bar — and opened a durable commitment for "fix the
-            // authentication bug". A vote too weak to escalate on its own
-            // is not evidence of the level it names; the axis default
-            // (and its honest 0.5 confidence) applies instead.
+            // Everything below the escalation floor abstains: a vote too weak
+            // to escalate on its own is not evidence of the level it names.
             let (highest, weight) = ranked
                 .iter()
                 .filter(|(_, weight)| *weight >= Self::ESCALATION_FLOOR)
@@ -612,9 +988,7 @@ impl<T: AxisValue> Votes<T> {
         let runner_up = ranked.get(1).map(|(_, s)| *s).unwrap_or(0.0);
         // How much better the winner is, as a fraction of itself — not its
         // share of the total. Share-of-total punishes any second signal
-        // regardless of how weak: "research how to…" scored `analyze` at 0.9
-        // against `answer` at 0.4 and still read as near-ambiguous, because
-        // 0.5/1.3 is only 0.38. A 2.25x lead is not a coin flip.
+        // regardless of how weak.
         let margin = 1.0 - (runner_up / best_score).min(1.0);
         // A lone weak signal should not read as certainty either, so the
         // margin is damped by how much evidence there was at all.
@@ -623,22 +997,21 @@ impl<T: AxisValue> Votes<T> {
     }
 }
 
-/// Everything tier 1 concluded, before the resolver turns it into a reading.
+/// Everything tier 1 concluded about one part of a request, before the
+/// resolver turns it into a reading.
 #[derive(Debug, Clone, Default)]
 pub struct Extraction {
     pub signals: Vec<Signal>,
     pub act: Votes<Act>,
     pub horizon: Votes<Horizon>,
     /// Stakes stated by the request's own words. Applied only to effectful
-    /// acts, for the reason given on [`STAKES_WORDS`].
+    /// acts: a question about production has no blast radius.
     pub stakes_from_words: Votes<Stakes>,
     /// Stakes implied by the *environment* rather than by the request.
     ///
     /// Kept separate because it is only relevant to acts that actually touch
     /// something: a dirty working tree makes an edit riskier, and says nothing
-    /// whatsoever about the risk of saying hello. Folding it in unconditionally
-    /// made every greeting in a work-in-progress repository read as
-    /// `reversible`.
+    /// whatsoever about the risk of saying hello.
     pub stakes_from_environment: Votes<Stakes>,
     pub evidence: Votes<Evidence>,
     pub clarity: Votes<Clarity>,
@@ -647,31 +1020,18 @@ pub struct Extraction {
     pub attendance: Attendance,
     pub domains: Vec<String>,
     /// Domains implied by the *environment* rather than by the request's own
-    /// words. Kept separate for the same reason as `stakes_from_environment`:
-    /// a git repository says nothing about the subject of a question asked
-    /// inside it, and folding this in unconditionally tagged "write a poem
-    /// about the sea" as `engineering` merely because the workspace happened
-    /// to be a repo.
+    /// words. A git repository says nothing about the subject of a question
+    /// asked inside it, so these apply only to effectful acts.
     pub domains_from_environment: Vec<String>,
-    /// The clause points at something it does not contain ("it", "that").
+    /// The strongest temporal reference to a current value, if any. The
+    /// resolver turns it into the `live-data` domain only when the act asks
+    /// for a fact; "refactor the current implementation" wants no retrieval.
+    pub recency: Option<(String, f64)>,
+    /// The part points at something it does not contain ("it", "that").
     pub deictic: bool,
 }
 
-/// Whether `phrase` occurs in `tokens` as a run of whole words.
-///
-/// Every multi-word lexicon entry goes through this rather than a raw
-/// `contains`: `lower.contains("then")` matched inside *authentication*,
-/// *strengthen* and *lengthen*, and `"first"` inside *firstname*, which is
-/// how a bug-fix request grew a session horizon.
-fn phrase_present(tokens: &[String], phrase: &str) -> bool {
-    let needle = words(phrase);
-    if needle.is_empty() || needle.len() > tokens.len() {
-        return false;
-    }
-    tokens
-        .windows(needle.len())
-        .any(|window| window.iter().zip(&needle).all(|(a, b)| a == b))
-}
+// ------------------------------------------------------------- tokens ---
 
 /// Split into lowercase alphanumeric words, preserving order.
 fn words(text: &str) -> Vec<String> {
@@ -684,10 +1044,8 @@ fn words(text: &str) -> Vec<String> {
 
 /// Crude English de-inflection, enough to match a lexicon of bare verbs.
 ///
-/// Not a stemmer and not trying to be one: it only strips the three suffixes
-/// that make a request's actual verb invisible to an exact-match lexicon.
-/// Without it "before deploying to production" contributed no act signal at
-/// all, because the lexicon has `deploy` and the text has `deploying`.
+/// Not a stemmer and not trying to be one: it only strips the suffixes that
+/// make a request's actual verb invisible to an exact-match lexicon.
 fn stems(word: &str) -> Vec<&str> {
     let mut out = vec![word];
     for suffix in ["ing", "ed", "es", "s"] {
@@ -708,135 +1066,507 @@ fn stems(word: &str) -> Vec<&str> {
     out
 }
 
-/// Check if a token matches a target word, accounting for English inflection
-/// and silent-'e' stem alterations (e.g. "writing" -> "write", "deploying" -> "deploy",
-/// "auditing" -> "audited", "ensuring" -> "ensure", "proved" -> "prove").
-fn token_matches(token: &str, target: &str) -> bool {
-    if token == target {
-        return true;
-    }
-    let token_stems = stems(token);
-    if token_stems.contains(&target) {
-        return true;
-    }
-    // Silent 'e' deletion: e.g. "writing" has stem "writ", matching target "write"
-    for s in &token_stems {
-        if target.strip_suffix('e') == Some(*s) {
-            return true;
-        }
-    }
-    let target_stems = stems(target);
-    for ts in &target_stems {
-        if token == *ts || token_stems.contains(ts) {
-            return true;
-        }
-        if token.strip_suffix('e') == Some(*ts) {
-            return true;
-        }
-    }
-    false
+/// A lexicon word with its de-inflected forms, computed once.
+struct Target {
+    word: &'static str,
+    stems: Vec<&'static str>,
 }
 
-/// Whether any token in the request matches `word`, allowing inflection.
-fn token_position(tokens: &[String], word: &str) -> Option<usize> {
-    tokens.iter().position(|token| token_matches(token, word))
-}
-
-/// Checks whether a token position corresponds to an imperative clause head in English.
-/// This includes the very first word (index 0), as well as verbs that immediately follow
-/// coordinating conjunctions ("and", "then", "also", "plus", "next", "after", "or")
-/// or clause delimiters (commas, semicolons, colons, newlines, dashes).
-fn is_clause_initial(tokens: &[String], position: usize, cleaned_text: &str) -> bool {
-    if position == 0 {
-        return true;
-    }
-    if position > 0 {
-        let prev = tokens[position - 1].as_str();
-        if matches!(
-            prev,
-            "and" | "then" | "also" | "plus" | "next" | "after" | "or"
-        ) {
-            return true;
+impl Target {
+    fn new(word: &'static str) -> Self {
+        Target {
+            word,
+            stems: stems(word),
         }
     }
-    if position > 1 && tokens[position - 2] == "and" && tokens[position - 1] == "then" {
-        return true;
+}
+
+/// A clause's tokens with their de-inflected forms, computed once, so
+/// matching the whole lexicon against a clause allocates nothing per pair.
+struct Tokens {
+    words: Vec<String>,
+}
+
+impl Tokens {
+    fn new(text: &str) -> Self {
+        Tokens { words: words(text) }
     }
-    let target = &tokens[position];
-    let lower = cleaned_text.to_ascii_lowercase();
-    for (idx, _) in lower.match_indices(target) {
-        let before = &lower[..idx];
-        let after = &lower[idx + target.len()..];
-        let is_word_start =
-            before.is_empty() || before.ends_with(|c: char| !c.is_ascii_alphanumeric());
-        let is_word_end =
-            after.is_empty() || after.starts_with(|c: char| !c.is_ascii_alphanumeric());
-        if is_word_start && is_word_end {
-            let trimmed = before.trim_end();
-            if trimmed.ends_with([',', ';', ':', '.', '\n', '-']) {
+
+    fn len(&self) -> usize {
+        self.words.len()
+    }
+
+    fn get(&self, index: usize) -> Option<&str> {
+        self.words.get(index).map(String::as_str)
+    }
+
+    /// Whether the token at `index` is `target`, allowing inflection and
+    /// silent-`e` alterations ("writing" → "write", "deploying" → "deploy").
+    fn matches(&self, index: usize, target: &Target) -> bool {
+        let Some(token) = self.get(index) else {
+            return false;
+        };
+        if token == target.word {
+            return true;
+        }
+        let token_stems = stems(token);
+        if token_stems.contains(&target.word) {
+            return true;
+        }
+        if let Some(without_e) = target.word.strip_suffix('e')
+            && token_stems.contains(&without_e)
+        {
+            return true;
+        }
+        for target_stem in &target.stems {
+            if token == *target_stem || token_stems.contains(target_stem) {
+                return true;
+            }
+            if token.strip_suffix('e') == Some(*target_stem) {
                 return true;
             }
         }
+        false
     }
-    false
+
+    /// First position matching `target`, skipping consumed tokens.
+    fn position(&self, target: &Target, consumed: &[bool]) -> Option<usize> {
+        (0..self.len())
+            .find(|&i| !consumed.get(i).copied().unwrap_or(false) && self.matches(i, target))
+    }
+
+    /// Whether `phrase` (whole words) occurs, and where.
+    fn phrase_at(&self, phrase: &[&str]) -> Option<usize> {
+        if phrase.is_empty() || phrase.len() > self.len() {
+            return None;
+        }
+        (0..=self.len() - phrase.len())
+            .find(|&start| (0..phrase.len()).all(|i| self.words[start + i] == phrase[i]))
+    }
 }
 
-/// Strip leading conversational preambles and polite requests so that the
-/// true operational verb lands at index 0 and receives the 1.6x imperative bonus.
-fn strip_conversational_preamble(mut text: &str) -> &str {
-    let preambles = [
-        "could you please",
-        "can you please",
-        "would you please",
-        "would you mind",
-        "could you",
-        "can you",
-        "please",
-        "help me to",
-        "help me",
-        "i would like you to",
-        "i'd like you to",
-        "i want you to",
-        "i need you to",
-        "i want to",
-        "i need to",
-        "we need to",
-        "let's",
-        "lets",
-    ];
+static VERB_TARGETS: LazyLock<Vec<(Target, Act, f64)>> = LazyLock::new(|| {
+    ACT_VERBS
+        .iter()
+        .map(|(word, act, weight)| (Target::new(word), *act, *weight))
+        .collect()
+});
 
-    let mut changed = true;
-    while changed {
-        changed = false;
-        let trimmed = text.trim_start();
-        let lower = trimmed.to_ascii_lowercase();
-        for preamble in preambles {
-            if lower.starts_with(preamble) {
-                let rest = &trimmed[preamble.len()..];
-                if rest.is_empty()
-                    || rest.starts_with(|c: char| c.is_whitespace() || c == ',' || c == ':')
-                {
-                    let mut after = rest.trim_start();
-                    if after.starts_with(',') || after.starts_with(':') {
-                        after = after[1..].trim_start();
-                    }
-                    if !after.is_empty() {
-                        text = after;
-                        changed = true;
-                        break;
-                    }
-                }
+fn is_lexicon_verb(tokens: &Tokens, index: usize) -> bool {
+    VERB_TARGETS
+        .iter()
+        .any(|(target, _, _)| tokens.matches(index, target))
+}
+
+fn split_phrase(phrase: &'static str) -> Vec<&'static str> {
+    phrase.split(' ').collect()
+}
+
+// ------------------------------------------------------------ clauses ---
+
+/// What a clause is doing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClauseKind {
+    /// A verb heads it: "fix the parser", "every day, check the bill".
+    Imperative,
+    /// Asks something: a wh-word or an auxiliary before a subject, or a
+    /// trailing question mark.
+    Question,
+    /// A request phrased as a wish ("I want the parser refactored"), or one
+    /// led by a verb the lexicon does not know ("sync the files daily").
+    Request,
+    /// Greetings and thanks and nothing else.
+    Social,
+    /// Describes the situation: "it crashes on empty input".
+    Statement,
+}
+
+impl ClauseKind {
+    /// Whether this clause asks for work, and so may stand as a strand.
+    pub(crate) fn is_work(self) -> bool {
+        matches!(
+            self,
+            ClauseKind::Imperative | ClauseKind::Question | ClauseKind::Request
+        )
+    }
+}
+
+/// One clause, read once.
+pub(crate) struct ClauseRead {
+    pub text: String,
+    pub boundary: crate::strand::Boundary,
+    pub kind: ClauseKind,
+    tokens: Tokens,
+    /// Tokens a social phrase already accounted for.
+    consumed: Vec<bool>,
+    /// Converse weight from greetings stripped off the front.
+    greeting: f64,
+    /// Signals for what was stripped, for the explain view.
+    stripped: Vec<String>,
+    question_mark: bool,
+}
+
+impl ClauseRead {
+    /// Whether this clause asks for work of its own, and so starts a part: a
+    /// question, or an instruction or wish that names something to do.
+    /// Everything else is context for the part beside it.
+    pub(crate) fn starts_part(&self) -> bool {
+        match self.kind {
+            ClauseKind::Question => true,
+            ClauseKind::Imperative | ClauseKind::Request => self.has_act_votes(),
+            ClauseKind::Social | ClauseKind::Statement => false,
+        }
+    }
+
+    /// Whether this clause votes for any act at all.
+    fn has_act_votes(&self) -> bool {
+        match self.kind {
+            ClauseKind::Statement | ClauseKind::Social => {
+                (1..self.tokens.len()).any(|i| self.is_head(i) && is_lexicon_verb(&self.tokens, i))
+            }
+            _ => (0..self.tokens.len())
+                .any(|i| !self.consumed[i] && is_lexicon_verb(&self.tokens, i)),
+        }
+    }
+
+    /// Whether the token at `index` heads its (sub-)clause: first word, or
+    /// right after a conjunction or sequencing word, or after punctuation.
+    fn is_head(&self, index: usize) -> bool {
+        if index == 0 {
+            return true;
+        }
+        if let Some(prev) = self.tokens.get(index - 1)
+            && HEAD_PREDECESSORS.contains(&prev)
+        {
+            return true;
+        }
+        if index > 1
+            && self.tokens.get(index - 2) == Some("and")
+            && self.tokens.get(index - 1) == Some("then")
+        {
+            return true;
+        }
+        let Some(target) = self.tokens.get(index) else {
+            return false;
+        };
+        let lower = self.text.to_ascii_lowercase();
+        for (at, _) in lower.match_indices(target) {
+            let before = &lower[..at];
+            let after = &lower[at + target.len()..];
+            let word_start =
+                before.is_empty() || before.ends_with(|c: char| !c.is_ascii_alphanumeric());
+            let word_end =
+                after.is_empty() || after.starts_with(|c: char| !c.is_ascii_alphanumeric());
+            if word_start && word_end && before.trim_end().ends_with([',', ';', ':', '.', '\n']) {
+                return true;
+            }
+        }
+        false
+    }
+}
+
+fn starts_with_words(tokens: &[String], phrase: &str) -> Option<usize> {
+    let needle: Vec<&str> = phrase.split(' ').collect();
+    (tokens.len() >= needle.len() && needle.iter().zip(tokens).all(|(a, b)| a == b))
+        .then_some(needle.len())
+}
+
+/// Drop `count` leading words from `text`, keeping the original spelling of
+/// what remains.
+fn drop_leading_words(text: &str, count: usize) -> &str {
+    let mut seen = 0usize;
+    let mut in_word = false;
+    for (i, c) in text.char_indices() {
+        let is_word = c.is_ascii_alphanumeric();
+        if is_word && !in_word {
+            if seen == count {
+                return &text[i..];
+            }
+            seen += 1;
+        }
+        in_word = is_word;
+    }
+    ""
+}
+
+/// Read one clause: strip what leads it, then decide its kind.
+pub(crate) fn read_clause(
+    text: &str,
+    boundary: crate::strand::Boundary,
+    question_mark: bool,
+) -> ClauseRead {
+    let mut rest = text.trim();
+    let mut greeting = 0.0f64;
+    let mut stripped = Vec::new();
+    let mut acknowledged = false;
+    // Greetings, acknowledgements, polite openers and sequencing words, in
+    // any order, until none applies.
+    loop {
+        let tokens = words(rest);
+        let Some(first) = tokens.first() else {
+            break;
+        };
+        if let Some((phrase, weight)) = SOCIAL_PHRASES
+            .iter()
+            .find(|(phrase, _)| starts_with_words(&tokens, phrase).is_some())
+            .filter(|(phrase, _)| starts_with_words(&tokens, phrase) != Some(tokens.len()))
+        {
+            // A social phrase leading a longer clause is a greeting.
+            if let Some(n) = starts_with_words(&tokens, phrase) {
+                greeting = greeting.max(*weight);
+                stripped.push(format!("greeting `{phrase}`"));
+                rest = drop_leading_words(rest, n);
+                continue;
+            }
+        }
+        if tokens.len() > 1
+            && let Some((word, weight)) = SOCIAL_WORDS.iter().find(|(word, _)| word == first)
+        {
+            greeting = greeting.max(*weight);
+            stripped.push(format!("greeting `{word}`"));
+            rest = drop_leading_words(rest, 1);
+            continue;
+        }
+        if tokens.len() > 1 && ACKNOWLEDGEMENTS.contains(&first.as_str()) {
+            acknowledged = true;
+            stripped.push(format!("acknowledgement `{first}`"));
+            rest = drop_leading_words(rest, 1);
+            continue;
+        }
+        if let Some(n) = PREAMBLES
+            .iter()
+            .filter_map(|preamble| starts_with_words(&tokens, preamble))
+            .max()
+            .filter(|n| *n < tokens.len())
+        {
+            stripped.push(format!("opener `{}`", tokens[..n].join(" ")));
+            rest = drop_leading_words(rest, n);
+            continue;
+        }
+        if tokens.len() > 1 && LEAD_FILLERS.contains(&first.as_str()) {
+            rest = drop_leading_words(rest, 1);
+            continue;
+        }
+        break;
+    }
+    let rest = rest.trim_start_matches(|c: char| !c.is_ascii_alphanumeric() && c.is_ascii());
+    let tokens = Tokens::new(rest);
+    let mut consumed = vec![false; tokens.len()];
+    let mut social_phrase = false;
+    for (phrase, _) in SOCIAL_PHRASES {
+        let words: Vec<&str> = split_phrase(phrase);
+        if let Some(at) = tokens.phrase_at(&words) {
+            social_phrase = true;
+            for flag in consumed.iter_mut().skip(at).take(words.len()) {
+                *flag = true;
             }
         }
     }
-    text
+    let lone_social = tokens.len() == 1
+        && SOCIAL_WORDS
+            .iter()
+            .any(|(word, _)| tokens.get(0) == Some(*word));
+    // A wish is a request, and the words that say so are not verbs of
+    // their own: the `what` of "what I need is…" asks nothing.
+    let desire = DESIRE_PREFIXES
+        .iter()
+        .filter_map(|prefix| starts_with_words(&tokens.words, prefix))
+        .max();
+    if let Some(length) = desire {
+        for flag in consumed.iter_mut().take(length) {
+            *flag = true;
+        }
+    }
+    let mut read = ClauseRead {
+        text: rest.to_string(),
+        boundary,
+        kind: ClauseKind::Statement,
+        tokens,
+        consumed,
+        greeting,
+        stripped,
+        question_mark,
+    };
+    read.kind = classify(
+        &read,
+        social_phrase,
+        lone_social,
+        acknowledged,
+        desire.is_some(),
+    );
+    read
 }
 
-/// Strip prompt scaffolding and runner control blocks before extracting intent.
-///
-/// Delegates to [`crate::control`], which owns the tag vocabulary. This used
-/// to carry its own copy of the tag list — exactly the drift `control.rs`
-/// exists to prevent.
+fn classify(
+    read: &ClauseRead,
+    social_phrase: bool,
+    lone_social: bool,
+    acknowledged: bool,
+    desire: bool,
+) -> ClauseKind {
+    let tokens = &read.tokens;
+    if tokens.len() == 0 {
+        return if read.greeting > 0.0 || acknowledged {
+            ClauseKind::Social
+        } else {
+            ClauseKind::Statement
+        };
+    }
+    if lone_social || (social_phrase && read.consumed.iter().all(|c| *c)) {
+        return ClauseKind::Social;
+    }
+    if desire {
+        return ClauseKind::Request;
+    }
+    let first = tokens.get(0).unwrap_or("");
+    let second = tokens.get(1).unwrap_or("");
+    let asks = WH_WORDS.contains(&first)
+        || (first == "do" && PERSONS.contains(&second))
+        || (first != "do" && AUX_WORDS.contains(&first) && QUESTION_SUBJECTS.contains(&second))
+        || read.question_mark;
+    if asks && !(social_phrase && read.consumed.first().copied().unwrap_or(false)) {
+        return ClauseKind::Question;
+    }
+    if social_phrase && read.consumed.first().copied().unwrap_or(false) {
+        return ClauseKind::Social;
+    }
+    // A verb heading a later sub-clause ("the build is broken, fix it")
+    // makes the clause an instruction whatever its first words say.
+    if (1..tokens.len()).any(|i| read.is_head(i) && is_lexicon_verb(tokens, i)) {
+        return ClauseKind::Imperative;
+    }
+    // "Build fails on CI", "the deploy failed", "move occurs because…": a
+    // subject, then its verb. The first word is the subject even when it
+    // could be a verb somewhere else.
+    if STATEMENT_VERBS.contains(&second) || first.chars().any(|c| c.is_ascii_digit()) {
+        return ClauseKind::Statement;
+    }
+    if read.is_head(0) && is_lexicon_verb(tokens, 0) {
+        return ClauseKind::Imperative;
+    }
+    if SUBJECT_STARTERS.contains(&first) {
+        return ClauseKind::Statement;
+    }
+    ClauseKind::Request
+}
+
+// ------------------------------------------------------------ material ---
+
+/// A request with its pasted material set aside.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct Prepared {
+    /// The text that may vote.
+    pub instruction: String,
+    /// Fenced code blocks removed.
+    pub fenced_blocks: usize,
+    /// Lines of unfenced pasted material removed.
+    pub pasted_lines: usize,
+}
+
+fn is_list_item(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
+        return true;
+    }
+    let digits = trimmed.chars().take_while(char::is_ascii_digit).count();
+    digits > 0
+        && digits <= 3
+        && (trimmed[digits..].starts_with(". ") || trimmed[digits..].starts_with(") "))
+}
+
+/// Whether a line reads as something a person wrote to the agent, rather
+/// than something pasted for it to look at.
+fn reads_as_request(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+    // Indented lines are code, stack frames and tracebacks.
+    if line.starts_with('\t') || line.starts_with("    ") {
+        return false;
+    }
+    if is_list_item(line) {
+        return true;
+    }
+    let tokens = Tokens::new(trimmed);
+    if let Some(first) = tokens.get(0)
+        && (is_lexicon_verb(&tokens, 0)
+            || WH_WORDS.contains(&first)
+            || AUX_WORDS.contains(&first)
+            || SOCIAL_WORDS.iter().any(|(word, _)| *word == first)
+            || PREAMBLES
+                .iter()
+                .any(|preamble| preamble.split(' ').next() == Some(first)))
+    {
+        return true;
+    }
+    let visible: Vec<char> = trimmed.chars().filter(|c| !c.is_whitespace()).collect();
+    if visible.is_empty() {
+        return true;
+    }
+    let prose = visible
+        .iter()
+        .filter(|c| {
+            c.is_alphabetic()
+                || matches!(
+                    c,
+                    ',' | '.' | '\'' | '?' | '!' | ':' | ';' | '-' | '"' | '(' | ')'
+                )
+        })
+        .count();
+    let letters = visible.iter().filter(|c| c.is_alphabetic()).count();
+    let prose_like = prose as f64 / visible.len() as f64 >= 0.9
+        && letters as f64 / visible.len() as f64 >= 0.7
+        && tokens.len() >= 2;
+    let ends_like_prose = trimmed.ends_with(['.', '?', '!', ':']);
+    prose_like || (ends_like_prose && letters as f64 / visible.len() as f64 >= 0.6)
+}
+
+/// Set pasted material aside: fenced blocks, and runs of two or more lines
+/// that do not read as a request (or one very long one). What remains is the
+/// request itself.
+pub(crate) fn prepare(raw: &str) -> Prepared {
+    fn flush<'a>(run: &mut Vec<&'a str>, kept: &mut Vec<&'a str>, prepared: &mut Prepared) {
+        let material = run.len() >= 2 || run.iter().any(|line| line.len() >= 160);
+        if material {
+            prepared.pasted_lines += run.len();
+        } else {
+            kept.append(run);
+        }
+        run.clear();
+    }
+    let text = clean_request_text(raw);
+    let mut prepared = Prepared::default();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut run: Vec<&str> = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
+            if !in_fence {
+                flush(&mut run, &mut kept, &mut prepared);
+                prepared.fenced_blocks += 1;
+            }
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        if reads_as_request(line) {
+            flush(&mut run, &mut kept, &mut prepared);
+            kept.push(line);
+        } else {
+            run.push(line);
+        }
+    }
+    flush(&mut run, &mut kept, &mut prepared);
+    prepared.instruction = kept.join("\n");
+    prepared
+}
+
+/// Strip prompt scaffolding and runner control blocks before extracting
+/// intent. Delegates to [`crate::control`], which owns the tag vocabulary.
 pub(crate) fn clean_request_text(raw: &str) -> String {
     let mut text = crate::control::strip_control_blocks(raw);
     while let Some(start) = text.find("[Scheduled-run context:") {
@@ -848,9 +1578,10 @@ pub(crate) fn clean_request_text(raw: &str) -> String {
             break;
         }
     }
-    let stripped = strip_conversational_preamble(text.trim());
-    stripped.to_string()
+    text.trim().to_string()
 }
+
+// ------------------------------------------------------------- digest ---
 
 /// A digest of every table tier 1 reads, so a lexicon change that forgets
 /// to bump [`crate::RESOLVER_VERSION`] fails a test rather than silently
@@ -864,6 +1595,34 @@ pub fn lexicon_digest() -> String {
     for (word, act, weight) in ACT_VERBS {
         out.push_str(&format!("act:{word}:{}:{weight}\n", act.as_str()));
     }
+    for (word, weight) in SOCIAL_WORDS {
+        out.push_str(&format!("social:{word}:{weight}\n"));
+    }
+    for (phrase, weight) in SOCIAL_PHRASES {
+        out.push_str(&format!("social-phrase:{phrase}:{weight}\n"));
+    }
+    let lists: [(&str, &[&str]); 15] = [
+        ("ack", ACKNOWLEDGEMENTS),
+        ("preamble", PREAMBLES),
+        ("filler", LEAD_FILLERS),
+        ("desire", DESIRE_PREFIXES),
+        ("requester", REQUESTER),
+        ("statement-verb", STATEMENT_VERBS),
+        ("aux", AUX_WORDS),
+        ("wh", WH_WORDS),
+        ("question-subject", QUESTION_SUBJECTS),
+        ("person", PERSONS),
+        ("subject", SUBJECT_STARTERS),
+        ("checkable", CHECKABLE_WORDS),
+        ("local", LOCAL_NOUNS),
+        ("time", TIME_WORDS),
+        ("head-predecessor", HEAD_PREDECESSORS),
+    ];
+    for (name, list) in lists {
+        for word in list {
+            out.push_str(&format!("{name}:{word}\n"));
+        }
+    }
     for (word, stakes, weight) in STAKES_WORDS {
         out.push_str(&format!("stakes:{word}:{}:{weight}\n", stakes.as_str()));
     }
@@ -872,6 +1631,9 @@ pub fn lexicon_digest() -> String {
     }
     for word in EXACT_EVIDENCE_WORDS {
         out.push_str(&format!("evidence-exact:{word}\n"));
+    }
+    for (phrase, weight) in ASSURANCE_PHRASES {
+        out.push_str(&format!("assurance:{phrase}:{weight}\n"));
     }
     for (phrase, weight) in RECENCY_PHRASES {
         out.push_str(&format!("recency:{phrase}:{weight}\n"));
@@ -882,6 +1644,9 @@ pub fn lexicon_digest() -> String {
     for word in DEICTIC_WORDS {
         out.push_str(&format!("deictic:{word}\n"));
     }
+    for word in BARE_PRONOUNS {
+        out.push_str(&format!("bare:{word}\n"));
+    }
     for word in RECURRENCE_ADJECTIVES {
         out.push_str(&format!("recurrence-adjective:{word}\n"));
     }
@@ -889,22 +1654,55 @@ pub fn lexicon_digest() -> String {
         out.push_str(&format!("determiner:{word}\n"));
     }
     out.push_str(&format!("floor:{}\n", Votes::<Act>::ESCALATION_FLOOR));
+    out.push_str(&format!("imperative-bonus:{IMPERATIVE_BONUS}\n"));
     crate::strand::segmentation_fingerprint(&mut out);
     format!("{:x}", Sha256::digest(out.as_bytes()))
 }
 
-/// Tier 1. A pure function of `request`.
+// --------------------------------------------------------- extraction ---
+
+/// Tier 1 over a whole request read as one part. A pure function of
+/// `request`; the resolver reads requests part by part through
+/// [`extract_part`].
 pub fn extract(request: &Request<'_>) -> Extraction {
+    let prepared = prepare(request.text);
+    let clauses: Vec<ClauseRead> = crate::strand::segment(&prepared.instruction)
+        .into_iter()
+        .map(|clause| read_clause(&clause.text, clause.boundary, clause.question))
+        .collect();
+    let all: Vec<&ClauseRead> = clauses.iter().collect();
+    extract_part(
+        request,
+        &all,
+        &prepared,
+        list_items(&prepared.instruction),
+        false,
+    )
+}
+
+/// How many enumerated items the request holds.
+pub(crate) fn list_items(instruction: &str) -> usize {
+    instruction
+        .lines()
+        .filter(|line| is_list_item(line))
+        .count()
+}
+
+/// Tier 1 over one part of a request: the clauses that make it up, and the
+/// pasted material and enumeration of the request it belongs to.
+pub(crate) fn extract_part(
+    request: &Request<'_>,
+    clauses: &[&ClauseRead],
+    prepared: &Prepared,
+    enumerated: usize,
+    earlier_parts: bool,
+) -> Extraction {
     let mut out = Extraction {
         attendance: request
             .attendance_override
             .unwrap_or_else(|| request.surface.implied_attendance()),
         ..Extraction::default()
     };
-    let cleaned_text = clean_request_text(request.text);
-    let lower = cleaned_text.to_ascii_lowercase();
-    let tokens = words(&cleaned_text);
-
     out.signals.push(Signal::new(
         SignalKind::Surface,
         format!("surface:{}", request.surface.as_str()),
@@ -916,196 +1714,138 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         ),
     ));
 
-    // --- lexical -------------------------------------------------------
-    // English requests are overwhelmingly imperative, so the leading token is
-    // far more likely to be the actual verb than a later one. Without this,
-    // "write a blog post" scores `author` and `operate` equally — because
-    // "post" is a verb somewhere, just not here.
-    const IMPERATIVE_BONUS: f64 = 1.6;
-    for (word, act, weight) in ACT_VERBS {
-        let Some(position) = token_position(&tokens, word) else {
-            continue;
-        };
-        let is_head = is_clause_initial(&tokens, position, &cleaned_text);
-        let weight = if is_head {
-            weight * IMPERATIVE_BONUS
-        } else {
-            *weight
-        };
-        out.act.add(*act, weight);
-        out.signals.push(Signal::new(
-            SignalKind::Lexical,
-            format!("verb:{word}"),
-            weight,
-            if position == 0 {
-                format!("`{word}` (leading verb) ⇒ {}", act.as_str())
-            } else if is_head {
-                format!("`{word}` (clause head verb) ⇒ {}", act.as_str())
-            } else {
-                format!("`{word}` ⇒ {}", act.as_str())
-            },
-        ));
-    }
-    for (word, stakes, weight) in STAKES_WORDS {
-        if token_position(&tokens, word).is_some() {
-            out.stakes_from_words.add(*stakes, *weight);
-            out.signals.push(Signal::new(
-                SignalKind::Lexical,
-                format!("stakes:{word}"),
-                *weight,
-                format!("`{word}` ⇒ {}", stakes.as_str()),
-            ));
-        }
-    }
-    for (phrase, evidence, weight) in EVIDENCE_WORDS {
-        let hit = if phrase.contains(' ') {
-            phrase_present(&tokens, phrase)
-        } else if EXACT_EVIDENCE_WORDS.contains(phrase) {
-            tokens.iter().any(|t| t == phrase)
-        } else {
-            tokens.iter().any(|t| token_matches(t, phrase))
-        };
-        if hit {
-            out.evidence.add(*evidence, *weight);
-            out.signals.push(Signal::new(
-                SignalKind::Lexical,
-                format!("evidence:{phrase}"),
-                *weight,
-                format!("`{phrase}` ⇒ {}", evidence.as_str()),
-            ));
-        }
-    }
-    for (phrase, horizon, weight) in HORIZON_PHRASES {
-        // A recurrence adjective names a thing, not a schedule: "the nightly
-        // job", "our daily report". Only the adverb ("run this nightly")
-        // says the work recurs.
-        if RECURRENCE_ADJECTIVES.contains(phrase)
-            && tokens
-                .windows(2)
-                .any(|pair| DETERMINERS.contains(&pair[0].as_str()) && pair[1] == *phrase)
-            && !tokens
-                .windows(2)
-                .any(|pair| !DETERMINERS.contains(&pair[0].as_str()) && pair[1] == *phrase)
-        {
-            continue;
-        }
-        if phrase_present(&tokens, phrase) {
-            out.horizon.add(*horizon, *weight);
-            out.signals.push(Signal::new(
-                SignalKind::Lexical,
-                format!("horizon:{}", phrase.replace(' ', "-")),
-                *weight,
-                format!("`{phrase}` ⇒ {}", horizon.as_str()),
-            ));
-        }
-    }
+    let part_words: Vec<String> = clauses
+        .iter()
+        .flat_map(|clause| clause.tokens.words.iter().cloned())
+        .collect();
+    let checkable = part_words
+        .iter()
+        .any(|word| CHECKABLE_WORDS.contains(&word.as_str()));
+    let mut asks = false;
+    let mut work = false;
 
-    // Temporal deixis ⇒ the answer must be retrieved on this turn. It sets
-    // the domain only; the runtime's freshness check enforces the retrieval.
-    // It deliberately does not raise the evidence standard: measured live,
-    // the `analytical` stance and "cite the sources" note that a `Cited`
-    // vote produces made gemma4:e2b-mlx deliberate in its thinking channel
-    // and emit nothing at all (three of six replays), where the same
-    // request under `direct-answer` produced a card six times out of six.
-    let mut recency: Option<(&str, f64)> = None;
-    for (phrase, weight) in RECENCY_PHRASES {
-        if phrase_present(&tokens, phrase) && recency.is_none_or(|(_, best)| *weight > best) {
-            recency = Some((phrase, *weight));
+    for clause in clauses {
+        for stripped in &clause.stripped {
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                "stripped",
+                0.0,
+                format!("{stripped} set aside"),
+            ));
         }
+        if clause.greeting > 0.0 {
+            out.act.add(Act::Converse, clause.greeting);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                "social:greeting",
+                clause.greeting,
+                "a greeting ⇒ converse".to_string(),
+            ));
+        }
+        work |= clause.kind.is_work();
+        read_acts(clause, &mut out);
+        if clause.kind == ClauseKind::Question {
+            asks = true;
+        }
+        read_stakes_and_evidence(clause, checkable, &mut out);
+        read_recency(clause, &mut out);
+        if matches!(clause.kind, ClauseKind::Imperative | ClauseKind::Request) {
+            read_horizon(clause, &mut out);
+        }
+        read_structure(clause, &mut out);
     }
-    if let Some((phrase, weight)) = recency {
-        out.domains.push("live-data".into());
+    if asks {
         out.signals.push(Signal::new(
-            SignalKind::Lexical,
-            format!("recency:{}", phrase.trim().replace(' ', "-")),
-            weight,
-            format!("`{}` ⇒ a current value, retrieved this turn", phrase.trim()),
+            SignalKind::Structural,
+            "question",
+            0.0,
+            "the part asks a question",
         ));
     }
 
-    // --- structural ----------------------------------------------------
-    let length = cleaned_text.trim().len();
-    if length <= 24 && !tokens.is_empty() {
+    // A greeting and nothing else is one reply.
+    if !work
+        && out
+            .act
+            .ranked()
+            .iter()
+            .all(|(act, _)| *act == Act::Converse)
+        && !out.act.is_empty()
+    {
         out.horizon.add(Horizon::Immediate, 0.6);
         out.signals.push(Signal::new(
             SignalKind::Structural,
-            "length:short",
+            "social-only",
             0.6,
-            format!("{length} chars ⇒ immediate"),
-        ));
-    } else if length >= 400 {
-        out.horizon.add(Horizon::Session, 0.7);
-        out.signals.push(Signal::new(
-            SignalKind::Structural,
-            "length:long",
-            0.7,
-            format!("{length} chars ⇒ session"),
+            "social talk and nothing else ⇒ immediate",
         ));
     }
-    if cleaned_text.contains("```") {
+
+    // --- material ---------------------------------------------------------
+    if prepared.fenced_blocks > 0 {
         out.act.add(Act::Modify, 0.3);
         out.signals.push(Signal::new(
             SignalKind::Structural,
             "code-fence",
             0.3,
-            "fenced code present",
+            format!("{} fenced block(s) set aside", prepared.fenced_blocks),
         ));
     }
-    if lower.contains("http://") || lower.contains("https://") {
-        out.act.add(Act::Analyze, 0.3);
+    if prepared.pasted_lines > 0 {
+        out.input_modalities.push(Modality::Data);
         out.signals.push(Signal::new(
             SignalKind::Structural,
-            "url",
-            0.3,
-            "a URL to fetch",
+            "pasted-material",
+            0.0,
+            format!(
+                "{} pasted line(s) read as material, not instructions",
+                prepared.pasted_lines
+            ),
         ));
-    }
-    let path_like = cleaned_text
-        .split_whitespace()
-        .any(|w| w.contains('/') && w.contains('.') && !w.contains("://"));
-    if path_like {
-        out.signals.push(Signal::new(
-            SignalKind::Structural,
-            "path-mention",
-            0.4,
-            "a file path is named",
-        ));
-        out.act.add(Act::Modify, 0.2);
-        out.clarity.add(Clarity::Clear, 0.5);
     }
     // Enumerated steps are the honest multi-step marker: a list the user
-    // wrote themselves, not two stray conjunctions.
-    let step_markers = lower.matches("\n- ").count()
-        + lower.matches("\n1.").count()
-        + lower.matches("\n2.").count();
-    if step_markers >= 2 {
+    // wrote themselves. Multi-step is a session, not a durable obligation.
+    if enumerated >= 2 && work {
         out.horizon.add(Horizon::Session, 0.9);
         out.signals.push(Signal::new(
             SignalKind::Structural,
             "enumerated-steps",
             0.9,
-            format!("{step_markers} enumerated items"),
+            format!("{enumerated} enumerated items ⇒ session"),
         ));
     }
 
-    // --- deictic -------------------------------------------------------
+    // --- deixis -----------------------------------------------------------
     let deictic: Vec<&str> = DEICTIC_WORDS
         .iter()
         .copied()
-        .filter(|w| tokens.iter().any(|t| t == w))
+        .filter(|w| part_words.iter().any(|t| t == w))
         .collect();
     out.deictic = !deictic.is_empty();
     if !deictic.is_empty() {
-        // Pointing at something is only ambiguous when there is no history to
-        // point at. Mid-conversation it is ordinary and clear.
-        if request.history.turn_index == 0 && request.workspace.recent_paths.is_empty() {
-            out.clarity.add(Clarity::Ambiguous, 0.7);
-            out.signals.push(Signal::new(
-                SignalKind::Deictic,
-                "unresolved-reference",
-                0.7,
-                format!("`{}` with no prior context", deictic.join("`, `")),
-            ));
+        let bare = clauses.iter().any(|clause| {
+            clause.kind.is_work()
+                && clause
+                    .tokens
+                    .words
+                    .last()
+                    .is_some_and(|last| BARE_PRONOUNS.contains(&last.as_str()))
+        });
+        // Pointing at something is only ambiguous when there is nothing to
+        // point at: the first part of a first message with no attachment.
+        // Mid-conversation, after an earlier part of the same message ("explain
+        // the parser, then refactor it"), or with an attached file, it is
+        // ordinary and clear.
+        if request.history.turn_index == 0 && request.attachments.is_empty() && !earlier_parts {
+            if bare {
+                out.clarity.add(Clarity::Ambiguous, 0.7);
+                out.signals.push(Signal::new(
+                    SignalKind::Deictic,
+                    "unresolved-reference",
+                    0.7,
+                    format!("`{}` with no prior context", deictic.join("`, `")),
+                ));
+            }
         } else {
             out.clarity.add(Clarity::Clear, 0.4);
             out.signals.push(Signal::new(
@@ -1117,9 +1857,8 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         }
     }
 
-    // --- workspace -----------------------------------------------------
+    // --- workspace --------------------------------------------------------
     if request.workspace.is_repo {
-        // Applied only to effectful acts; see `domains_from_environment`.
         out.domains_from_environment.push("engineering".into());
         out.signals.push(Signal::new(
             SignalKind::Workspace,
@@ -1129,9 +1868,6 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         ));
     }
     if request.workspace.has_uncommitted_changes {
-        // Uncommitted work is not recoverable from git alone, so a modifying
-        // turn here is riskier than the same turn on a clean tree. Applied
-        // only to effectful acts; see `stakes_from_environment`.
         out.stakes_from_environment.add(Stakes::Reversible, 0.5);
         out.signals.push(Signal::new(
             SignalKind::Workspace,
@@ -1141,7 +1877,7 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         ));
     }
 
-    // --- session -------------------------------------------------------
+    // --- session ----------------------------------------------------------
     if let Some(previous) = request.history.previous_act {
         // Continuity is a real prior, but a weak one: people change subject.
         out.act.add(previous, 0.25);
@@ -1152,17 +1888,8 @@ pub fn extract(request: &Request<'_>) -> Extraction {
             format!("previous turn read as {}", previous.as_str()),
         ));
     }
-    if request.history.commitment_open {
-        out.horizon.add(Horizon::Session, 0.4);
-        out.signals.push(Signal::new(
-            SignalKind::Session,
-            "commitment-open",
-            0.4,
-            "a commitment is already open here",
-        ));
-    }
 
-    // --- attachments ---------------------------------------------------
+    // --- attachments ------------------------------------------------------
     for attachment in request.attachments {
         out.input_modalities.push(attachment.modality);
         out.signals.push(Signal::new(
@@ -1193,6 +1920,265 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     out
 }
 
+fn read_acts(clause: &ClauseRead, out: &mut Extraction) {
+    let tokens = &clause.tokens;
+    for (target, act, weight) in VERB_TARGETS.iter() {
+        let Some(position) = tokens.position(target, &clause.consumed) else {
+            continue;
+        };
+        let head = clause.is_head(position);
+        let weight = match clause.kind {
+            // A statement's first word is its subject, and its other nouns
+            // are not verbs; only a verb heading a later sub-clause ("it
+            // crashes, fix it") asks for anything.
+            ClauseKind::Statement if !head || position == 0 => continue,
+            ClauseKind::Social if !head => continue,
+            // In a question the head asks; other verbs are what it asks
+            // about ("did the email send?") and count for half.
+            ClauseKind::Question if !head => weight * 0.5,
+            _ if head => weight * IMPERATIVE_BONUS,
+            _ => *weight,
+        };
+        // "Alert me", "send me the report": delivering the result to the
+        // person asking is an answer, not an operation on someone else.
+        let to_requester = *act == Act::Operate
+            && tokens
+                .get(position + 1)
+                .is_some_and(|next| REQUESTER.contains(&next));
+        let (act, weight) = if to_requester {
+            (Act::Answer, weight * 0.5)
+        } else {
+            (*act, weight)
+        };
+        out.act.add(act, weight);
+        out.signals.push(Signal::new(
+            SignalKind::Lexical,
+            format!("verb:{}", target.word),
+            weight,
+            if to_requester {
+                format!("`{} me` delivers to the requester ⇒ answer", target.word)
+            } else if position == 0 {
+                format!("`{}` (leading verb) ⇒ {}", target.word, act.as_str())
+            } else if head {
+                format!("`{}` (clause head verb) ⇒ {}", target.word, act.as_str())
+            } else {
+                format!("`{}` ⇒ {}", target.word, act.as_str())
+            },
+        ));
+    }
+    if clause.kind == ClauseKind::Question {
+        let first = tokens.get(0).unwrap_or("");
+        if !WH_WORDS.contains(&first) {
+            let weight = if AUX_WORDS.contains(&first) {
+                0.8 * IMPERATIVE_BONUS
+            } else {
+                0.8
+            };
+            out.act.add(Act::Answer, weight);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                "question:head",
+                weight,
+                if AUX_WORDS.contains(&first) {
+                    format!("`{first}` opens a question ⇒ answer")
+                } else {
+                    "a question mark ⇒ answer".to_string()
+                },
+            ));
+        }
+    }
+    for (phrase, weight) in SOCIAL_PHRASES {
+        if tokens.phrase_at(&split_phrase(phrase)).is_some() {
+            out.act.add(Act::Converse, *weight);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                format!("social:{}", phrase.replace(' ', "-")),
+                *weight,
+                format!("`{phrase}` ⇒ converse"),
+            ));
+        }
+    }
+    if clause.kind == ClauseKind::Social
+        && let Some(first) = tokens.get(0)
+        && let Some((word, weight)) = SOCIAL_WORDS.iter().find(|(word, _)| *word == first)
+    {
+        out.act.add(Act::Converse, *weight);
+        out.signals.push(Signal::new(
+            SignalKind::Lexical,
+            format!("social:{word}"),
+            *weight,
+            format!("`{word}` ⇒ converse"),
+        ));
+    }
+}
+
+fn read_stakes_and_evidence(clause: &ClauseRead, checkable: bool, out: &mut Extraction) {
+    let tokens = &clause.tokens;
+    for (phrase, stakes, weight) in STAKES_WORDS {
+        let words = split_phrase(phrase);
+        let hit = if words.len() > 1 {
+            tokens.phrase_at(&words).is_some()
+        } else {
+            tokens.position(&Target::new(phrase), &[]).is_some()
+        };
+        if hit {
+            out.stakes_from_words.add(*stakes, *weight);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                format!("stakes:{}", phrase.replace(' ', "-")),
+                *weight,
+                format!("`{phrase}` ⇒ {}", stakes.as_str()),
+            ));
+        }
+    }
+    for (phrase, evidence, weight) in EVIDENCE_WORDS {
+        let words = split_phrase(phrase);
+        let hit = if words.len() > 1 {
+            tokens.phrase_at(&words).is_some()
+        } else if EXACT_EVIDENCE_WORDS.contains(phrase) {
+            tokens.words.iter().any(|t| t == phrase)
+        } else {
+            tokens.position(&Target::new(phrase), &[]).is_some()
+        };
+        if hit {
+            out.evidence.add(*evidence, *weight);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                format!("evidence:{}", phrase.replace(' ', "-")),
+                *weight,
+                format!("`{phrase}` ⇒ {}", evidence.as_str()),
+            ));
+        }
+    }
+    for (phrase, weight) in ASSURANCE_PHRASES {
+        let words = split_phrase(phrase);
+        let hit = if words.len() > 1 {
+            tokens.phrase_at(&words).is_some()
+        } else {
+            tokens.position(&Target::new(phrase), &[]).is_some()
+        };
+        if hit && checkable {
+            out.evidence.add(Evidence::Verified, *weight);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                format!("evidence:{}", phrase.replace(' ', "-")),
+                *weight,
+                format!("`{phrase}` something checkable ⇒ verified"),
+            ));
+        }
+    }
+}
+
+fn read_recency(clause: &ClauseRead, out: &mut Extraction) {
+    let tokens = &clause.tokens;
+    if TIME_WORDS
+        .iter()
+        .any(|word| tokens.words.iter().any(|t| t == word))
+    {
+        return;
+    }
+    for (phrase, weight) in RECENCY_PHRASES {
+        let words = split_phrase(phrase);
+        let Some(at) = tokens.phrase_at(&words) else {
+            continue;
+        };
+        let next = tokens.get(at + words.len()).unwrap_or("");
+        // "today's": the possessive splits into `today` `s`; look past it.
+        let next = if next == "s" {
+            tokens.get(at + words.len() + 1).unwrap_or("")
+        } else {
+            next
+        };
+        // The thing that is current: the noun after the word ("the current
+        // directory"), just before it ("is my branch up to date"), or what a
+        // wh-question asks about ("what tasks are scheduled right now").
+        let before = (at.saturating_sub(2)..at).filter_map(|i| tokens.get(i));
+        let asked_about = tokens
+            .get(0)
+            .filter(|first| matches!(*first, "what" | "which"))
+            .and_then(|_| tokens.get(1));
+        if LOCAL_NOUNS.contains(&next)
+            || before.into_iter().any(|word| LOCAL_NOUNS.contains(&word))
+            || asked_about.is_some_and(|word| LOCAL_NOUNS.contains(&word))
+        {
+            continue;
+        }
+        if out.recency.as_ref().is_none_or(|(_, best)| *weight > *best) {
+            out.recency = Some((phrase.to_string(), *weight));
+        }
+    }
+    if let Some((phrase, weight)) = out.recency.clone()
+        && !out
+            .signals
+            .iter()
+            .any(|s| s.name == format!("recency:{}", phrase.replace(' ', "-")))
+    {
+        out.signals.push(Signal::new(
+            SignalKind::Lexical,
+            format!("recency:{}", phrase.replace(' ', "-")),
+            weight,
+            format!("`{phrase}` ⇒ a current value, if the part asks for a fact"),
+        ));
+    }
+}
+
+fn read_horizon(clause: &ClauseRead, out: &mut Extraction) {
+    let tokens = &clause.tokens;
+    for (phrase, horizon, weight) in HORIZON_PHRASES {
+        // A recurrence adjective names a thing, not a schedule: "the nightly
+        // job", "our daily report". Only the adverb says the work recurs.
+        if RECURRENCE_ADJECTIVES.contains(phrase)
+            && tokens
+                .words
+                .windows(2)
+                .any(|pair| DETERMINERS.contains(&pair[0].as_str()) && pair[1] == *phrase)
+            && !tokens
+                .words
+                .windows(2)
+                .any(|pair| !DETERMINERS.contains(&pair[0].as_str()) && pair[1] == *phrase)
+            && tokens.get(0) != Some(phrase)
+        {
+            continue;
+        }
+        if tokens.phrase_at(&split_phrase(phrase)).is_some() {
+            out.horizon.add(*horizon, *weight);
+            out.signals.push(Signal::new(
+                SignalKind::Lexical,
+                format!("horizon:{}", phrase.replace(' ', "-")),
+                *weight,
+                format!("`{phrase}` ⇒ {}", horizon.as_str()),
+            ));
+        }
+    }
+}
+
+fn read_structure(clause: &ClauseRead, out: &mut Extraction) {
+    let text = &clause.text;
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("http://") || lower.contains("https://") {
+        out.act.add(Act::Analyze, 0.3);
+        out.signals.push(Signal::new(
+            SignalKind::Structural,
+            "url",
+            0.3,
+            "a URL to fetch",
+        ));
+    }
+    let path_like = text
+        .split_whitespace()
+        .any(|w| w.contains('/') && w.contains('.') && !w.contains("://"));
+    if path_like {
+        out.signals.push(Signal::new(
+            SignalKind::Structural,
+            "path-mention",
+            0.4,
+            "a file path is named",
+        ));
+        out.act.add(Act::Modify, 0.2);
+        out.clarity.add(Clarity::Clear, 0.5);
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -1201,35 +2187,32 @@ mod tests {
     fn request<'a>(text: &'a str) -> Request<'a> {
         Request {
             text,
-            surface: Surface::Cli,
-            attachments: &[],
-            workspace: WorkspaceFacts::default(),
-            history: HistoryFacts::default(),
-            attendance_override: None,
-            lineage_hint: None,
+            ..Request::default()
         }
     }
 
     #[test]
-    fn temporal_deixis_marks_the_request_as_live_data() {
+    fn temporal_deixis_is_recorded_and_local_nouns_are_not() {
         let now = extract(&request("what is the current price of copper"));
-        assert!(
-            now.domains.iter().any(|d| d == "live-data"),
-            "{:?}",
-            now.domains
-        );
+        assert_eq!(now.recency.as_ref().map(|r| r.0.as_str()), Some("current"));
         assert!(now.signals.iter().any(|s| s.name.starts_with("recency:")));
-        // The domain is set; the evidence standard is left to the request's
-        // own words (the runtime freshness check does the enforcing).
+        // The evidence standard is left to the request's own words.
         assert_ne!(now.evidence.winner().map(|w| w.0), Some(Evidence::Cited));
 
-        let timeless = extract(&request("explain how copper is refined"));
-        assert!(!timeless.domains.iter().any(|d| d == "live-data"));
-
-        // A topic word alone is never a routing key: no temporal reference,
-        // no live-data domain.
-        let topic_only = extract(&request("tell me about the climate of Delhi"));
-        assert!(!topic_only.domains.iter().any(|d| d == "live-data"));
+        for local in [
+            "what's in the current directory",
+            "update the README to reflect the latest changes",
+            "fix the live reload bug",
+            "what time is it right now",
+            "what's today's date",
+        ] {
+            assert!(extract(&request(local)).recency.is_none(), "{local}");
+        }
+        assert!(
+            extract(&request("explain how copper is refined"))
+                .recency
+                .is_none()
+        );
     }
 
     #[test]
@@ -1251,6 +2234,18 @@ mod tests {
     }
 
     #[test]
+    fn a_greeting_in_front_of_a_question_does_not_take_it_over() {
+        let extraction = extract(&request(
+            "hey, what did we decide about the schema yesterday?",
+        ));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Answer));
+        let extraction = extract(&request("hey can you check the logs"));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Verify));
+        let extraction = extract(&request("hello there, how are you doing today"));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Converse));
+    }
+
+    #[test]
     fn production_words_raise_stakes_whatever_the_verb() {
         let extraction = extract(&request("deploy the service to production"));
         assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Operate));
@@ -1261,15 +2256,45 @@ mod tests {
     }
 
     #[test]
+    fn topic_nouns_do_not_raise_stakes() {
+        for text in [
+            "rename the Customer struct to Client",
+            "fix the payment form validation",
+            "make the banner visible to everyone",
+            "the query is expensive, optimize it",
+        ] {
+            assert!(
+                extract(&request(text)).stakes_from_words.winner().is_none(),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn unknown_input_abstains_rather_than_guessing() {
         let extraction = extract(&request("zorble the frobnicator"));
         assert!(extraction.act.is_empty(), "lexicon invented a reading");
     }
 
-    /// The `is_managed_work_request` heuristic this replaces fired on any two
-    /// of `and`/`then`/`first`. A sentence that merely contains conjunctions
-    /// is not multi-day work, and reading it as such is what made the old
-    /// gate useless.
+    #[test]
+    fn a_statement_casts_no_act_vote() {
+        let extraction = extract(&request("the deploy script is broken"));
+        assert!(extraction.act.is_empty(), "{:?}", extraction.act.ranked());
+        let extraction = extract(&request("it crashes on empty input, fix it"));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Modify));
+    }
+
+    #[test]
+    fn a_question_about_an_effect_is_a_question() {
+        let extraction = extract(&request("Did the email send?"));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Answer));
+        let extraction = extract(&request("is the deploy broken"));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Answer));
+        // A request that is phrased as a question is still a request.
+        let extraction = extract(&request("can you deploy the service?"));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Operate));
+    }
+
     #[test]
     fn conjunctions_alone_do_not_imply_a_long_horizon() {
         let extraction = extract(&request("explain what this and that mean"));
@@ -1279,12 +2304,22 @@ mod tests {
     }
 
     #[test]
-    fn recurrence_phrases_imply_a_durable_horizon() {
+    fn recurrence_phrases_imply_a_durable_horizon_for_requests_only() {
         let extraction = extract(&request("check the cloud bill every day and alert me"));
         assert_eq!(
             extraction.horizon.winner().map(|w| w.0),
             Some(Horizon::Durable)
         );
+        for question in [
+            "what happens whenever I press ctrl-c in the REPL?",
+            "why does the test fail continuously on CI?",
+        ] {
+            assert_ne!(
+                extract(&request(question)).horizon.winner().map(|w| w.0),
+                Some(Horizon::Durable),
+                "{question}"
+            );
+        }
     }
 
     #[test]
@@ -1317,9 +2352,16 @@ mod tests {
     }
 
     #[test]
-    fn a_bare_pronoun_is_ambiguous_only_without_context() {
+    fn only_a_bare_pronoun_is_ambiguous_and_only_without_context() {
         let cold = extract(&request("fix this"));
         assert_eq!(cold.clarity.winner().map(|w| w.0), Some(Clarity::Ambiguous));
+
+        // `that` as a relative pronoun points at nothing.
+        let relative = extract(&request("Write a function that parses ISO dates"));
+        assert_ne!(
+            relative.clarity.winner().map(|w| w.0),
+            Some(Clarity::Ambiguous)
+        );
 
         let mut warm = request("fix this");
         warm.history.turn_index = 3;
@@ -1328,6 +2370,34 @@ mod tests {
             extract(&warm).clarity.winner().map(|w| w.0),
             Some(Clarity::Clear)
         );
+    }
+
+    #[test]
+    fn pasted_material_is_set_aside() {
+        let mut log = String::from("why is this service failing? here is the log:\n");
+        for i in 0..40 {
+            log.push_str(&format!(
+                "2026-09-26T10:00:{i:02}Z INFO worker deploy job {i} for customer account\n"
+            ));
+        }
+        let prepared = prepare(&log);
+        assert_eq!(prepared.pasted_lines, 40);
+        assert!(!prepared.instruction.contains("worker deploy"));
+        let extraction = extract(&request(&log));
+        assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Answer));
+        assert!(extraction.input_modalities.contains(&Modality::Data));
+
+        let fenced = "what does this do?\n```rust\nfn deploy() { send(); }\n```";
+        let prepared = prepare(fenced);
+        assert_eq!(prepared.fenced_blocks, 1);
+        assert_eq!(prepared.instruction, "what does this do?");
+    }
+
+    #[test]
+    fn hard_wrapped_prose_is_kept() {
+        let text = "please update the config so that\nthe retries are bounded and the timeout\nis configurable per provider";
+        let prepared = prepare(text);
+        assert_eq!(prepared.pasted_lines, 0, "{prepared:?}");
     }
 
     #[test]
@@ -1344,11 +2414,7 @@ mod tests {
         assert!(tied_confidence < clear_confidence);
     }
 
-    /// On an ordered axis a weaker level *corroborates* a stronger one. This
-    /// is the bug that dropped "deploy the billing service to production" to
-    /// the general engagement: a dirty working tree voted `reversible`, which
-    /// was scored as a rival to `irreversible` and dragged the whole reading
-    /// below the acceptance floor.
+    /// On an ordered axis a weaker level *corroborates* a stronger one.
     #[test]
     fn a_lower_level_never_argues_against_a_higher_one() {
         let mut alone: Votes<Stakes> = Votes::default();
@@ -1361,14 +2427,9 @@ mod tests {
         let (value, confidence) = corroborated.winner().unwrap();
 
         assert_eq!(value, Stakes::Irreversible);
-        assert!(
-            confidence >= alone_confidence,
-            "agreement at a lower level reduced confidence: {confidence} < {alone_confidence}"
-        );
+        assert!(confidence >= alone_confidence);
     }
 
-    /// Ordered axes take the highest supported level, because on every one of
-    /// them that is the cautious direction.
     #[test]
     fn ordered_axes_take_the_highest_supported_level() {
         let mut stakes: Votes<Stakes> = Votes::default();
@@ -1382,13 +2443,28 @@ mod tests {
         assert_eq!(evidence.winner().map(|w| w.0), Some(Evidence::Audited));
     }
 
-    /// A stray weak hint must not promote work to a longer horizon; that is
-    /// how the keyword heuristic this replaces went wrong.
     #[test]
     fn weak_hints_do_not_escalate_an_ordered_axis() {
         let mut horizon: Votes<Horizon> = Votes::default();
         horizon.add(Horizon::Immediate, 0.6);
         horizon.add(Horizon::Durable, 0.3);
         assert_eq!(horizon.winner().map(|w| w.0), Some(Horizon::Immediate));
+    }
+
+    #[test]
+    fn assurance_needs_something_checkable() {
+        assert_eq!(
+            extract(&request("make sure the tests pass"))
+                .evidence
+                .winner()
+                .map(|w| w.0),
+            Some(Evidence::Verified)
+        );
+        assert!(
+            extract(&request("write a poem, make sure it rhymes"))
+                .evidence
+                .winner()
+                .is_none()
+        );
     }
 }

@@ -97,6 +97,7 @@ fn a_domain_disjoint_directive_is_marked_paused_not_removed() {
         relation: vak_intent::GoalRelation::New,
         request: "look up the sensex".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     let t1 = log
@@ -124,6 +125,7 @@ fn a_domain_disjoint_directive_is_marked_paused_not_removed() {
         relation: vak_intent::GoalRelation::AddsTo,
         request: "how do I poach an egg".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(user_msg("how do I poach an egg"))
@@ -156,6 +158,7 @@ fn a_domain_overlapping_directive_is_never_marked_paused() {
         relation: vak_intent::GoalRelation::New,
         request: "look up the sensex".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     let t1 = log
@@ -183,6 +186,7 @@ fn a_domain_overlapping_directive_is_never_marked_paused() {
         relation: vak_intent::GoalRelation::AddsTo,
         request: "and the nifty too".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(user_msg("and the nifty too")).unwrap();

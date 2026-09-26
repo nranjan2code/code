@@ -137,7 +137,7 @@ pub enum Horizon {
     Immediate,
     /// A handful of tool calls inside one turn.
     Turn,
-    /// Multi-step work that wants a plan and outlives a single turn.
+    /// Multi-step work that wants a plan inside this session.
     Session,
     /// Spans sessions, restarts, and potentially months.
     Durable,
@@ -177,8 +177,13 @@ impl Horizon {
     }
 
     /// Work at this horizon earns a durable commitment of its own.
+    ///
+    /// Only work that outlives the session: multi-step work inside one
+    /// session runs under its plan (the managed work contract), and opening a
+    /// month-long obligation for it left the ledger full of commitments
+    /// nobody would ever close.
     pub fn opens_commitment(self) -> bool {
-        self.rank() >= Horizon::Session.rank()
+        self == Horizon::Durable
     }
 }
 
@@ -604,9 +609,13 @@ impl EpistemicStance {
                 "Provide a clear, direct answer to the question. Avoid unnecessary meta-commentary, \
                  unsolicited execution plans, or unwarranted tool calls when knowledge in context suffices."
             }
+            // Citation is demanded by the intent note when the request asks
+            // for it, not by the stance: measured live, "cite sources for
+            // every factual assertion" made a small local model deliberate
+            // and emit nothing on requests that asked for no sources.
             EpistemicStance::Analytical => {
-                "Scrutinize claims objectively. Separate verified facts from inferences, evaluate \
-                 counter-arguments or alternative explanations, and cite sources for every factual assertion."
+                "Scrutinize claims objectively. Separate verified facts from inferences and \
+                 evaluate counter-arguments or alternative explanations before concluding."
             }
             EpistemicStance::Exploratory => {
                 "Map the landscape systematically. Prioritize breadth, surface key trade-offs, \

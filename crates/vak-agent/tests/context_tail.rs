@@ -409,6 +409,7 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
         relation: vak_intent::GoalRelation::New,
         request: "research on WEF".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(MessageRecord {
@@ -431,6 +432,7 @@ async fn thread_in_the_assembled_request_lists_only_non_verbatim_directives() {
         relation: vak_intent::GoalRelation::AddsTo,
         request: "use python sandbox".into(),
         supersedes_revision: None,
+        explicit: false,
     })
     .unwrap();
     log.append_message(MessageRecord {

@@ -42,10 +42,12 @@
 //! * **Intent never gates the permission engine.** Permission is evaluated
 //!   exactly as it always was; an engagement can only add an approval
 //!   requirement on top. Nothing here can authorize anything.
-//! * **Uncertainty resolves to `general`.** A reading below the confidence
-//!   floor produces [`Engagement::general`], which is byte-for-byte the
-//!   behaviour that shipped before this crate existed. Being unsure must never
-//!   silently take tools away.
+//! * **Uncertainty resolves to the orienting engagement.** A reading below the
+//!   confidence floor loads the orientation floor (files and memory) and
+//!   leaves every other admitted tool one `find_tools` call away; what a human
+//!   delegated still applies. Being unsure never removes a capability — it
+//!   only sends less up front. [`Engagement::general`], which restricts
+//!   nothing at all, is what a *disabled* kernel produces.
 //!
 //! # Reproducibility
 //!
@@ -69,19 +71,20 @@ pub mod signals;
 pub mod strand;
 
 pub use authority::{
-    ApprovalCeiling, Authority, Autonomy, CapabilityDecision, CapabilityKind, CapabilityRequest,
-    Envelope, Escalation, GateFallback, PermissionCeiling,
+    ApprovalCeiling, Authority, Autonomy, Envelope, Escalation, GateFallback, PermissionCeiling,
 };
 pub use axes::{
     Act, Attendance, Clarity, EpistemicStance, Evidence, Horizon, Modality, Satisfaction, Stakes,
 };
 pub use engage::{
     Cadence, ClarifyPolicy, ContextProfile, DeliveryPosture, DemandHint, Engagement, HilMode,
-    OutputShape, Posture, StopProfile, Urgency, derive,
+    OutputShape, Posture, StopProfile, Urgency, apply_authority, derive,
 };
 pub use engage::{DOMAIN_VOCABULARY, FLOOR_DOMAINS};
-pub use goal::{GoalControlState, GoalRelation, GoalState, GoalUpdate, goal_relation};
-pub use limits::{CapabilitySlice, DomainSet, Limits};
+pub use goal::{
+    GoalControlState, GoalRelation, GoalState, GoalUpdate, goal_relation, next_goal_update,
+};
+pub use limits::{DomainSet, Limits};
 pub use outcome::{
     Command, CompletionVerdict, ControlSource, EvidenceReceipt, EvidenceState,
     InterventionDecision, InterventionEvaluation, InterventionKind, InterventionRequest,
@@ -95,7 +98,8 @@ pub use outcome::{
 pub use reading::{Confidences, Intent, Provenance, Reading, Tier};
 pub use resolve::{
     Classification, Declared, RESOLVER_VERSION, Resolution, ResolverConfig, apply_classification,
-    classification_prompt, implied_stakes, parse_classifications, prompt_digest, resolve,
+    apply_envelopes, classification_budget, classification_prompt, implied_stakes,
+    parse_classifications, prompt_digest, resolve,
 };
 pub use signals::{
     Attachment, HistoryFacts, Request, Signal, SignalKind, Surface, WorkspaceFacts, extract,

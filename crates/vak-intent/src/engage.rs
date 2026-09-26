@@ -360,21 +360,50 @@ impl Engagement {
         engagement
     }
 
-    /// Compose with another engagement, narrowing only.
-    ///
-    /// Limits meet. Posture takes the more cautious of each selection under
-    /// an explicit per-field order, so the operation is commutative and
-    /// never less cautious than either operand — the earlier version took
-    /// `self`'s stop and context profiles unconditionally and could turn
-    /// `verification` into `message` depending on argument order. Notes are
-    /// kept from both sides: a model-visible instruction one strand needed
-    /// is not dropped because another had none.
+    /// Compose with another engagement, narrowing only: limits meet, and the
+    /// posture takes the more cautious of each selection ([`Posture::meet`]).
     pub fn meet(&self, other: &Engagement) -> Engagement {
-        let a = &self.posture;
-        let b = &other.posture;
         Engagement {
             limits: self.limits.meet(&other.limits),
-            posture: Posture {
+            posture: self.posture.meet(&other.posture),
+        }
+    }
+
+    /// The engagement for a turn made of several strands.
+    ///
+    /// Everything authority-bearing meets: the strictest strand governs
+    /// approval, permission, spend, closure evidence, modalities, and the
+    /// posture. The domain requirement is the turn's *capacity* rather than
+    /// its authority and takes the **union** — a turn that is "search the web,
+    /// then run the tests" needs both toolsets. It is still at most the
+    /// unrestricted baseline, which is the invariant that matters.
+    pub fn compose(strands: &[Engagement]) -> Engagement {
+        let Some((first, rest)) = strands.split_first() else {
+            return Engagement::general();
+        };
+        let mut out = first.clone();
+        let mut domains = first.limits.required_domains.clone();
+        for next in rest {
+            domains = domains.union(&next.limits.required_domains);
+            out = out.meet(next);
+        }
+        out.limits.required_domains = domains;
+        out
+    }
+}
+
+impl Posture {
+    /// The more cautious of two postures, field by field, under an explicit
+    /// per-field order, so the operation is commutative and never less
+    /// cautious than either operand. The delivery shape and the stance have
+    /// no order and are `self`'s. Notes are kept from both sides: a
+    /// model-visible instruction one strand needed is not dropped because
+    /// another had none.
+    pub fn meet(&self, other: &Posture) -> Posture {
+        let a = self;
+        let b = other;
+        {
+            Posture {
                 managed: a.managed || b.managed,
                 open_commitment: a.open_commitment || b.open_commitment,
                 checkpoint_before_effect: a.checkpoint_before_effect || b.checkpoint_before_effect,
@@ -435,46 +464,8 @@ impl Engagement {
                     (Some(x), Some(y)) if x == y => Some(x.clone()),
                     (Some(x), Some(y)) => Some(format!("{x}\n{y}")),
                 },
-            },
+            }
         }
-    }
-
-    /// The engagement for a turn made of several strands.
-    ///
-    /// Everything authority-bearing meets: the strictest strand governs
-    /// approval, permission, spend, closure evidence, modalities, and the
-    /// posture. Two kinds of field are the turn's *capacity* rather than its
-    /// authority and take the most demanding strand instead — the domain
-    /// requirement is the **union** (a turn that is "search the web, then
-    /// run the tests" needs both toolsets), and the ladder, worker and turn
-    /// allowances are the largest (a greeting's "no workers" must not cap
-    /// the migration beside it). Both are still at most the unrestricted
-    /// baseline, which is the invariant that matters.
-    pub fn compose(strands: &[Engagement]) -> Engagement {
-        let Some((first, rest)) = strands.split_first() else {
-            return Engagement::general();
-        };
-        let mut out = first.clone();
-        let mut domains = first.limits.required_domains.clone();
-        let mut ladder_limit = first.limits.ladder_limit;
-        let mut worker_budget = first.limits.worker_budget;
-        let mut max_turns = first.limits.max_turns;
-        let widest = |a: Option<usize>, b: Option<usize>| match (a, b) {
-            (Some(x), Some(y)) => Some(x.max(y)),
-            _ => None,
-        };
-        for next in rest {
-            domains = domains.union(&next.limits.required_domains);
-            ladder_limit = widest(ladder_limit, next.limits.ladder_limit);
-            worker_budget = widest(worker_budget, next.limits.worker_budget);
-            max_turns = widest(max_turns, next.limits.max_turns);
-            out = out.meet(next);
-        }
-        out.limits.required_domains = domains;
-        out.limits.ladder_limit = ladder_limit;
-        out.limits.worker_budget = worker_budget;
-        out.limits.max_turns = max_turns;
-        out
     }
 }
 
@@ -561,12 +552,7 @@ pub const DOMAIN_VOCABULARY: &[&str] = &[
 /// misread is a small annoyance, while removing a tool the task needed looks
 /// to the user like the agent is broken. Callers therefore gate slicing on a
 /// higher bar, and low confidence still tightens risk.
-pub fn derive(
-    reading: &Reading,
-    authority: &Authority,
-    slice_capabilities: bool,
-    now: chrono::DateTime<chrono::Utc>,
-) -> Engagement {
+pub fn derive(reading: &Reading, authority: &Authority, slice_capabilities: bool) -> Engagement {
     let mut limits = Limits::unrestricted();
 
     // --- capabilities --------------------------------------------------
@@ -604,47 +590,22 @@ pub fn derive(
     // A leg that cannot see is not a valid fallback for a vision turn.
     limits.required_modalities = reading.required_modalities();
 
-    // --- route ladder --------------------------------------------------
-    // Trivial work does not need a deep fallback chain; walking one costs
-    // latency and money that a greeting cannot justify.
-    limits.ladder_limit = match reading.horizon {
-        Horizon::Immediate => Some(1),
-        _ => None,
-    };
-
-    // --- approval and permission ---------------------------------------
-    // The envelope question is answered per action at dispatch time; here we
-    // take the conservative branch, because an engagement is computed before
-    // anyone knows which paths a turn will touch.
-    // `now` is a recorded input rather than a clock read: three separate
-    // `Utc::now()` calls here could straddle an envelope's expiry and answer
-    // the approval and permission questions from different worlds, and a
-    // decision that depends on an unrecorded instant is not reproducible.
-    limits.approval_ceiling = authority.approval_ceiling(reading.stakes, now, false);
-    limits.permission_ceiling = authority.permission_ceiling(now);
-
-    // --- budget --------------------------------------------------------
-    limits.spend_ceiling_usd = authority.spend_limit_usd(now);
-
-    // --- concurrency and length ----------------------------------------
-    limits.worker_budget = match reading.act {
-        Act::Converse | Act::Answer => Some(0),
-        _ => None,
-    };
-    limits.max_turns = match reading.horizon {
-        Horizon::Immediate => Some(2),
-        _ => None,
-    };
+    // A reading never caps the route ladder, the turn count or the workers.
+    // Those caps only ever removed capacity from requests the reader got
+    // wrong — a 20-character "fix the failing test" lost its fallback legs
+    // and gave its workers two steps — and a reading decides what is loaded,
+    // never what is possible (invariant 32).
 
     // --- closure -------------------------------------------------------
     limits.min_satisfaction = reading.evidence.min_satisfaction();
 
     // --- posture -------------------------------------------------------
-    let managed = reading.horizon.opens_commitment();
-    let hil = derive_hil(reading, authority, now);
+    let hil = derive_hil(reading, authority);
     let delivery = derive_delivery(reading);
     let posture = Posture {
-        managed,
+        // Multi-step work runs under a plan; only work that outlives the
+        // session earns a durable commitment.
+        managed: reading.horizon.rank() >= Horizon::Session.rank(),
         open_commitment: reading.horizon.opens_commitment(),
         // Any act the reading covers, not just the primary one. "migrate …
         // and verify … before deploying" resolves `verify` as primary, and
@@ -659,14 +620,14 @@ pub fn derive(
         checkpoint_before_effect: reading.acts().iter().any(|act| act.requires_execution())
             && reading.stakes.wants_checkpoint(),
         hil,
-        gate_fallback: authority.gate_fallback(reading.horizon),
+        gate_fallback: GateFallback::Deny,
         clarify: derive_clarify(reading),
         delivery,
         demand: DemandHint {
             reasoning_required: matches!(
                 reading.act,
                 Act::Analyze | Act::Author | Act::Modify | Act::Orchestrate
-            ) || reading.horizon.opens_commitment(),
+            ) || reading.horizon.rank() >= Horizon::Session.rank(),
             evidence_required: reading.evidence.rank() >= Evidence::Cited.rank(),
             structured_output: matches!(
                 delivery.shape,
@@ -679,7 +640,26 @@ pub fn derive(
         note: derive_note(reading, hil),
     };
 
-    Engagement { limits, posture }
+    let mut engagement = Engagement { limits, posture };
+    apply_authority(&mut engagement, reading, authority);
+    engagement
+}
+
+/// Apply the authority in force to an engagement: the approval ceiling for
+/// the reading's stakes, and what happens to a gate nobody can answer.
+///
+/// One place for every path — a confident reading, a provisional one, and a
+/// part the free tiers could not read at all — because authority does not
+/// depend on how well the request was read: `manual` means "ask" whether or
+/// not the reader understood the words.
+///
+/// A grant on a commitment is applied separately, once the strands serving
+/// it are known (`apply_envelopes`), and covers actions one at a time at the
+/// approval gate — an engagement is computed before anyone knows which paths
+/// a turn will touch.
+pub fn apply_authority(engagement: &mut Engagement, reading: &Reading, authority: &Authority) {
+    engagement.limits.approval_ceiling = authority.approval_ceiling(reading.stakes);
+    engagement.posture.gate_fallback = authority.gate_fallback(reading.horizon);
 }
 
 /// Derive the appropriate epistemic cognitive stance from the reading.
@@ -711,11 +691,7 @@ pub fn derive_epistemic_stance(reading: &Reading) -> EpistemicStance {
     }
 }
 
-fn derive_hil(
-    reading: &Reading,
-    authority: &Authority,
-    now: chrono::DateTime<chrono::Utc>,
-) -> HilMode {
+fn derive_hil(reading: &Reading, authority: &Authority) -> HilMode {
     let needs_a_human = reading.stakes.rank() >= Stakes::Costly.rank();
     // Nobody to ask and somewhere to park the question: wait rather than
     // fail. This covers irreversible work too — an irreversible step with
@@ -734,13 +710,8 @@ fn derive_hil(
     if authority.autonomy == Autonomy::Manual {
         return HilMode::Interrupt;
     }
-    let envelope_live = authority
-        .envelope
-        .as_ref()
-        .is_some_and(|envelope| envelope.is_live(now));
-    if authority.autonomy == Autonomy::Delegated && envelope_live {
-        return HilMode::Envelope;
-    }
+    // `Envelope` is set by `apply_envelopes` on a strand whose commitment
+    // carries a live grant; delegation without one is not a boundary.
     if authority.autonomy == Autonomy::Autonomous {
         return HilMode::Review;
     }
@@ -910,12 +881,6 @@ mod tests {
     use super::*;
     use crate::axes::{Act, Attendance, Clarity, Evidence, Horizon, Stakes};
 
-    fn now() -> chrono::DateTime<chrono::Utc> {
-        chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
-            .unwrap()
-            .with_timezone(&chrono::Utc)
-    }
-
     fn reading(act: Act, horizon: Horizon, stakes: Stakes, evidence: Evidence) -> Reading {
         Reading {
             act,
@@ -948,9 +913,8 @@ mod tests {
                                         let authority = Authority {
                                             autonomy,
                                             attendance,
-                                            envelope: None,
                                         };
-                                        let engagement = derive(&r, &authority, slice, now());
+                                        let engagement = derive(&r, &authority, slice);
                                         assert!(
                                             engagement.limits.is_at_most(&baseline),
                                             "widened: {act:?}/{horizon:?}/{stakes:?}/\
@@ -967,21 +931,20 @@ mod tests {
     }
 
     #[test]
-    fn a_greeting_gets_no_tools_one_leg_and_minimal_context() {
+    fn a_greeting_gets_no_tools_and_minimal_context() {
         let r = reading(
             Act::Converse,
             Horizon::Immediate,
             Stakes::Inert,
             Evidence::None,
         );
-        let engagement = derive(&r, &Authority::default(), true, now());
+        let engagement = derive(&r, &Authority::default(), true);
         // A greeting asks for nothing beyond the floor that lets it look at
         // what is in front of it.
         assert_eq!(
             engagement.limits.required_domains,
             crate::limits::DomainSet::only(FLOOR_DOMAINS.iter().copied())
         );
-        assert_eq!(engagement.limits.ladder_limit, Some(1));
         assert_eq!(engagement.posture.context, ContextProfile::Minimal);
         assert!(!engagement.posture.open_commitment);
         assert_eq!(engagement.posture.note, None);
@@ -991,7 +954,7 @@ mod tests {
     fn every_act_keeps_the_orientation_floor() {
         for act in Act::ALL {
             let r = reading(act, Horizon::Turn, Stakes::Reversible, Evidence::None);
-            let engagement = derive(&r, &Authority::default(), true, now());
+            let engagement = derive(&r, &Authority::default(), true);
             for domain in FLOOR_DOMAINS {
                 assert!(
                     engagement.limits.required_domains.contains(domain),
@@ -1011,7 +974,7 @@ mod tests {
         // there, connected and admitted.
         for act in [Act::Answer, Act::Locate] {
             let r = reading(act, Horizon::Turn, Stakes::Inert, Evidence::None);
-            let engagement = derive(&r, &Authority::default(), true, now());
+            let engagement = derive(&r, &Authority::default(), true);
             assert!(
                 engagement.limits.required_domains.contains("live-data"),
                 "{act:?} cannot reach a live source"
@@ -1024,7 +987,7 @@ mod tests {
         // The general form of the weather failure: it was never specific to
         // `Answer`. A turn obliged to cite cannot satisfy that from memory.
         let r = reading(Act::Verify, Horizon::Turn, Stakes::Inert, Evidence::Cited);
-        let engagement = derive(&r, &Authority::default(), true, now());
+        let engagement = derive(&r, &Authority::default(), true);
         assert!(engagement.limits.required_domains.contains("live-data"));
     }
 
@@ -1057,7 +1020,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::Verified,
         );
-        let engagement = derive(&r, &Authority::default(), true, now());
+        let engagement = derive(&r, &Authority::default(), true);
         assert!(engagement.posture.managed);
         assert!(engagement.posture.open_commitment);
         assert_eq!(engagement.posture.context, ContextProfile::Full);
@@ -1076,7 +1039,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::Audited,
         );
-        let engagement = derive(&r, &Authority::default(), true, now());
+        let engagement = derive(&r, &Authority::default(), true);
         assert_eq!(
             engagement.limits.min_satisfaction,
             crate::Satisfaction::Attested
@@ -1090,9 +1053,7 @@ mod tests {
         let mut low = reading(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None);
         low.clarity = Clarity::Ambiguous;
         assert_eq!(
-            derive(&low, &Authority::default(), true, now())
-                .posture
-                .clarify,
+            derive(&low, &Authority::default(), true).posture.clarify,
             ClarifyPolicy::StateAssumption
         );
 
@@ -1104,9 +1065,7 @@ mod tests {
         );
         high.clarity = Clarity::Ambiguous;
         assert_eq!(
-            derive(&high, &Authority::default(), true, now())
-                .posture
-                .clarify,
+            derive(&high, &Authority::default(), true).posture.clarify,
             ClarifyPolicy::Ask
         );
     }
@@ -1122,9 +1081,8 @@ mod tests {
         let authority = Authority {
             autonomy: Autonomy::Delegated,
             attendance: Attendance::Unattended,
-            envelope: None,
         };
-        let engagement = derive(&r, &authority, true, now());
+        let engagement = derive(&r, &authority, true);
         assert_eq!(engagement.posture.hil, HilMode::Defer);
         assert_eq!(engagement.posture.gate_fallback, GateFallback::Defer);
     }
@@ -1133,9 +1091,7 @@ mod tests {
     fn unattended_work_rolls_up_instead_of_pinging() {
         let mut r = reading(Act::Verify, Horizon::Durable, Stakes::Inert, Evidence::None);
         r.attendance = Attendance::Unattended;
-        let delivery = derive(&r, &Authority::default(), true, now())
-            .posture
-            .delivery;
+        let delivery = derive(&r, &Authority::default(), true).posture.delivery;
         assert_eq!(delivery.cadence, Cadence::Digest);
         assert_eq!(delivery.urgency, Urgency::Quiet);
     }
@@ -1148,7 +1104,7 @@ mod tests {
             Stakes::Irreversible,
             Evidence::None,
         );
-        let engagement = derive(&r, &Authority::default(), true, now());
+        let engagement = derive(&r, &Authority::default(), true);
         assert_eq!(engagement.posture.hil, HilMode::Interrupt);
         assert_eq!(engagement.posture.delivery.urgency, Urgency::Interrupt);
         assert!(
@@ -1168,9 +1124,7 @@ mod tests {
             Stakes::Inert,
             Evidence::Cited,
         );
-        let demand = derive(&r, &Authority::default(), true, now())
-            .posture
-            .demand;
+        let demand = derive(&r, &Authority::default(), true).posture.demand;
         assert!(demand.reasoning_required);
         assert!(demand.evidence_required);
     }
@@ -1187,7 +1141,7 @@ mod tests {
             Evidence::None,
         );
         r.alternate_acts.insert(Act::Modify);
-        let engagement = derive(&r, &Authority::default(), true, now());
+        let engagement = derive(&r, &Authority::default(), true);
         assert!(engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Inspection);
 
@@ -1198,7 +1152,7 @@ mod tests {
             Stakes::Reversible,
             Evidence::None,
         );
-        let engagement = derive(&inert, &Authority::default(), true, now());
+        let engagement = derive(&inert, &Authority::default(), true);
         assert!(!engagement.posture.checkpoint_before_effect);
         assert_eq!(engagement.posture.stop, StopProfile::Message);
     }
@@ -1214,13 +1168,11 @@ mod tests {
             ),
             &Authority::default(),
             true,
-            now(),
         );
         let b = derive(
             &reading(Act::Answer, Horizon::Turn, Stakes::Inert, Evidence::None),
             &Authority::default(),
             true,
-            now(),
         );
         let met = a.meet(&b);
         assert!(met.limits.is_at_most(&a.limits));
