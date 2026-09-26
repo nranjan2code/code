@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.9 done. V3.10 onward and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.9 and V3.11 done. V3.10, V3.12, V3.13 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -270,7 +270,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   dialog folds into the greeting instead of covering it on first run.
 - [x] **V3.9 Motion.** The durations and curve from doc 75 §5.4; message
   arrival, result reveal, skeletons; no hover movement.
-- [ ] **V3.11 Finish the CSS cleanup inside each surface rewrite:** the 30
+- [x] **V3.11 Finish the CSS cleanup inside each surface rewrite:** the 30
   duplicate selector groups whose merge would change the cascade, the 3
   remaining `!important` rules (`.good-chip`, `.prompt-page > header`,
   `.office-outline button`) and the 35 hex literals outside the tokens.
@@ -748,3 +748,32 @@ what was not.
   reading the stylesheet. Bug found on the way: Solid applies a static
   `classList` in an effect after insertion, so the class has to be decided
   when the turn is created.
+- 2026-09-26: V3.11 done; `styles.css` is 5,957 lines (was 6,083). No
+  selector is defined twice at the top level: the 30 groups V2.8 skipped
+  are one rule each. Each merged at the first or last copy, whichever left
+  the cascade alone, with a shorthand replacing the longhands before it;
+  four needed more, because live responsive rules sat on both sides:
+  `.composer-wrap`, `.chat`, `.workspace-head` and `.dock` now have one
+  base rule with the values that won, and the responsive declarations that
+  never applied (always replaced by a later unconditional rule) are gone,
+  since they would have come alive once the base moved before them. The
+  shared `.sidebar, .dock` transparent-border rule folded into each. The
+  three `!important` are gone: `.chip.good-chip`, `.prompt-page > header`
+  (nothing competed), and the Office outline's indent is a `--depth`
+  variable instead of an inline padding. No hex literal is outside a theme
+  block (was 32): token fallbacks dropped, the old palette's status colours
+  are `--yellow` and `--red`, text on filled buttons is `--on-accent`, and
+  the letterbox, preview stage, previewed page and terminal have named
+  tokens in `:root`. Two were bugs: the Workbench command text and package
+  chips were light-on-dark colours on the theme background, nearly
+  invisible in light mode; they are `--text` and `--green` now. Checked by
+  computed style (43 properties, each border side separately, reduced
+  motion to freeze animation) of every element and its ::before/::after,
+  headless Chrome: the colour and `!important` changes left 4,322
+  elements on 11 screens unchanged; the merges left 11,678 elements on 29
+  screens unchanged (conversation, details, Review, agents and Settings
+  at 1440, 1240, 1000, 950, 850, 760, 700, 680, 620, 560, 480 and 390,
+  light and dark). Two identical baseline runs differed in nothing. Not
+  checked: the terminal and the Workbench chips live (no execution on these
+  screens), the Office outline's narrow layout, and screens other than
+  those listed.
