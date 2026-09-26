@@ -122,6 +122,6 @@ async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
         document
             .lines()
             .join("\n")
-            .contains("[deleted by mira: Steady.][inserted by mira: Up.]")
+            .contains("[deleted by mira: Steady][inserted by mira: Up].")
     );
 }

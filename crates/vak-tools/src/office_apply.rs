@@ -284,7 +284,7 @@ fn op_schemas() -> Value {
             "replace_paragraph_text",
             serde_json::json!({ "anchor": anchor("paragraph anchor, e.g. p@12"), "text": text }),
             &["anchor", "text"],
-            "Word: replace a paragraph's text (a tracked change)"
+            "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are"
         ),
         op(
             "insert_paragraph_after",

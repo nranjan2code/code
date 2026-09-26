@@ -1,10 +1,13 @@
 //! Word ops. Every change to an existing document is a native tracked
 //! change under the runtime-supplied author (docs/design/72, R7), so it
-//! survives into Word as a redline a person can accept or reject there.
+//! survives into Word as a redline a person can accept or reject there. A
+//! paragraph's new text is written as a redline of only the words that
+//! differ ([`super::redline`]).
 
 use std::io::{Read, Seek};
 
-use super::{EditContext, EditError, Expect, Outcome, Work, fail};
+use super::{EditContext, EditError, Expect, Outcome, Work, fail, redline};
+use crate::Limits;
 use crate::splice::{Splice, Tree, escape_attr, escape_text, start_tag};
 
 const W: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
@@ -12,8 +15,9 @@ const W_STRICT: &str = "http://purl.oclc.org/ooxml/wordprocessingml/main";
 const W14: &str = "http://schemas.microsoft.com/office/word/2010/wordml";
 const MC: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 
-/// Markup inside a paragraph that v1 ops will not rewrite: existing
-/// revisions, fields and text boxes. The error says what to do instead.
+/// Markup inside a paragraph that `delete_paragraph` will not rewrite:
+/// existing revisions, fields and text boxes. The error says what to do
+/// instead.
 const REFUSED_INSIDE: &[&str] = &[
     "ins",
     "del",
@@ -155,18 +159,16 @@ fn suggestion(doc: &Doc, all: &[(String, usize)], anchor: &str) -> String {
     }
 }
 
-/// A paragraph's visible text, from its `w:t` elements.
+/// A paragraph's text from its `w:t` elements, for suggesting an anchor.
 fn paragraph_text(doc: &Doc, paragraph: usize) -> String {
-    let mut text = String::new();
-    for node in doc.tree.descendants(paragraph, "t") {
-        let inner = &doc.tree.nodes[node].inner;
-        text.push_str(&String::from_utf8_lossy(&doc.bytes[inner.clone()]));
-    }
-    text.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
+    let limits = Limits::default();
+    doc.tree
+        .descendants(paragraph, "t")
+        .filter_map(|node| {
+            let inner = doc.tree.nodes[node].inner.clone();
+            redline::decode_text(&doc.bytes[inner], &doc.part, &limits).ok()
+        })
+        .collect()
 }
 
 fn refuse_complex(doc: &Doc, paragraph: &usize, anchor: &str) -> Result<(), EditError> {
@@ -208,7 +210,7 @@ fn revision(doc: &Doc, id: u64, context: &EditContext) -> String {
 }
 
 /// Run content for `text`: tabs and line breaks become `w:tab`/`w:br`.
-fn run_content(w: &str, text: &str) -> String {
+pub(super) fn run_content(w: &str, text: &str) -> String {
     let mut out = String::new();
     for (line_index, line) in text.split('\n').enumerate() {
         if line_index > 0 {
@@ -262,37 +264,6 @@ fn deleted_run(doc: &Doc, run: usize) -> Result<String, EditError> {
     Ok(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// The first run's formatting, unless copying it would hide the new text
-/// or duplicate a revision id.
-fn copied_run_properties(doc: &Doc, run: Option<usize>) -> String {
-    let Some(run) = run else {
-        return String::new();
-    };
-    let Some(properties) = doc.tree.children(run, "rPr").next() else {
-        return String::new();
-    };
-    for unsafe_local in ["vanish", "specVanish", "rPrChange"] {
-        if doc
-            .tree
-            .descendants(properties, unsafe_local)
-            .next()
-            .is_some()
-        {
-            return String::new();
-        }
-    }
-    let white = doc.tree.descendants(properties, "color").any(|color| {
-        doc.tree.nodes[color]
-            .element
-            .attr("val")
-            .is_some_and(|value| value.eq_ignore_ascii_case("FFFFFF"))
-    });
-    if white {
-        return String::new();
-    }
-    String::from_utf8_lossy(&doc.bytes[doc.tree.nodes[properties].span.clone()]).into_owned()
-}
-
 fn runs(doc: &Doc, paragraph: usize) -> Vec<usize> {
     doc.tree.descendants(paragraph, "r").collect()
 }
@@ -330,47 +301,65 @@ pub(super) fn replace_paragraph_text<R: Read + Seek>(
 ) -> Result<Outcome, EditError> {
     let doc = load(work)?;
     let paragraph = find(&doc, anchor)?;
-    refuse_complex(&doc, &paragraph, anchor)?;
-    let runs = runs(&doc, paragraph);
-    let mut id = next_revision_id(&doc);
-    let mut splice = Splice::default();
-    let w = &doc.w;
-    for run in &runs {
-        let deleted = deleted_run(&doc, *run)?;
-        splice.replace(
-            doc.tree.nodes[*run].span.clone(),
-            format!("<{w}del{}>{deleted}</{w}del>", revision(&doc, id, context)),
-        );
-        id += 1;
-    }
-    if !text.is_empty() {
-        let properties = copied_run_properties(&doc, runs.first().copied());
-        let inserted = format!(
-            "<{w}ins{}><{w}r>{properties}{}</{w}r></{w}ins>",
-            revision(&doc, id, context),
-            run_content(w, text)
-        );
-        append_to_paragraph(&doc, &mut splice, paragraph, &inserted);
-    }
-    work.put(&doc.part, splice.apply(&doc.bytes, &doc.part)?);
-    let expect = if text.trim().is_empty() {
-        Expect::UnitDeleted {
-            anchor: anchor.to_string(),
-        }
-    } else {
-        Expect::UnitContains {
-            anchor: anchor.to_string(),
-            needles: lines(text),
-        }
+    let limits = *work.limits();
+    let part = redline::Part {
+        name: &doc.part,
+        bytes: &doc.bytes,
+        tree: &doc.tree,
+        limits: &limits,
+        w: &doc.w,
     };
+    let replaced = redline::replace(
+        &part,
+        paragraph,
+        anchor,
+        text,
+        context,
+        next_revision_id(&doc),
+    )?;
+    if let Some(bytes) = replaced.bytes {
+        work.put(&doc.part, bytes);
+    }
     Ok(Outcome {
-        summary: format!(
-            "{anchor}: text replaced as a tracked change ({} run(s) marked deleted)",
-            runs.len()
-        ),
-        expect: vec![expect],
+        summary: replaced.summary,
+        expect: vec![Expect::Paragraph {
+            anchor: anchor.to_string(),
+            author: context.author.clone(),
+            accepted: replaced.accepted,
+            rejected: replaced.rejected,
+            fixed: replaced.fixed,
+        }],
         created: None,
     })
+}
+
+/// The paragraph `anchor` of a written main part, as a paragraph edit's
+/// postcondition reads it.
+pub(super) fn paragraph_views(
+    name: &str,
+    bytes: &[u8],
+    limits: &Limits,
+    anchor: &str,
+    author: &str,
+) -> Result<redline::Views, String> {
+    let tree = Tree::parse(bytes, name, limits).map_err(|error| error.to_string())?;
+    let Some(w) = tree.prefix_for(W).or_else(|| tree.prefix_for(W_STRICT)) else {
+        return Err("the document does not declare the WordprocessingML namespace".into());
+    };
+    let Some((_, paragraph)) = paragraphs(&tree)
+        .into_iter()
+        .find(|(candidate, _)| candidate == anchor)
+    else {
+        return Err(format!("{anchor} is missing"));
+    };
+    let part = redline::Part {
+        name,
+        bytes,
+        tree: &tree,
+        limits,
+        w: &w,
+    };
+    redline::views(&part, paragraph, author).map_err(|error| error.message)
 }
 
 pub(super) fn insert_paragraph_after<R: Read + Seek>(

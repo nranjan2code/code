@@ -367,7 +367,7 @@ fn remap(mut op: OfficeOp, minted: &HashMap<String, String>) -> OfficeOp {
 
 fn label(op: &OfficeOp, cell: Option<&str>) -> String {
     match op {
-        OfficeOp::ReplaceParagraphText { anchor, .. } => format!("Rewrite paragraph {anchor}"),
+        OfficeOp::ReplaceParagraphText { anchor, .. } => format!("Edit paragraph {anchor}"),
         OfficeOp::InsertParagraphAfter { anchor, .. } => {
             format!("New paragraph after {anchor}")
         }

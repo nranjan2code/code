@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **A Word edit changes only the words that change.** When the assistant
+  edits a paragraph, only the words that differ become tracked changes:
+  "twelve months" to "twenty-four months" is one small redline in Review and
+  in the file, not the whole clause struck out and typed again. Before, accepting
+  such an edit made the whole paragraph take its first word's formatting (a
+  bold heading word turned the clause bold), dropped its links and removed
+  its footnote marks. A paragraph with a cross-reference, or with someone
+  else's tracked changes, can now be edited around those parts, and a change
+  to them is refused with a message naming them. Revising a draft updates the
+  assistant's earlier change instead of refusing the paragraph.
+
 ## 5.0.0 — 2026-09-26
 
 - **Requests are read more accurately, and what is decided takes effect.**

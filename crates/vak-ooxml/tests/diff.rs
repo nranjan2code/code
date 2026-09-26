@@ -60,7 +60,7 @@ fn word_changes_are_grouped_under_their_heading() {
             .after
             .as_deref()
             .unwrap()
-            .contains("[inserted by Mira: Growing.]")
+            .contains("[deleted by Mira: Steady][inserted by Mira: Growing].")
     );
     let added = result
         .changes

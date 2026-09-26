@@ -14,7 +14,7 @@ const word: OfficeReview = {
   flags: ["1 external link(s) (recorded, never followed)"],
   changes: [
     { section: "Summary", anchor: "p:1A000001", kind: "added", before: null, after: "[inserted by Mira: Details]" },
-    { section: "Outlook", anchor: "p@11", kind: "changed", before: "Steady.", after: "[deleted by Mira: Steady.][inserted by Mira: Growing.]" },
+    { section: "Outlook", anchor: "p@11", kind: "changed", before: "Steady.", after: "[deleted by Mira: Steady][inserted by Mira: Growing]." },
   ],
 };
 const sheet: OfficeReview = {
@@ -36,7 +36,7 @@ const choosing: OfficeReview = {
   flags: [],
   changes: [],
   choices: [
-    { id: "0", label: "Rewrite paragraph p@11", requires: [], changes: [{ section: "Outlook", anchor: "p@11", kind: "changed", before: "Steady.", after: "[deleted by Mira: Steady.][inserted by Mira: Growing.]" }] },
+    { id: "0", label: "Edit paragraph p@11", requires: [], changes: [{ section: "Outlook", anchor: "p@11", kind: "changed", before: "Steady.", after: "[deleted by Mira: Steady][inserted by Mira: Growing]." }] },
     { id: "1", label: "New paragraph after p@1", requires: [], changes: [{ section: "Summary", anchor: "p:1A000001", kind: "added", before: null, after: "[inserted by Mira: Details]" }] },
     { id: "2", label: "New paragraph after p@3", requires: [], changes: [{ section: "Summary", anchor: "p:1A000002", kind: "added", before: null, after: "[inserted by Mira: Risks]" }] },
     { id: "3", label: "New paragraph after p:1A000001", requires: ["1"], changes: [{ section: "Summary", anchor: "p:1A000003", kind: "added", before: null, after: "[inserted by Mira: More details]" }] },

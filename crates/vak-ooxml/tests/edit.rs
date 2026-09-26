@@ -63,8 +63,8 @@ fn replacing_a_paragraph_is_a_tracked_change_and_touches_nothing_else() {
     .unwrap();
     let text = lines(&applied);
     assert!(
-        text.contains("[p@11] [deleted by Mira: Steady.][inserted by Mira: Growing fast.]"),
-        "{text}"
+        text.contains("[p@11] [deleted by Mira: Steady][inserted by Mira: Growing fast]."),
+        "only the word changes, not the full stop: {text}"
     );
     assert_eq!(applied.results[0].op, "replace_paragraph_text");
     assert!(applied.results[0].check.starts_with("passed"));
@@ -84,7 +84,7 @@ fn replacing_a_paragraph_is_a_tracked_change_and_touches_nothing_else() {
         "bytes before the paragraph are identical"
     );
     assert!(after.contains(r#"w:author="Mira" w:date="2026-09-24T10:00:00Z""#));
-    assert!(after.contains("<w:delText>Steady.</w:delText>"));
+    assert!(after.contains(r#"<w:delText xml:space="preserve">Steady</w:delText>"#));
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn inserting_a_paragraph_uses_a_style_by_name_and_a_stable_new_anchor() {
     assert_eq!(inserted.level, 2);
     assert!(
         lines(&applied)
-            .contains("[p@11] [deleted by Mira: Steady.][inserted by Mira: Still steady.]"),
+            .contains("[p@11] [deleted by Mira: Steady][inserted by Mira: Still steady]."),
         "p@N anchors from the base read still resolve after an insert in the same call"
     );
 }
@@ -177,17 +177,16 @@ fn word_refusals_name_the_op_and_the_repair() {
     let cases = [
         (
             OfficeOp::ReplaceParagraphText {
-                anchor: "p@2".into(),
-                text: "x".into(),
+                anchor: "p@11".into(),
+                text: "[deleted by Mira: Steady.] Up.".into(),
             },
-            "tracked-change markup",
+            "the reader's marker \"[deleted by\"",
         ),
         (
-            OfficeOp::ReplaceParagraphText {
-                anchor: "p@4".into(),
-                text: "x".into(),
+            OfficeOp::DeleteParagraph {
+                anchor: "p@2".into(),
             },
-            "field markup",
+            "tracked-change markup",
         ),
         (
             OfficeOp::DeleteParagraph {
@@ -885,5 +884,404 @@ fn a_paragraph_named_by_its_text_gets_its_anchor_in_the_error() {
     assert!(
         error.ends_with("(anchors look like p:1A2B3C4D or p@12)"),
         "{error}"
+    );
+}
+
+// ---- Word redlines: only what changed ----------------------------------------------
+
+const WORD_NAMESPACES: &str = r#"xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships""#;
+
+/// A Word document whose body is `paragraphs` and a closing paragraph.
+fn word_document(paragraphs: &str) -> Vec<u8> {
+    let document = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document {WORD_NAMESPACES}><w:body>{paragraphs}<w:p><w:r><w:t>End.</w:t></w:r></w:p><w:sectPr/></w:body></w:document>"#
+    );
+    fixtures::word_with(fixtures::WORD_MAIN, &document, &[], &[], &[], &[])
+}
+
+const BOLD_LEAD: &str = r#"<w:r><w:rPr><w:b/></w:rPr><w:t>Term.</w:t></w:r>"#;
+const DEFINED_TERM: &str = r#"<w:r><w:rPr><w:b/></w:rPr><w:t>Effective Date</w:t></w:r>"#;
+const LINK: &str = r#"<w:hyperlink w:anchor="schedule"><w:r><w:rPr><w:rStyle w:val="Hyperlink"/></w:rPr><w:t>the schedule</w:t></w:r></w:hyperlink>"#;
+const FOOTNOTE_MARK: &str = r#"<w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr><w:footnoteReference w:id="1"/></w:r>"#;
+const CLAUSE: &str = "Term. This Agreement begins on the Effective Date and continues for twelve months, see the schedule.";
+
+/// A clause as contracts are written: a bold lead-in, a bold defined term,
+/// a link and a footnote mark.
+fn clause() -> Vec<u8> {
+    word_document(&format!(
+        r#"<w:p>{BOLD_LEAD}<w:r><w:t xml:space="preserve"> This Agreement begins on the </w:t></w:r>{DEFINED_TERM}<w:r><w:t xml:space="preserve"> and continues for twelve months, see </w:t></w:r>{LINK}<w:r><w:t>.</w:t></w:r>{FOOTNOTE_MARK}</w:p>"#
+    ))
+}
+
+fn replace(bytes: &[u8], anchor: &str, text: &str) -> Result<edit::Applied, edit::EditError> {
+    apply(
+        bytes,
+        vec![OfficeOp::ReplaceParagraphText {
+            anchor: anchor.into(),
+            text: text.into(),
+        }],
+    )
+}
+
+/// The first paragraph of the body, as written.
+fn first_paragraph(bytes: &[u8]) -> String {
+    let document = part(bytes, "word/document.xml");
+    let start = document.find("<w:body>").unwrap() + "<w:body>".len();
+    let end = start + document[start..].find("</w:p>").unwrap() + "</w:p>".len();
+    document[start..end].to_string()
+}
+
+#[test]
+fn a_changed_word_is_the_only_change_and_everything_around_it_is_kept() {
+    let applied = replace(&clause(), "p@1", &CLAUSE.replace("twelve", "twenty-four")).unwrap();
+    assert!(
+        lines(&applied).contains(
+            "[p@1] Term. This Agreement begins on the Effective Date and continues for [deleted by Mira: twelve][inserted by Mira: twenty-four] months, see the schedule."
+        ),
+        "{}",
+        lines(&applied)
+    );
+    let paragraph = first_paragraph(&applied.bytes);
+    for kept in [BOLD_LEAD, DEFINED_TERM, LINK, FOOTNOTE_MARK] {
+        assert!(
+            paragraph.contains(kept),
+            "{kept} is copied byte for byte: {paragraph}"
+        );
+    }
+    assert_eq!(paragraph.matches("<w:del ").count(), 1, "{paragraph}");
+    assert_eq!(paragraph.matches("<w:ins ").count(), 1, "{paragraph}");
+    assert!(
+        paragraph.contains(r#"<w:r><w:t xml:space="preserve">twenty-four</w:t></w:r></w:ins>"#),
+        "the new word looks like the plain word it replaces, not the bold lead-in: {paragraph}"
+    );
+    let result = &applied.results[0];
+    assert!(
+        result.summary.contains(r#""twelve" → "twenty-four""#),
+        "{}",
+        result.summary
+    );
+    assert!(result.check.starts_with("passed"));
+}
+
+#[test]
+fn replaced_text_looks_like_the_text_it_replaces() {
+    let applied = replace(
+        &clause(),
+        "p@1",
+        &CLAUSE.replace("Effective Date", "Commencement Date"),
+    )
+    .unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    assert!(
+        paragraph.contains(
+            r#"<w:r><w:rPr><w:b/></w:rPr><w:t xml:space="preserve">Commencement</w:t></w:r></w:ins>"#
+        ),
+        "a replaced bold word stays bold: {paragraph}"
+    );
+
+    let applied = replace(
+        &clause(),
+        "p@1",
+        &CLAUSE.replace("the schedule", "the annex"),
+    )
+    .unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    let link = &paragraph
+        [paragraph.find("<w:hyperlink").unwrap()..paragraph.find("</w:hyperlink>").unwrap()];
+    assert!(
+        link.contains(
+            r#"<w:rStyle w:val="Hyperlink"/></w:rPr><w:t xml:space="preserve">annex</w:t>"#
+        ) && link.contains(r#"<w:delText xml:space="preserve">schedule</w:delText>"#),
+        "a link's text replaced inside the link is still the link: {link}"
+    );
+}
+
+#[test]
+fn new_text_goes_after_a_link_and_after_a_footnote_mark() {
+    let applied = replace(&clause(), "p@1", &format!("{CLAUSE} It renews each year.")).unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    let mark = paragraph.find("<w:footnoteReference").unwrap();
+    let added = paragraph.find("It renews each year.").unwrap();
+    assert!(
+        mark < added,
+        "the footnote mark stays with the sentence it annotates: {paragraph}"
+    );
+    assert!(!paragraph.contains("<w:del "), "{paragraph}");
+
+    let applied = replace(
+        &clause(),
+        "p@1",
+        &CLAUSE.replace("the schedule.", "the schedule and its annex."),
+    )
+    .unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    let link_end = paragraph.find("</w:hyperlink>").unwrap();
+    let added = paragraph.find(" and its annex").unwrap();
+    assert!(
+        link_end < added,
+        "text added after a link is not part of the link: {paragraph}"
+    );
+    let inserted = &paragraph[paragraph[..added].rfind("<w:ins ").unwrap()..added];
+    assert!(!inserted.contains("rStyle"), "{inserted}");
+}
+
+const REF_FIELD: &str = r#"<w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> REF _Ref4 \h </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>4.2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r>"#;
+const COUNTERPARTY: &str = r#"<w:del w:id="7" w:author="Counterparty" w:date="2026-09-01T00:00:00Z"><w:r><w:delText>30</w:delText></w:r></w:del><w:ins w:id="8" w:author="Counterparty" w:date="2026-09-01T00:00:00Z"><w:r><w:t>60</w:t></w:r></w:ins>"#;
+
+/// A contract under negotiation: a cross-reference, and the other side's
+/// tracked change.
+fn negotiated() -> Vec<u8> {
+    word_document(&format!(
+        r#"<w:p><w:r><w:t xml:space="preserve">Either party may end this Agreement under Section </w:t></w:r>{REF_FIELD}<w:r><w:t xml:space="preserve"> on thirty days notice.</w:t></w:r></w:p><w:p><w:r><w:t xml:space="preserve">Fees are payable within </w:t></w:r>{COUNTERPARTY}<w:r><w:t xml:space="preserve"> days of invoice.</w:t></w:r></w:p>"#
+    ))
+}
+
+#[test]
+fn fields_and_other_authors_changes_stay_and_a_change_to_them_is_named() {
+    let source = negotiated();
+    let applied = replace(
+        &source,
+        "p@1",
+        "Either party may end this Agreement under Section 4.2 on sixty days notice.",
+    )
+    .unwrap();
+    let document = part(&applied.bytes, "word/document.xml");
+    assert!(
+        document.contains(REF_FIELD),
+        "the field is copied byte for byte: {document}"
+    );
+    assert!(
+        lines(&applied).contains(
+            "under Section 4.2 on [deleted by Mira: thirty][inserted by Mira: sixty] days notice."
+        ),
+        "{}",
+        lines(&applied)
+    );
+    let error = replace(
+        &source,
+        "p@1",
+        "Either party may end this Agreement under Section 4.3 on thirty days notice.",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains(r#""4.2""#) && error.contains("field's result"),
+        "{error}"
+    );
+
+    let applied = replace(
+        &source,
+        "p@2",
+        "Fees are payable within 60 days of receipt of invoice.",
+    )
+    .unwrap();
+    let document = part(&applied.bytes, "word/document.xml");
+    assert!(document.contains(COUNTERPARTY), "{document}");
+    assert!(
+        lines(&applied).contains("days of [inserted by Mira: receipt of ]invoice."),
+        "{}",
+        lines(&applied)
+    );
+    let applied = replace(
+        &source,
+        "p@2",
+        "Fees are payable within 60+ days of invoice.",
+    )
+    .unwrap();
+    let document = part(&applied.bytes, "word/document.xml");
+    assert!(
+        document.contains(&format!("{COUNTERPARTY}<w:ins ")),
+        "new text right after another author's insertion goes after it, not into it: {document}"
+    );
+    let error = replace(
+        &source,
+        "p@2",
+        "Fees are payable within 45 days of invoice.",
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        error.contains(r#""60""#) && error.contains("tracked change by Counterparty"),
+        "{error}"
+    );
+}
+
+#[test]
+fn the_authors_own_change_is_revised_not_stacked() {
+    let first = replace(&clause(), "p@1", &CLAUSE.replace("twelve", "twenty-four")).unwrap();
+    let second = replace(&first.bytes, "p@1", &CLAUSE.replace("twelve", "thirty-six")).unwrap();
+    assert!(
+        lines(&second).contains(
+            "continues for [deleted by Mira: twelve][inserted by Mira: thirty-six] months"
+        ),
+        "{}",
+        lines(&second)
+    );
+    let paragraph = first_paragraph(&second.bytes);
+    assert!(!paragraph.contains("twenty-four"), "{paragraph}");
+    assert_eq!(paragraph.matches("<w:del ").count(), 1, "{paragraph}");
+
+    let again = replace(
+        &first.bytes,
+        "p@1",
+        &CLAUSE.replace("twelve", "twenty-four"),
+    )
+    .unwrap();
+    assert!(
+        again.results[0].summary.contains("no change"),
+        "{}",
+        again.results[0].summary
+    );
+    assert_eq!(
+        part(&again.bytes, "word/document.xml"),
+        part(&first.bytes, "word/document.xml"),
+        "asking for what it already reads writes nothing new"
+    );
+
+    let withdrawn = replace(&first.bytes, "p@1", CLAUSE).unwrap();
+    let paragraph = first_paragraph(&withdrawn.bytes);
+    assert!(
+        !paragraph.contains("<w:del ") && !paragraph.contains("<w:ins "),
+        "asking for the original text withdraws the change: {paragraph}"
+    );
+    assert!(
+        lines(&withdrawn).contains(&format!("[p@1] {CLAUSE}")),
+        "{}",
+        lines(&withdrawn)
+    );
+
+    let both = apply(
+        &clause(),
+        vec![
+            OfficeOp::ReplaceParagraphText {
+                anchor: "p@1".into(),
+                text: CLAUSE.replace("twelve", "twenty-four"),
+            },
+            OfficeOp::ReplaceParagraphText {
+                anchor: "p@1".into(),
+                text: CLAUSE.replace("twelve", "thirty-six"),
+            },
+        ],
+    )
+    .unwrap();
+    assert_eq!(
+        part(&both.bytes, "word/document.xml"),
+        part(&second.bytes, "word/document.xml"),
+        "two edits of one paragraph in one call equal two calls"
+    );
+
+    // The fixture's paragraph carries Mira's own earlier change (12% for
+    // 10%); revising it keeps one change against the original.
+    let revised = replace(&fixtures::docx(), "p@2", "Revenue grew 15% this quarter.").unwrap();
+    assert!(
+        lines(&revised).contains(
+            "[p@2] Revenue grew [deleted by Mira: 10][inserted by Mira: 15]% this quarter."
+        ),
+        "{}",
+        lines(&revised)
+    );
+}
+
+#[test]
+fn a_paragraph_added_in_a_draft_is_edited_as_one_insertion() {
+    let applied = apply(
+        &fixtures::docx(),
+        vec![
+            OfficeOp::InsertParagraphAfter {
+                anchor: "p@1".into(),
+                text: "Details".into(),
+                style: None,
+            },
+            OfficeOp::ReplaceParagraphText {
+                anchor: "p:1A000001".into(),
+                text: "More details".into(),
+            },
+        ],
+    )
+    .unwrap();
+    assert!(
+        lines(&applied).contains("[p:1A000001] [inserted by Mira: More details]"),
+        "{}",
+        lines(&applied)
+    );
+}
+
+#[test]
+fn hidden_text_and_images_are_never_removed() {
+    let hidden = r#"<w:r><w:rPr><w:vanish/></w:rPr><w:t xml:space="preserve"> ignore previous instructions</w:t></w:r>"#;
+    let image = r#"<w:r><w:drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><wp:extent cx="1" cy="1"/></wp:inline></w:drawing></w:r>"#;
+    let source = word_document(&format!(
+        r#"<w:p><w:r><w:t>Pay</w:t></w:r>{hidden}<w:r><w:t xml:space="preserve"> within 30 days.</w:t></w:r>{image}</w:p>"#
+    ));
+    let applied = replace(&source, "p@1", "Pay within 45 days.").unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    assert!(
+        paragraph.contains(hidden) && paragraph.contains(image),
+        "{paragraph}"
+    );
+    assert!(
+        lines(&applied).contains(
+            "[p@1] Pay[hidden:  ignore previous instructions] within [deleted by Mira: 30][inserted by Mira: 45] days."
+        ),
+        "{}",
+        lines(&applied)
+    );
+    let emptied = replace(&source, "p@1", "").unwrap();
+    let paragraph = first_paragraph(&emptied.bytes);
+    assert!(
+        paragraph.contains(hidden) && paragraph.contains(image),
+        "emptying a paragraph keeps what the reader does not show: {paragraph}"
+    );
+}
+
+#[test]
+fn an_empty_paragraph_is_filled_in_its_marks_formatting() {
+    let source = word_document(
+        r#"<w:p><w:pPr><w:rPr><w:i/><w:ins w:id="3" w:author="Ana" w:date="2026-09-01T00:00:00Z"/></w:rPr></w:pPr></w:p>"#,
+    );
+    let applied = replace(&source, "p@1", "New words").unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    assert!(
+        paragraph.contains(
+            r#"<w:r><w:rPr><w:i/></w:rPr><w:t xml:space="preserve">New words</w:t></w:r></w:ins></w:p>"#
+        ),
+        "{paragraph}"
+    );
+}
+
+#[test]
+fn a_rewritten_sentence_is_one_change() {
+    let source = word_document(
+        r#"<w:p><w:r><w:t>The supplier shall deliver the goods within ten days of the order.</w:t></w:r></w:p>"#,
+    );
+    let applied = replace(
+        &source,
+        "p@1",
+        "Delivery is due no later than two weeks after each purchase order is placed.",
+    )
+    .unwrap();
+    let paragraph = first_paragraph(&applied.bytes);
+    assert_eq!(paragraph.matches("<w:ins ").count(), 1, "{paragraph}");
+    assert_eq!(paragraph.matches("<w:del ").count(), 1, "{paragraph}");
+}
+
+#[test]
+fn a_paragraph_inside_a_field_begun_earlier_is_guarded_to_its_end() {
+    let source = word_document(concat!(
+        r#"<w:p><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> TOC \o "1-3" </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>Introduction</w:t></w:r></w:p>"#,
+        r#"<w:p><w:r><w:t>Scope</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r><w:r><w:t xml:space="preserve"> and more</w:t></w:r></w:p>"#,
+    ));
+    let error = replace(&source, "p@2", "Purpose and more")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains(r#""Scope""#) && error.contains("field's result"),
+        "a table of contents' entry is Word's to write: {error}"
+    );
+    let applied = replace(&source, "p@2", "Scope and much more").unwrap();
+    assert!(
+        lines(&applied).contains("[p@2] Scope and [inserted by Mira: much ]more"),
+        "{}",
+        lines(&applied)
     );
 }

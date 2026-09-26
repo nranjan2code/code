@@ -7,7 +7,9 @@
 //! file whose edits did not land.
 
 mod deck;
+mod redline;
 mod sheet;
+mod textdiff;
 mod word;
 
 use std::collections::BTreeMap;
@@ -233,12 +235,48 @@ pub(crate) enum Expect {
     /// A section (sheet, slide, heading) with this anchor exists.
     Section(String),
     Title(String),
+    /// The Word paragraph reads `accepted` (compared folded, as
+    /// [`textdiff::fold`] does) with `author`'s tracked changes accepted,
+    /// reads `rejected` exactly with them rejected, and still holds the
+    /// content the reader does not show (`fixed`, by element name).
+    Paragraph {
+        anchor: String,
+        author: String,
+        accepted: String,
+        rejected: String,
+        fixed: Vec<String>,
+    },
+}
+
+impl Expect {
+    fn anchor(&self) -> Option<&str> {
+        match self {
+            Expect::UnitContains { anchor, .. }
+            | Expect::UnitDeleted { anchor }
+            | Expect::Absent { anchor }
+            | Expect::Paragraph { anchor, .. } => Some(anchor),
+            _ => None,
+        }
+    }
 }
 
 pub(crate) struct Outcome {
     pub summary: String,
     pub expect: Vec<Expect>,
     pub created: Option<String>,
+}
+
+impl Outcome {
+    /// Paragraphs whose whole text this op sets: an earlier op's promise
+    /// about one of them is superseded by this op's.
+    fn rewritten(&self) -> impl Iterator<Item = &str> {
+        self.expect.iter().filter_map(|expect| match expect {
+            Expect::Paragraph { anchor, .. } | Expect::UnitDeleted { anchor } => {
+                Some(anchor.as_str())
+            }
+            _ => None,
+        })
+    }
 }
 
 /// Applies `ops` in order to the package in `source` and returns the new
@@ -364,13 +402,36 @@ pub fn apply(
             })
         })
         .collect();
+    // A later op that sets a paragraph's whole text supersedes what an
+    // earlier op promised about that paragraph.
+    let rewritten_later: Vec<Vec<String>> = (0..outcomes.len())
+        .map(|position| {
+            outcomes[position + 1..]
+                .iter()
+                .flat_map(|(_, _, outcome)| outcome.rewritten())
+                .map(str::to_string)
+                .collect()
+        })
+        .collect();
+    let mut written = Written {
+        bytes: &bytes,
+        limits,
+        main: None,
+    };
     let mut results = Vec::with_capacity(outcomes.len());
     for (position, (index, name, outcome)) in outcomes.into_iter().enumerate() {
         for expect in &outcome.expect {
             if superseded[position] && matches!(expect, Expect::SlideOrder(_)) {
                 continue;
             }
-            check(&document, expect).map_err(|message| EditError {
+            if expect.anchor().is_some_and(|anchor| {
+                rewritten_later[position]
+                    .iter()
+                    .any(|later| later == anchor)
+            }) {
+                continue;
+            }
+            check(&document, &mut written, expect).map_err(|message| EditError {
                 op: Some((index, name)),
                 message: format!("postcondition failed after writing: {message}"),
             })?;
@@ -448,7 +509,32 @@ fn drop_signatures<R: std::io::Read + std::io::Seek>(
     Ok(signatures.len().max(usize::from(!origins.is_empty())))
 }
 
-fn check(document: &Document, expect: &Expect) -> Result<(), String> {
+/// The written package, with its main part read when a check needs it.
+struct Written<'a> {
+    bytes: &'a [u8],
+    limits: Limits,
+    main: Option<(String, Vec<u8>)>,
+}
+
+impl Written<'_> {
+    fn main(&mut self) -> Result<(&str, &[u8]), String> {
+        if self.main.is_none() {
+            let mut package = Package::open(Cursor::new(self.bytes.to_vec()), self.limits)
+                .map_err(|error| error.to_string())?;
+            let name = package.main_part().to_string();
+            let bytes = package
+                .read_part(&name)
+                .map_err(|error| error.to_string())?;
+            self.main = Some((name, bytes));
+        }
+        match &self.main {
+            Some((name, bytes)) => Ok((name.as_str(), bytes.as_slice())),
+            None => Err("the main part could not be read".into()),
+        }
+    }
+}
+
+fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Result<(), String> {
     let unit = |anchor: &str| document.units.iter().find(|unit| unit.anchor == anchor);
     match expect {
         Expect::UnitContains { anchor, needles } => {
@@ -523,6 +609,37 @@ fn check(document: &Document, expect: &Expect) -> Result<(), String> {
             } else {
                 Err(format!("title is {:?}", document.title))
             }
+        }
+        Expect::Paragraph {
+            anchor,
+            author,
+            accepted,
+            rejected,
+            fixed,
+        } => {
+            let limits = written.limits;
+            let (name, bytes) = written.main()?;
+            let views = word::paragraph_views(name, bytes, &limits, anchor, author)?;
+            if textdiff::fold_text(&views.accepted) != *accepted {
+                return Err(format!(
+                    "{anchor} reads {:?} with the changes accepted, not the text asked for",
+                    views.accepted
+                ));
+            }
+            if views.rejected != *rejected {
+                return Err(format!(
+                    "{anchor} reads {:?} with the changes rejected, not what it read before",
+                    views.rejected
+                ));
+            }
+            if views.fixed != *fixed {
+                return Err(format!(
+                    "{anchor} no longer holds the content the edit had to keep ({} before, {} after)",
+                    fixed.join(", "),
+                    views.fixed.join(", ")
+                ));
+            }
+            Ok(())
         }
     }
 }

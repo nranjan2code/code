@@ -846,7 +846,11 @@ in progress, and the rest of V4 follows it.
     command or script is the way to change an Office file; FullAccess can
     still do it, which is what FullAccess means (invariant 13). A Word edit to an existing document
     is a tracked change authored by the runtime's Agent id, never a name the
-    model supplies. A changed Excel input or formula sets `fullCalcOnLoad`,
+    model supplies, and marks only the words that change: every run it does
+    not split, and everything the reader does not show (footnote marks,
+    images, field codes, bookmarks, hidden text, other authors' deletions),
+    is kept byte for byte, and a change to a field's result or to another
+    author's tracked change is refused, never written. A changed Excel input or formula sets `fullCalcOnLoad`,
     and cached values read as stale until Excel recalculates. An op never
     adds, enables or strips macros: the output keeps the source's macro
     state.

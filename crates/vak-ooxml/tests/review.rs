@@ -215,3 +215,28 @@ fn a_draft_the_ops_do_not_reproduce_is_taken_whole() {
     .unwrap_err();
     assert!(error.contains("choosing among more than"), "{error}");
 }
+
+#[test]
+fn a_word_edit_is_offered_and_kept_as_its_changed_words() {
+    let source = fixtures::docx();
+    let ops = vec![
+        OfficeOp::ReplaceParagraphText {
+            anchor: "p@11".into(),
+            text: "Growing.".into(),
+        },
+        insert("p@1", "Details"),
+    ];
+    let offered = choices(&source, &ops);
+    assert_eq!(offered.len(), 2);
+    assert_eq!(offered[0].label, "Edit paragraph p@11");
+    assert_eq!(
+        offered[0].changes[0].after.as_deref(),
+        Some("[deleted by Mira: Steady][inserted by Mira: Growing].")
+    );
+    let narrowed = narrow(&source, &ops, &["0"]).unwrap();
+    assert!(
+        narrowed.contains("[p@11] [deleted by Mira: Steady][inserted by Mira: Growing]."),
+        "{narrowed}"
+    );
+    assert!(!narrowed.contains("Details"), "{narrowed}");
+}
