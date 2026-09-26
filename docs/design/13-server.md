@@ -29,7 +29,7 @@ consumers.
 | PUT | `/config/key` `{provider,key}` | store a provider credential in the user secret scope (OS keychain, or an encrypted-file fallback) |
 | DELETE | `/config/key` `{provider}` | revoke it; `shadowed_by_env` reports a key still exported in the real environment |
 | GET | `/providers` | provider list, configured pool size, and non-secret credential fingerprints (never key values) |
-| GET | `/providers/:name/models` | models that provider's stored key can reach, live (502 + reason on failure — never a static fallback) |
+| GET | `/providers/:name/models` | models that provider's stored key can reach, live (502 + reason on failure — never a static fallback; a missing key adds `"kind": "no_ai_service"`) |
 | GET/PUT | `/fs/file` | read/write a file confined to the workspace root |
 | GET | `/fs/tree?limit=` | bounded recursive listing (@-mention autocomplete) |
 | POST | `/sessions/:id/side` `{question}` | side chat: branched turn, main chain untouched |

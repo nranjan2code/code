@@ -46,6 +46,16 @@ const CUSTOM_MODEL = "\u0000custom";
 
 type Page = SettingsPageId;
 
+/** The Model row's words for a failed catalogue. A missing key arrives typed
+ * (`no_ai_service`) so it is said plainly, never by reading the message,
+ * which names an environment variable. */
+function catalogFailure(error: unknown): string {
+  if (error instanceof api.ApiError && error.kind === "no_ai_service") {
+    return "This AI service needs an account key. Add one under Account key below.";
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 // Everyday pages are what anyone changes; Agents holds one page per agent;
 // Advanced is shown only with technical details on (docs/design/75 §6.3).
 type NavGroup = "Everyday" | "Advanced";
@@ -863,17 +873,17 @@ export default function Settings() {
     providers()?.providers.find((p) => p.name === name)?.configured;
     if (!name) return;
     setCatalog([]);
-    setCatalogNote("discovering models…");
+    setCatalogNote("Looking for models…");
     void (async () => {
       try {
         const r = await api.discoverModels(name);
         if (name !== provider()) return;
         setCatalog(r.models);
-        setCatalogNote(r.models.length ? null : "provider returned no models");
+        setCatalogNote(r.models.length ? null : "This AI service offers no models to this account.");
         if (r.models.length && !r.models.includes(model())) setModel(r.models[0]);
       } catch (error) {
         if (name !== provider()) return;
-        setCatalogNote(error instanceof Error ? error.message : String(error));
+        setCatalogNote(catalogFailure(error));
       }
     })();
   });
@@ -1110,9 +1120,9 @@ export default function Settings() {
       try {
         const fresh = await api.discoverModels(provider() || providers()?.current || "");
         setCatalog(fresh.models);
-        setCatalogNote(fresh.models.length ? null : "provider returned no models");
+        setCatalogNote(fresh.models.length ? null : "This AI service offers no models to this account.");
       } catch (e) {
-        setCatalogNote(e instanceof Error ? e.message : String(e));
+        setCatalogNote(catalogFailure(e));
       }
       await Promise.all([loadProviders(), loadHealth()]);
       setNotice({ kind: "info", text: "Key saved on this device." });

@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.15 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.15 and V3.17 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -300,6 +300,13 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   its Settings page and in the Agents navigation (doc 75 §6.3 mockup).
 - [ ] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
   from a real plan answer, not only an options table (doc 70 screen 2).
+- [x] **V3.17 Plain words for a model list that needs a key.** An agent's
+  Model row showed the models request's own text ("provider auth missing:
+  set ANTHROPIC_API_KEY for provider 'anthropic'"). It should say that this
+  AI service needs an account key and point at the Account key row, with a
+  typed kind from the server, never matching on the text.
+  Done when: on a fresh home the Model row says so in one plain sentence,
+  with no provider or variable name, at 1440 and 390, light and dark.
 
 #### Handoff for V3.5 (written 2026-09-25, after V3.4)
 
@@ -898,3 +905,22 @@ what was not.
   ANTHROPIC_API_KEY for provider 'anthropic'"; the mockup's "Edit
   personality" button was not added, since Your agents already holds
   "Change name and character".
+- 2026-09-26: V3.17 done (the Model row V3.15 saw, not fixed). One
+  function in vak-server, `provider_error_body`, now decides a provider
+  failure's body for a refused turn (`provider_unavailable`) and for
+  `GET /providers/{name}/models` and `/availability` alike: `error` stays
+  the precise message for operators and the CLI, and a missing key adds
+  `"kind": "no_ai_service"`, as V3.12 did for a send. Settings reads that
+  kind from the typed `ApiError` and says "This AI service needs an account
+  key. Add one under Account key below."; anything else still shows the
+  server's message. The row's other two notes lost "provider" too:
+  "Looking for models…" and "This AI service offers no models to this
+  account." Nothing matches on the message text. `server_ext`'s key
+  round-trip test now asks a keyless provider for its models and pins the
+  502, the kind and the precise message. Checked live on the fresh home
+  (`/tmp/vak-fresh-v1`, no AI service) in headless Chrome at 1440 × 900 and
+  390 × 844, light and dark: the agent page's Model row shows the sentence,
+  no provider or variable name is visible (the variable stays behind the
+  closed Technical details row), and there is no sideways scroll.
+  Evidence: `after/V3.17-*`. Seen, not fixed: the AI service picker still
+  lists the raw ids ("anthropic").

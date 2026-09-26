@@ -4401,20 +4401,30 @@ pub(crate) fn mpsc_to_broadcast(tx: events::EventBus) -> mpsc::Sender<AgentEvent
 /// there, so a two-field body would have shown the user the machine code
 /// ("provider_unavailable") instead of the message that says what to fix.
 ///
-/// A missing credential also carries `"kind": "no_ai_service"`, so a client
-/// can offer to connect one without matching on the message text; `error`
-/// stays the precise message an operator or the CLI needs.
+/// A missing credential also carries `"kind": "no_ai_service"` (see
+/// `provider_error_body`).
 fn provider_unavailable(err: vak_core::CoreError) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let detail = err.to_string();
-    eprintln!("[run] refused: {detail}");
-    let body = match err {
+    eprintln!("[run] refused: {err}");
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        axum::Json(provider_error_body(&err)),
+    )
+        .into_response()
+}
+
+/// `{"error": <message>}` for a provider failure, plus `"kind":
+/// "no_ai_service"` when the cause is a missing credential, so a client can
+/// say so in plain words without matching on the message text; `error`
+/// stays the precise message an operator or the CLI needs. The one place
+/// that decides the kind, for a refused turn and a model catalogue alike.
+fn provider_error_body(err: &vak_core::CoreError) -> serde_json::Value {
+    match err {
         vak_core::CoreError::MissingAuth { .. } => {
-            serde_json::json!({ "error": detail, "kind": "no_ai_service" })
+            serde_json::json!({ "error": err.to_string(), "kind": "no_ai_service" })
         }
-        _ => serde_json::json!({ "error": detail }),
-    };
-    (StatusCode::SERVICE_UNAVAILABLE, axum::Json(body)).into_response()
+        _ => serde_json::json!({ "error": err.to_string() }),
+    }
 }
 
 /// `run_prompt`, `side_chat`, and `start_bestofn` all fall back to
@@ -13388,11 +13398,11 @@ async fn discover_models(
                 Json(serde_json::json!({ "provider": name, "models": models })).into_response()
             }
         }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({ "provider": name, "error": e.to_string() })),
-        )
-            .into_response(),
+        Err(e) => {
+            let mut body = provider_error_body(&e);
+            body["provider"] = serde_json::Value::String(name);
+            (StatusCode::BAD_GATEWAY, Json(body)).into_response()
+        }
     }
 }
 
@@ -13410,11 +13420,9 @@ async fn model_availability(
     let models = match state.core.discover_models("bedrock").await {
         Ok(models) => models,
         Err(e) => {
-            return (
-                StatusCode::BAD_GATEWAY,
-                Json(serde_json::json!({"provider":name,"error":e.to_string()})),
-            )
-                .into_response();
+            let mut body = provider_error_body(&e);
+            body["provider"] = serde_json::Value::String(name);
+            return (StatusCode::BAD_GATEWAY, Json(body)).into_response();
         }
     };
     match state.core.bedrock_model_availability(&models).await {
