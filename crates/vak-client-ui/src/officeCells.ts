@@ -23,6 +23,20 @@ export function parseCell(value: string): Cell {
   };
 }
 
+/** Parse familiar values typed into the shared workbook editor. A leading
+ * apostrophe keeps an entry literal; formulas remain strings for the worker's
+ * formula convention. */
+export function parseCellInput(value: string): string | number | boolean {
+  const trimmed = value.trim();
+  if (value.startsWith("'") || value.startsWith("=")) return value;
+  if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase() === "true";
+  if (trimmed !== "") {
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) return numeric;
+  }
+  return value;
+}
+
 /** "B12" → { column: 2, row: 12 }; null for anything else. */
 export function cellAddress(address: string): { column: number; row: number } | null {
   const match = /^([A-Za-z]{1,3})(\d+)$/.exec(address);

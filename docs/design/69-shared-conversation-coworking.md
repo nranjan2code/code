@@ -1,6 +1,6 @@
 # 69 — Shared conversation and draft coworking
 
-Status: **implemented and audited**. Scoped invitations, shared reading, attributed conversation messages, observed participant presence, saved-draft comments, live refresh, isolated Agent revision and exact one-time approval delegation are shipped.
+Status: **implemented; Office workspace collaboration added 2026-09-26, pending live visual and multi-client audit**. Scoped invitations, shared reading, attributed conversation messages, observed participant presence, saved-draft comments, live refresh, isolated Agent revision and exact one-time approval delegation are shipped. Office collaboration adds explicit edit grants, a full-screen shared Office view, a compare-and-swap shared draft, reviewable branches, and Agent candidate import through the existing review path.
 
 ## Product contract
 
@@ -24,6 +24,17 @@ The same Agent and conversation stay visible to everyone admitted to that audien
 - Only an authorized approver can accept a candidate. The accept action records actor identity and candidate digest, rechecks destination state, and produces a promotion receipt. A conversation message or previewed document cannot resolve an approval.
 - The owner may assign one server-held pending approval to one active participant. The assignment is recorded in the conversation ledger and binds that invitation to the exact request ID; a pending gate cannot silently move to another participant. It grants no standing approval authority. The first valid answer consumes the gate, records the verified actor on the resolved approval activity, and cannot create a persistent permission rule. Candidate acceptance remains a separate authority.
 - The conversation displays the current result, review state, outstanding comments, and any blocking decision. Technical execution remains available from that result without becoming the default layout.
+
+### Office workspaces
+
+- The Office package engine remains first-party core functionality. The Office workspace UI is a built-in client surface, not an installable plugin and not a second document engine.
+- Starting a workspace pins one exact saved Office candidate and file path. Its shared branch advances by immutable, worker-applied candidates. Every edit names the expected branch head; a stale edit receives a conflict and cannot overwrite a newer revision.
+- An owner can invite a participant with an explicit `edit` capability. That grant permits typed Office edits, branches, and merges only. It does not grant candidate acceptance, workspace writes, Agent runs, external effects, or approvals.
+- People can create named branches from the shared head, edit there, and merge only when supported operation anchors do not overlap. Structural Word edits conflict conservatively with concurrent paragraph edits because positional anchors can move. Conflicted changes remain reviewable and can be manually re-applied.
+- An Agent candidate can be imported only when it records a base whose file digest matches the chosen branch head. Its lineage operations are applied to that head as a new candidate; a different base stays a separate saved version for review.
+- Office changes continue through `vak_ooxml::edit`, the broker worker, target verification and the normal owner Review/accept path. Each revision is a saved candidate, and the owner's workspace has a direct action into the existing Review panel. The server stores room metadata and candidate references, not a second mutable copy of the document.
+- Presence reports the participant's active room and selected Office anchor. Comments remain attributed, anchored candidate comments. The current UI renders the Office view full-screen in the shared invitation and inside the owner's immersive Artifact Canvas.
+- The first editor supports Word paragraph replacement, Excel cell values, and PowerPoint placeholder text. Visio remains view-only; the other typed operations remain available to Agent edits/imports. Page-faithful Office layout, formula recalculation, and simultaneous character-level co-editing are not provided.
 
 ## Implementation boundaries
 

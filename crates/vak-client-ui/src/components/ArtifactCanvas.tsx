@@ -11,6 +11,7 @@ import {
   openCandidateReview,
   type ActiveComponentPreview,
   technicalDetails,
+  coworkingPresence,
 } from "../store";
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
@@ -19,7 +20,7 @@ import { sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate, sendPrompt } from "../App";
-import OfficeView from "./OfficeView";
+import OfficeWorkspacePane from "./OfficeWorkspacePane";
 import { isOfficePath } from "../officeFiles";
 
 export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office";
@@ -567,12 +568,12 @@ export default function ArtifactCanvas() {
     }
   };
   const commentsForArtifact = () => candidateComments().filter((comment) => !comment.path || comment.path === path());
-  const returnToReview = () => {
+  const returnToReview = (candidateId?: string) => {
     const artifact = canvasArtifact();
     const executionId = artifact?.executionId;
     if (!executionId) return;
     closeArtifactCanvas();
-    openCandidateReview(executionId, artifact?.sessionId, artifact?.candidateId);
+    openCandidateReview(executionId, artifact?.sessionId, candidateId ?? artifact?.candidateId);
   };
   const returnToConversation = () => {
     const sessionId = canvasArtifact()?.sessionId;
@@ -716,7 +717,7 @@ export default function ArtifactCanvas() {
               <Icon name="preview" size={14} />
             </button>
             <Show when={canvasArtifact()?.candidateId && canvasArtifact()?.executionId}>
-              <button type="button" class="artifact-canvas-btn" onClick={returnToReview} title="Back to review">
+              <button type="button" class="artifact-canvas-btn" onClick={() => returnToReview()} title="Back to review">
                 <Icon name="diff" size={14} /> Review changes
               </button>
             </Show>
@@ -778,10 +779,14 @@ export default function ArtifactCanvas() {
                 </div>
               }</Show>
               <Show when={displayType() === "office" && canvasArtifact()}>{(artifact) =>
-                <OfficeView
+                <OfficeWorkspacePane
                   source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId }}
                   fileName={title()}
                   focus={artifact().anchor}
+                  canEdit={true}
+                  canStart={!!artifact().sessionId && !!artifact().candidateId}
+                  collaborators={coworkingPresence(artifact().sessionId ?? activeId())}
+                  onReview={artifact().executionId ? returnToReview : undefined}
                 />
               }</Show>
               {/* Image Preview */}

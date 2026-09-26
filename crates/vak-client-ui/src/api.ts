@@ -1132,7 +1132,27 @@ export type OfficeStructure = {
 };
 
 /** Where an Office file lives: the workspace, or a saved candidate. */
-export type OfficeSource = { path: string; sessionId?: string; candidateId?: string };
+export type OfficeSource = { path: string; sessionId?: string; candidateId?: string; token?: string };
+
+export type OfficeEditOp =
+  | { op: "replace_paragraph_text"; anchor: string; text: string }
+  | { op: "set_cells"; sheet: string; cells: Record<string, string | number | boolean> }
+  | { op: "set_placeholder_text"; anchor: string; text: string };
+
+export type OfficeWorkspaceRevision = { candidate_id: string; parent_candidate_id: string; merge_parent_candidate_id?: string | null; branch_id: string; author_id: string; author_name: string; created_at: string; ops: OfficeEditOp[] };
+export type OfficeWorkspaceBranch = { branch_id: string; name: string; base_candidate_id: string; head_candidate_id: string; shared: boolean; archived: boolean };
+export type OfficeWorkspace = { schema: number; room_id: string; session_id: string; path: string; created_at: string; branches: OfficeWorkspaceBranch[]; revisions: OfficeWorkspaceRevision[] };
+
+async function officeReq<T>(source: OfficeSource, url: string, init?: RequestInit): Promise<T> {
+  if (!source.token) return req<T>(url, init);
+  const headers: Record<string, string> = { "Content-Type": "application/json", ...((init?.headers as Record<string, string>) ?? {}), Authorization: `Bearer ${source.token}` };
+  const response = await fetch(url, { ...init, headers, credentials: "omit", cache: "no-store", referrerPolicy: "no-referrer" });
+  const text = await response.text();
+  let parsed: { error?: string } = {};
+  try { parsed = text ? JSON.parse(text) as { error?: string } : {}; } catch { parsed = {}; }
+  if (!response.ok) throw new ApiError(parsed.error ?? (response.status === 401 || response.status === 403 ? "This invitation has expired or no longer permits this action." : `Could not open the Office workspace (${response.status}).`), response.status);
+  return (text ? JSON.parse(text) : null) as T;
+}
 
 function officeUrl(source: OfficeSource, query: string): string {
   const path = `path=${encodeURIComponent(source.path)}&${query}`;
@@ -1144,11 +1164,11 @@ function officeUrl(source: OfficeSource, query: string): string {
 /** A page of an Office file: from unit `from`, or, given `at`, from the unit
  *  that cited anchor names (`focus` is then that unit's anchor). */
 export function readOfficeProjection(source: OfficeSource, from = 0, at?: string): Promise<OfficeProjection> {
-  return req(officeUrl(source, at ? `at=${encodeURIComponent(at)}` : `from=${from}`));
+  return officeReq(source, officeUrl(source, at ? `at=${encodeURIComponent(at)}` : `from=${from}`));
 }
 
 export function readOfficeStructure(source: OfficeSource): Promise<OfficeStructure> {
-  return req(officeUrl(source, "view=structure"));
+  return officeReq(source, officeUrl(source, "view=structure"));
 }
 
 /** What a file card says about an Office file: its kind, counts and flags,
@@ -1163,6 +1183,33 @@ export function readOfficeFacts(source: OfficeSource): Promise<OfficeProjection 
   const facts = req<OfficeProjection>(officeUrl(source, "view=facts")).catch(() => null);
   officeFactsCache.set(key, { at: Date.now(), facts });
   return facts;
+}
+
+export function createOfficeWorkspace(sessionId: string, candidateId: string, path: string): Promise<OfficeWorkspace> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/office-workspaces`, { method: "POST", body: JSON.stringify({ candidate_id: candidateId, path }) });
+}
+
+export function listOfficeWorkspaces(sessionId: string): Promise<{ workspaces: OfficeWorkspace[] }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/office-workspaces`);
+}
+
+export function getOfficeWorkspaces(source: OfficeSource): Promise<{ workspaces: OfficeWorkspace[] }> {
+  if (!source.sessionId) return Promise.resolve({ workspaces: [] });
+  return officeReq(source, `/sessions/${encodeURIComponent(source.sessionId)}/office-workspaces`);
+}
+
+export function mutateOfficeWorkspace(sessionId: string, roomId: string, action: unknown): Promise<{ workspace: OfficeWorkspace; candidate?: SandboxCandidateRecord; error?: string }> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/office-workspaces/${encodeURIComponent(roomId)}`, { method: "POST", body: JSON.stringify(action) });
+}
+
+export function mutateOfficeWorkspaceFromSource(source: OfficeSource, roomId: string, action: unknown): Promise<{ workspace?: OfficeWorkspace; workspaces?: OfficeWorkspace[]; candidate?: SandboxCandidateRecord }> {
+  if (!source.sessionId) return Promise.reject(new Error("Office workspace has no conversation."));
+  return officeReq(source, `/sessions/${encodeURIComponent(source.sessionId)}/office-workspaces/${encodeURIComponent(roomId)}`, { method: "POST", body: JSON.stringify(action) });
+}
+
+export function setOfficeFocus(source: OfficeSource, roomId: string, anchor: string | null, active = true): Promise<{ ok: boolean }> {
+  if (!source.sessionId) return Promise.resolve({ ok: false });
+  return officeReq(source, `/sessions/${encodeURIComponent(source.sessionId)}/office-workspaces/${encodeURIComponent(roomId)}/presence`, { method: "POST", body: JSON.stringify({ anchor, active }) });
 }
 
 const OFFICE_FACTS_TTL_MS = 30_000;
@@ -1217,7 +1264,7 @@ export type CoworkingInvitation = {
   revoked_at?: string;
 };
 
-export type CoworkingParticipant = { principal_id: string; display_name: string };
+export type CoworkingParticipant = { principal_id: string; display_name: string; office_room_id?: string | null; office_anchor?: string | null };
 
 export function coworkingPresence(sessionId: string): Promise<{ participants: CoworkingParticipant[] }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/presence`);
@@ -1227,10 +1274,10 @@ export function listCoworkingInvitations(sessionId: string): Promise<{ invitatio
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`);
 }
 
-export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number, canComment = false, canMessage = false): Promise<{ invitation: CoworkingInvitation; token: string }> {
+export function createCoworkingInvitation(sessionId: string, displayName: string, expiresInHours: number, canComment = false, canMessage = false, canEdit = false): Promise<{ invitation: CoworkingInvitation; token: string }> {
   return req(`/sessions/${encodeURIComponent(sessionId)}/coworking/invitations`, {
     method: "POST",
-    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours, can_comment: canComment, can_message: canMessage }),
+    body: JSON.stringify({ display_name: displayName, expires_in_hours: expiresInHours, can_comment: canComment, can_message: canMessage, can_edit: canEdit }),
   });
 }
 

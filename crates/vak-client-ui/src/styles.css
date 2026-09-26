@@ -494,6 +494,31 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .shared-comment-form button { justify-self: start; }
 .shared-comment-form p { margin: 0; color: var(--muted); font-size: var(--fs-meta); line-height: 1.5; }
 .shared-conversation-error { color: var(--red); font-size: var(--fs-control); }
+.shared-office-overlay { position: fixed; z-index: 1100; inset: 0; display: flex; flex-direction: column; overflow: auto; background: var(--bg); color: var(--text); }
+.office-workspace-pane { min-height: 0; height: 100%; display: flex; flex-direction: column; color: var(--text); background: var(--bg); }
+.office-workspace-head { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-height: 56px; padding: 8px clamp(16px, 3vw, 36px); border-bottom: 1px solid var(--border-soft); background: var(--surface); }
+.office-workspace-title { min-width: 180px; display: flex; flex-direction: column; gap: 2px; }
+.office-workspace-title strong { font-size: var(--fs-control); font-weight: 600; }
+.office-workspace-title span, .office-workspace-history { color: var(--muted); font-size: var(--fs-meta); }
+.office-workspace-people { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.office-workspace-people span { padding: 4px 9px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--surface-raised); color: var(--text-soft); font-size: var(--fs-meta); }
+.office-workspace-toolbar { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: 8px clamp(16px, 3vw, 36px); border-bottom: 1px solid var(--border-soft); background: var(--bg); }
+.office-workspace-toolbar label, .office-workspace-toolbar form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.office-workspace-toolbar label { color: var(--text-soft); font-size: var(--fs-meta); }
+.office-workspace-toolbar input, .office-workspace-toolbar select, .shared-office-comments textarea { min-height: 34px; padding: 6px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-meta); }
+.office-workspace-start { width: min(620px, calc(100vw - 36px)); margin: auto; padding: 28px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface); }
+.office-workspace-start p { color: var(--text-soft); font-size: var(--fs-ui); line-height: 1.55; }
+.office-workspace-error { margin: 0; padding: 8px clamp(16px, 3vw, 36px); color: var(--red); background: var(--surface); font-size: var(--fs-control); }
+.office-workspace-pane > .office-view { flex: 1 1 auto; min-height: 0; }
+.office-workspace-history { flex: 0 0 auto; display: flex; justify-content: space-between; gap: var(--space-3); padding: 8px clamp(16px, 3vw, 36px); border-top: 1px solid var(--border-soft); background: var(--surface); }
+.shared-office-comments { width: min(980px, calc(100vw - 32px)); flex: 0 0 auto; align-self: center; padding: 16px 20px 24px; border-top: 1px solid var(--border-soft); }
+.shared-office-comments h2 { margin: 0 0 10px; font-size: var(--fs-section); }
+.shared-office-comments form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: 12px; }
+.shared-office-comments form label { flex: 0 0 100%; color: var(--text-soft); font-size: var(--fs-meta); }
+.shared-office-comments textarea { flex: 1 1 280px; resize: vertical; }
+.shared-office-comments article { padding: 10px 0; border-bottom: 1px solid var(--border-soft); }
+.shared-office-comments article strong, .shared-office-comments article code { font-size: var(--fs-meta); }
+.shared-office-comments article p { margin: 5px 0 0; color: var(--text-soft); font-size: var(--fs-control); }
 .everyday-result { display: grid; gap: var(--space-1); padding: 14px var(--space-4); border: 1px solid var(--border-soft); border-radius: 12px; background: var(--surface-raised); }
 .everyday-result strong { color: var(--text); font-size: var(--fs-control); }
 .everyday-result span { color: var(--text-soft); font-size: var(--fs-meta); }
@@ -5044,6 +5069,8 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .artifact-fallback { display: grid; place-items: center; gap: var(--space-2); min-height: 220px; color: var(--muted); text-align: center; }
 .artifact-fallback strong { color: var(--text); font-size: var(--fs-ui); }
 .artifact-fallback span { font-size: var(--fs-meta); }
+.artifact-office { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-2); height: 100%; min-height: 420px; }
+.artifact-office > .office-view { flex: 1 1 auto; align-self: stretch; min-height: 380px; padding: 0; }
 
 /* Workbench follows the shared Auditor's Desk tokens instead of introducing a
    separate blue/slate product palette. */

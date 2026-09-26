@@ -57,6 +57,7 @@ mod client_events;
 mod client_ui;
 mod core_pool;
 mod coworking;
+mod office_workspace;
 mod delivery;
 mod embedded_ui;
 mod events;
@@ -476,6 +477,8 @@ mod eviction_tests {
 struct CoworkingPresence {
     display_name: String,
     seen_at: Instant,
+    office_room_id: Option<String>,
+    office_anchor: Option<String>,
 }
 
 #[derive(Clone)]
@@ -914,6 +917,9 @@ fn router_with_state(state: AppState) -> Router {
             post(delegate_coworking_approval),
         )
         .route("/sessions/{id}/coworking/updates", get(coworking_updates))
+        .route("/sessions/{id}/office-workspaces", get(office_workspace::list).post(office_workspace::create))
+        .route("/sessions/{id}/office-workspaces/{room_id}", post(office_workspace::mutate))
+        .route("/sessions/{id}/office-workspaces/{room_id}/presence", post(office_workspace::focus))
         .route(
             "/sessions/{id}/coworking/invitations/{grant_id}/revoke",
             post(revoke_coworking_invitation),
@@ -3417,6 +3423,12 @@ fn participant_read_route_allowed(
         if matches!(*rest, ["coworking", "approvals", _]) {
             return true;
         }
+        if matches!(*rest, ["office-workspaces", _, "presence"]) {
+            return true;
+        }
+        if matches!(*rest, ["office-workspaces", _]) {
+            return principal.capabilities.iter().any(|capability| capability == "edit");
+        }
         return principal
             .capabilities
             .iter()
@@ -3447,6 +3459,7 @@ fn participant_read_route_allowed(
             | ["coworking", "presence"]
             | ["coworking", "approvals"]
             | ["coworking", "updates"]
+            | ["office-workspaces"]
     )
 }
 
@@ -7391,6 +7404,8 @@ struct CoworkingInvitationBody {
     can_comment: bool,
     #[serde(default)]
     can_message: bool,
+    #[serde(default)]
+    can_edit: bool,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -7755,13 +7770,14 @@ fn touch_coworking_presence(
         .coworking_presence
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    all.entry(conversation_id.to_string()).or_default().insert(
-        principal_id.to_string(),
-        CoworkingPresence {
-            display_name: display_name.to_string(),
-            seen_at: Instant::now(),
-        },
-    );
+    let presence = all.entry(conversation_id.to_string()).or_default().entry(principal_id.to_string()).or_insert_with(|| CoworkingPresence {
+        display_name: display_name.to_string(),
+        seen_at: Instant::now(),
+        office_room_id: None,
+        office_anchor: None,
+    });
+    presence.display_name = display_name.to_string();
+    presence.seen_at = Instant::now();
 }
 
 fn coworking_presence_snapshot(state: &AppState, conversation_id: &str) -> serde_json::Value {
@@ -7781,6 +7797,8 @@ fn coworking_presence_snapshot(state: &AppState, conversation_id: &str) -> serde
             serde_json::json!({
                 "principal_id": principal_id,
                 "display_name": presence.display_name,
+                "office_room_id": presence.office_room_id,
+                "office_anchor": presence.office_anchor,
             })
         })
         .collect();
@@ -7962,6 +7980,9 @@ async fn create_coworking_invitation(
             }
             if body.can_comment {
                 capabilities.push("comment".into());
+            }
+            if body.can_edit {
+                capabilities.push("edit".into());
             }
             capabilities
         },
@@ -11303,6 +11324,9 @@ fn office_lineage(
     let root = workspace
         .canonicalize()
         .map_err(|error| format!("cannot resolve the workspace: {error}"))?;
+    // A file not yet in the workspace is a new document, whose Word edits
+    // were written clean; the replay must write them the same way.
+    let new_file = !confined_path(&root, path).is_some_and(|file| file.is_file());
     let collect = |log: &vak_session::SessionLog| {
         let calls: std::collections::HashMap<_, _> =
             successful_office_calls(log).into_iter().collect();
@@ -11391,6 +11415,7 @@ fn office_lineage(
                     author: vak_tools::office_apply::tracked_change_author(
                         agent.as_deref().unwrap_or("vak"),
                     ),
+                    new_file,
                 });
             }
         }
@@ -12147,12 +12172,26 @@ async fn dispatch_candidate_revision(
         }
         return (StatusCode::CONFLICT, error).into_response();
     }
+    // An Office file the draft creates is a new document: the revision
+    // edits it clean, as the draft was made, though the copy holds it.
+    let new_documents: Vec<String> = saved
+        .candidate
+        .files
+        .iter()
+        .filter(|file| {
+            file.operation != vak_sandbox::CandidateOperation::Delete
+                && vak_ooxml::is_openxml_path(&file.path)
+                && !saved.candidate.destination_root.join(&file.path).is_file()
+        })
+        .map(|file| file.path.replace('\\', "/"))
+        .collect();
     let child_core = match Core::new_with_trust(task_root.clone(), false) {
         Ok(core) => core
             .with_agent_identity(Some(agent_identity))
             .with_surface(vak_core::Surface::Background)
             .with_approver_answerable(false)
-            .with_task_copy_boundary(),
+            .with_task_copy_boundary()
+            .with_new_documents(new_documents),
         Err(error) => {
             if let Ok(mut admissions) = parent.admissions.lock() {
                 admissions.remove(&admission);
@@ -17658,6 +17697,7 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
         sandbox: core.agent_sandbox(),
         sandbox_sink: None,
         agent_id: core.agent_identity().map(|a| a.id.clone()),
+        new_documents: Vec::new(),
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
     let out = bash.execute(&args, &ctx).await;
@@ -20390,6 +20430,7 @@ mod sandbox_promotion_tests {
             &vak_ooxml::edit::EditContext {
                 author: "Vakyartha".into(),
                 date: "2026-09-24T10:00:00Z".into(),
+                tracked: true,
             },
             vak_ooxml::Limits::default(),
             None,
@@ -21478,6 +21519,7 @@ mod sandbox_promotion_tests {
             "/sessions/session-1/sandbox/candidates/candidate-1/comments",
             "/sessions/session-1/coworking/updates",
             "/sessions/session-1/coworking/presence",
+            "/sessions/session-1/office-workspaces",
         ] {
             assert!(participant_read_route_allowed(
                 &axum::http::Method::GET,
@@ -21515,6 +21557,21 @@ mod sandbox_promotion_tests {
             &axum::http::Method::POST,
             "/sessions/session-1/coworking/messages",
             &participant(&["read", "message"])
+        ));
+        assert!(participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/office-workspaces/room-1/presence",
+            &participant(&["read"])
+        ));
+        assert!(!participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/office-workspaces/room-1",
+            &participant(&["read"])
+        ));
+        assert!(participant_read_route_allowed(
+            &axum::http::Method::POST,
+            "/sessions/session-1/office-workspaces/room-1",
+            &participant(&["read", "edit"])
         ));
         assert!(!participant_read_route_allowed(
             &axum::http::Method::POST,

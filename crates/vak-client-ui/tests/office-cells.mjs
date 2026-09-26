@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cellAddress, cellRange, columnName, parseCell } from "../src/officeCells.ts";
+import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../src/officeCells.ts";
 
 assert.deepEqual(parseCell("150"), { shown: "150", formula: null, stale: false, notCalculated: false });
 assert.deepEqual(parseCell("=SUM(B2:B4) [cached: 1950, stale until recalculated]"), { shown: "1950", formula: "=SUM(B2:B4)", stale: true, notCalculated: false });
@@ -7,6 +7,10 @@ assert.deepEqual(parseCell("=B3*2 [cached: 140]"), { shown: "140", formula: "=B3
 assert.deepEqual(parseCell("=B3*2 [not calculated yet]"), { shown: "", formula: "=B3*2", stale: false, notCalculated: true });
 assert.deepEqual(parseCell("(shared formula) [cached: 7]"), { shown: "7", formula: "(shared formula)", stale: false, notCalculated: false });
 assert.equal(parseCell("[cached: looks like one] but is text").formula, null, "text that merely resembles a marker stays text");
+assert.equal(parseCellInput("42"), 42, "numeric entry remains numeric");
+assert.equal(parseCellInput("TRUE"), true, "boolean entry remains boolean");
+assert.equal(parseCellInput("=SUM(A1:A3)"), "=SUM(A1:A3)", "formula entry uses the worker formula convention");
+assert.equal(parseCellInput("'001"), "'001", "leading apostrophe preserves literal text");
 assert.deepEqual(cellAddress("B12"), { column: 2, row: 12 });
 assert.deepEqual(cellAddress("AA3"), { column: 27, row: 3 });
 assert.equal(cellAddress("B"), null);

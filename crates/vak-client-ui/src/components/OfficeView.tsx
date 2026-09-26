@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
 import * as api from "../api";
 import Redline from "./OfficeRedline";
-import { cellAddress, cellRange, columnName, parseCell } from "../officeCells";
+import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../officeCells";
 
 // The Canvas views of an Office file (docs/design/72, P4, U1–U4): a
 // Document, Workbook or Deck view of the reader's own projection, and the
@@ -40,6 +40,9 @@ export default function OfficeView(props: {
   onSelect?: (anchor: string | null) => void;
   /** A cited place to open at and select. */
   focus?: string;
+  /** Human edits are submitted as typed OpenXML operations to the shared draft. */
+  canEdit?: boolean;
+  onEdit?: (operation: api.OfficeEditOp) => Promise<void> | void;
 }) {
   const [meta, setMeta] = createSignal<api.OfficeProjection | null>(null);
   const [units, setUnits] = createSignal<api.OfficeUnit[]>([]);
@@ -51,6 +54,9 @@ export default function OfficeView(props: {
   const [loading, setLoading] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
   const [copied, setCopied] = createSignal(false);
+  const [editText, setEditText] = createSignal("");
+  const [savingEdit, setSavingEdit] = createSignal(false);
+  const [editError, setEditError] = createSignal<string | null>(null);
   let request = 0;
 
   const select = (anchor: string | null) => {
@@ -143,6 +149,52 @@ export default function OfficeView(props: {
     .map(([name, count]) => `${count.toLocaleString()} ${name}`)
     .join(" · ");
 
+  const editable = () => {
+    const info = meta();
+    const anchor = selected();
+    if (!props.canEdit || !props.onEdit || !info || !anchor) return null;
+    if (info.vocabulary === "excel") {
+      const marker = anchor.lastIndexOf("!");
+      if (marker < 0) return null;
+      const sheet = anchor.slice(0, marker).replace(/^'/, "").replace(/'$/, "").replace(/''/g, "'");
+      const address = anchor.slice(marker + 1);
+      const range = cellRange(address);
+      if (!sheet || !range || range.first.column !== range.last.column || range.first.row !== range.last.row) return null;
+      const row = units().find((unit) => unit.kind === "sheet_row" && unit.anchor.startsWith(`${anchor.slice(0, marker + 1)}`));
+      if (row?.labels.some((label) => /hidden|very hidden/i.test(label))) return null;
+      const raw = row?.cells?.find(([cell]) => cell === address)?.[1] ?? "";
+      const cell = parseCell(raw);
+      return { value: cell.formula || cell.shown, operation: (text: string): api.OfficeEditOp => ({ op: "set_cells", sheet, cells: { [address]: parseCellInput(text) } }) };
+    }
+    const unit = units().find((entry) => entry.anchor === anchor);
+    if (!unit) return null;
+    if (info.vocabulary === "word" && (unit.kind === "paragraph" || unit.kind === "heading")) {
+      if (unit.labels.some((label) => /hidden|white text|tracked changes/i.test(label))) return null;
+      const value = unit.text.replace(/\[(?:inserted by|deleted by) [^:]+: ([^\]]*)\]/g, "$1").replace(/\[(?:hidden|white text): ([^\]]*)\]/g, "$1");
+      return { value, operation: (text: string): api.OfficeEditOp => ({ op: "replace_paragraph_text", anchor, text }) };
+    }
+    if (info.vocabulary === "power_point" && unit.kind === "shape" && unit.labels.length === 0) {
+      return { value: unit.text.replace(/ ¶ /g, "\n"), operation: (text: string): api.OfficeEditOp => ({ op: "set_placeholder_text", anchor, text }) };
+    }
+    return null;
+  };
+
+  createEffect(on(() => [selected(), units(), meta()?.vocabulary], () => {
+    const target = editable();
+    setEditText(target?.value ?? "");
+    setEditError(null);
+  }));
+
+  const saveEdit = async () => {
+    const target = editable();
+    if (!target || savingEdit()) return;
+    setSavingEdit(true);
+    setEditError(null);
+    try { await props.onEdit?.(target.operation(editText())); }
+    catch (cause) { setEditError(cause instanceof Error ? cause.message : String(cause)); }
+    finally { setSavingEdit(false); }
+  };
+
   return (
     <div class="office-view">
       <Show when={meta()}>{(info) => (
@@ -201,11 +253,16 @@ export default function OfficeView(props: {
       <Show when={selected()}>{(anchor) => (
         <div class="office-view-selection" role="toolbar" aria-label="Selected place">
           <code>{anchor()}</code>
+          <Show when={editable()}>
+            <textarea aria-label="Edit selected Office content" value={editText()} onInput={(event) => setEditText(event.currentTarget.value)} rows={2} />
+            <button type="button" class="btn primary sm" disabled={savingEdit()} onClick={() => void saveEdit()}>{savingEdit() ? "Saving draft…" : "Save to shared draft"}</button>
+          </Show>
           <button type="button" class="btn primary sm" onClick={() => ask(anchor())}>Ask Vakyartha about this</button>
           <button type="button" class="btn sm" onClick={() => void copy(anchor())}>{copied() ? "Copied" : "Copy anchor"}</button>
           <button type="button" class="btn sm" aria-label="Clear selection" onClick={() => select(null)}>Clear</button>
         </div>
       )}</Show>
+      <Show when={editError()}>{(message) => <p class="office-view-edit-error" role="alert">{message()}</p>}</Show>
     </div>
   );
 }

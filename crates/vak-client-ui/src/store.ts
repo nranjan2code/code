@@ -61,7 +61,7 @@ export const [workspaceSwitching, setWorkspaceSwitching] = createSignal(false);
 export type Connection = "connecting" | "live" | "reconnecting" | "resyncing" | "offline";
 export const [connection, setConnection] = createSignal<Connection>("live");
 export const [sessions, setSessions] = createSignal<SessionSummary[]>([]);
-export type CoworkingParticipant = { principal_id: string; display_name: string };
+export type CoworkingParticipant = { principal_id: string; display_name: string; office_room_id?: string | null; office_anchor?: string | null };
 const [coworkingPresenceBySession, setCoworkingPresenceBySession] = createStore<Record<string, CoworkingParticipant[]>>({});
 export const coworkingPresence = (sessionId: string | null) => sessionId ? (coworkingPresenceBySession[sessionId] ?? []) : [];
 export function setCoworkingPresence(sessionId: string, participants: CoworkingParticipant[]) {
