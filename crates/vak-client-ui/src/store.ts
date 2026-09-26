@@ -295,16 +295,17 @@ export function hydrateWorkbenchExecutions(sessionId: string, events: Array<Reco
   if (rebuilt.size) setWorkbenchExecutionsFor(sessionId, (prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item); return [...merged.values()]; });
 }
 
-/** A Workbench is scoped to the currently selected task, never global app history. */
-export function resetWorkbenchExecutions(clearHistoryForSessionId?: string) {
-  if (clearHistoryForSessionId) {
-    setWorkbenchExecutionsFor(clearHistoryForSessionId, []);
-  }
+/**
+ * A Workbench is scoped to the currently selected task, never global app
+ * history. A Canvas opened in `sessionId` stays open: showing the same
+ * conversation again (the load-time route re-activates it) is not leaving it.
+ */
+export function resetWorkbenchExecutions(sessionId: string) {
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
   setRequestedArtifact(null);
   setActiveComponentPreview(null);
-  closeArtifactCanvas();
+  if (canvasConversation !== sessionId) closeArtifactCanvas();
 }
 
 export interface ActiveComponentPreview {
@@ -354,6 +355,8 @@ export interface ArtifactCanvasState {
 const [canvasArtifact, setCanvasArtifact] = createSignal<ActiveComponentPreview | null>(null);
 const [canvasMode, setCanvasMode] = createSignal<CanvasMode>("split");
 const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
+/** The conversation the open Canvas belongs to. */
+let canvasConversation: string | null = null;
 
 export { canvasArtifact, canvasMode, canvasDevice, setCanvasDevice };
 
@@ -375,11 +378,13 @@ export function openArtifactCanvas(preview: ActiveComponentPreview) {
   if (dockTab()) {
     setDockTab(null);
   }
+  canvasConversation = preview.sessionId ?? activeId();
   setCanvasArtifact(preview);
 }
 
 /** Close the artifact canvas. */
 export function closeArtifactCanvas() {
+  canvasConversation = null;
   setCanvasArtifact(null);
 }
 

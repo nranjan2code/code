@@ -340,8 +340,15 @@ export async function applyRoute(hash: string) {
   const match = /^#\/s\/([^?]+)(?:\?(.*))?$/.exec(hash);
   if (!match) return;
   const [, sessionId, query] = match;
-  if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
-  await activate(sessionId);
+  if (sessionId === activeId()) {
+    // Already shown: on load `openAgentChat` has just activated it and set
+    // this route. Activating again would attach and hydrate it twice.
+    setInboxOpen(false);
+    if (narrowViewport()) setSidebarOpen(false);
+  } else {
+    if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
+    await activate(sessionId);
+  }
   const approval = new URLSearchParams(query ?? "").get("approval");
   if (!approval) return;
   // Scroll the card into view once it has actually rendered — the
@@ -425,7 +432,7 @@ export async function activate(id: string) {
   setReplyTarget(null);
   // Do not let execution/artifact state from the previously selected task
   // bleed into this task while its durable sidecar is loading.
-  resetWorkbenchExecutions();
+  resetWorkbenchExecutions(id);
   if (sessions().find((session) => session.session_id === id)?.running) {
     markRunning(id, true);
   }

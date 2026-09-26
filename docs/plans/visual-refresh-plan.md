@@ -905,6 +905,38 @@ what was not.
   ANTHROPIC_API_KEY for provider 'anthropic'"; the mockup's "Edit
   personality" button was not added, since Your agents already holds
   "Change name and character".
+- 2026-09-26: Fixed the Canvas that closed itself soon after load (seen in
+  V3.14). On a load of `/app`, `refreshBackend` opens the conversation with
+  `activate`, which sets `#/s/<id>`; `init()` then applies that route and
+  calls `activate` for the same conversation again, and its
+  `resetWorkbenchExecutions()` closed a Canvas opened in between. The reset
+  now takes the conversation being shown and keeps a Canvas opened in that
+  conversation (`openArtifactCanvas` records it: the preview's `sessionId`,
+  else the active one); a reset for a different conversation still closes
+  it. The unused history-clearing argument went with it. Checked live on the
+  review conversation (`/tmp/vak-screen1-live`, dev build on the real home)
+  before and after: before, Open on the draft card opened Canvas and the
+  second `activate` closed it about 3.5 s later with the sidebar left
+  collapsed; after, in headless Chrome at 1440 × 900 and 390 × 844, light and
+  dark (`after/V3.14-canvas-after-load-*`), Open was clicked within 5 ms of
+  the card rendering and Canvas stayed on "Draft preview · Version 2"
+  through a same-conversation `activate` (forced by a route change in every
+  run; the load-time one also landed after the click in two of the four),
+  and a route to another conversation closed it. Not met as written: the card
+  was not on screen until 4.7 to 9.6 s after load on the debug build, so no
+  click could come within 2 s of load.
+- 2026-09-26: A load no longer opens its conversation twice. `applyRoute`
+  skips `activate` for the conversation already shown (the route
+  `openAgentChat` just set), and only closes the inbox and, on a narrow
+  screen, the sidebar, as `activate` would. Checked in headless Chrome at
+  1440 × 900 and 390 × 844, light and dark, on the review conversation: each
+  load made one attach call (it was two); Canvas opened from the draft card
+  stayed open; with the inbox open, a notification-style route to the same
+  conversation (`?approval=`) closed the inbox and made no attach call; a
+  route to another conversation attached it and closed Canvas. No
+  screenshots: nothing on screen changed. Seen, not fixed: on this dev
+  server `GET /sessions` took 5.6 to 12.5 s with no client running, so the
+  card took 20 to 45 s to appear on some loads.
 - 2026-09-26: V3.17 done (the Model row V3.15 saw, not fixed). One
   function in vak-server, `provider_error_body`, now decides a provider
   failure's body for a refused turn (`provider_unavailable`) and for
