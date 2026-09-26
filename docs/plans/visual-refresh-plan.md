@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.9 and V3.11 to V3.13 done. V3.10 and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.13 done; V3.14 to V3.16 are follow-ups from the anchor check. V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -287,9 +287,19 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   frame inside a frame. Everyday view drops the kind row and draws one
   frame.
   Done when: that answer shows one frame and no kind row, light and dark.
-- [ ] **V3.10 Anchor check.** The four doc 70 screens and the three doc 75
+- [x] **V3.10 Anchor check.** The four doc 70 screens and the three doc 75
   screens compared with their references in the running app; doc 70's
   ledger updated with the evidence.
+- [ ] **V3.14 The result card.** A file result as doc 75 §6.1's card: a
+  preview, the draft status in words ("Draft, version 2, waiting for your
+  review"), one primary Review changes on the newest result, Open and Ask
+  for changes; no byte count (it comes from `vak-server`).
+  Done when: the review conversation's newest result shows that card at
+  1440 and 390, light and dark.
+- [ ] **V3.15 The Agent page.** The Agent's character beside its name on
+  its Settings page and in the Agents navigation (doc 75 §6.3 mockup).
+- [ ] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
+  from a real plan answer, not only an options table (doc 70 screen 2).
 
 #### Handoff for V3.5 (written 2026-09-25, after V3.4)
 
@@ -816,3 +826,14 @@ what was not.
   live against a model answer (the fresh home has no AI service), nor
   other primitives that sat in the adaptive frame without a frame of
   their own; those now sit on the page like prose, as V3.2 intends.
+- 2026-09-26: V3.10 done: the four doc 70 screens and the three doc 75
+  screens compared in the running app with the review data and a fresh
+  home, and doc 70's ledger records the result ("Anchor check after the
+  visual refresh"). First run matches its mockup; Settings, Review and
+  Canvas hold their relationships; the result card (screen 1 and §6.1),
+  the Agent page's character and the plan composition fall short and are
+  V3.14 to V3.16. Evidence: `after/V3.10-*` (16 screenshots, 1440 light
+  and dark, four at 390, no sideways scroll). Seen and left as data, not
+  code: the review conversation's old revision request with raw ids
+  (recorded before V1.12) and the header's "Vak" (the Agent name frozen in
+  that conversation before the rename).
