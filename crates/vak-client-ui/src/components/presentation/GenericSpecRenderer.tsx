@@ -2,7 +2,7 @@ import { For, Show, createContext, createEffect, createMemo, createSignal, onCle
 import type { AdaptiveRenderNode } from "../../types";
 import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
 import { safeUrl, sandboxedSrcdoc } from "../../safeUrl";
-import { openInEditor, openComponentPreview, openArtifactCanvas, uiPreferences } from "../../store";
+import { openInEditor, openComponentPreview, openArtifactCanvas, technicalDetails, uiPreferences } from "../../store";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
@@ -115,7 +115,8 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
     case "alert":
     case "conversation":
     case "transaction": {
-      const entries = Object.entries(props).filter(([key]) => !["title", "summary", "semantic_type"].includes(key));
+      // `kind` names the card itself (its accessible label), not a field.
+      const entries = Object.entries(props).filter(([key]) => !["title", "summary", "semantic_type", "kind"].includes(key));
       return renderUniversalCard({ primitive: "universal_card", props: { ...props, kind: str(props, "kind") ?? safeNode.primitive.replaceAll("_", " "), entries }, children }, surface);
     }
     default:
@@ -1424,23 +1425,29 @@ function renderUniversalCard(node: AdaptiveRenderNode, _surface: RenderSurface) 
   const title = str(node.props, "title");
   const summary = str(node.props, "summary");
   const rawEntries = node.props.entries;
-  const entries: [string, unknown][] = Array.isArray(rawEntries)
+  // A field that only restates what kind of card this is ("kind: entity" on
+  // an entity card) is detail, shown with technical details on.
+  const restatesKind = ([key, value]: [string, unknown]) =>
+    ["kind", "type", "semantic_type"].includes(key.toLowerCase()) && String(value).toLowerCase() === kind.toLowerCase();
+  const entries = (): [string, unknown][] => (Array.isArray(rawEntries)
     ? (rawEntries as unknown[]).filter(
         (e): e is [string, unknown] => Array.isArray(e) && e.length >= 1 && typeof e[0] === "string",
       )
-    : [];
+    : []).filter((entry) => technicalDetails() || !restatesKind(entry));
   return (
     <section class="canvas-card universal-card" aria-label={`${kind} result`}>
       <Show when={title}><h3>{title}</h3></Show>
       <Show when={summary}><p>{summary}</p></Show>
-      <dl>
-        <For each={entries}>{([key, value]) => (
-          <div class="universal-card-row">
-            <dt>{universalFieldLabel(key)}</dt>
-            <dd><UniversalValue value={value} /></dd>
-          </div>
-        )}</For>
-      </dl>
+      <Show when={entries().length > 0}>
+        <dl>
+          <For each={entries()}>{([key, value]) => (
+            <div class="universal-card-row">
+              <dt>{universalFieldLabel(key)}</dt>
+              <dd><UniversalValue value={value} /></dd>
+            </div>
+          )}</For>
+        </dl>
+      </Show>
     </section>
   );
 }
