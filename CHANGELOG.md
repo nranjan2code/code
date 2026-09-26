@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 5.0.0 — 2026-09-26
 
 - **Requests are read more accurately, and what is decided takes effect.**
   A review of how a message is understood, then a live run with a local
