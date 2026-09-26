@@ -771,6 +771,12 @@ export function listProviders(): Promise<import("./types").ProvidersResponse> {
   return req("/providers");
 }
 
+/** The name people know a provider by, from the server's listing; an id the
+ * listing does not hold shows as itself. */
+export function providerLabel(list: readonly import("./types").ProviderInfo[] | undefined, id: string): string {
+  return list?.find((p) => p.name === id)?.label ?? id;
+}
+
 /** Live model list for one provider, discovered from its API. */
 export function discoverModels(provider: string): Promise<{ provider: string; models: string[] }> {
   return req(`/providers/${encodeURIComponent(provider)}/models`);

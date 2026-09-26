@@ -4129,19 +4129,27 @@ impl Core {
         }
     }
 
+    /// The name a person knows `provider` by, for every everyday screen;
+    /// the id stays for configuration and technical views. This table is
+    /// also the set of known providers (`provider_known`), so a provider
+    /// cannot be added without a name.
+    pub fn provider_label(provider: &str) -> Option<&'static str> {
+        match provider {
+            "anthropic" => Some("Anthropic"),
+            "google" => Some("Google Gemini"),
+            "openai" => Some("OpenAI"),
+            "openai-responses" => Some("OpenAI (Responses API)"),
+            "openrouter" => Some("OpenRouter"),
+            "openrouter-responses" => Some("OpenRouter (Responses API)"),
+            "opencode-zen" => Some("OpenCode Zen"),
+            "bedrock" => Some("Amazon Bedrock"),
+            "ollama" => Some("Ollama"),
+            _ => None,
+        }
+    }
+
     pub fn provider_known(provider: &str) -> bool {
-        matches!(
-            provider,
-            "anthropic"
-                | "google"
-                | "openai"
-                | "openai-responses"
-                | "openrouter"
-                | "openrouter-responses"
-                | "opencode-zen"
-                | "bedrock"
-                | "ollama"
-        )
+        Self::provider_label(provider).is_some()
     }
 
     /// True when a run on `provider` would find credentials right now.
@@ -7927,6 +7935,20 @@ mod channel_mcp_network_tests {
             Some("https://bedrock-mantle.us-east-1.api.aws/v1")
         );
         assert!(Core::provider_known("bedrock"));
+    }
+
+    /// Every provider the registry can dispatch to has a name for people,
+    /// and so counts as known; a registry entry added without one fails here.
+    #[test]
+    fn every_registered_provider_has_a_label() {
+        for name in vak_llm::registry::default_registry().names() {
+            assert!(
+                Core::provider_label(&name).is_some(),
+                "provider '{name}' has no label in Core::provider_label"
+            );
+        }
+        assert_eq!(Core::provider_label("nope"), None);
+        assert!(!Core::provider_known("nope"));
     }
 
     /// An un-matched server keeps its own configured value; the deny list

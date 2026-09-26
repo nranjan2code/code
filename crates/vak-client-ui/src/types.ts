@@ -327,6 +327,8 @@ export interface SkillInfo {
 
 export interface ProviderInfo {
   name: string;
+  /** The name people know the service by; `name` is the id. */
+  label: string;
   env_var?: string | null;
   pool_env_var?: string | null;
   pool_size?: number;

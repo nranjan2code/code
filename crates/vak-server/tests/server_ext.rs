@@ -1610,6 +1610,10 @@ async fn providers_listing_and_key_storage_roundtrip() {
         .find(|p| p["name"] == "opencode-zen")
         .unwrap();
     assert_eq!(zen["configured"], true);
+    assert_eq!(
+        zen["label"], "OpenCode Zen",
+        "everyday screens show the service's name, not its id"
+    );
 
     // Re-saving replaces the line instead of appending duplicates.
     client

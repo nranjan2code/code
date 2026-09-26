@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.15 and V3.17 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.15, V3.17 and V3.18 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -307,6 +307,11 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   typed kind from the server, never matching on the text.
   Done when: on a fresh home the Model row says so in one plain sentence,
   with no provider or variable name, at 1440 and 390, light and dark.
+- [x] **V3.18 Service names, not ids.** An agent's AI service picker listed
+  the raw ids ("anthropic", "openai-responses"). It should list the names
+  people know, from one source the server owns.
+  Done when: the picker and its notes show only names at 1440 and 390, light
+  and dark, and the Connect sheet reads the same names.
 
 #### Handoff for V3.5 (written 2026-09-25, after V3.4)
 
@@ -956,3 +961,25 @@ what was not.
   closed Technical details row), and there is no sideways scroll.
   Evidence: `after/V3.17-*`. Seen, not fixed: the AI service picker still
   lists the raw ids ("anthropic").
+- 2026-09-26: V3.18 done (the picker V3.17 saw, not fixed). `Core::provider_label`
+  (vak-core) is the one table of service names, and it is now also the set
+  of known providers: `provider_known` is "has a label", so the two lists
+  that had to agree are one, and a test fails if the registry gains a
+  service without a name. `GET /providers` sends each one's `label`. The
+  Connect sheet's own name table, which missed the two Responses API ids,
+  is gone (invariant 30); it and Settings read the label through
+  `api.providerLabel`. Settings' AI service picker, the Account key note
+  ("Ollama runs on this computer and needs no key."), the key field's
+  label, and the key-removed notices use the name; the notices no longer
+  name the environment variable ("Key removed."). The second API style of
+  one account is named "OpenAI (Responses API)" and "OpenRouter (Responses
+  API)", because both entries are real choices in the picker and must be
+  told apart. Ids stay in technical views (Operations, receipts, the model
+  menu shown with technical details on). Checked live on the fresh home in
+  headless Chrome at 1440 × 900 and 390 × 844, light and dark: the picker
+  shows "Anthropic" and its nine options are names, no raw id is in the
+  page text, and there is no sideways scroll; in the browser pane the
+  Connect sheet lists the same names, one per account, and picking Ollama
+  (not applied) shows the Ollama note. Evidence: `after/V3.18-*` (the
+  native option list does not draw in a screenshot; its text was read from
+  the page). `server_ext` pins the label in the listing.

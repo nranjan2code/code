@@ -891,6 +891,7 @@ export default function Settings() {
   // The provider the credential controls act on — the selected one, or the
   // active one before any selection has been made.
   const keyProvider = () => provider() || providers()?.current || "";
+  const keyProviderLabel = () => api.providerLabel(providers()?.providers, keyProvider());
 
   const currentProviderInfo = () =>
     providers()?.providers.find((p) => p.name === (provider() || providers()?.current));
@@ -1145,8 +1146,8 @@ export default function Settings() {
       setCatalogNote(null);
       setNotice(
         res.shadowed_by_env
-          ? { kind: "error", text: `Removed the stored key, but ${res.env_var} is still set in your environment, so ${name} stays authenticated.` }
-          : { kind: "info", text: `Key removed (${res.env_var}).` },
+          ? { kind: "error", text: `Removed the saved key, but this computer still supplies one from its environment, so ${api.providerLabel(providers()?.providers, name)} stays connected.` }
+          : { kind: "info", text: "Key removed." },
       );
     } catch (error) {
       setNotice({ kind: "error", text: `Could not remove key: ${error instanceof Error ? error.message : String(error)}` });
@@ -1394,7 +1395,7 @@ export default function Settings() {
                       // reconciles the model against what the key reaches.
                     }}
                   >
-                    <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}{p.configured ? " ✓" : ""}</option>}</For>
+                    <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.label}{p.configured ? " ✓" : ""}</option>}</For>
                     <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
                   </select>
                 </Row>
@@ -1437,14 +1438,14 @@ export default function Settings() {
                   description={
                     currentProviderInfo()?.requires_key
                       ? (currentProviderInfo()?.configured ? "Saved securely on this device." : "Not added yet.")
-                      : `${keyProvider()} runs on this computer and needs no key.`
+                      : `${keyProviderLabel()} runs on this computer and needs no key.`
                   }
                 >
                   <Show
                     when={keyDraft() === null}
                     fallback={
                       <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder="Paste your key" aria-label={`Account key for ${keyProvider()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder="Paste your key" aria-label={`Account key for ${keyProviderLabel()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
                         <button class="btn primary sm" disabled={keyBusy() || !keyDraft()?.trim()} onClick={() => void saveKey()}>{keyBusy() ? "Saving…" : "Save"}</button>
                         <button class="settings-button" onClick={() => setKeyDraft(null)}>Cancel</button>
                       </span>

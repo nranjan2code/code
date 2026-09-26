@@ -13349,6 +13349,7 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
         let credential_ids = state.core.provider_credential_ids(&name);
         let (project_key, user_key, process_key) = state.core.provider_key_sources(&name);
         providers.push(serde_json::json!({
+            "label": Core::provider_label(&name).unwrap_or(&name),
             "name": name,
             "env_var": Core::provider_env_var(&name),
             "pool_env_var": pool_env_var(&name),
