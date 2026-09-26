@@ -1053,3 +1053,17 @@ what was not.
   removed and no frame reloaded, while the heartbeat still asked the server
   for changes. Not checked in the desktop shell itself (it runs the same
   bundle).
+- 2026-09-26: Fixed the flicker that remained after the first fix, found by
+  tracing layout changes inside the real desktop window (WebKit) through a
+  temporary command, since headless Chrome did not reproduce it. The window
+  showed an empty conversation, and every 10 s the heartbeat's re-read raised
+  the loading state, so the greeting was swapped for the loading skeleton
+  (V3.9) and back, and the session refresh rebuilt the greeting's recent
+  results. A background re-read (the heartbeat, a stream resync) no longer
+  raises the loading state; only opening a conversation shows the skeleton.
+  An unchanged session list keeps its objects, and a transcript re-read
+  keeps each unchanged item's object, so its row stays mounted. Checked in
+  the running desktop app: 27 s after load with no element removed, no
+  attribute changed and no scroll movement (before: the greeting rebuilt and
+  the skeleton flashed every 10 s); the maintainer confirmed the flicker
+  gone. Web: 30 s on a conversation with content, nothing removed.

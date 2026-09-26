@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
 import { displayFileName } from "./attachFiles";
-import { createStore, reconcile } from "solid-js/store";
+import { createStore, reconcile, unwrap } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
 import { stripControlScaffolding } from "./structured";
@@ -1117,9 +1117,19 @@ export function transcriptToItems(
 }
 
 /** Rebuild a session view from the persisted ledger. */
+/** A transcript is append-only, so an item at the same position with the
+ * same content is the same item: keep the object already on screen, and the
+ * row showing it stays mounted instead of being rebuilt under the reader. */
+function keepUnchanged(current: Item[], incoming: Item[]): Item[] {
+  return incoming.map((item, index) => {
+    const previous = current[index];
+    return previous && JSON.stringify(unwrap(previous)) === JSON.stringify(item) ? previous : item;
+  });
+}
+
 export function hydrateFromTranscript(id: string, messages: Message[], entries?: TranscriptEntryMeta[]) {
   const current: Item[] = itemsBySession[id] ?? [];
-  const incoming = transcriptToItems(id, messages, entries);
+  const incoming = keepUnchanged(current, transcriptToItems(id, messages, entries));
 
   if (current.length === 0) {
     setItemsBySession(id, incoming);

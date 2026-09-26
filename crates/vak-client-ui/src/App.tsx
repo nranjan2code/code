@@ -147,10 +147,10 @@ export async function refreshSessions() {
     if (source === api.backendUrl()) {
       setSessions((prev) => {
         const active = prev.find((s) => s.session_id === activeId());
-        if (active && !res.sessions.some((s) => s.session_id === active.session_id)) {
-          return [active, ...res.sessions];
-        }
-        return res.sessions;
+        const next = active && !res.sessions.some((s) => s.session_id === active.session_id) ? [active, ...res.sessions] : res.sessions;
+        // An unchanged list keeps its objects, so lists drawn from it (the
+        // greeting's recent results) are not rebuilt on every refresh.
+        return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
       });
       // Startup opens the canonical Vakyartha conversation through agent admission.
       // Session refresh itself never chooses an arbitrary recent task.
@@ -197,14 +197,14 @@ export async function refreshSessions() {
         if (!s.running && isRunning(s.session_id)) {
           markRunning(s.session_id, false);
           if (visible.has(s.session_id)) {
-            await hydrate(s.session_id);
+            await hydrate(s.session_id, true);
           }
         } else if (!s.running && visible.has(s.session_id)) {
           // Shared-human messages are append-only ledger writes rather than
           // Agent events. Reconcile visible settled conversations on the
           // existing session heartbeat so an owner's open transcript picks
           // them up without another subscription on the shared stream.
-          await hydrate(s.session_id);
+          await hydrate(s.session_id, true);
         }
       }
       pruneStreams();
@@ -238,8 +238,12 @@ async function settledTranscript(id: string): ReturnType<typeof api.transcript> 
  * which read as the page refreshing. */
 const lastHydrated = new Map<string, string>();
 
-async function hydrate(id: string) {
-  setHydratingId(id);
+/** Load a conversation's durable record. `background` re-reads (the session
+ * heartbeat, a stream resync) never raise the loading state: an empty
+ * conversation would swap its greeting for the loading skeleton and back
+ * every 10 s. */
+async function hydrate(id: string, background = false) {
+  if (!background) setHydratingId(id);
   try {
     const [t, presentation, sandbox] = await Promise.all([
       isRunning(id) ? Promise.resolve(undefined) : settledTranscript(id),
@@ -272,7 +276,7 @@ async function hydrate(id: string) {
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
-    setHydratingId((current) => (current === id ? null : current));
+    if (!background) setHydratingId((current) => (current === id ? null : current));
   }
 }
 
@@ -316,7 +320,7 @@ function openStream(id: string) {
       // resync state until that terminal event, then hydrate the durable
       // record and only afterward report live again.
       if (!isRunning(id)) {
-        void hydrate(id).finally(() => {
+        void hydrate(id, true).finally(() => {
           resyncingSessions.delete(id);
           setConnection("live");
         });
