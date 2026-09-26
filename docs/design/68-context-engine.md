@@ -383,7 +383,8 @@ tolerate topic changes:
   the superseded directives as "earlier, now paused". No cut, a re-weighting.
 - **Stale data** (the directive asks for a value as it stands now — temporal
   deixis such as "current", "right now", "today", "latest" sets the
-  `live-data` domain on the reading — and no retrieval-shaped call succeeded
+  `live-data` domain on the reading; `live` counts only in its *current*
+  sense, never as the verb "reside", resolver version 4 — and no retrieval-shaped call succeeded
   in the run): the answer or card can only repeat an earlier turn's figure.
   A card call is intercepted before execution and answered with a
   `[freshness-check]` error value the model repairs by retrieving first; a

@@ -363,6 +363,53 @@ const EVIDENCE_WORDS: &[(&str, Evidence, f64)] = &[
 /// match `source` — "the source code" is not a citation request.
 const EXACT_EVIDENCE_WORDS: &[&str] = &["sources"];
 
+/// `live` is two words. As an adjective or adverb ("a live score", "is it
+/// live", "go live") it means *current* or *in production*, and votes for
+/// both live data and irreversible stakes. As a verb ("we live in the
+/// city", "my kids live with me") it means *reside*, and says nothing about
+/// either: measured live, "we live in the city" in a weekend-planning
+/// request set `live-data`, the freshness check refused the plan card, and
+/// the person got no plan at all.
+///
+/// The verb reading is recognised from its neighbours, never from a topic:
+/// a subject or auxiliary right before it, or — unless a copula or "go"
+/// right before it makes it the adjective — a residence preposition right
+/// after it. Only the bare form `live` is ever read in the current sense;
+/// `lives`, `lived` and `living` are always the verb.
+const LIVE_WORD: &str = "live";
+/// A word before `live` that makes it the verb "reside".
+const RESIDE_SUBJECTS: &[&str] = &[
+    "i", "we", "you", "they", "he", "she", "who", "people", "both", "all", "to", "can", "could",
+    "would", "will", "might", "should", "must", "not", "never", "t", "d", "ll",
+];
+/// A word after `live` that makes it "reside", unless [`LIVE_COPULAS`]
+/// precedes it.
+const RESIDE_PREPOSITIONS: &[&str] = &[
+    "in", "near", "with", "nearby", "abroad", "alone", "together", "close", "downtown", "outside",
+];
+/// A word before `live` that keeps it the adjective ("is live in prod",
+/// "go live in an hour").
+const LIVE_COPULAS: &[&str] = &[
+    "is", "are", "was", "were", "be", "been", "being", "s", "re", "go", "goes", "going", "went",
+    "gone", "now",
+];
+
+/// Whether some occurrence of `live` in `tokens` means *current*, not
+/// *reside*.
+fn live_means_current(tokens: &[String]) -> bool {
+    tokens.iter().enumerate().any(|(i, token)| {
+        if token != LIVE_WORD {
+            return false;
+        }
+        let prev = i.checked_sub(1).map(|p| tokens[p].as_str());
+        let next = tokens.get(i + 1).map(String::as_str);
+        let copula = prev.is_some_and(|w| LIVE_COPULAS.contains(&w));
+        let subject = prev.is_some_and(|w| RESIDE_SUBJECTS.contains(&w));
+        let preposition = next.is_some_and(|w| RESIDE_PREPOSITIONS.contains(&w));
+        copula || !(subject || preposition)
+    })
+}
+
 /// Temporal deixis: the request asks for a value as it stands *now*, which
 /// no model knows from training and which must therefore be retrieved on
 /// this turn (`live-data` domain, docs/design/68-context-engine.md §7 and
@@ -879,6 +926,15 @@ pub fn lexicon_digest() -> String {
     for (phrase, horizon, weight) in HORIZON_PHRASES {
         out.push_str(&format!("horizon:{phrase}:{}:{weight}\n", horizon.as_str()));
     }
+    for word in RESIDE_SUBJECTS {
+        out.push_str(&format!("live-reside-subject:{word}\n"));
+    }
+    for word in RESIDE_PREPOSITIONS {
+        out.push_str(&format!("live-reside-preposition:{word}\n"));
+    }
+    for word in LIVE_COPULAS {
+        out.push_str(&format!("live-copula:{word}\n"));
+    }
     for word in DEICTIC_WORDS {
         out.push_str(&format!("deictic:{word}\n"));
     }
@@ -947,7 +1003,12 @@ pub fn extract(request: &Request<'_>) -> Extraction {
         ));
     }
     for (word, stakes, weight) in STAKES_WORDS {
-        if token_position(&tokens, word).is_some() {
+        let hit = if *word == LIVE_WORD {
+            live_means_current(&tokens)
+        } else {
+            token_position(&tokens, word).is_some()
+        };
+        if hit {
             out.stakes_from_words.add(*stakes, *weight);
             out.signals.push(Signal::new(
                 SignalKind::Lexical,
@@ -1009,7 +1070,12 @@ pub fn extract(request: &Request<'_>) -> Extraction {
     // request under `direct-answer` produced a card six times out of six.
     let mut recency: Option<(&str, f64)> = None;
     for (phrase, weight) in RECENCY_PHRASES {
-        if phrase_present(&tokens, phrase) && recency.is_none_or(|(_, best)| *weight > best) {
+        let present = if *phrase == LIVE_WORD {
+            live_means_current(&tokens)
+        } else {
+            phrase_present(&tokens, phrase)
+        };
+        if present && recency.is_none_or(|(_, best)| *weight > best) {
             recency = Some((phrase, *weight));
         }
     }
@@ -1230,6 +1296,39 @@ mod tests {
         // no live-data domain.
         let topic_only = extract(&request("tell me about the climate of Delhi"));
         assert!(!topic_only.domains.iter().any(|d| d == "live-data"));
+    }
+
+    #[test]
+    fn live_as_reside_is_neither_current_nor_irreversible() {
+        for text in [
+            "Help me plan Saturday with the kids. They are 6 and 9, we live in the city, and I would like a couple of options for the afternoon.",
+            "deploy the site to wherever I live near",
+            "update the doc: my son lives with his grandparents",
+            "rewrite the letter, we have lived in Pune for years",
+            "fix the budget for living costs",
+            "where do you live",
+            "change the address, my kids live in the suburbs",
+        ] {
+            let x = extract(&request(text));
+            assert!(!x.domains.iter().any(|d| d == "live-data"), "{text}");
+            assert!(!x.signals.iter().any(|s| s.name == "stakes:live"), "{text}");
+        }
+    }
+
+    #[test]
+    fn live_as_current_still_counts() {
+        for text in [
+            "what is the live score of the match",
+            "show me the live price",
+            "is it live",
+            "find a live stream of the launch",
+            "deploy it, the site is live in production",
+            "we go live in an hour, deploy the fix",
+        ] {
+            let x = extract(&request(text));
+            assert!(x.domains.iter().any(|d| d == "live-data"), "{text}");
+            assert!(x.signals.iter().any(|s| s.name == "stakes:live"), "{text}");
+        }
     }
 
     #[test]
