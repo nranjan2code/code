@@ -206,7 +206,21 @@ fn timeline_payload_schema() -> Value {
                     "properties": {
                         "label": {"type": "string"},
                         "detail": {"type": "string"},
-                        "status": {"type": "string"}
+                        "status": {"type": "string"},
+                        "time": {"type": "string", "description": "When it happens, e.g. 1:00–4:00 pm"},
+                        "options": {
+                            "type": "array",
+                            "description": "Alternatives for this step, one of which the person chooses",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "label": {"type": "string"},
+                                    "detail": {"type": "string"},
+                                    "facts": {"type": "array", "items": {"type": "string"}, "description": "Short facts, e.g. \"20 min away\""}
+                                },
+                                "required": ["label"]
+                            }
+                        }
                     },
                     "required": ["label"]
                 }
@@ -413,7 +427,7 @@ const SHAPES: &[CardShape] = &[
     },
     CardShape {
         name: "emit_timeline_card",
-        description: "Emit a timeline/plan/checklist/schedule card: an ordered or grouped list of steps, milestones, or items.",
+        description: "Emit a timeline/plan/checklist/schedule card: an ordered or grouped list of steps, milestones, or items. When a step offers alternatives to choose between, give that one step (for example \"After lunch\") an options list holding each alternative, rather than listing the alternatives as separate steps.",
         semantic_types: &[
             "coding.deployment",
             "coding.incident",
