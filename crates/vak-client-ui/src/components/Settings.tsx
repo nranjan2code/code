@@ -35,6 +35,7 @@ import { loadHealth, refreshSessions, openAgentChat, closeSplit } from "../App";
 import { sortByRecent } from "../agentRecents";
 import { capabilityHue, capabilityInitial } from "../capabilityIcon";
 import Icon, { type IconName } from "./Icon";
+import AgentMark from "./AgentMark";
 import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
@@ -924,7 +925,7 @@ export default function Settings() {
     void api.listAgents().then((r) => setSettingsAgents(r.agents)).catch(() => setSettingsAgents([]));
   });
   const agentEntries = createMemo(() => [
-    { id: "vak", name: "Vakyartha" },
+    { id: "vak", name: "Vakyartha", character: "vak", animation: "subtle" as const },
     ...sortByRecent(settingsAgents().filter((a) => a.id !== "vak" && (a.lifecycle ?? "active") === "active")),
   ].filter((agent) => matches(`${agent.name} agent model ai service key turns helpers context`)));
   const openAgentPage = async (id: string) => {
@@ -936,6 +937,7 @@ export default function Settings() {
     await load();
   };
   const agentName = () => activeAgentId() === "vak" ? "Vakyartha" : activeAgent()?.name ?? "Vakyartha";
+  const agentLook = () => activeAgentId() === "vak" ? { character: "vak", animation: "subtle" as const } : { character: activeAgent()?.character ?? "vak", animation: activeAgent()?.animation ?? "subtle" };
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
   const [trashedSessions, setTrashedSessions] = createSignal<SessionSummary[]>([]);
   const refreshTrash = async () => {
@@ -1195,7 +1197,7 @@ export default function Settings() {
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id || (item.id === "privacy" && page() === "archived") }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
           </For>
           <Show when={agentEntries().length > 0}>
-            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><Icon name="spark" /><span>{agent.name}</span></button>}</For></nav></div>
+            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button>}</For></nav></div>
           </Show>
           <For each={pageGroups().filter(([group]) => group === "Advanced")}>
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
@@ -1363,7 +1365,10 @@ export default function Settings() {
 
             <Show when={page() === "agent"}>
               <header class="agent-settings-header">
-                <div><h1>{scope() === "user" ? "Shared defaults" : agentName()}</h1><p>{scope() === "user" ? "Every agent starts from these unless it sets its own." : "Changes apply to new conversations. Conversations already started keep the model they began with."}</p></div>
+                <div class="agent-settings-title">
+                  <Show when={scope() !== "user"}><AgentMark character={agentLook().character} motion={agentLook().animation} size={60} /></Show>
+                  <div><h1>{scope() === "user" ? "Shared defaults" : agentName()}</h1><p>{scope() === "user" ? "Every agent starts from these unless it sets its own." : "Changes apply to new conversations. Conversations already started keep the model they began with."}</p></div>
+                </div>
                 <button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Manage agents</button>
               </header>
               <Group title="Model">

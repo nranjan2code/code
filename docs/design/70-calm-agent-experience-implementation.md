@@ -226,7 +226,9 @@ changes as the one primary action on the newest waiting draft, then Open and
 Ask for changes, with no byte count
 (`docs/assets/visual-refresh-2026/after/V3.14-*`). The review conversation's
 newest result is a file the old revision path wrote straight to the folder,
-so it truthfully reads "Saved in your folder" and offers no review.
+so it truthfully reads "Saved in your folder" and offers no review. V3.15 then put
+the Agent's character beside its name on its Settings page and in the Agents
+navigation (`docs/assets/visual-refresh-2026/after/V3.15-*`).
 
 Doc 75's three screens: first run matches its mockup (greeting, Connect
 card in the greeting, four starters with examples; the header status is a
