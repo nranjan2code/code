@@ -2522,7 +2522,8 @@ impl Agent {
                 } else if matches!(
                     call.name.as_str(),
                     "write" | "edit" | "patch" | "remember" | "propose_skill"
-                ) {
+                ) || self.delivered_file(&call.name, &call.input).is_some()
+                {
                     receipts.files_modified += 1;
                     let path = call.input.get("path").and_then(|v| v.as_str());
                     if let Some(p) = path {
