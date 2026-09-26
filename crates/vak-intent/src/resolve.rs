@@ -46,9 +46,10 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// History: 1 — the original kernel. 2 — word-boundary phrase matching,
 /// sub-floor ordered votes abstain, lexical stakes gated on effectful acts,
 /// strands. 3 — conversational delivery verbs resolve as Answer rather than
-/// workspace authoring. The test `lexicon_digest_matches_resolver_version` pins the
-/// tables to this number so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 3;
+/// workspace authoring. 4 — `live` as the verb "reside" ("we live in the
+/// city") no longer reads as current data or irreversible stakes. The test
+/// `lexicon_digest_matches_resolver_version` pins the tables to this number so a change to either without the other fails CI.
+pub const RESOLVER_VERSION: u32 = 4;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1150,8 +1151,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            3,
-            "2d1404c227272d3046af63de9f15fa5a40864b0c2a4c1b04ec6d7e4a5e5a266e",
+            4,
+            "61d3d2c6765fc5fdf7609653c74a682fd336ec3076394780094e8f6b3154f48f",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(
