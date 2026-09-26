@@ -900,5 +900,16 @@ what was not.
   run; the load-time one also landed after the click in two of the four),
   and a route to another conversation closed it. Not met as written: the card
   was not on screen until 4.7 to 9.6 s after load on the debug build, so no
-  click could come within 2 s of load. Left as is: the load still attaches and
-  hydrates the conversation twice.
+  click could come within 2 s of load.
+- 2026-09-26: A load no longer opens its conversation twice. `applyRoute`
+  skips `activate` for the conversation already shown (the route
+  `openAgentChat` just set), and only closes the inbox and, on a narrow
+  screen, the sidebar, as `activate` would. Checked in headless Chrome at
+  1440 × 900 and 390 × 844, light and dark, on the review conversation: each
+  load made one attach call (it was two); Canvas opened from the draft card
+  stayed open; with the inbox open, a notification-style route to the same
+  conversation (`?approval=`) closed the inbox and made no attach call; a
+  route to another conversation attached it and closed Canvas. No
+  screenshots: nothing on screen changed. Seen, not fixed: on this dev
+  server `GET /sessions` took 5.6 to 12.5 s with no client running, so the
+  card took 20 to 45 s to appear on some loads.

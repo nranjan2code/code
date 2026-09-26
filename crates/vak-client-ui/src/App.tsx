@@ -340,8 +340,15 @@ export async function applyRoute(hash: string) {
   const match = /^#\/s\/([^?]+)(?:\?(.*))?$/.exec(hash);
   if (!match) return;
   const [, sessionId, query] = match;
-  if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
-  await activate(sessionId);
+  if (sessionId === activeId()) {
+    // Already shown: on load `openAgentChat` has just activated it and set
+    // this route. Activating again would attach and hydrate it twice.
+    setInboxOpen(false);
+    if (narrowViewport()) setSidebarOpen(false);
+  } else {
+    if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
+    await activate(sessionId);
+  }
   const approval = new URLSearchParams(query ?? "").get("approval");
   if (!approval) return;
   // Scroll the card into view once it has actually rendered — the
