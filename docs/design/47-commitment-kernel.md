@@ -756,6 +756,12 @@ read its own commitments — and found five more, all fixed here:
   a live-data question; the agent's own state is local.
 * The verb table lacked common instructions (see *The reader*).
 
+On the `main` line, resolver version 4 separately fixed the sense of `live`:
+the verb "reside" ("we live in the city") carries no recency or stakes,
+while "a live score" asks for a current value and "go live" describes a
+launch. The version 5 resolver combines that reading with the clause-aware
+reader described above.
+
 One finding is left as a decision rather than a fix: under `full-access`
 the permission engine allows every call without asking, so the approval
 floor the kernel raises for irreversible work has nothing to gate there. A

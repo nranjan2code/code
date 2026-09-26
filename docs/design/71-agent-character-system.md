@@ -1,6 +1,6 @@
 # Agent character system
 
-Status: In progress — eight built-in expression atlases and runtime states shipped; installed user packs are the next slice.
+Status: In progress — eight built-in expression atlases and runtime states shipped, with sized WebP copies since V4.2 of the visual refresh; flat glyphs for 32 px and below and installed user packs are later slices.
 
 ## Purpose
 
@@ -24,7 +24,7 @@ Each runtime character provides:
 - a still presentation when either the OS or Vak requests reduced motion;
 - identical identity in conversation, coworking, sidebar, settings, and Agent creation because the character id is frozen with the Agent identity.
 
-Source portraits and expression atlases live in `crates/vak-client-ui/public/characters/`. Runtime metadata lives in `crates/vak-client-ui/src/agentGlyph.ts`; server validation lives in `crates/vak-server/src/agents.rs`. Additions must update both typed registries and the render harness. Portraits are transparent square PNGs, 512×512, framed to remain readable when cropped into the runtime container. Atlases are transparent 4×2 PNGs, 1024×512. Each frame must remain legible at 24 px.
+Source portraits and expression atlases live in `docs/brand/characters/`: transparent square PNG portraits, 512×512, framed to remain readable when cropped into the runtime container, and transparent 4×2 PNG atlases, 1024×512. Each frame must remain legible at 24 px. The client never loads the sources. `scripts/brand/generate.mjs` writes WebP copies of each portrait and atlas with 64, 128 and 256 px frames into `crates/vak-client-ui/public/characters/` (`<id>-<size>.webp`, `<id>-atlas-<size>.webp`), and `AgentMark` loads the smallest copy that covers its size at the screen's pixel ratio (`characterTier`). Change a source, then run the generator and its `--check`. Runtime metadata lives in `crates/vak-client-ui/src/agentGlyph.ts`; server validation lives in `crates/vak-server/src/agents.rs`. Additions must update both typed registries, the generator's character list and the render harness.
 
 ## Animation contract
 

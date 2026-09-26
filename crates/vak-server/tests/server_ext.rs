@@ -1610,6 +1610,10 @@ async fn providers_listing_and_key_storage_roundtrip() {
         .find(|p| p["name"] == "opencode-zen")
         .unwrap();
     assert_eq!(zen["configured"], true);
+    assert_eq!(
+        zen["label"], "OpenCode Zen",
+        "everyday screens show the service's name, not its id"
+    );
 
     // Re-saving replaces the line instead of appending duplicates.
     client
@@ -1682,6 +1686,25 @@ async fn providers_listing_and_key_storage_roundtrip() {
         .await
         .unwrap();
     assert_eq!(unknown_models.status(), 404);
+
+    // Discovery for a provider whose key was just removed keeps the precise
+    // message for an operator and types it, so a client can say "needs an
+    // account key" without matching on the text.
+    let keyless_models = client
+        .get(format!("{base}/providers/opencode-zen/models"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(keyless_models.status(), 502);
+    let keyless: serde_json::Value = keyless_models.json().await.unwrap();
+    assert_eq!(keyless["kind"], "no_ai_service");
+    assert_eq!(keyless["provider"], "opencode-zen");
+    assert!(
+        keyless["error"]
+            .as_str()
+            .is_some_and(|e| e.contains("OPENCODE_API_KEY")),
+        "the message still names what to set, got: {keyless}"
+    );
 
     // Unknown and keyless providers are rejected as values, not panics.
     let unknown = client

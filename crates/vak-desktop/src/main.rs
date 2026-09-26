@@ -457,9 +457,30 @@ struct Running {
     backend: Backend,
 }
 
+/// How the main window draws its title bar. On macOS the window controls
+/// overlay the webview (`titleBarStyle: Overlay` in tauri.conf.json), so the
+/// client leaves room for them; elsewhere the system draws a title bar.
+#[derive(Serialize, Clone, Copy)]
+#[serde(rename_all = "snake_case")]
+enum WindowChrome {
+    Overlay,
+    Native,
+}
+
+impl Default for WindowChrome {
+    fn default() -> Self {
+        if cfg!(target_os = "macos") {
+            Self::Overlay
+        } else {
+            Self::Native
+        }
+    }
+}
+
 #[derive(Serialize, Clone, Default)]
 struct BackendInfo {
     version: String,
+    window_chrome: WindowChrome,
     ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     base_url: Option<String>,
@@ -613,6 +634,7 @@ async fn boot_backend(cwd: PathBuf, trusted: bool) -> Result<Running, String> {
 
     let info = BackendInfo {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        window_chrome: WindowChrome::default(),
         ready: true,
         base_url: Some(format!("http://{addr}")),
         token: Some(token),

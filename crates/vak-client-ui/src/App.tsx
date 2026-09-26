@@ -31,6 +31,8 @@ import {
   setUsageFor,
   hydrateFromTranscript,
   hydrateFromPresentation,
+  itemsOf,
+  presentationOf,
   hydrateWorkbenchExecutions,
   setWorkbenchLoadError,
   resetWorkbenchExecutions,
@@ -145,10 +147,10 @@ export async function refreshSessions() {
     if (source === api.backendUrl()) {
       setSessions((prev) => {
         const active = prev.find((s) => s.session_id === activeId());
-        if (active && !res.sessions.some((s) => s.session_id === active.session_id)) {
-          return [active, ...res.sessions];
-        }
-        return res.sessions;
+        const next = active && !res.sessions.some((s) => s.session_id === active.session_id) ? [active, ...res.sessions] : res.sessions;
+        // An unchanged list keeps its objects, so lists drawn from it (the
+        // greeting's recent results) are not rebuilt on every refresh.
+        return JSON.stringify(next) === JSON.stringify(prev) ? prev : next;
       });
       // Startup opens the canonical Vakyartha conversation through agent admission.
       // Session refresh itself never chooses an arbitrary recent task.
@@ -195,14 +197,14 @@ export async function refreshSessions() {
         if (!s.running && isRunning(s.session_id)) {
           markRunning(s.session_id, false);
           if (visible.has(s.session_id)) {
-            await hydrate(s.session_id);
+            await hydrate(s.session_id, true);
           }
         } else if (!s.running && visible.has(s.session_id)) {
           // Shared-human messages are append-only ledger writes rather than
           // Agent events. Reconcile visible settled conversations on the
           // existing session heartbeat so an owner's open transcript picks
           // them up without another subscription on the shared stream.
-          await hydrate(s.session_id);
+          await hydrate(s.session_id, true);
         }
       }
       pruneStreams();
@@ -230,8 +232,18 @@ async function settledTranscript(id: string): ReturnType<typeof api.transcript> 
   throw new Error("Transcript is not ready");
 }
 
-async function hydrate(id: string) {
-  setHydratingId(id);
+/** What `hydrate` last applied per conversation. The session heartbeat
+ * re-reads every visible settled conversation every 10 s; applying an
+ * identical read rebuilt every turn (and reloaded every result preview),
+ * which read as the page refreshing. */
+const lastHydrated = new Map<string, string>();
+
+/** Load a conversation's durable record. `background` re-reads (the session
+ * heartbeat, a stream resync) never raise the loading state: an empty
+ * conversation would swap its greeting for the loading skeleton and back
+ * every 10 s. */
+async function hydrate(id: string, background = false) {
+  if (!background) setHydratingId(id);
   try {
     const [t, presentation, sandbox] = await Promise.all([
       isRunning(id) ? Promise.resolve(undefined) : settledTranscript(id),
@@ -244,6 +256,10 @@ async function hydrate(id: string) {
       }),
       api.sandboxExecutions(id).catch((error) => ({ events: [], session_id: id, error: error instanceof Error ? error.message : String(error) })),
     ]);
+    const read = JSON.stringify([t ?? null, presentation ?? null, sandbox]);
+    const unchanged = lastHydrated.get(id) === read && itemsOf(id).length > 0 && (!presentation || presentationOf(id) !== null);
+    if (unchanged) return;
+    lastHydrated.set(id, read);
     if (!isRunning(id) && t) {
       hydrateFromTranscript(id, t.messages, t.entries);
       if (presentation) hydrateFromPresentation(id, presentation);
@@ -260,7 +276,7 @@ async function hydrate(id: string) {
       appendSystem(id, `Could not load this task: ${error instanceof Error ? error.message : String(error)}`);
     }
   } finally {
-    setHydratingId((current) => (current === id ? null : current));
+    if (!background) setHydratingId((current) => (current === id ? null : current));
   }
 }
 
@@ -304,7 +320,7 @@ function openStream(id: string) {
       // resync state until that terminal event, then hydrate the durable
       // record and only afterward report live again.
       if (!isRunning(id)) {
-        void hydrate(id).finally(() => {
+        void hydrate(id, true).finally(() => {
           resyncingSessions.delete(id);
           setConnection("live");
         });
@@ -340,8 +356,15 @@ export async function applyRoute(hash: string) {
   const match = /^#\/s\/([^?]+)(?:\?(.*))?$/.exec(hash);
   if (!match) return;
   const [, sessionId, query] = match;
-  if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
-  await activate(sessionId);
+  if (sessionId === activeId()) {
+    // Already shown: on load `openAgentChat` has just activated it and set
+    // this route. Activating again would attach and hydrate it twice.
+    setInboxOpen(false);
+    if (narrowViewport()) setSidebarOpen(false);
+  } else {
+    if (!sessions().some((s) => s.session_id === sessionId)) await refreshSessions();
+    await activate(sessionId);
+  }
   const approval = new URLSearchParams(query ?? "").get("approval");
   if (!approval) return;
   // Scroll the card into view once it has actually rendered — the
@@ -425,7 +448,7 @@ export async function activate(id: string) {
   setReplyTarget(null);
   // Do not let execution/artifact state from the previously selected task
   // bleed into this task while its durable sidecar is loading.
-  resetWorkbenchExecutions();
+  resetWorkbenchExecutions(id);
   if (sessions().find((session) => session.session_id === id)?.running) {
     markRunning(id, true);
   }
@@ -1208,6 +1231,17 @@ export default function App() {
 
   createEffect(() => {
     if (backend().ready) void loadHealth();
+  });
+
+  // Where the window controls overlay the page (the macOS desktop shell),
+  // `data-chrome="overlay"` makes the sidebar, header and Settings leave
+  // room for them, except in full screen, where the system hides them.
+  const [fullscreen, setFullscreen] = createSignal(false);
+  onMount(() => onCleanup(host.onFullscreenChange(setFullscreen)));
+  createEffect(() => {
+    const overlay = backend().window_chrome === "overlay" && !fullscreen();
+    if (overlay) document.documentElement.dataset.chrome = "overlay";
+    else delete document.documentElement.dataset.chrome;
   });
 
   // "system" is resolved here rather than in CSS so one attribute always

@@ -923,19 +923,20 @@ function ResultEvidence(props: { item: OutputItem }) {
 
 /** Ask for changes on a result that is not a single file; a single file's
  * card carries it (`ResultCard`). */
-function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string }) {
+function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string; resultId?: string }) {
   const files = () => props.material.filter((item) => item.content.type === "artifact").length;
   const isPlan = createMemo(() => [props.answer, ...props.material].some((item) => {
+    if (item.content.type === "adaptive") return item.content.tree.root.primitive === "timeline";
     if (item.content.type !== "structured") return false;
     return /(?:^|[._-])(plan|timeline|checklist|options)(?:$|[._-])/.test(item.content.output.semantic_type.toLowerCase());
   }));
   const revise = () => {
-    const resultId = props.answer.outcome?.result_id;
+    const resultId = props.resultId;
     if (!resultId) return;
     setReplyTarget({ sessionId: props.sessionId, resultId, label: "this result" });
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
-  return <Show when={files() !== 1 && props.answer.outcome?.result_id}>
+  return <Show when={files() !== 1 && props.resultId}>
     <nav class="primary-result-actions" aria-label="Result actions">
       <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
     </nav>
@@ -1037,7 +1038,7 @@ function optionInteractionFor(sessionId?: string, resultId?: string) {
   if (!sessionId || !resultId) return undefined;
   return { onOptionSelect: (label: string) => {
     setReplyTarget({ sessionId, resultId, label: `option “${label}”` });
-    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan.`, mode: "append" } }));
+    window.dispatchEvent(new CustomEvent("vak:edit-prompt", { detail: { text: `Use “${label}” in this plan and show me the whole updated plan.`, mode: "append" } }));
   } };
 }
 
@@ -1396,7 +1397,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
           <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
           <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => entry.node)}</div></Show>
           <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} />
-          <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} /></>}</Show>
+          <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item().outcome?.result_id ?? uniqueResultId() ?? item().id} /></>}</Show>
         </article>
       </AssistantMessage>);
       lead = [];
@@ -1500,7 +1501,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               </Show>
               <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={item} sessionId={props.sessionId} />
               <ResultEvidence item={item} />
-              <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} />
+              <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? uniqueResultId()} />
             </article>
           </AssistantMessage>;
         out.push(result);

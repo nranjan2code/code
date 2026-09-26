@@ -44,20 +44,22 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// History: 1 — the original kernel. 2 — word-boundary phrase matching,
 /// sub-floor ordered votes abstain, lexical stakes gated on effectful acts,
 /// strands. 3 — conversational delivery verbs resolve as Answer rather than
-/// workspace authoring. 4 — clauses read by role (questions, statements,
-/// greetings), pasted material set aside, topic nouns no longer raise stakes,
-/// a recency word asks for live data only beside a request for a fact and
-/// never before a local noun or about the agent's own state, assurance needs
-/// something checkable,
-/// sequencing words and length no longer set a horizon, strand ids from a
-/// host-minted turn id, stakes words count when the verb is unknown and a
-/// weak part keeps the risk they raise, the flag spellings of destructive
-/// git commands are stakes words, and common instruction verbs the lexicon
-/// lacked (append, replace, merge, commit, revert, push, compile…) are read.
-/// The test `lexicon_digest_matches_resolver_version`
-/// pins the tables to this number so a change to either without the other
-/// fails CI.
-pub const RESOLVER_VERSION: u32 = 4;
+/// workspace authoring. 4 — two lines of work took this number before they
+/// met, so a ledger row that says 4 was written by one of them: on `main`,
+/// `live` as the verb "reside" ("we live in the city") stopped reading as
+/// current data or irreversible stakes; on the intent-accuracy branch, the
+/// tier-1 reader was rewritten (clauses read by role, pasted material set
+/// aside, topic nouns no longer raise stakes, recency asks for live data only
+/// beside a request for a fact and never about something local or the
+/// agent's own state, assurance needs something checkable, no horizon from
+/// sequencing words or length, strand ids from a host-minted turn id, stakes
+/// words count when the verb is unknown and a weak part keeps them, the flag
+/// spellings of destructive git commands and common instruction verbs are
+/// read). 5 — the two together: `live` counts as a recency word only in the
+/// sense of *current*, and "go live" is a stakes phrase. The test
+/// `lexicon_digest_matches_resolver_version` pins the tables to this number
+/// so a change to either without the other fails CI.
+pub const RESOLVER_VERSION: u32 = 5;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1348,8 +1350,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            4,
-            "49599eceb4d6256922bd3054a405f452430414ead23e372f386c1e7c729371d7",
+            5,
+            "b4a8e4771afdfa16f21afc993fbfe8864723a4a5a714c8f438faa01d583748f9",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(

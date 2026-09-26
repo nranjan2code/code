@@ -124,6 +124,29 @@ function renderNode(node: AdaptiveRenderNode | null | undefined, surface: Render
   }
 }
 
+/** The alternatives a plan step offers (its typed `options`), keeping only
+ * well-formed entries. */
+function stepOptions(props: Record<string, unknown>): TimelineOption[] {
+  const raw = props.options;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((option): TimelineOption[] => {
+    if (!option || typeof option !== "object") return [];
+    const record = option as Record<string, unknown>;
+    if (typeof record.label !== "string" || !record.label.trim()) return [];
+    return [{
+      label: record.label,
+      detail: typeof record.detail === "string" ? record.detail : undefined,
+      facts: Array.isArray(record.facts) ? record.facts.filter((fact): fact is string => typeof fact === "string") : [],
+    }];
+  });
+}
+
+/**
+ * A plan, or a list of options (`variant: "options"`). A plan whose steps
+ * offer typed `options` is drawn with those options beside it (doc 70
+ * screen 2): the step says how many there are, and each option can be used
+ * in the plan. A narrow column stacks them.
+ */
 function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
   const title = str(node.props, "title") ?? "Overview";
   const kicker = str(node.props, "kicker") ?? "Plan";
@@ -131,22 +154,34 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
   const interaction = useContext(PresentationInteractionContext);
   const items = Array.isArray(node.children) ? node.children : [];
   const compact = surface === "compact";
+  const itemPropsOf = (item: AdaptiveRenderNode) => (item && typeof item === "object" && item.props && typeof item.props === "object" ? item.props : {});
+  const choices = options ? [] : items.flatMap((item) => {
+    const itemProps = itemPropsOf(item);
+    const offered = stepOptions(itemProps);
+    return offered.length > 0 ? [{ label: str(itemProps, "label") ?? str(itemProps, "title") ?? "Step", options: offered }] : [];
+  });
+  // A status every step shares ("suggested" on each) tells the reader
+  // nothing; a step that offers options already says so.
+  const statuses = new Set(items.filter((item) => stepOptions(itemPropsOf(item)).length === 0).map((item) => str(itemPropsOf(item), "status")?.trim().toLowerCase() ?? ""));
+  const uniformStatus = items.length > 1 && statuses.size === 1;
   const list = <For each={items}>
     {(item, index) => {
-      const itemProps = item && typeof item === "object" && item.props && typeof item.props === "object" ? item.props : {};
+      const itemProps = itemPropsOf(item);
+      const offered = options ? [] : stepOptions(itemProps);
       const label = str(itemProps, "label") ?? str(itemProps, "title") ?? "Item";
       const detail = str(itemProps, "detail");
       const status = str(itemProps, "status");
       const time = str(itemProps, "time");
       const normalizedStatus = status?.trim().toLowerCase().replace(/[ _-]+/g, "");
       const complete = normalizedStatus === "complete" || normalizedStatus === "completed" || normalizedStatus === "done";
-      const showStatus = Boolean(status && !["pending", "todo", "notstarted"].includes(normalizedStatus ?? ""));
+      const showStatus = Boolean(status && !["pending", "todo", "notstarted"].includes(normalizedStatus ?? "") && offered.length === 0 && (complete || !uniformStatus));
       return <li classList={{ complete, "is-option": options }}>
         <Show when={!options}><span class="adaptive-timeline-marker" aria-hidden="true">{index() + 1}</span></Show>
         <div>
           <strong>{label}</strong>
           <Show when={time}><small class="adaptive-timeline-time">{time}</small></Show>
           <Show when={detail && !compact}><p>{detail}</p></Show>
+          <Show when={offered.length > 0}><small class="adaptive-timeline-choice">{offered.length === 1 ? "1 option" : `${offered.length} options`} to choose from</small></Show>
           <Show when={showStatus}><small class="adaptive-timeline-status">{complete ? "Done" : status}</small></Show>
         </div>
         <Show when={options && interaction && !compact}>
@@ -155,7 +190,7 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
       </li>;
     }}
   </For>;
-  return (
+  const timeline = (
     <section class="adaptive-timeline" classList={{ "adaptive-timeline-compact": compact, "adaptive-options": options }} aria-label={title}>
       <header class="adaptive-timeline-head">
         <Show when={!options}><span class="adaptive-timeline-kicker">{kicker}</span></Show>
@@ -163,6 +198,42 @@ function renderTimeline(node: AdaptiveRenderNode, surface: RenderSurface) {
       </header>
       <Show when={options} fallback={<ol>{list}</ol>}><ul>{list}</ul></Show>
     </section>
+  );
+  if (choices.length === 0 || compact) return timeline;
+  return (
+    <div class="adaptive-plan">
+      <div class="adaptive-plan-grid">
+        {timeline}
+        <div class="adaptive-plan-choices">
+          <For each={choices}>
+            {(step) => (
+              <section class="adaptive-timeline adaptive-options" aria-label={`Options for ${step.label}`}>
+                <header class="adaptive-timeline-head">
+                  <span class="adaptive-timeline-kicker">Options</span>
+                  <h3>{step.label}</h3>
+                </header>
+                <ul>
+                  <For each={step.options}>
+                    {(option) => (
+                      <li class="is-option">
+                        <div>
+                          <strong>{option.label}</strong>
+                          <Show when={option.detail}><p>{option.detail}</p></Show>
+                          <Show when={option.facts.length > 0}><small>{option.facts.join(" · ")}</small></Show>
+                        </div>
+                        <Show when={interaction}>
+                          <button type="button" class="adaptive-option-action" onClick={() => interaction?.onOptionSelect(option.label)} aria-label={`Use ${option.label}`}>Use this</button>
+                        </Show>
+                      </li>
+                    )}
+                  </For>
+                </ul>
+              </section>
+            )}
+          </For>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1485,11 +1556,18 @@ export default function GenericSpecRenderer(props: GenericSpecRendererProps) {
 // never throw on missing or malformed input) so behavior does not regress.
 // ---------------------------------------------------------------------------
 
+interface TimelineOption {
+  label: string;
+  detail?: string;
+  facts: string[];
+}
+
 interface RawTimelineItem {
   label: string;
   detail?: string;
   status?: string;
   time?: string;
+  options?: unknown;
 }
 
 const TIMELINE_ARRAY_FIELDS = ["items", "steps", "milestones", "slots", "agenda", "tasks", "options", "choices", "questions", "qa", "entries"] as const;
@@ -1531,6 +1609,7 @@ function normalizeTimelineItems(data: unknown): RawTimelineItem[] {
         detail: detail != null && detail !== time ? String(detail) : undefined,
         status: status != null ? String(status) : undefined,
         time: time != null ? String(time) : undefined,
+        options: o.options,
       };
     }
     return { label: "Item" };
@@ -1547,7 +1626,7 @@ export function buildTimelineSpec(data: unknown, defaultTitle = "Plan", kicker =
     props: { title, kicker, variant: timelineArrayField(record) === "options" ? "options" : "sequence" },
     children: items.map((item) => ({
       primitive: "section",
-      props: { label: item.label, detail: item.detail ?? "", status: item.status ?? "", time: item.time ?? "" },
+      props: { label: item.label, detail: item.detail ?? "", status: item.status ?? "", time: item.time ?? "", options: item.options ?? [] },
       children: [],
     })),
   };

@@ -607,6 +607,10 @@ const STAKES_WORDS: &[(&str, Stakes, f64)] = &[
     ("rm rf", Stakes::Irreversible, 1.0),
     ("drop table", Stakes::Irreversible, 0.9),
     ("drop database", Stakes::Irreversible, 1.0),
+    // Launching: "we go live in an hour". Bare `live` is a topic word or a
+    // recency word ([`LIVE_WORD`]), never stakes.
+    ("go live", Stakes::Irreversible, 0.8),
+    ("going live", Stakes::Irreversible, 0.8),
 ];
 
 /// Words that raise the evidence standard.
@@ -658,6 +662,54 @@ const CHECKABLE_WORDS: &[&str] = &[
     "runs",
 ];
 
+/// `live` is two words. As an adjective or adverb ("a live score", "is it
+/// live") it means *current*, and is a recency word like "right now": a
+/// request for a fact with it asks for a value observed this turn. As a verb
+/// ("we live in the city", "my kids live with me") it means *reside*, and
+/// says nothing about time: measured live, "we live in the city" in a
+/// weekend-planning request set `live-data`, the freshness check refused the
+/// plan card, and the person got no plan at all. "Go live" — launching —
+/// is a stakes phrase, not a recency word ([`STAKES_WORDS`]).
+///
+/// The verb reading is recognised from its neighbours, never from a topic:
+/// a subject or auxiliary right before it, or — unless a copula or "go"
+/// right before it makes it the adjective — a residence preposition right
+/// after it. Only the bare form `live` is ever read in the current sense;
+/// `lives`, `lived` and `living` are always the verb.
+const LIVE_WORD: &str = "live";
+/// A word before `live` that makes it the verb "reside".
+const RESIDE_SUBJECTS: &[&str] = &[
+    "i", "we", "you", "they", "he", "she", "who", "people", "both", "all", "to", "can", "could",
+    "would", "will", "might", "should", "must", "not", "never", "t", "d", "ll",
+];
+/// A word after `live` that makes it "reside", unless [`LIVE_COPULAS`]
+/// precedes it.
+const RESIDE_PREPOSITIONS: &[&str] = &[
+    "in", "near", "with", "nearby", "abroad", "alone", "together", "close", "downtown", "outside",
+];
+/// A word before `live` that keeps it the adjective ("is live in prod",
+/// "go live in an hour").
+const LIVE_COPULAS: &[&str] = &[
+    "is", "are", "was", "were", "be", "been", "being", "s", "re", "go", "goes", "going", "went",
+    "gone", "now",
+];
+
+/// Whether some occurrence of `live` in `tokens` means *current*, not
+/// *reside*.
+fn live_means_current(tokens: &[String]) -> bool {
+    tokens.iter().enumerate().any(|(i, token)| {
+        if token != LIVE_WORD {
+            return false;
+        }
+        let prev = i.checked_sub(1).map(|p| tokens[p].as_str());
+        let next = tokens.get(i + 1).map(String::as_str);
+        let copula = prev.is_some_and(|w| LIVE_COPULAS.contains(&w));
+        let subject = prev.is_some_and(|w| RESIDE_SUBJECTS.contains(&w));
+        let preposition = next.is_some_and(|w| RESIDE_PREPOSITIONS.contains(&w));
+        copula || !(subject || preposition)
+    })
+}
+
 /// Temporal deixis: the request asks for a value as it stands *now*, which
 /// no model knows from training and which must therefore be observed on this
 /// turn (`live-data` domain, docs/design/68-context-engine.md §7). References
@@ -678,6 +730,8 @@ const RECENCY_PHRASES: &[(&str, f64)] = &[
     ("real time", 0.8),
     ("at the moment", 0.9),
     ("up to date", 0.7),
+    // Only in the sense of *current* ([`live_means_current`]).
+    (LIVE_WORD, 0.5),
 ];
 
 /// Nouns that make a recency word local rather than live: "the current
@@ -1641,6 +1695,15 @@ pub fn lexicon_digest() -> String {
     for (phrase, horizon, weight) in HORIZON_PHRASES {
         out.push_str(&format!("horizon:{phrase}:{}:{weight}\n", horizon.as_str()));
     }
+    for word in RESIDE_SUBJECTS {
+        out.push_str(&format!("live-reside-subject:{word}\n"));
+    }
+    for word in RESIDE_PREPOSITIONS {
+        out.push_str(&format!("live-reside-preposition:{word}\n"));
+    }
+    for word in LIVE_COPULAS {
+        out.push_str(&format!("live-copula:{word}\n"));
+    }
     for word in DEICTIC_WORDS {
         out.push_str(&format!("deictic:{word}\n"));
     }
@@ -2071,9 +2134,12 @@ fn read_stakes_and_evidence(clause: &ClauseRead, checkable: bool, out: &mut Extr
 
 fn read_recency(clause: &ClauseRead, out: &mut Extraction) {
     let tokens = &clause.tokens;
+    let only_live_is_current =
+        live_means_current(&tokens.words) && tokens.words.iter().any(|word| word == LIVE_WORD);
     if TIME_WORDS
         .iter()
         .any(|word| tokens.words.iter().any(|t| t == word))
+        && !only_live_is_current
     {
         return;
     }
@@ -2082,6 +2148,10 @@ fn read_recency(clause: &ClauseRead, out: &mut Extraction) {
         let Some(at) = tokens.phrase_at(&words) else {
             continue;
         };
+        // "We live in the city" is not a question about time.
+        if *phrase == LIVE_WORD && !live_means_current(&tokens.words) {
+            continue;
+        }
         let next = tokens.get(at + words.len()).unwrap_or("");
         // "today's": the possessive splits into `today` `s`; look past it.
         let next = if next == "s" {
@@ -2212,6 +2282,58 @@ mod tests {
             extract(&request("explain how copper is refined"))
                 .recency
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn live_as_reside_is_neither_current_nor_irreversible() {
+        for text in [
+            "Help me plan Saturday with the kids. They are 6 and 9, we live in the city, and I would like a couple of options for the afternoon.",
+            "deploy the site to wherever I live near",
+            "update the doc: my son lives with his grandparents",
+            "rewrite the letter, we have lived in Pune for years",
+            "fix the budget for living costs",
+            "where do you live",
+            "change the address, my kids live in the suburbs",
+        ] {
+            let x = extract(&request(text));
+            assert!(x.recency.is_none(), "{text}: {:?}", x.recency);
+            assert!(
+                !x.signals
+                    .iter()
+                    .any(|s| s.name.starts_with("stakes:") && s.name.contains("live")),
+                "{text}"
+            );
+        }
+    }
+
+    /// `live` in the sense of *current* is a recency word — whether it asks
+    /// for live data is then the act's question (a request for a fact) — and
+    /// "go live" is a launch, which raises stakes for the work that does it.
+    #[test]
+    fn live_as_current_still_counts() {
+        for text in [
+            "what is the live score of the match",
+            "show me the live price",
+            "is it live",
+            "find a live stream of the launch",
+            "deploy it, the site is live in production",
+            "we go live in an hour, deploy the fix",
+        ] {
+            let x = extract(&request(text));
+            assert!(
+                x.recency
+                    .as_ref()
+                    .is_some_and(|(phrase, _)| phrase == "live"),
+                "{text}: {:?}",
+                x.recency
+            );
+        }
+        let launch = extract(&request("we go live in an hour, deploy the fix"));
+        assert!(
+            launch.signals.iter().any(|s| s.name == "stakes:go-live"),
+            "{:?}",
+            launch.signals
         );
     }
 

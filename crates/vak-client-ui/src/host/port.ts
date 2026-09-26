@@ -62,6 +62,10 @@ export interface Host {
   info(): Promise<BackendInfo>;
   /** Host-level changes (workspace opened, boot failed). Returns unsubscribe. */
   onInfoChanged(handler: (info: BackendInfo) => void): () => void;
+  /** Whether the window is in full screen, now and on each change. A host
+   *  whose window chrome never overlays the page reports nothing. Returns
+   *  unsubscribe. */
+  onFullscreenChange(handler: (fullscreen: boolean) => void): () => void;
 
   /** Open `cwd` as the active workspace. `trust` is the operator's answer
    *  when they have just been asked, and undefined when nobody is being

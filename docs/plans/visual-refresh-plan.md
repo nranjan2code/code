@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.15 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.18 done (V3 complete). V4.2 done (WebP copies; the glyphs moved to V4.6); V4.3 to V4.6 remain.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -298,8 +298,20 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   1440 and 390, light and dark.
 - [x] **V3.15 The Agent page.** The Agent's character beside its name on
   its Settings page and in the Agents navigation (doc 75 §6.3 mockup).
-- [ ] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
+- [x] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
   from a real plan answer, not only an options table (doc 70 screen 2).
+- [x] **V3.17 Plain words for a model list that needs a key.** An agent's
+  Model row showed the models request's own text ("provider auth missing:
+  set ANTHROPIC_API_KEY for provider 'anthropic'"). It should say that this
+  AI service needs an account key and point at the Account key row, with a
+  typed kind from the server, never matching on the text.
+  Done when: on a fresh home the Model row says so in one plain sentence,
+  with no provider or variable name, at 1440 and 390, light and dark.
+- [x] **V3.18 Service names, not ids.** An agent's AI service picker listed
+  the raw ids ("anthropic", "openai-responses"). It should list the names
+  people know, from one source the server owns.
+  Done when: the picker and its notes show only names at 1440 and 390, light
+  and dark, and the Connect sheet reads the same names.
 
 #### Handoff for V3.5 (written 2026-09-25, after V3.4)
 
@@ -346,8 +358,9 @@ it at 390 as well as 1440, light and dark, like every other item.
   padding; tray variants render correctly; and client, admin and website checks
   pass at 1440 × 900 and 390 × 844 in light and dark. Evidence: `after/` files
   named `V4.1-*`.
-- [ ] **V4.2 Character glyphs.** A flat two-colour glyph per character for 32px
-  and below, plus 64 and 128px WebP copies of the portraits; doc 71 updated.
+- [x] **V4.2 Character WebP copies.** WebP copies of the portraits and
+  atlases; doc 71 updated. *Revised by the maintainer on 2026-09-26:* the
+  glyphs moved to V4.6.
 - [ ] **V4.3 Desktop chrome.** Overlay title bar in
   `crates/vak-desktop/tauri.conf.json` (`titleBarStyle`, `hiddenTitle`,
   `trafficLightPosition`), drag regions on the sidebar head and header, and
@@ -357,6 +370,11 @@ it at 390 as well as 1440, light and dark, like every other item.
 - [ ] **V4.4 Brand README.** `docs/brand/README.md`: the Ink and Saffron
   palette, Newsreader, the campaign line as the product line, the
   transparent master.
+- [ ] **V4.6 Character glyphs.** A flat two-colour glyph per character for
+  32px and below, in the mark's style. Decided 2026-09-26: each glyph uses
+  its character's own two colours (fox orange with cream, the songbird's
+  indigo with saffron, and so on), checked for contrast on every theme's
+  ground; who draws them is still open.
 - [ ] **V4.5 Close out.** Doc 75's status changed to shipped with evidence;
   doc 70's visual rules pointed at doc 75; the AGENTS.md "Pending: the visual
   refresh" section removed and the design-doc list updated (§5).
@@ -898,3 +916,172 @@ what was not.
   ANTHROPIC_API_KEY for provider 'anthropic'"; the mockup's "Edit
   personality" button was not added, since Your agents already holds
   "Change name and character".
+- 2026-09-26: Fixed the Canvas that closed itself soon after load (seen in
+  V3.14). On a load of `/app`, `refreshBackend` opens the conversation with
+  `activate`, which sets `#/s/<id>`; `init()` then applies that route and
+  calls `activate` for the same conversation again, and its
+  `resetWorkbenchExecutions()` closed a Canvas opened in between. The reset
+  now takes the conversation being shown and keeps a Canvas opened in that
+  conversation (`openArtifactCanvas` records it: the preview's `sessionId`,
+  else the active one); a reset for a different conversation still closes
+  it. The unused history-clearing argument went with it. Checked live on the
+  review conversation (`/tmp/vak-screen1-live`, dev build on the real home)
+  before and after: before, Open on the draft card opened Canvas and the
+  second `activate` closed it about 3.5 s later with the sidebar left
+  collapsed; after, in headless Chrome at 1440 × 900 and 390 × 844, light and
+  dark (`after/V3.14-canvas-after-load-*`), Open was clicked within 5 ms of
+  the card rendering and Canvas stayed on "Draft preview · Version 2"
+  through a same-conversation `activate` (forced by a route change in every
+  run; the load-time one also landed after the click in two of the four),
+  and a route to another conversation closed it. Not met as written: the card
+  was not on screen until 4.7 to 9.6 s after load on the debug build, so no
+  click could come within 2 s of load.
+- 2026-09-26: A load no longer opens its conversation twice. `applyRoute`
+  skips `activate` for the conversation already shown (the route
+  `openAgentChat` just set), and only closes the inbox and, on a narrow
+  screen, the sidebar, as `activate` would. Checked in headless Chrome at
+  1440 × 900 and 390 × 844, light and dark, on the review conversation: each
+  load made one attach call (it was two); Canvas opened from the draft card
+  stayed open; with the inbox open, a notification-style route to the same
+  conversation (`?approval=`) closed the inbox and made no attach call; a
+  route to another conversation attached it and closed Canvas. No
+  screenshots: nothing on screen changed. Seen, not fixed: on this dev
+  server `GET /sessions` took 5.6 to 12.5 s with no client running, so the
+  card took 20 to 45 s to appear on some loads.
+- 2026-09-26: V3.17 done (the Model row V3.15 saw, not fixed). One
+  function in vak-server, `provider_error_body`, now decides a provider
+  failure's body for a refused turn (`provider_unavailable`) and for
+  `GET /providers/{name}/models` and `/availability` alike: `error` stays
+  the precise message for operators and the CLI, and a missing key adds
+  `"kind": "no_ai_service"`, as V3.12 did for a send. Settings reads that
+  kind from the typed `ApiError` and says "This AI service needs an account
+  key. Add one under Account key below."; anything else still shows the
+  server's message. The row's other two notes lost "provider" too:
+  "Looking for models…" and "This AI service offers no models to this
+  account." Nothing matches on the message text. `server_ext`'s key
+  round-trip test now asks a keyless provider for its models and pins the
+  502, the kind and the precise message. Checked live on the fresh home
+  (`/tmp/vak-fresh-v1`, no AI service) in headless Chrome at 1440 × 900 and
+  390 × 844, light and dark: the agent page's Model row shows the sentence,
+  no provider or variable name is visible (the variable stays behind the
+  closed Technical details row), and there is no sideways scroll.
+  Evidence: `after/V3.17-*`. Seen, not fixed: the AI service picker still
+  lists the raw ids ("anthropic").
+- 2026-09-26: V3.16 done. Real plan answers came first: four luna
+  (`openai-responses/gpt-6-luna`) runs on the real home with a throwaway
+  workspace never sent a separate options card; the alternatives sat inside
+  the plan (items marked "option", "Option 1:" labels, or "A or B" prose),
+  with nothing typed to tell them apart. By maintainer decision a timeline
+  step now carries typed `options` (label, detail, facts) and a `time`,
+  additive in `emit_timeline_card`'s schema (whose description tells the
+  model to put a step's alternatives there, with an example) and validated
+  by vak-delivery, whose text form lists them for channels
+  (`plan_step_options_are_typed_and_reach_the_text_form`). The timeline
+  renderer draws a plan whose step offers options as the plan with an
+  options card beside it (doc 70 screen 2), the step saying "2 options to
+  choose from", each option with its details, facts and Use this; a column
+  under 680px stacks them. A status every step shares ("suggested" on each)
+  is no longer shown, nor on a step with options. A card-only result now
+  offers Adjust plan (its actions take the turn's result id or the card's
+  own item id, as the option buttons already did, and an adaptive tree with
+  a timeline root counts as a plan), and Use this now asks for "the whole
+  updated plan". Checked live with luna at 1440 and 390, light and dark
+  (`after/V3.16-sunday-*`): with the example in the description, three of
+  three plan requests put the alternatives in one step's options; Use this
+  on "Park or garden stroll" prepared the reply, sending it returned a
+  plan holding only the chosen step (`V3.16-sunday-revised`), and after the wording change a
+  fresh plan's Use this returned the whole updated day with the choice
+  marked selected (`V3.16-kids-*`). Found on the way and since fixed
+  separately (`1f27ee6c`): "we live in the city" reads as a live-data request, so the
+  freshness gate refused the plan card and the person got "I could not
+  retrieve a current value". Not done: time-of-day icons, the reference's
+  date chip and venue pictures (nothing typed carries them), and Add to
+  calendar, which needs a connector (doc 70 row 2).
+- 2026-09-26: V3.18 done (the picker V3.17 saw, not fixed). `Core::provider_label`
+  (vak-core) is the one table of service names, and it is now also the set
+  of known providers: `provider_known` is "has a label", so the two lists
+  that had to agree are one, and a test fails if the registry gains a
+  service without a name. `GET /providers` sends each one's `label`. The
+  Connect sheet's own name table, which missed the two Responses API ids,
+  is gone (invariant 30); it and Settings read the label through
+  `api.providerLabel`. Settings' AI service picker, the Account key note
+  ("Ollama runs on this computer and needs no key."), the key field's
+  label, and the key-removed notices use the name; the notices no longer
+  name the environment variable ("Key removed."). The second API style of
+  one account is named "OpenAI (Responses API)" and "OpenRouter (Responses
+  API)", because both entries are real choices in the picker and must be
+  told apart. Ids stay in technical views (Operations, receipts, the model
+  menu shown with technical details on). Checked live on the fresh home in
+  headless Chrome at 1440 × 900 and 390 × 844, light and dark: the picker
+  shows "Anthropic" and its nine options are names, no raw id is in the
+  page text, and there is no sideways scroll; in the browser pane the
+  Connect sheet lists the same names, one per account, and picking Ollama
+  (not applied) shows the Ollama note. Evidence: `after/V3.18-*` (the
+  native option list does not draw in a screenshot; its text was read from
+  the page). `server_ext` pins the label in the listing.
+- 2026-09-26: V4.2 done, as the maintainer scoped it: WebP copies now, the
+  glyphs later (V4.6, own two colours each). The 16 source PNGs (512px
+  portraits, 1024 × 512 atlases, 7.9 MB) moved to `docs/brand/characters/`
+  and no longer ship; `scripts/brand/generate.mjs` (sharp 0.35.4, already
+  pinned for V4.1) writes each portrait and atlas as WebP with 64, 128 and
+  256px frames (48 files, 2.0 MB) and its `--check` covers them. 256 is one
+  tier past the plan's 64 and 128, because the 104px greeting mascot needs
+  208 pixels on a 2× screen. `AgentMark` loads the smallest copy covering
+  its size at the screen's pixel ratio (`characterTier`,
+  `tests/character-tier.mjs`); `vak-server` serves `.webp` as `image/webp`,
+  and `packaged_character_assets_load_with_the_unauthenticated_shell` now
+  fetches a WebP atlas and pins that the source PNG is not served. Checked
+  live on the fresh home at 1440 and 390, light and dark, at pixel ratio 1
+  and 2 (`after/V4.2-*`): the 28px sidebar marks load the 64px copies, the
+  greeting mascot the 128px copy at ratio 1 and the 256px copy at ratio 2,
+  no PNG is requested, and the page's character art is 104 KB at ratio 1 and
+  181 KB at ratio 2 (the same two characters' sources were 1.9 MB); the art
+  stays sharp. Not checked: the desktop shell, which ships the same `dist/`.
+- 2026-09-26: Fixed the flicker the maintainer saw in the desktop and web
+  apps. The session heartbeat re-reads every visible settled conversation
+  every 10 s (so an owner sees a coworker's messages), and applying that
+  read replaced every transcript item, so every turn was rebuilt; since
+  V3.14 each file result holds a preview frame, which reloaded each time and
+  read as the page refreshing. The sidebar's 10 s agents refresh also
+  rebuilt every agent row and character. `hydrate` now skips a read
+  identical to the last one it applied for that conversation, and the
+  sidebar keeps its list when the agents are unchanged; a real change (a new
+  message, an accepted draft) still applies. Measured live on the review
+  conversation over 30 s at 1440 light and 390 dark, with a mutation
+  observer: before, 6 turns and 6 result cards were rebuilt, 3 preview
+  frames reloaded and their files were fetched again; after, no element was
+  removed and no frame reloaded, while the heartbeat still asked the server
+  for changes. Not checked in the desktop shell itself (it runs the same
+  bundle).
+- 2026-09-26: Fixed the flicker that remained after the first fix, found by
+  tracing layout changes inside the real desktop window (WebKit) through a
+  temporary command, since headless Chrome did not reproduce it. The window
+  showed an empty conversation, and every 10 s the heartbeat's re-read raised
+  the loading state, so the greeting was swapped for the loading skeleton
+  (V3.9) and back, and the session refresh rebuilt the greeting's recent
+  results. A background re-read (the heartbeat, a stream resync) no longer
+  raises the loading state; only opening a conversation shows the skeleton.
+  An unchanged session list keeps its objects, and a transcript re-read
+  keeps each unchanged item's object, so its row stays mounted. Checked in
+  the running desktop app: 27 s after load with no element removed, no
+  attribute changed and no scroll movement (before: the greeting rebuilt and
+  the skeleton flashed every 10 s); the maintainer confirmed the flicker
+  gone. Web: 30 s on a conversation with content, nothing removed.
+- 2026-09-26: V4.3 in progress (not ticked). The desktop window uses an
+  overlay title bar (`titleBarStyle: Overlay`, `hiddenTitle`,
+  `trafficLightPosition` 18,22 in `crates/vak-desktop/tauri.conf.json`), and
+  `core:window:allow-start-dragging` is granted for the drag regions. The
+  shell reports `window_chrome` (`overlay` on macOS, `native` elsewhere) in
+  `backend_info`, and the client sets `data-chrome="overlay"` on the root
+  unless the window is in full screen (`Host::onFullscreenChange`; the web
+  host reports nothing). With it set, the sidebar and Settings keep a 34px
+  draggable strip above their content for the window controls (so does a
+  Settings page on a phone-width window), a header that reaches the left
+  edge (sidebar hidden, or a narrow window) starts 76px further in, and the
+  sidebar head and header are drag regions. Checked in the browser with the
+  attribute forced and the controls drawn in their place, at 1440 and 390,
+  light and dark (`after/V4.3-simulated-*`): the controls sit in the strip
+  above the wordmark, clear of the header with the sidebar hidden, and
+  above "Back to Vakyartha" in Settings. The desktop app ran with it (the
+  maintainer moved the window); still to confirm in the running app: drag,
+  double-click to zoom, full screen and the controls' exact position.

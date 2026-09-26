@@ -1,5 +1,6 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
-import { agentCharacter, AGENT_CHARACTERS, type AgentCharacter } from "../agentGlyph";
+import { agentCharacter, AGENT_CHARACTERS, characterAtlas, characterPortrait, type AgentCharacter } from "../agentGlyph";
+import { characterTier } from "../characterTier";
 
 export type CharacterState = "idle" | "listening" | "thinking" | "working" | "waiting" | "success" | "concern" | "acknowledge";
 
@@ -19,6 +20,9 @@ export default function AgentMark(props: {
   const id = () => (props.character && props.character in AGENT_CHARACTERS ? props.character : "vak") as AgentCharacter;
   const companion = () => agentCharacter(id());
   const state = () => reaction() ? "acknowledge" : props.state ?? "idle";
+  const tier = () => characterTier((props.size ?? 26) * (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1));
+  const portrait = () => characterPortrait(id(), tier());
+  const atlas = () => characterAtlas(id(), tier());
   const acknowledge = () => {
     if (!props.interactive) return;
     setReaction(true);
@@ -43,8 +47,8 @@ export default function AgentMark(props: {
     onPointerDown={acknowledge}
     aria-hidden="true"
   >
-    <img class="agent-mark-fallback" src={companion().image} alt="" draggable={false} />
-    <img class="agent-mark-atlas-source" src={companion().atlas} alt="" onError={() => setAtlasFailed(true)} onLoad={() => setAtlasFailed(false)} />
-    <span class="agent-mark-atlas" style={{ "background-image": `url(${companion().atlas})` }} />
+    <img class="agent-mark-fallback" src={portrait()} alt="" draggable={false} />
+    <img class="agent-mark-atlas-source" src={atlas()} alt="" onError={() => setAtlasFailed(true)} onLoad={() => setAtlasFailed(false)} />
+    <span class="agent-mark-atlas" style={{ "background-image": `url(${atlas()})` }} />
   </span>;
 }

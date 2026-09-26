@@ -6,18 +6,6 @@ import type { ProviderInfo } from "../types";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 
-/** Names people know a service by. An id without an entry shows as itself. */
-const SERVICE_NAMES: Record<string, string> = {
-  anthropic: "Anthropic",
-  bedrock: "Amazon Bedrock",
-  openai: "OpenAI",
-  "opencode-zen": "OpenCode Zen",
-  google: "Google Gemini",
-  openrouter: "OpenRouter",
-  ollama: "Ollama",
-};
-
-const serviceName = (id: string) => SERVICE_NAMES[id] ?? id;
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
@@ -59,6 +47,7 @@ function ConnectForm() {
     });
   };
   const chosen = () => accounts().find((p) => p.name === account());
+  const serviceName = (id: string) => api.providerLabel(providers(), id);
 
   onMount(() => void (async () => {
     try {
@@ -137,7 +126,7 @@ function ConnectForm() {
               <span>Paste the key from your AI service account. It is kept on this device.</span>
               <select aria-label="AI service" value={account()} onChange={(e) => { setAccount(e.currentTarget.value); setModels([]); setModel(""); setError(null); }}>
                 <option value="">Choose a service…</option>
-                <For each={accounts()}>{(p) => <option value={p.name}>{serviceName(p.name)}{p.configured ? " (key saved)" : ""}</option>}</For>
+                <For each={accounts()}>{(p) => <option value={p.name}>{p.label}{p.configured ? " (key saved)" : ""}</option>}</For>
               </select>
               <Show when={account() && models().length === 0}>
                 <div class="connect-row">

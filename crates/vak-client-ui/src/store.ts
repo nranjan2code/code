@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
 import { displayFileName } from "./attachFiles";
-import { createStore, reconcile } from "solid-js/store";
+import { createStore, reconcile, unwrap } from "solid-js/store";
 import * as api from "./api";
 export { stripControlScaffolding } from "./structured";
 import { stripControlScaffolding } from "./structured";
@@ -295,16 +295,17 @@ export function hydrateWorkbenchExecutions(sessionId: string, events: Array<Reco
   if (rebuilt.size) setWorkbenchExecutionsFor(sessionId, (prev) => { const merged = new Map(prev.map((item) => [item.id, item])); for (const [id, item] of rebuilt) if (!preferLive || !merged.has(id)) merged.set(id, item); return [...merged.values()]; });
 }
 
-/** A Workbench is scoped to the currently selected task, never global app history. */
-export function resetWorkbenchExecutions(clearHistoryForSessionId?: string) {
-  if (clearHistoryForSessionId) {
-    setWorkbenchExecutionsFor(clearHistoryForSessionId, []);
-  }
+/**
+ * A Workbench is scoped to the currently selected task, never global app
+ * history. A Canvas opened in `sessionId` stays open: showing the same
+ * conversation again (the load-time route re-activates it) is not leaving it.
+ */
+export function resetWorkbenchExecutions(sessionId: string) {
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
   setRequestedArtifact(null);
   setActiveComponentPreview(null);
-  closeArtifactCanvas();
+  if (canvasConversation !== sessionId) closeArtifactCanvas();
 }
 
 export interface ActiveComponentPreview {
@@ -354,6 +355,8 @@ export interface ArtifactCanvasState {
 const [canvasArtifact, setCanvasArtifact] = createSignal<ActiveComponentPreview | null>(null);
 const [canvasMode, setCanvasMode] = createSignal<CanvasMode>("split");
 const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
+/** The conversation the open Canvas belongs to. */
+let canvasConversation: string | null = null;
 
 export { canvasArtifact, canvasMode, canvasDevice, setCanvasDevice };
 
@@ -375,11 +378,13 @@ export function openArtifactCanvas(preview: ActiveComponentPreview) {
   if (dockTab()) {
     setDockTab(null);
   }
+  canvasConversation = preview.sessionId ?? activeId();
   setCanvasArtifact(preview);
 }
 
 /** Close the artifact canvas. */
 export function closeArtifactCanvas() {
+  canvasConversation = null;
   setCanvasArtifact(null);
 }
 
@@ -1112,9 +1117,19 @@ export function transcriptToItems(
 }
 
 /** Rebuild a session view from the persisted ledger. */
+/** A transcript is append-only, so an item at the same position with the
+ * same content is the same item: keep the object already on screen, and the
+ * row showing it stays mounted instead of being rebuilt under the reader. */
+function keepUnchanged(current: Item[], incoming: Item[]): Item[] {
+  return incoming.map((item, index) => {
+    const previous = current[index];
+    return previous && JSON.stringify(unwrap(previous)) === JSON.stringify(item) ? previous : item;
+  });
+}
+
 export function hydrateFromTranscript(id: string, messages: Message[], entries?: TranscriptEntryMeta[]) {
   const current: Item[] = itemsBySession[id] ?? [];
-  const incoming = transcriptToItems(id, messages, entries);
+  const incoming = keepUnchanged(current, transcriptToItems(id, messages, entries));
 
   if (current.length === 0) {
     setItemsBySession(id, incoming);

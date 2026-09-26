@@ -138,7 +138,7 @@ export default function WorkspaceHeader() {
   };
 
   return (
-    <><header class="workspace-head">
+    <><header class="workspace-head" data-tauri-drag-region>
       <div class="workspace-leading">
         <Show when={!sidebarOpen()}>
           <button type="button" class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>

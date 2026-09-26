@@ -8,6 +8,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Channel } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 
 import type { BackendInfo, WorkspaceReview } from "../types";
@@ -40,6 +41,23 @@ export const activeHost: Host = {
     // `backend-ready` is emitted by the shell when it finishes booting a
     // workspace's embedded server.
     const pending = listen<BackendInfo>("backend-ready", (event) => handler(event.payload));
+    let stopped = false;
+    void pending.then((un) => {
+      if (stopped) un();
+    });
+    return () => {
+      stopped = true;
+      void pending.then((un) => un());
+    };
+  },
+
+  onFullscreenChange(handler: (fullscreen: boolean) => void): () => void {
+    // macOS hides the overlaid window controls in full screen; the page
+    // stops leaving room for them.
+    const window = getCurrentWindow();
+    const check = () => void window.isFullscreen().then(handler).catch(() => {});
+    check();
+    const pending = window.onResized(check);
     let stopped = false;
     void pending.then((un) => {
       if (stopped) un();

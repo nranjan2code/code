@@ -46,6 +46,16 @@ const CUSTOM_MODEL = "\u0000custom";
 
 type Page = SettingsPageId;
 
+/** The Model row's words for a failed catalogue. A missing key arrives typed
+ * (`no_ai_service`) so it is said plainly, never by reading the message,
+ * which names an environment variable. */
+function catalogFailure(error: unknown): string {
+  if (error instanceof api.ApiError && error.kind === "no_ai_service") {
+    return "This AI service needs an account key. Add one under Account key below.";
+  }
+  return error instanceof Error ? error.message : String(error);
+}
+
 // Everyday pages are what anyone changes; Agents holds one page per agent;
 // Advanced is shown only with technical details on (docs/design/75 §6.3).
 type NavGroup = "Everyday" | "Advanced";
@@ -863,17 +873,17 @@ export default function Settings() {
     providers()?.providers.find((p) => p.name === name)?.configured;
     if (!name) return;
     setCatalog([]);
-    setCatalogNote("discovering models…");
+    setCatalogNote("Looking for models…");
     void (async () => {
       try {
         const r = await api.discoverModels(name);
         if (name !== provider()) return;
         setCatalog(r.models);
-        setCatalogNote(r.models.length ? null : "provider returned no models");
+        setCatalogNote(r.models.length ? null : "This AI service offers no models to this account.");
         if (r.models.length && !r.models.includes(model())) setModel(r.models[0]);
       } catch (error) {
         if (name !== provider()) return;
-        setCatalogNote(error instanceof Error ? error.message : String(error));
+        setCatalogNote(catalogFailure(error));
       }
     })();
   });
@@ -881,6 +891,7 @@ export default function Settings() {
   // The provider the credential controls act on — the selected one, or the
   // active one before any selection has been made.
   const keyProvider = () => provider() || providers()?.current || "";
+  const keyProviderLabel = () => api.providerLabel(providers()?.providers, keyProvider());
 
   const currentProviderInfo = () =>
     providers()?.providers.find((p) => p.name === (provider() || providers()?.current));
@@ -1110,9 +1121,9 @@ export default function Settings() {
       try {
         const fresh = await api.discoverModels(provider() || providers()?.current || "");
         setCatalog(fresh.models);
-        setCatalogNote(fresh.models.length ? null : "provider returned no models");
+        setCatalogNote(fresh.models.length ? null : "This AI service offers no models to this account.");
       } catch (e) {
-        setCatalogNote(e instanceof Error ? e.message : String(e));
+        setCatalogNote(catalogFailure(e));
       }
       await Promise.all([loadProviders(), loadHealth()]);
       setNotice({ kind: "info", text: "Key saved on this device." });
@@ -1135,8 +1146,8 @@ export default function Settings() {
       setCatalogNote(null);
       setNotice(
         res.shadowed_by_env
-          ? { kind: "error", text: `Removed the stored key, but ${res.env_var} is still set in your environment, so ${name} stays authenticated.` }
-          : { kind: "info", text: `Key removed (${res.env_var}).` },
+          ? { kind: "error", text: `Removed the saved key, but this computer still supplies one from its environment, so ${api.providerLabel(providers()?.providers, name)} stays connected.` }
+          : { kind: "info", text: "Key removed." },
       );
     } catch (error) {
       setNotice({ kind: "error", text: `Could not remove key: ${error instanceof Error ? error.message : String(error)}` });
@@ -1190,6 +1201,7 @@ export default function Settings() {
   return (
     <div ref={settingsRoot} class="settings-shell" data-phone-view={phoneView()} role="dialog" aria-modal="true" aria-label="Settings" use:trapFocus>
       <aside class="settings-nav">
+        <div class="window-drag-strip" data-tauri-drag-region aria-hidden="true" />
         <button type="button" class="settings-back" onClick={() => setSettingsOpen(false)}><Icon name="chevron" /><span>Back to Vakyartha</span></button>
         <div class="settings-search"><Icon name="search" /><input aria-label="Search settings" placeholder="Search settings…" value={query()} onInput={(event) => setQuery(event.currentTarget.value)} /></div>
         <Show when={pageGroups().length > 0 || agentEntries().length > 0} fallback={<div class="settings-no-results">No matching settings</div>}>
@@ -1207,6 +1219,7 @@ export default function Settings() {
       </aside>
 
       <main ref={settingsMain} class="settings-main">
+        <div class="window-drag-strip settings-main-strip" data-tauri-drag-region aria-hidden="true" />
         <div class="settings-content">
           <button type="button" class="settings-page-back" onClick={() => setPhoneView("list")}><Icon name="chevron" /><span>Settings</span></button>
           <Show when={voiceProviders.error || presentationLibrary.error || promptLayer.error || promptEffective.error}>
@@ -1384,7 +1397,7 @@ export default function Settings() {
                       // reconciles the model against what the key reaches.
                     }}
                   >
-                    <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}{p.configured ? " ✓" : ""}</option>}</For>
+                    <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.label}{p.configured ? " ✓" : ""}</option>}</For>
                     <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
                   </select>
                 </Row>
@@ -1427,14 +1440,14 @@ export default function Settings() {
                   description={
                     currentProviderInfo()?.requires_key
                       ? (currentProviderInfo()?.configured ? "Saved securely on this device." : "Not added yet.")
-                      : `${keyProvider()} runs on this computer and needs no key.`
+                      : `${keyProviderLabel()} runs on this computer and needs no key.`
                   }
                 >
                   <Show
                     when={keyDraft() === null}
                     fallback={
                       <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder="Paste your key" aria-label={`Account key for ${keyProvider()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
+                        <input type="password" autocomplete="off" spellcheck={false} placeholder="Paste your key" aria-label={`Account key for ${keyProviderLabel()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
                         <button class="btn primary sm" disabled={keyBusy() || !keyDraft()?.trim()} onClick={() => void saveKey()}>{keyBusy() ? "Saving…" : "Save"}</button>
                         <button class="settings-button" onClick={() => setKeyDraft(null)}>Cancel</button>
                       </span>

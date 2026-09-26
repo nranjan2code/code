@@ -327,6 +327,8 @@ export interface SkillInfo {
 
 export interface ProviderInfo {
   name: string;
+  /** The name people know the service by; `name` is the id. */
+  label: string;
   env_var?: string | null;
   pool_env_var?: string | null;
   pool_size?: number;
@@ -365,6 +367,9 @@ export interface BackendInfo {
   /** Web host only: whether a real PTY is reachable ([server.web] terminal). */
   terminal?: boolean;
   version?: string;
+  /** Desktop only: `overlay` when the window controls sit over the page
+   *  (macOS), so the page leaves room for them. */
+  window_chrome?: "overlay" | "native";
 }
 
 /** What a folder would ask for, read as text and never through the config
