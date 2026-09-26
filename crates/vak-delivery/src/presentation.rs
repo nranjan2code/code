@@ -441,6 +441,44 @@ pub struct ArtifactRef {
     pub path: Option<String>,
     pub media_type: Option<String>,
     pub description: Option<String>,
+    /// The observed size. A technical detail: a surface shows it only when
+    /// the person asked for technical details.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// Where the file stands, derived from durable records. `None` when the
+    /// projection has no evidence either way, as for a live event before its
+    /// run settles.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<ArtifactStatus>,
+}
+
+/// Where a produced file stands for the person it was made for. Versions
+/// count the saved versions of one draft, from 1.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ArtifactStatus {
+    /// Waiting for review; the workspace has not changed. `saved_as` is the
+    /// newest saved version, absent until the draft is first saved for review.
+    Draft {
+        version: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        saved_as: Option<VersionFile>,
+    },
+    /// A reviewed version was accepted into the workspace.
+    Accepted {
+        version: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        saved_as: Option<VersionFile>,
+    },
+    /// Written straight into the workspace; there was no draft to review.
+    InFolder,
+}
+
+/// A saved draft version and this file's path inside it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VersionFile {
+    pub version_id: String,
+    pub path: String,
 }
 
 #[derive(Debug)]
@@ -1328,6 +1366,14 @@ mod tests {
                     path: Some(".vak/scratch/report.pdf".into()),
                     media_type: Some("application/pdf".into()),
                     description: Some("Generated report".into()),
+                    size_bytes: Some(2048),
+                    status: Some(super::ArtifactStatus::Draft {
+                        version: 2,
+                        saved_as: Some(super::VersionFile {
+                            version_id: "version-2".into(),
+                            path: "report.pdf".into(),
+                        }),
+                    }),
                 },
             },
             OutputContent::Document {

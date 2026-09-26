@@ -219,6 +219,15 @@ not for their example text or the pre-refresh palette.
 | 3. Review and accept | One sheet: preview, then changes, then the decision (goes to, saved copy, checks), Accept selected and Keep as draft | Single column rather than a decision panel beside the changes; this draft is an HTML file with no automatic check, so the observed-checks row the reference shows has nothing to report |
 | 4. Conversation and canvas | Conversation beside the draft, Draft preview with the version, device switcher, Work on this together, comments, Review changes | None at the level of relationships; the review draft itself renders blank (its unclosed `<title>`) |
 
+Follow-up, 2026-09-26: V3.14 closed screen 1's result card gap. A file
+result is now the reference's card: a preview, the draft status in words from
+the server's records ("Draft, version 2, waiting for your review"), Review
+changes as the one primary action on the newest waiting draft, then Open and
+Ask for changes, with no byte count
+(`docs/assets/visual-refresh-2026/after/V3.14-*`). The review conversation's
+newest result is a file the old revision path wrote straight to the folder,
+so it truthfully reads "Saved in your folder" and offers no review.
+
 Doc 75's three screens: first run matches its mockup (greeting, Connect
 card in the greeting, four starters with examples; the header status is a
 chip rather than a line under the name). Settings has the Everyday,

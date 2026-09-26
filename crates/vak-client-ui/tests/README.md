@@ -21,6 +21,25 @@ live model created a valid deliverable, that every renderer schema was exercised
 or that Tauri's installed binary has been updated. Production builds do not
 include this test entry point.
 
+# Result card
+
+`result-card.html` renders the real timeline over file results shaped like
+the server's projection: two drafts waiting for review (only the newer one's
+Review changes is primary), an accepted image, a file saved straight to the
+folder, and one result with two files from one run.
+
+```sh
+agent-browser --session vak-result-card open http://localhost:1421/app/tests/result-card.html
+agent-browser --session vak-result-card eval 'window.runChecks()'
+```
+
+It checks the status words, the one primary action, that the preview draws
+the newest saved version in a sandboxed frame, that no size shows until
+technical details are on, where Ask for changes sits, and that the answer
+comes before its file. The words and the newest-draft rule are
+`tests/result-card.mjs`; the status itself is derived on the server
+(`draft_status_follows_saved_versions_and_acceptance`).
+
 # Undo after a reload
 
 `promotion-undo.html` mounts the real Workbench over a session's durable

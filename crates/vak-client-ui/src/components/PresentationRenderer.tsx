@@ -1,6 +1,7 @@
-import { createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, Show } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, ErrorBoundary, For, onCleanup, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import type {
+  ArtifactRef,
   DocumentBlock,
   InlineNode,
   OutputItem,
@@ -20,12 +21,18 @@ import {
   openOfficeCitation,
   setReplyTarget,
   isRunning,
+  presentationOf,
+  technicalDetails,
 } from "../store";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
 import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
-import { safeUrl, isLocalArtifactPath } from "../safeUrl";
+import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
+import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPreview";
+import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
+import { relAgo } from "../time";
+import Skeleton from "./Skeleton";
 import * as api from "../api";
 import { host } from "../host";
 import { isOfficePath, parseOfficeCitation } from "../officeFiles";
@@ -611,16 +618,10 @@ function RenderAudit(props: { document: PresentationDocument }) {
   </Show>;
 }
 
-/**
- * The file card (docs/design/72, U6): a deliverable or an attached file, with
- * what the reader says about an Office file (its kind, counts and flags) and
- * Open, Review, Download and, where the host has it, Open with.
- */
-export function Artifact(props: { item: OutputItem; showActions?: boolean }) {
-  if (props.item.content.type !== "artifact") return null;
-  const artifact = props.item.content.artifact;
+/** What the reader says about an Office file, and Download and Open with,
+ * shared by the file row and the result card. */
+function useFileActions(artifact: ArtifactRef) {
   const path = () => artifact.path ?? null;
-  const reviewAction = () => props.item.actions.find((action) => action.verb === "review_draft");
   const [facts] = createResource(
     () => { const value = path(); return value && isOfficePath(value) ? value : null; },
     (value) => api.readOfficeFacts({ path: value }),
@@ -643,57 +644,185 @@ export function Artifact(props: { item: OutputItem; showActions?: boolean }) {
       setProblem(error instanceof Error ? error.message : String(error));
     }
   };
+  const canOpenWith = () => host.can("open-with") && Boolean(facts()) && !facts()!.macro_enabled;
   const flags = () => { const value = facts(); return value ? officeFlagsLabel(value) : null; };
+  return { path, facts, flags, problem, download, openWith, canOpenWith };
+}
+
+/** Opens a file where it can be seen: a saved draft version in Canvas as
+ * that version, a previewable file in Canvas, anything else in Workbench. */
+function openFile(item: OutputItem, sessionId?: string) {
+  if (item.content.type !== "artifact") return;
+  const artifact = item.content.artifact;
+  const status = artifact.status;
+  const saved = status && status.state !== "in_folder" ? status.saved_as : null;
+  const context = {
+    sessionId: sessionId ?? item.provenance?.session_id ?? undefined,
+    resultId: item.outcome?.result_id ?? undefined,
+    executionId: item.provenance?.tool_call_id ?? undefined,
+  };
+  if (saved && context.sessionId) {
+    openArtifactCanvas({ id: `${saved.version_id}:${saved.path}`, title: artifact.name, artifactPath: saved.path, ...context, candidateId: saved.version_id });
+  } else if (artifact.path && isPreviewableArtifact(artifact.path)) {
+    openArtifactPathInCanvas(artifact.path, undefined, context);
+  } else if (artifact.path) {
+    openWorkbenchArtifact(artifact.path);
+  }
+}
+
+/**
+ * A file named in a message: an attached file or a file a document points
+ * to (docs/design/72, U6), with what the reader says about an Office file
+ * and Open, Download and, where the host has it, Open with. A file the Agent
+ * produced as a result is a `ResultCard` instead.
+ */
+export function Artifact(props: { item: OutputItem }) {
+  if (props.item.content.type !== "artifact") return null;
+  const artifact = props.item.content.artifact;
+  const file = useFileActions(artifact);
   return (
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
       <span class="artifact-copy">
         <strong>{artifact.name}</strong>
-        <small>{facts() ? officeFactsLine(facts()!) : artifact.description ?? artifact.media_type ?? "Artifact"}</small>
-        <Show when={flags()}>{(label) => <small class="artifact-flags" title={facts()!.flags.join("\n")}><Icon name="warning" size={11} />{label()}</small>}</Show>
-        <Show when={problem()}><small class="artifact-problem" role="alert">{problem()}</small></Show>
+        <small>{file.facts() ? officeFactsLine(file.facts()!) : artifact.description ?? fileKind(artifact.name, artifact.media_type)}</small>
+        <Show when={file.flags()}>{(label) => <small class="artifact-flags" title={file.facts()!.flags.join("\n")}><Icon name="warning" size={11} />{label()}</small>}</Show>
+        <Show when={file.problem()}><small class="artifact-problem" role="alert">{file.problem()}</small></Show>
       </span>
-      <Show when={props.showActions !== false && path()}>
-        {(value) => (
-          <button
-            type="button"
-            class="artifact-open"
-            onClick={() => {
-              if (isPreviewableArtifact(value())) {
-                openArtifactPathInCanvas(value(), undefined, {
-                  sessionId: props.item.provenance?.session_id ?? undefined,
-                  resultId: props.item.outcome?.result_id ?? undefined,
-                  executionId: props.item.provenance?.tool_call_id ?? undefined,
-                });
-              } else {
-                openWorkbenchArtifact(value());
-              }
-            }}
-          >
-            {isPreviewableArtifact(value()) ? "Open Canvas" : "Open"}
-          </button>
-        )}
+      <Show when={file.path()}>
+        {(value) => <button type="button" class="artifact-open" onClick={() => openFile(props.item)}>{isPreviewableArtifact(value()) ? "Open Canvas" : "Open"}</button>}
       </Show>
-      <Show when={props.showActions !== false && reviewAction()}>
-        {(action) => (
-          <button
-            type="button"
-            class="artifact-open"
-            onClick={() => {
-              const executionId = action().data.execution_id;
-              if (executionId) openCandidateReview(executionId, props.item.provenance?.session_id ?? undefined, action().data.candidate_id);
-            }}
-          >
-            {action().label}
-          </button>
-        )}
+      <Show when={file.path()}>
+        {(value) => <button type="button" class="artifact-open" onClick={() => void file.download(value())}>Download</button>}
       </Show>
-      <Show when={props.showActions !== false && path()}>
-        {(value) => <button type="button" class="artifact-open" onClick={() => void download(value())}>Download</button>}
+      <Show when={file.canOpenWith() && file.path()}>
+        {(value) => <button type="button" class="artifact-open" onClick={() => void file.openWith(value())}>Open with…</button>}
       </Show>
-      <Show when={props.showActions !== false && host.can("open-with") && facts() && !facts()!.macro_enabled && path()}>
-        {(value) => <button type="button" class="artifact-open" onClick={() => void openWith(value())}>Open with…</button>}
+    </article>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/**
+ * The picture at the start of a result card: the page itself for a web page,
+ * offline in a sandboxed frame as Review draws it, the image for an image,
+ * and the kind of file for anything else. It reads the newest saved version
+ * when there is one, so the card shows what Review would.
+ */
+function ResultPreview(props: { item: OutputItem; sessionId: string }) {
+  const artifact = () => (props.item.content.type === "artifact" ? props.item.content.artifact : null);
+  const source = createMemo(() => {
+    const value = artifact();
+    if (!value?.path) return null;
+    const status = value.status;
+    const saved = status && status.state !== "in_folder" ? status.saved_as : null;
+    const reader: ArtifactPreviewReader = saved
+      ? { readFile: (file) => api.readSandboxCandidateFile(props.sessionId, saved.version_id, file), readFileRaw: (file) => api.readSandboxCandidateFileRaw(props.sessionId, saved.version_id, file) }
+      : api;
+    const kind = fileKind(value.name, value.media_type);
+    return { path: saved?.path ?? value.path, kind, reader, key: `${saved?.version_id ?? ""}:${saved?.path ?? value.path}` };
+  }, undefined, { equals: (a, b) => a?.key === b?.key });
+  // Signals, not a resource: a pending resource read here would suspend the
+  // conversation's boundary and remount the turn.
+  const [page, setPage] = createSignal<string | null>(null);
+  const [image, setImage] = createSignal<string | null>(null);
+  const [failed, setFailed] = createSignal(false);
+  createEffect(() => {
+    const value = source();
+    setPage(null);
+    setImage(null);
+    setFailed(false);
+    if (!value || (value.kind !== "Web page" && value.kind !== "Image")) return;
+    let current = true;
+    let objectUrl: string | null = null;
+    onCleanup(() => {
+      current = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    });
+    if (value.kind === "Image") {
+      value.reader.readFileRaw(value.path)
+        .then((url) => { if (current) { objectUrl = url; setImage(url); } else URL.revokeObjectURL(url); })
+        .catch(() => { if (current) setFailed(true); });
+      return;
+    }
+    value.reader.readFile(value.path)
+      .then((file) => {
+        const content = file.content;
+        if (content == null) throw new Error("not text");
+        return artifactPreviewHtml(value.path, content, "'none'", value.reader).catch(() => sandboxedSrcdoc(content, "'none'"));
+      })
+      .then((html) => { if (current) setPage(html); })
+      .catch(() => { if (current) setFailed(true); });
+  });
+  const pending = () => !failed() && !page() && !image() && (source()?.kind === "Web page" || source()?.kind === "Image");
+  return (
+    <div class="result-card-preview" aria-hidden="true">
+      <Show when={page()}>{(html) => <div class="result-card-page"><iframe title="" tabIndex={-1} sandbox="allow-scripts" srcdoc={html()} /></div>}</Show>
+      <Show when={image()}>{(url) => <img class="result-card-image" src={url()} alt="" />}</Show>
+      <Show when={pending()}><Skeleton label="Loading preview" shapes={["block"]} class="result-card-skeleton" /></Show>
+      <Show when={!page() && !image() && !pending()}>
+        <div class="result-card-kind"><Icon name={source()?.kind === "Image" ? "preview" : "file"} size={22} /><span>{source()?.kind ?? "File"}</span></div>
       </Show>
+    </div>
+  );
+}
+
+/**
+ * A file the Agent produced, as the one result card (docs/design/75 §6.1): a
+ * preview, where the file stands in words, and its actions. Review changes is
+ * the primary action only on the conversation's newest draft still waiting
+ * for review; a card whose status the server could not establish says
+ * nothing about it rather than guess. Size and path are technical details.
+ */
+export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean }) {
+  if (props.item.content.type !== "artifact") return null;
+  const artifact = props.item.content.artifact;
+  const file = useFileActions(artifact);
+  const words = () => statusWords(artifact.status);
+  const review = () => (props.showReview === false ? undefined : props.item.actions.find((action) => action.verb === "review_draft"));
+  const primary = () => {
+    if (!review() || artifact.status?.state !== "draft") return false;
+    const timeline = presentationOf(props.sessionId);
+    return timeline ? newestWaitingDraft(timeline.items) === props.item.id : true;
+  };
+  const made = () => {
+    const at = Date.parse(props.item.timestamp);
+    return at > Date.UTC(2000, 0, 1) ? `made ${relAgo(props.item.timestamp)}` : "";
+  };
+  const details = () => [file.facts() ? officeFactsLine(file.facts()!) : fileKind(artifact.name, artifact.media_type), made(), words()?.folder].filter(Boolean).join(" · ");
+  const askForChanges = () => {
+    const resultId = props.resultId;
+    if (!resultId) return;
+    setReplyTarget({ sessionId: props.sessionId, resultId, label: artifact.name });
+    window.dispatchEvent(new CustomEvent("vak:focus-composer"));
+  };
+  return (
+    <article class="result-card" aria-label={artifact.name}>
+      <ResultPreview item={props.item} sessionId={props.sessionId} />
+      <div class="result-card-text">
+        <Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>
+        <h3 class="result-card-name">{artifact.name}</h3>
+        <p class="result-card-details">{details()}</p>
+        <Show when={file.flags()}>{(label) => <p class="result-card-flags" title={file.facts()!.flags.join("\n")}><Icon name="warning" size={12} />{label()}</p>}</Show>
+        <Show when={technicalDetails() && (artifact.size_bytes != null || artifact.path)}>
+          <p class="result-card-technical">{[artifact.size_bytes != null ? formatBytes(artifact.size_bytes) : "", artifact.path ?? ""].filter(Boolean).join(" · ")}</p>
+        </Show>
+        <Show when={file.problem()}><p class="result-card-problem" role="alert">{file.problem()}</p></Show>
+      </div>
+      <div class="result-card-actions">
+        <Show when={review()}>
+          {(action) => <button type="button" class={primary() ? "btn primary" : "btn"} onClick={() => openCandidateReview(action().data.execution_id, props.sessionId, action().data.candidate_id)}>Review changes</button>}
+        </Show>
+        <Show when={file.path()}><button type="button" class="btn" onClick={() => openFile(props.item, props.sessionId)}>Open</button></Show>
+        <Show when={!words()?.waiting && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.download(value())}>Download</button>}</Show>
+        <Show when={file.canOpenWith() && file.path()}>{(value) => <button type="button" class="btn" onClick={() => void file.openWith(value())}>Open with…</button>}</Show>
+        <Show when={props.askForChanges && props.resultId}><button type="button" class="result-card-link" onClick={askForChanges}>Ask for changes</button></Show>
+      </div>
     </article>
   );
 }
@@ -792,18 +921,10 @@ function ResultEvidence(props: { item: OutputItem }) {
   </Show>}</Show>;
 }
 
+/** Ask for changes on a result that is not a single file; a single file's
+ * card carries it (`ResultCard`). */
 function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sessionId: string }) {
-  const artifacts = createMemo(() => props.material.filter((item) => item.content.type === "artifact"));
-  const previews = createMemo(() => artifacts().filter((item) => item.content.type === "artifact" && Boolean(item.content.artifact.path) && isPreviewableArtifact(item.content.artifact.path)));
-  const reviews = createMemo(() => {
-    const seen = new Set<string>();
-    return artifacts().flatMap((item) => item.actions.filter((action) => {
-      const executionId = action.data.execution_id;
-      if (action.verb !== "review_draft" || !executionId || seen.has(executionId)) return false;
-      seen.add(executionId);
-      return true;
-    }));
-  });
+  const files = () => props.material.filter((item) => item.content.type === "artifact").length;
   const isPlan = createMemo(() => [props.answer, ...props.material].some((item) => {
     if (item.content.type !== "structured") return false;
     return /(?:^|[._-])(plan|timeline|checklist|options)(?:$|[._-])/.test(item.content.output.semantic_type.toLowerCase());
@@ -814,20 +935,26 @@ function ResultActions(props: { answer: OutputItem; material: OutputItem[]; sess
     setReplyTarget({ sessionId: props.sessionId, resultId, label: "this result" });
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
-  return <Show when={previews().length || reviews().length || props.answer.outcome?.result_id}>
+  return <Show when={files() !== 1 && props.answer.outcome?.result_id}>
     <nav class="primary-result-actions" aria-label="Result actions">
-      <For each={previews()}>{(item) => {
-        if (item.content.type !== "artifact" || !item.content.artifact.path) return null;
-        const path = item.content.artifact.path;
-        return <button type="button" onClick={() => openArtifactPathInCanvas(path, undefined, {
-          sessionId: props.sessionId,
-          resultId: item.outcome?.result_id ?? props.answer.outcome?.result_id ?? undefined,
-          executionId: item.provenance?.tool_call_id ?? undefined,
-        })}><Icon name="preview" size={13} />{previews().length === 1 ? "Open" : `Open ${item.content.artifact.name}`}</button>;
-      }}</For>
-      <For each={reviews()}>{(action) => <button type="button" onClick={() => openCandidateReview(action.data.execution_id, props.sessionId, action.data.candidate_id)}><Icon name="diff" size={13} />Review changes</button>}</For>
-      <Show when={props.answer.outcome?.result_id}><button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for a change"}</button></Show>
+      <button type="button" onClick={revise}>{isPlan() ? "Adjust plan" : "Ask for changes"}</button>
     </nav>
+  </Show>;
+}
+
+/** A result's files as result cards, after its answer. Files from one run
+ * share one draft, so only the first offers Review changes. */
+function ResultFiles(props: { files: OutputItem[]; answer?: OutputItem; sessionId: string }) {
+  const reviewed = new Set<string>();
+  return <Show when={props.files.length > 0}>
+    <div class="primary-result-files">
+      {props.files.map((item) => {
+        const execution = item.actions.find((action) => action.verb === "review_draft")?.data.execution_id;
+        const showReview = !execution || !reviewed.has(execution);
+        if (execution) reviewed.add(execution);
+        return <ResultCard item={item} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? props.answer?.outcome?.result_id ?? undefined} showReview={showReview} askForChanges={props.files.length === 1} />;
+      })}
+    </div>
   </Show>;
 }
 
@@ -1230,7 +1357,7 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       const details = isRawJson ? item.fallback_text : compactFailure(item.fallback_text).details;
       return <section class="semantic-recovery" role="alert"><Icon name="warning" size={15} /><div><strong>{item.status === "partial" ? "Partial outcome" : "Run needs attention"}</strong><p>{text}</p><details class="semantic-recovery-details"><summary>View details</summary><pre>{details}</pre></details></div></section>;
     }
-    if (item.kind === "artifact") return <section class="artifact-shelf" aria-label="Artifact"><Artifact item={item} /></section>;
+    if (item.kind === "artifact") return <ResultCard item={item} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? undefined} askForChanges />;
     if (["progress", "retry", "information"].includes(item.kind)) return <ActivityRow item={item} />;
     // Lifecycle summaries and scaffolding fallback items must not leak as assistant prose
     const cleanFallback = stripControlScaffolding(item.fallback_text).trim();
@@ -1263,12 +1390,12 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
       // A capped turn can produce a real file or card before the result
       // evaluator assigns a result ID. Keep its observed file actions usable.
       const anchor = material.find((entry) => entry.item.outcome?.result_id)?.item ?? material[0]?.item;
+      const cards = material.filter((entry) => entry.item.kind !== "artifact");
       out.push(<AssistantMessage sessionId={props.sessionId}>
         <article class="primary-result" data-result-id={anchor?.outcome?.result_id} aria-label="Agent result">
           <Show when={anchor && anchor.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-          <div class="primary-result-material">
-            {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
-          </div>
+          <Show when={cards.length > 0}><div class="primary-result-material">{cards.map((entry) => entry.node)}</div></Show>
+          <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={anchor} sessionId={props.sessionId} />
           <Show when={anchor}>{(item) => <><ResultEvidence item={item()} /><ResultActions answer={item()} material={material.map((entry) => entry.item)} sessionId={props.sessionId} /></>}</Show>
         </article>
       </AssistantMessage>);
@@ -1362,15 +1489,16 @@ function Turn(props: { id: string; items: OutputItem[]; sessionId: string; allow
               aria-label="Agent result"
             >
               <Show when={item.status !== "succeeded"}><div class="primary-result-caution" role="status"><Icon name="warning" size={14} />The requested outcome is not verified. Check the evidence before relying on completion claims.</div></Show>
-              <Show when={material.length > 0}>
+              <Show when={material.some((entry) => entry.item.kind !== "artifact")}>
                 <div class="primary-result-material" aria-label="Result material">
-                  {material.map((entry) => entry.item.kind === "artifact" ? <section class="artifact-shelf" aria-label="Artifact"><Artifact item={entry.item} showActions={false} /></section> : entry.node)}
+                  {material.filter((entry) => entry.item.kind !== "artifact").map((entry) => entry.node)}
                 </div>
               </Show>
               <Show when={hasCard}
                 fallback={<div class="primary-result-answer"><PresentationDocumentView document={answer} sessionId={props.sessionId} resultId={item.outcome?.result_id ?? item.id} presentationId={item.provenance?.presentation_id ?? undefined} /></div>}>
                 <Show when={answer.metadata.card_note}>{(note) => <div class="primary-result-note"><MarkdownView text={note()} /></div>}</Show>
               </Show>
+              <ResultFiles files={material.filter((entry) => entry.item.kind === "artifact").map((entry) => entry.item)} answer={item} sessionId={props.sessionId} />
               <ResultEvidence item={item} />
               <ResultActions answer={item} material={material.map((entry) => entry.item)} sessionId={props.sessionId} />
             </article>

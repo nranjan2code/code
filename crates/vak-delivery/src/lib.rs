@@ -29,11 +29,11 @@ pub use adaptive::markdown as adaptive_presentation_markdown;
 pub use adaptive::project as project_adaptive_presentation;
 pub use adaptive::project_preferred as project_preferred_adaptive_presentation;
 pub use presentation::{
-    ArtifactRef, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
+    ArtifactRef, ArtifactStatus, CalloutTone, Citation, DocumentBlock, DocumentCoverage,
     DocumentCoverageDisposition, InlineNode, OutputContent, OutputItem, OutputKind,
     OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputStreamFrame,
     OutputTimeline, PRESENTATION_SCHEMA_VERSION, PresentationDocument, ResultOutcome,
-    SurfaceCapabilities, TableAlignment, compile_markdown, inline_text, safe_link,
+    SurfaceCapabilities, TableAlignment, VersionFile, compile_markdown, inline_text, safe_link,
 };
 pub use skills::{
     ChartOutput, ChartPoint, ChartSeries, DecisionDisposition, IntendedPresentation, LinkPreview,

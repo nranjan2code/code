@@ -71,7 +71,22 @@ export interface ArtifactRef {
   path?: string | null;
   media_type?: string | null;
   description?: string | null;
+  /** Observed size; shown only with technical details on. */
+  size_bytes?: number | null;
+  /** Where the file stands, from the server's durable records; absent when unknown. */
+  status?: ArtifactStatus | null;
 }
+
+/** A saved draft version and the file's path inside it. */
+export interface VersionFile {
+  version_id: string;
+  path: string;
+}
+
+export type ArtifactStatus =
+  | { state: "draft"; version: number; saved_as?: VersionFile | null }
+  | { state: "accepted"; version: number; saved_as?: VersionFile | null }
+  | { state: "in_folder" };
 
 export interface StructuredOutput {
   semantic_type: string;

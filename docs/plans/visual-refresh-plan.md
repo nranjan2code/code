@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.13 done; V3.14 to V3.16 are follow-ups from the anchor check. V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.14 done; V3.15 and V3.16 are follow-ups from the anchor check. V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -290,7 +290,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
 - [x] **V3.10 Anchor check.** The four doc 70 screens and the three doc 75
   screens compared with their references in the running app; doc 70's
   ledger updated with the evidence.
-- [ ] **V3.14 The result card.** A file result as doc 75 §6.1's card: a
+- [x] **V3.14 The result card.** A file result as doc 75 §6.1's card: a
   preview, the draft status in words ("Draft, version 2, waiting for your
   review"), one primary Review changes on the newest result, Open and Ask
   for changes; no byte count (it comes from `vak-server`).
@@ -837,3 +837,47 @@ what was not.
   code: the review conversation's old revision request with raw ids
   (recorded before V1.12) and the header's "Vak" (the Agent name frozen in
   that conversation before the rename).
+- 2026-09-26: V3.14 done. `ArtifactRef` (vak-delivery) gains two additive
+  fields, `size_bytes` and `status` (`draft` with its version and newest
+  saved version, `accepted`, or `in_folder`), and the projection derives the
+  status from the durable sandbox records with Review's own rule (versions
+  count per run; an acceptance settles the round, an undo reopens it, a
+  version saved later starts a new one); unreadable records leave it
+  unknown. "Draft · N bytes" and "Produced by write" are gone from all three
+  server paths. The client's `ResultCard` replaces the file chip in results
+  and the older live-turn deliverable chip (and their CSS): a preview (a web
+  page drawn offline in a sandboxed frame from the newest saved version, an
+  image, or the file's kind), the status in words ("Draft, version 2,
+  waiting for your review"), kind, age and "your folder hasn't changed
+  yet", then Review changes, primary only on the conversation's newest
+  waiting draft, Open (a saved version opens as that version in Canvas),
+  Download (not for a waiting draft) and Ask for changes; size and path show
+  only with technical details on. The answer now comes before its file, and
+  a narrow column (a phone, or beside Canvas) gets the compact layout by
+  container query. Checked live on the review conversation at 1440 and 390,
+  light and dark (`after/V3.14-review-*`): the turn-1 draft reads "Draft,
+  version 2, waiting for your review" with the primary Review changes; its
+  thumbnail is blank because the draft's `<title>` is unclosed (Canvas says
+  the same); Open showed "Draft preview · Version 2", Review opened with
+  versions 1 and 2, Ask for changes set the reply target. That
+  conversation's newest result was written straight to the folder by the
+  old revision path, so it reads "Saved in your folder" with no review (the
+  file is no longer there). Checked against real models on the real home
+  with a throwaway workspace, at the maintainer's request
+  (`after/V3.14-real-*`): the local Ollama model wrote a web page with
+  `bash`, which today always works in the folder, and the card showed its
+  real thumbnail and "Saved in your folder"; `openai-responses/gpt-6-luna`
+  edited a Word file with `office_apply` and the card read "Draft, version
+  1, waiting for your review" with the reader's facts, at 1440 and 390,
+  light and dark; accepting in Review turned it into "Accepted, version 1 ·
+  now in your folder", after a reload and, in a second run, live. Harness
+  `tests/result-card.html` (16 checks) covers what the data could not: a
+  rendered thumbnail of a saved version, an older waiting draft beside the
+  newer primary one, an accepted image and a result with two files
+  (`after/V3.14-harness-*`). Not reached live: version 2 from a real
+  revision, because the review-comment revision of the Word draft failed on
+  the server ("revision did not change candidate files"). Seen, not fixed:
+  Canvas opened in the first seconds after load is closed again by the
+  workbench reset; one luna turn made two drafts of the same file, and
+  accepting one leaves the other waiting (and primary); Office files show
+  their kind, not a page preview.

@@ -5,10 +5,10 @@ pub(crate) use vak_intent::control::{clean_scaffolding, is_scaffolding_line};
 
 use vak_agent::AgentEvent;
 use vak_delivery::{
-    ArtifactRef, DeliveryAction, OutputContent, OutputItem, OutputKind, OutputProvenance,
-    OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline, PresentationDocument,
-    PresentationPlanner, ResultOutcome, SignalContext, built_in_adapters, compile_markdown,
-    link_previews_from_text, signals_from_context, structured_markdown,
+    ArtifactRef, ArtifactStatus, DeliveryAction, OutputContent, OutputItem, OutputKind,
+    OutputProvenance, OutputRole, OutputStatus, OutputStreamEvent, OutputTimeline,
+    PresentationDocument, PresentationPlanner, ResultOutcome, SignalContext, built_in_adapters,
+    compile_markdown, link_previews_from_text, signals_from_context, structured_markdown,
     structured_outputs_from_text, structured_outputs_from_tool_result_with,
 };
 
@@ -237,6 +237,11 @@ pub(crate) fn append_sandbox_artifacts(
             _ => None,
         })
         .collect::<HashMap<_, _>>();
+    // Unreadable records leave every draft's status unknown rather than
+    // reporting a version the records may contradict.
+    let drafts = vak_sandbox::load_records(&home.join("sandbox").join("records.jsonl"))
+        .ok()
+        .map(|records| DraftVersions::new(records, session_id));
     for event in events {
         let vak_tools::SandboxEvent::ArtifactGenerated {
             execution_id,
@@ -268,25 +273,16 @@ pub(crate) fn append_sandbox_artifacts(
         // Only an execution that ran inside `.vak/scratch/` holds a draft to
         // review; one that worked in the workspace already put its files
         // where they belong, and candidate export refuses it.
-        let reviewable = reviewable_roots.get(&execution_id).is_some_and(|root| {
-            let artifact = std::path::Path::new(&path);
-            let scratch = std::path::Path::new(root);
-            let Some(workspace) = scratch
-                .ancestors()
-                .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
-                .and_then(std::path::Path::parent)
-            else {
-                return false;
-            };
-            if artifact.is_absolute() {
-                artifact.starts_with(scratch)
-            } else {
-                scratch
-                    .strip_prefix(workspace)
-                    .ok()
-                    .is_some_and(|relative_scratch| artifact.starts_with(relative_scratch))
-            }
-        });
+        let scratch = reviewable_roots
+            .get(&execution_id)
+            .filter(|root| draft_relative_path(&path, root).is_some());
+        let reviewable = scratch.is_some();
+        let status = match scratch {
+            Some(root) => drafts
+                .as_ref()
+                .map(|drafts| drafts.status(&execution_id, &path, root)),
+            None => Some(ArtifactStatus::InFolder),
+        };
         // A successful write/edit is already projected from the durable tool
         // result. Its sandbox event is stronger evidence about the same file,
         // not a second artifact. Merge the sidecar metadata and actions so a
@@ -318,7 +314,9 @@ pub(crate) fn append_sandbox_artifacts(
             if let OutputContent::Artifact { artifact } = &mut existing.content {
                 artifact.path = Some(path.clone());
                 artifact.media_type = Some(mime_type);
-                artifact.description = Some(format!("Draft · {size_bytes} bytes"));
+                artifact.description = None;
+                artifact.size_bytes = Some(size_bytes);
+                artifact.status = status;
             }
             continue;
         }
@@ -335,7 +333,9 @@ pub(crate) fn append_sandbox_artifacts(
                     name,
                     path: Some(path.clone()),
                     media_type: Some(mime_type),
-                    description: Some(format!("Draft · {size_bytes} bytes")),
+                    description: None,
+                    size_bytes: Some(size_bytes),
+                    status,
                 },
             },
             provenance: Some(OutputProvenance {
@@ -350,6 +350,119 @@ pub(crate) fn append_sandbox_artifacts(
         });
     }
     deduplicate_file_artifacts(&mut timeline.items);
+}
+
+/// The saved versions of each execution's draft in one conversation, in the
+/// order the durable records hold them. Versions of one draft are
+/// alternatives, so an acceptance settles every version saved before it and
+/// a version saved afterwards starts a new round; undoing an acceptance
+/// reopens its round. This is the rule Review applies
+/// (`vak-client-ui/src/candidateVersions.ts`), so the card and Review agree.
+struct DraftVersions {
+    versions: HashMap<String, Vec<vak_sandbox::CandidateManifest>>,
+    /// Per execution, the version index a live (not undone) acceptance
+    /// settled, and whether a version was saved after it.
+    accepted: HashMap<String, (usize, bool)>,
+}
+
+impl DraftVersions {
+    fn new(records: Vec<vak_sandbox::DurableRecord>, session_id: &str) -> Self {
+        use vak_sandbox::DurableRecord;
+        let undone: HashSet<String> = records
+            .iter()
+            .filter_map(|record| match record {
+                DurableRecord::PromotionUndo(undo) if undo.session_id == session_id => {
+                    Some(undo.candidate_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        let mut owner: HashMap<String, (String, usize)> = HashMap::new();
+        let mut versions: HashMap<String, Vec<vak_sandbox::CandidateManifest>> = HashMap::new();
+        let mut accepted: HashMap<String, (usize, bool)> = HashMap::new();
+        for record in records {
+            match record {
+                DurableRecord::Candidate(candidate) if candidate.session_id == session_id => {
+                    let list = versions.entry(candidate.execution_id.clone()).or_default();
+                    owner.insert(
+                        candidate.candidate.candidate_id.clone(),
+                        (candidate.execution_id.clone(), list.len()),
+                    );
+                    list.push(candidate.candidate);
+                    if let Some(state) = accepted.get_mut(&candidate.execution_id) {
+                        state.1 = true;
+                    }
+                }
+                DurableRecord::Promotion(promotion)
+                    if promotion.session_id == session_id
+                        && !undone.contains(&promotion.candidate_id) =>
+                {
+                    if let Some((execution, index)) = owner.get(&promotion.candidate_id) {
+                        accepted.insert(execution.clone(), (*index, false));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Self { versions, accepted }
+    }
+
+    /// The status of the file at `path`, produced by `execution_id` in the
+    /// scratch directory `scratch`.
+    fn status(&self, execution_id: &str, path: &str, scratch: &str) -> ArtifactStatus {
+        let versions = self
+            .versions
+            .get(execution_id)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let saved_as = |index: usize| {
+            let relative = draft_relative_path(path, scratch)?;
+            versions
+                .get(index)?
+                .files
+                .iter()
+                .find(|file| std::path::Path::new(&file.path) == relative)
+                .map(|file| vak_delivery::VersionFile {
+                    version_id: versions[index].candidate_id.clone(),
+                    path: file.path.clone(),
+                })
+        };
+        match self.accepted.get(execution_id) {
+            Some(&(index, false)) => ArtifactStatus::Accepted {
+                version: version_number(index),
+                saved_as: saved_as(index),
+            },
+            _ if versions.is_empty() => ArtifactStatus::Draft {
+                version: 1,
+                saved_as: None,
+            },
+            _ => ArtifactStatus::Draft {
+                version: version_number(versions.len() - 1),
+                saved_as: saved_as(versions.len() - 1),
+            },
+        }
+    }
+}
+
+fn version_number(index: usize) -> u32 {
+    u32::try_from(index).map_or(u32::MAX, |index| index.saturating_add(1))
+}
+
+/// `path` (absolute, or relative to the workspace) relative to the scratch
+/// directory it was written in, which is how a saved version names it.
+fn draft_relative_path<'a>(path: &'a str, scratch: &str) -> Option<&'a std::path::Path> {
+    let artifact = std::path::Path::new(path);
+    let scratch = std::path::Path::new(scratch);
+    if artifact.is_absolute() {
+        return artifact.strip_prefix(scratch).ok();
+    }
+    let workspace = scratch
+        .ancestors()
+        .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
+        .and_then(std::path::Path::parent)?;
+    artifact
+        .strip_prefix(scratch.strip_prefix(workspace).ok()?)
+        .ok()
 }
 
 /// Repeated successful writes to one file within a turn are revisions of the
@@ -1494,7 +1607,9 @@ fn artifact_from_tool(name: &str, input: &serde_json::Value) -> Option<ArtifactR
         name: filename,
         media_type: media_type_for_path(&path),
         path: Some(path),
-        description: Some(format!("Produced by {name}")),
+        description: None,
+        size_bytes: None,
+        status: Some(ArtifactStatus::InFolder),
     })
 }
 
@@ -1909,7 +2024,9 @@ pub(crate) fn live_event(session_id: &str, event: AgentEvent) -> Option<OutputSt
                             .to_string(),
                         path: Some(path.clone()),
                         media_type: Some(mime_type.clone()),
-                        description: Some(format!("Draft · {size_bytes} bytes")),
+                        description: None,
+                        size_bytes: Some(size_bytes),
+                        status: None,
                     },
                 },
                 provenance: Some(OutputProvenance {
@@ -2240,8 +2357,8 @@ mod tests {
     use std::collections::{BTreeMap, HashMap};
     use std::path::PathBuf;
     use vak_delivery::{
-        OutputContent, OutputItem, OutputKind, OutputProvenance, OutputRole, OutputStatus,
-        OutputTimeline, ResultOutcome,
+        ArtifactStatus, OutputContent, OutputItem, OutputKind, OutputProvenance, OutputRole,
+        OutputStatus, OutputTimeline, ResultOutcome,
     };
     use vak_llm::{ContentBlock, Message, Role};
     use vak_session::{
@@ -2629,6 +2746,153 @@ mod tests {
             action.verb == "review_draft"
                 && action.data.get("execution_id").map(String::as_str) == Some("call-1")
         }));
+        let OutputContent::Artifact { artifact } = &artifact.content else {
+            panic!("artifact content");
+        };
+        assert_eq!(artifact.description, None, "no byte count in words");
+        assert_eq!(artifact.size_bytes, Some(42));
+        assert_eq!(
+            artifact.status,
+            Some(ArtifactStatus::Draft {
+                version: 1,
+                saved_as: None
+            })
+        );
+    }
+
+    /// A draft's status follows the durable records the way Review reads
+    /// them: saved versions count up, an acceptance settles the round, an
+    /// undo reopens it, and a version saved later starts a new round.
+    #[test]
+    fn draft_status_follows_saved_versions_and_acceptance() {
+        let home = tempfile::tempdir().expect("temporary home");
+        let events = home.path().join("sandbox/executions");
+        std::fs::create_dir_all(&events).expect("execution directory");
+        let scratch = home.path().join(".vak/scratch/vak/call-1");
+        std::fs::create_dir_all(&scratch).expect("scratch directory");
+        let started = vak_tools::SandboxEvent::ExecutionStarted {
+            execution_id: "call-1".into(),
+            owner_session_id: Some("session-1".into()),
+            tool: "bash".into(),
+            code_preview: "write page".into(),
+            language: "sh".into(),
+            scratch_dir: scratch.to_string_lossy().into_owned(),
+        };
+        let generated = vak_tools::SandboxEvent::ArtifactGenerated {
+            execution_id: "call-1".into(),
+            path: ".vak/scratch/vak/call-1/site/page.html".into(),
+            mime_type: "text/html".into(),
+            size_bytes: 120,
+        };
+        std::fs::write(
+            events.join("session-1.jsonl"),
+            format!(
+                "{}\n{}\n",
+                serde_json::to_string(&started).expect("started json"),
+                serde_json::to_string(&generated).expect("event json")
+            ),
+        )
+        .expect("write events");
+        let candidate = |id: &str, session: &str| {
+            serde_json::json!({"kind": "Candidate", "record": {
+                "record_id": format!("record-{id}"), "session_id": session, "turn_id": "turn-1",
+                "result_id": "result-1", "execution_id": "call-1", "environment_id": "env-1",
+                "candidate_digest": "digest", "verified": true, "updated_at": "2026-09-26T00:00:00Z",
+                "candidate": {"candidate_id": id, "source_root": "/saved", "destination_root": "/workspace",
+                    "files": [{"path": "site/page.html", "candidate_hash": "h", "base_hash": null, "bytes": 120}]}
+            }})
+        };
+        let promotion = |id: &str| {
+            serde_json::json!({"kind": "Promotion", "record": {
+                "record_id": format!("promotion-{id}"), "session_id": "session-1", "result_id": "result-1",
+                "candidate_digest": "digest", "candidate_id": id, "updated_at": "2026-09-26T00:00:00Z",
+                "receipt": {"candidate_id": id, "applied": [], "before_hashes": [], "after_hashes": [], "verification": []}
+            }})
+        };
+        let undo = |id: &str| {
+            serde_json::json!({"kind": "PromotionUndo", "record": {
+                "record_id": format!("undo-{id}"), "session_id": "session-1", "candidate_id": id,
+                "updated_at": "2026-09-26T00:00:00Z",
+                "receipt": {"candidate_id": id, "restored": [], "verification": []}
+            }})
+        };
+        let status_after = |records: &[serde_json::Value]| {
+            let text: String = records.iter().map(|record| format!("{record}\n")).collect();
+            std::fs::write(home.path().join("sandbox/records.jsonl"), text).expect("records");
+            let mut timeline = OutputTimeline::empty("session-1");
+            super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
+            let item = timeline
+                .items
+                .iter()
+                .find(|item| item.kind == OutputKind::Artifact)
+                .expect("projected artifact");
+            let OutputContent::Artifact { artifact } = &item.content else {
+                panic!("artifact content");
+            };
+            artifact.status.clone()
+        };
+        let saved = |id: &str| {
+            Some(vak_delivery::VersionFile {
+                version_id: id.into(),
+                path: "site/page.html".into(),
+            })
+        };
+
+        let mut records = vec![candidate("v1", "session-1"), candidate("x", "session-2")];
+        assert_eq!(
+            status_after(&records),
+            Some(ArtifactStatus::Draft {
+                version: 1,
+                saved_as: saved("v1")
+            }),
+            "another conversation's version does not count"
+        );
+        records.push(candidate("v2", "session-1"));
+        assert_eq!(
+            status_after(&records),
+            Some(ArtifactStatus::Draft {
+                version: 2,
+                saved_as: saved("v2")
+            })
+        );
+        records.push(promotion("v2"));
+        assert_eq!(
+            status_after(&records),
+            Some(ArtifactStatus::Accepted {
+                version: 2,
+                saved_as: saved("v2")
+            })
+        );
+        records.push(undo("v2"));
+        assert_eq!(
+            status_after(&records),
+            Some(ArtifactStatus::Draft {
+                version: 2,
+                saved_as: saved("v2")
+            }),
+            "undoing the acceptance reopens the draft"
+        );
+        records.push(promotion("v1"));
+        records.push(candidate("v3", "session-1"));
+        assert_eq!(
+            status_after(&records),
+            Some(ArtifactStatus::Draft {
+                version: 3,
+                saved_as: saved("v3")
+            }),
+            "a version saved after an acceptance starts a new round"
+        );
+
+        std::fs::write(home.path().join("sandbox/records.jsonl"), "not json\n").expect("records");
+        let mut timeline = OutputTimeline::empty("session-1");
+        super::append_sandbox_artifacts(&mut timeline, home.path(), "session-1");
+        let OutputContent::Artifact { artifact } = &timeline.items[0].content else {
+            panic!("artifact content");
+        };
+        assert_eq!(
+            artifact.status, None,
+            "unreadable records leave the status unknown"
+        );
     }
 
     #[test]
@@ -2664,7 +2928,9 @@ mod tests {
                     name: "page.html".into(),
                     path: Some("page.html".into()),
                     media_type: Some("text/html".into()),
-                    description: Some("Produced by write".into()),
+                    description: None,
+                    size_bytes: None,
+                    status: Some(ArtifactStatus::InFolder),
                 },
             },
             provenance: Some(OutputProvenance {
@@ -2698,6 +2964,12 @@ mod tests {
                 .iter()
                 .any(|action| action.verb == "review_draft")
         );
+        let OutputContent::Artifact { artifact } = &artifacts[0].content else {
+            panic!("artifact content");
+        };
+        assert_eq!(artifact.status, Some(ArtifactStatus::InFolder));
+        assert_eq!(artifact.description, None);
+        assert_eq!(artifact.size_bytes, Some(21));
     }
 
     #[test]
@@ -2746,6 +3018,8 @@ mod tests {
                     path: Some(path.into()),
                     media_type: Some("text/csv".into()),
                     description: None,
+                    size_bytes: None,
+                    status: None,
                 },
             },
             provenance: None,

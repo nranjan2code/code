@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, setAgentCreateOpen, setConnectOpen, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, openCandidateReview, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, activeAgentId, backend, setAgentCreateOpen, setConnectOpen, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -9,7 +9,7 @@ import AgentMark from "./AgentMark";
 import SetupBanner from "./SetupBanner";
 import MarkdownView from "./MarkdownView";
 import MessageActions from "./MessageActions";
-import PresentationTimelineView, { Artifact, StructuredView } from "./PresentationRenderer";
+import PresentationTimelineView, { Artifact, ResultCard, StructuredView } from "./PresentationRenderer";
 import { attachFiles } from "../attachFiles";
 import type { OutputItem } from "../types";
 import { hasSettledProjection, serverTurnFor } from "../turnPairing";
@@ -636,6 +636,24 @@ function attachedFileItem(file: api.InboxFile, sessionId?: string | null): Outpu
   } as OutputItem;
 }
 
+/** A file a run just produced, before the run's settled result arrives with
+ * its status; the first one of a run offers Review changes, as the settled
+ * card does. */
+function deliverableItem(art: { name: string; path: string; execId?: string }, first: boolean, sessionId?: string | null): OutputItem {
+  return {
+    id: `deliverable:${art.execId ?? ""}:${art.path}`,
+    turn_id: "",
+    timestamp: "",
+    role: "tool",
+    kind: "artifact",
+    status: "succeeded",
+    content: { type: "artifact", artifact: { name: art.name, path: art.path } },
+    provenance: { session_id: sessionId ?? undefined, tool_call_id: art.execId },
+    actions: first && art.execId ? [{ id: `review-${art.execId}`, label: "Review changes", verb: "review_draft", data: { execution_id: art.execId } }] : [],
+    fallback_text: art.path,
+  } as OutputItem;
+}
+
 function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   if (item.kind === "user") {
     const text = stripControlScaffolding(item.text);
@@ -784,28 +802,9 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
             }
           </For>
           <Show when={!props.item.streaming && turnDeliverables().length > 0}>
-            <div class="turn-artifacts-container">
+            <div class="primary-result-files">
               <For each={turnDeliverables()}>
-                {(art, index) => (
-                  <div class="turn-artifact-chip">
-                    <span class="artifact-chip-icon"><Icon name="preview" size={14} /></span>
-                    <div class="artifact-chip-details">
-                      <span class="artifact-chip-name">{art.name}</span>
-                      <span class="artifact-chip-path">{art.path}</span>
-                    </div>
-                    <button
-                      type="button"
-                      class="artifact-chip-btn"
-                      onClick={() => openArtifactPathInCanvas(art.path, undefined, { sessionId: props.sessionId ?? undefined, executionId: art.execId })}
-                      title={`Open ${art.path} in Artifact Canvas`}
-                    >
-                      <Icon name="preview" size={12} /> Open Canvas
-                    </button>
-                    <Show when={index() === 0 && art.execId}>
-                      <button type="button" class="artifact-chip-btn" onClick={() => openCandidateReview(art.execId!, props.sessionId ?? undefined)}><Icon name="diff" size={12} /> Review changes</button>
-                    </Show>
-                  </div>
-                )}
+                {(art, index) => <ResultCard item={deliverableItem(art, index() === 0, props.sessionId ?? activeId())} sessionId={props.sessionId ?? activeId() ?? ""} />}
               </For>
             </div>
           </Show>
