@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.14 done; V3.15 and V3.16 are follow-ups from the anchor check. V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.15 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -296,7 +296,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   for changes; no byte count (it comes from `vak-server`).
   Done when: the review conversation's newest result shows that card at
   1440 and 390, light and dark.
-- [ ] **V3.15 The Agent page.** The Agent's character beside its name on
+- [x] **V3.15 The Agent page.** The Agent's character beside its name on
   its Settings page and in the Agents navigation (doc 75 §6.3 mockup).
 - [ ] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
   from a real plan answer, not only an options table (doc 70 screen 2).
@@ -881,3 +881,20 @@ what was not.
   workbench reset; one luna turn made two drafts of the same file, and
   accepting one leaves the other waiting (and primary); Office files show
   their kind, not a page preview.
+- 2026-09-26: V3.15 done. Settings' Agents navigation draws each agent's
+  character (24px, so the row keeps the 38px rhythm of the other rows) in
+  place of the shared spark icon, and an agent's page puts its character
+  (60px, as the mockup's) beside the Newsreader name; the Shared defaults
+  view has no character. "Manage agents" no longer wraps beside a long
+  description. Checked live at 1440 and 390, light and dark: on the review
+  home (`after/V3.15-settings-*`) all three agents draw the Vakyartha bird,
+  because the two custom agents store the retired ids `leaf` and `wave`
+  (known data, not code); on the fresh home an agent created through the
+  real New agent wizard from the Research Analyst template got its default
+  character, Moss, which the navigation and the page both show
+  (`after/V3.15-agents-*`, which also closes V3.8's unchecked "creating an
+  agent" and "a template's default"). Seen, not fixed: on that home the
+  agent page's Model row shows the server's raw "provider auth missing: set
+  ANTHROPIC_API_KEY for provider 'anthropic'"; the mockup's "Edit
+  personality" button was not added, since Your agents already holds
+  "Change name and character".

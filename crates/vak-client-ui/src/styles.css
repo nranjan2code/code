@@ -2136,6 +2136,8 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-technical > summary:hover { background: var(--surface-hover); }
 .settings-section-title { margin: 40px 0 var(--space-4); font-family: var(--display); font-size: var(--fs-title); font-weight: 600; line-height: 28px; }
 .settings-content > header.agent-settings-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-5); }
+.agent-settings-title { display: flex; align-items: center; gap: var(--space-4); min-width: 0; }
+.agent-settings-header > .settings-button { flex: none; white-space: nowrap; }
 .settings-nav nav { display: flex; flex-direction: column; gap: 2px; }
 .settings-nav nav button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 38px; padding: 7px 11px; border-radius: 8px; color: var(--muted); text-align: left; }
 .settings-nav nav button:hover { color: var(--text-soft); background: var(--surface-hover); }
