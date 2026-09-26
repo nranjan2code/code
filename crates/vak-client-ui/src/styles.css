@@ -1067,6 +1067,18 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .adaptive-options li.is-option::after { display: none; }
 .adaptive-option-action { align-self: center; border: 1px solid var(--border-soft); border-radius: 999px; padding: 6px 10px; color: var(--muted); background: transparent; font: inherit; font-size: var(--fs-caption); cursor: pointer; }
 .adaptive-option-action:hover, .adaptive-option-action:focus-visible { border-color: var(--accent); color: var(--text); }
+/* A plan with the options one of its steps offers (doc 70 screen 2): side by
+ * side when the column has room, stacked when it does not. */
+.adaptive-plan { container-type: inline-size; margin: var(--space-3) 0; }
+.adaptive-plan-grid { display: grid; gap: var(--space-3); align-items: start; }
+.adaptive-plan-grid .adaptive-timeline { margin: 0; }
+.adaptive-plan-choices { display: grid; gap: var(--space-3); }
+.adaptive-plan-choices li.is-option { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); }
+.adaptive-plan-choices .adaptive-option-action { justify-self: start; }
+.adaptive-timeline .adaptive-timeline-choice { color: var(--accent); font-weight: 500; }
+@container (min-width: 680px) {
+  .adaptive-plan-grid { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
+}
 .option-table-action { width: 1%; white-space: nowrap; text-align: right; }
 
 .assistant-structured-card {

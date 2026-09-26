@@ -1446,11 +1446,41 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
             if let Some(items) = p["items"].as_array() {
                 for item in items.iter().take(100) {
                     let label = item["label"].as_str().unwrap_or("Step");
+                    let label = match item["time"].as_str() {
+                        Some(time) => format!("{label} ({time})"),
+                        None => label.to_string(),
+                    };
                     let detail = item["detail"].as_str().unwrap_or_default();
                     if detail.is_empty() {
                         lines.push(format!("- {label}"));
                     } else {
                         lines.push(format!("- {label}: {detail}"));
+                    }
+                    for option in item["options"].as_array().into_iter().flatten().take(20) {
+                        let name = option["label"].as_str().unwrap_or("Option");
+                        let facts = option["facts"]
+                            .as_array()
+                            .map(|facts| {
+                                facts
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            })
+                            .unwrap_or_default();
+                        let text = [
+                            option["detail"].as_str().unwrap_or_default(),
+                            facts.as_str(),
+                        ]
+                        .into_iter()
+                        .filter(|part| !part.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" · ");
+                        if text.is_empty() {
+                            lines.push(format!("  - Option: {name}"));
+                        } else {
+                            lines.push(format!("  - Option: {name}: {text}"));
+                        }
                     }
                 }
             }
@@ -1947,6 +1977,20 @@ fn validate_payload(
                         strings(item, &["label"])
                             && item.get("detail").is_none_or(Value::is_string)
                             && item.get("status").is_none_or(Value::is_string)
+                            && item.get("time").is_none_or(Value::is_string)
+                            && item.get("options").is_none_or(|options| {
+                                options.as_array().is_some_and(|options| {
+                                    options.iter().all(|option| {
+                                        strings(option, &["label"])
+                                            && option.get("detail").is_none_or(Value::is_string)
+                                            && option.get("facts").is_none_or(|facts| {
+                                                facts.as_array().is_some_and(|facts| {
+                                                    facts.iter().all(Value::is_string)
+                                                })
+                                            })
+                                    })
+                                })
+                            })
                     })
                 })
         }
@@ -2422,6 +2466,38 @@ mod tests {
             structured_outputs_from_text(r#"{"semantic_type":"metric","payload":{"label":"x"}}"#)
                 .is_empty()
         );
+    }
+
+    /// A plan step may carry the alternatives the person chooses between;
+    /// they are typed, validated, and spelled out in the text form a channel
+    /// gets.
+    #[test]
+    fn plan_step_options_are_typed_and_reach_the_text_form() {
+        let plan = structured_outputs_from_text(
+            r#"{"semantic_type":"plan.timeline","payload":{"title":"Saturday","items":[{"label":"Morning","time":"9:00–12:00","detail":"Pancakes, then the park"},{"label":"Afternoon","detail":"Pick one","options":[{"label":"Science museum","detail":"Hands-on exhibits","facts":["20 min away","2 hours"]},{"label":"Botanic garden"}]}]}}"#,
+        );
+        assert_eq!(plan.len(), 1, "a step with options is a valid plan");
+        let text = structured_markdown(&plan[0]);
+        assert!(text.contains("- Morning (9:00–12:00): Pancakes, then the park"));
+        assert!(
+            text.contains("  - Option: Science museum: Hands-on exhibits · 20 min away, 2 hours")
+        );
+        assert!(text.contains("  - Option: Botanic garden"));
+
+        for malformed in [
+            r#"{"label":"Afternoon","options":"museum or garden"}"#,
+            r#"{"label":"Afternoon","options":[{"detail":"no label"}]}"#,
+            r#"{"label":"Afternoon","options":[{"label":"Museum","facts":"far"}]}"#,
+            r#"{"label":"Afternoon","time":3}"#,
+        ] {
+            let source = format!(
+                r#"{{"semantic_type":"plan.timeline","payload":{{"title":"Saturday","items":[{malformed}]}}}}"#
+            );
+            assert!(
+                structured_outputs_from_text(&source).is_empty(),
+                "rejected: {malformed}"
+            );
+        }
     }
 
     #[test]

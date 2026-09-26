@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.15, V3.17 and V3.18 done; V3.16 is a follow-up from the anchor check. V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.18 done (V3 complete). V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -298,7 +298,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   1440 and 390, light and dark.
 - [x] **V3.15 The Agent page.** The Agent's character beside its name on
   its Settings page and in the Agents navigation (doc 75 §6.3 mockup).
-- [ ] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
+- [x] **V3.16 Plan composition.** Screen 2's plan-plus-options relationship
   from a real plan answer, not only an options table (doc 70 screen 2).
 - [x] **V3.17 Plain words for a model list that needs a key.** An agent's
   Model row showed the models request's own text ("provider auth missing:
@@ -961,6 +961,36 @@ what was not.
   closed Technical details row), and there is no sideways scroll.
   Evidence: `after/V3.17-*`. Seen, not fixed: the AI service picker still
   lists the raw ids ("anthropic").
+- 2026-09-26: V3.16 done. Real plan answers came first: four luna
+  (`openai-responses/gpt-6-luna`) runs on the real home with a throwaway
+  workspace never sent a separate options card; the alternatives sat inside
+  the plan (items marked "option", "Option 1:" labels, or "A or B" prose),
+  with nothing typed to tell them apart. By maintainer decision a timeline
+  step now carries typed `options` (label, detail, facts) and a `time`,
+  additive in `emit_timeline_card`'s schema (whose description tells the
+  model to put a step's alternatives there, with an example) and validated
+  by vak-delivery, whose text form lists them for channels
+  (`plan_step_options_are_typed_and_reach_the_text_form`). The timeline
+  renderer draws a plan whose step offers options as the plan with an
+  options card beside it (doc 70 screen 2), the step saying "2 options to
+  choose from", each option with its details, facts and Use this; a column
+  under 680px stacks them. A status every step shares ("suggested" on each)
+  is no longer shown, nor on a step with options. A card-only result now
+  offers Adjust plan (its actions take the turn's result id or the card's
+  own item id, as the option buttons already did, and an adaptive tree with
+  a timeline root counts as a plan), and Use this now asks for "the whole
+  updated plan". Checked live with luna at 1440 and 390, light and dark
+  (`after/V3.16-sunday-*`): with the example in the description, three of
+  three plan requests put the alternatives in one step's options; Use this
+  on "Park or garden stroll" prepared the reply, sending it returned a
+  plan holding only the chosen step (`V3.16-sunday-revised`), and after the wording change a
+  fresh plan's Use this returned the whole updated day with the choice
+  marked selected (`V3.16-kids-*`). Found on the way and since fixed
+  separately (`1f27ee6c`): "we live in the city" reads as a live-data request, so the
+  freshness gate refused the plan card and the person got "I could not
+  retrieve a current value". Not done: time-of-day icons, the reference's
+  date chip and venue pictures (nothing typed carries them), and Add to
+  calendar, which needs a connector (doc 70 row 2).
 - 2026-09-26: V3.18 done (the picker V3.17 saw, not fixed). `Core::provider_label`
   (vak-core) is the one table of service names, and it is now also the set
   of known providers: `provider_known` is "has a label", so the two lists

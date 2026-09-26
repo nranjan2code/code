@@ -228,7 +228,11 @@ Ask for changes, with no byte count
 newest result is a file the old revision path wrote straight to the folder,
 so it truthfully reads "Saved in your folder" and offers no review. V3.15 then put
 the Agent's character beside its name on its Settings page and in the Agents
-navigation (`docs/assets/visual-refresh-2026/after/V3.15-*`).
+navigation (`docs/assets/visual-refresh-2026/after/V3.15-*`). V3.16 closed
+screen 2's gap: a plan step carries typed `options`, and a plan whose step
+offers them is drawn with the options card beside it, each option with Use
+this bound to the result; checked with real luna plans
+(`docs/assets/visual-refresh-2026/after/V3.16-*`).
 
 Doc 75's three screens: first run matches its mockup (greeting, Connect
 card in the greeting, four starters with examples; the header status is a
