@@ -1056,6 +1056,47 @@ pub fn prepare_revision_copy(candidate: &CandidateManifest, task_root: &Path) ->
     Ok(())
 }
 
+/// An Office draft a revision turn delivered: `draft`, under the task copy's
+/// `.vak/scratch/`, is the next version of the task file `path`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisionDraft {
+    pub path: String,
+    pub draft: String,
+}
+
+/// Put each delivered draft in place of the task file it is a draft for, so
+/// the revision's candidate is frozen from the task copy like any other
+/// change. `office_apply` never writes the file it edits (it writes a draft
+/// under `.vak/scratch/`, which a candidate never includes); in a revision the
+/// task copy stands where the workspace stands in a conversation, and this
+/// is its acceptance of the draft, made before the person reviews the new
+/// version.
+pub fn adopt_revision_drafts(task_root: &Path, drafts: &[RevisionDraft]) -> Result<(), Error> {
+    for draft in drafts {
+        if Path::new(&draft.path).starts_with(".vak") {
+            return Err(Error::PathEscape(draft.path.clone()));
+        }
+        if !Path::new(&draft.draft).starts_with(".vak/scratch") {
+            return Err(Error::PathEscape(draft.draft.clone()));
+        }
+        let source = confined(task_root, &draft.draft)?;
+        let bytes = fs::read(&source).map_err(|_| Error::Missing(draft.draft.clone()))?;
+        let target = confined(task_root, &draft.path)?;
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&target)?;
+        use std::io::Write;
+        output.write_all(&bytes)?;
+        output.sync_all()?;
+    }
+    Ok(())
+}
+
 fn write_transaction(path: &Path, transaction: &PromotionTransaction) -> Result<(), Error> {
     let parent = path
         .parent()
@@ -1926,6 +1967,68 @@ mod tests {
             Err(Error::CandidateChanged(path)) if path == "pages/index.html"
         ));
         assert!(!failed_copy.exists());
+    }
+
+    #[test]
+    fn adopted_office_draft_becomes_the_next_version() {
+        let source = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let store = tempfile::tempdir().unwrap();
+        fs::write(workspace.path().join("letter.docx"), "original").unwrap();
+        fs::write(source.path().join("letter.docx"), "version one").unwrap();
+        let first = freeze_candidate(
+            "v1",
+            source.path(),
+            workspace.path(),
+            &store.path().join("v1"),
+        )
+        .unwrap();
+        let task = store.path().join("task");
+        prepare_revision_copy(&first, &task).unwrap();
+        let drafts = task.join(".vak/scratch/vak/call-2");
+        fs::create_dir_all(&drafts).unwrap();
+        fs::write(drafts.join("letter.docx"), "version two").unwrap();
+
+        // Left in scratch, the draft is not a change: this is the failure.
+        assert!(matches!(
+            freeze_revision_candidate("unchanged", &task, &first, &store.path().join("x")),
+            Err(Error::InvalidPlan(reason)) if reason == "revision did not change candidate files"
+        ));
+
+        let adopted = RevisionDraft {
+            path: "letter.docx".into(),
+            draft: ".vak/scratch/vak/call-2/letter.docx".into(),
+        };
+        adopt_revision_drafts(&task, std::slice::from_ref(&adopted)).unwrap();
+        let second =
+            freeze_revision_candidate("v2", &task, &first, &store.path().join("v2")).unwrap();
+        assert_eq!(second.files.len(), 1);
+        assert_eq!(second.files[0].path, "letter.docx");
+        assert_eq!(second.files[0].base_hash, first.files[0].base_hash);
+        assert_eq!(
+            fs::read_to_string(second.source_root.join("letter.docx")).unwrap(),
+            "version two"
+        );
+
+        for refused in [
+            RevisionDraft {
+                path: ".vak/config.toml".into(),
+                ..adopted.clone()
+            },
+            RevisionDraft {
+                draft: "letter.docx".into(),
+                ..adopted.clone()
+            },
+            RevisionDraft {
+                draft: ".vak/scratch/../../letter.docx".into(),
+                ..adopted.clone()
+            },
+        ] {
+            assert!(matches!(
+                adopt_revision_drafts(&task, &[refused]),
+                Err(Error::PathEscape(_))
+            ));
+        }
     }
 
     #[test]

@@ -11218,6 +11218,77 @@ fn saved_candidate(
 /// each call whose source was an earlier draft to the file the chain
 /// started from (docs/design/72, P3). Only successful calls count; the
 /// worker then refuses a lineage that does not reproduce the draft.
+/// Each `office_apply` call in a session that succeeded, in ledger order,
+/// with its arguments. A call's id is its execution id, so it names the
+/// directory its draft is in (`vak_tools::office_apply::draft_dir`).
+fn successful_office_calls(log: &vak_session::SessionLog) -> Vec<(String, serde_json::Value)> {
+    let mut calls = Vec::new();
+    let mut succeeded = std::collections::HashSet::new();
+    for (_, message) in log.message_chain() {
+        for block in &message.content {
+            match block {
+                vak_llm::ContentBlock::ToolUse { id, name, input } if name == "office_apply" => {
+                    calls.push((id.clone(), input.clone()));
+                }
+                vak_llm::ContentBlock::ToolResult {
+                    tool_use_id,
+                    is_error: false,
+                    ..
+                } => {
+                    succeeded.insert(tool_use_id.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    calls.retain(|(id, _)| succeeded.contains(id));
+    calls
+}
+
+/// The Office drafts a revision turn delivered in its task copy, one per
+/// file: the newest successful `office_apply` call for that file whose draft
+/// exists. Each draft is a whole file, so a later one supersedes an earlier
+/// one; a call repeated verbatim is answered with the earlier draft and
+/// writes none, which is why a missing draft is passed over.
+fn revision_office_drafts(
+    log: &vak_session::SessionLog,
+    task_root: &std::path::Path,
+) -> Vec<vak_sandbox::RevisionDraft> {
+    let Ok(root) = task_root.canonicalize() else {
+        return Vec::new();
+    };
+    let agent = log
+        .header()
+        .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
+    let mut drafts: Vec<vak_sandbox::RevisionDraft> = Vec::new();
+    for (call_id, args) in successful_office_calls(log).into_iter().rev() {
+        let Some(relative) = args
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|path| confined_path(&root, path.trim()))
+            .and_then(|path| {
+                path.strip_prefix(&root)
+                    .ok()
+                    .map(std::path::Path::to_path_buf)
+            })
+        else {
+            continue;
+        };
+        let path = relative.to_string_lossy().replace('\\', "/");
+        if drafts.iter().any(|draft| draft.path == path) {
+            continue;
+        }
+        let draft = vak_tools::office_apply::draft_dir(agent.as_deref(), &call_id).join(&relative);
+        if root.join(&draft).is_file() {
+            drafts.push(vak_sandbox::RevisionDraft {
+                path,
+                draft: draft.to_string_lossy().replace('\\', "/"),
+            });
+        }
+    }
+    drafts
+}
+
 fn office_lineage(
     state: &AppState,
     session_id: &str,
@@ -11229,28 +11300,8 @@ fn office_lineage(
         .canonicalize()
         .map_err(|error| format!("cannot resolve the workspace: {error}"))?;
     let collect = |log: &vak_session::SessionLog| {
-        let mut calls = std::collections::HashMap::new();
-        let mut succeeded = std::collections::HashSet::new();
-        for (_, message) in log.message_chain() {
-            for block in &message.content {
-                match block {
-                    vak_llm::ContentBlock::ToolUse { id, name, input }
-                        if name == "office_apply" =>
-                    {
-                        calls.insert(id.clone(), input.clone());
-                    }
-                    vak_llm::ContentBlock::ToolResult {
-                        tool_use_id,
-                        is_error: false,
-                        ..
-                    } => {
-                        succeeded.insert(tool_use_id.clone());
-                    }
-                    _ => {}
-                }
-            }
-        }
-        calls.retain(|id, _| succeeded.contains(id));
+        let calls: std::collections::HashMap<_, _> =
+            successful_office_calls(log).into_iter().collect();
         let agent = log
             .header()
             .and_then(|header| header.agent.as_ref().map(|agent| agent.id.clone()));
@@ -11985,7 +12036,8 @@ fn append_candidate_revision_activity(
 /// Run a saved-draft revision in a fresh child Core rooted in verified copy
 /// bytes. Its worker has no write path to the owning workspace, even when the
 /// owner has FullAccess. A new candidate is published only after a completed
-/// Agent turn changes the task copy.
+/// Agent turn changes the task copy; an Office file changes through the
+/// draft `office_apply` delivered, which takes the file's place in the copy.
 async fn dispatch_candidate_revision(
     state: AppState,
     saved: vak_sandbox::CandidateRecord,
@@ -12190,7 +12242,7 @@ async fn dispatch_candidate_revision(
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let prompt = format!(
-        "Revise the saved draft in this isolated working copy. {revision_prompt}. Keep existing candidate files; add files only when needed. The person must review and accept a new version before any workspace change. Available files: {}.",
+        "Revise the saved draft in this isolated working copy. {revision_prompt}. The draft's files are: {}. Change them under their own names: what you change becomes the next version of this draft, which the person reviews and accepts before their workspace changes. Never save a revised file under a new name; add a file only when the change needs a new one.",
         saved
             .candidate
             .files
@@ -12231,17 +12283,20 @@ async fn dispatch_candidate_revision(
         let mut new_candidate_id = None;
         let completed = match outcome {
             Ok((vak_agent::TurnOutcome::Completed { response }, log)) => {
+                let drafts = revision_office_drafts(&log, &task_root);
                 if let Ok(mut slot) = child.session.lock() {
                     *slot = Some(log);
                 }
                 let id = uuid::Uuid::now_v7().to_string();
                 let frozen_root = sandbox_candidates_root(&state).join(&id);
-                match vak_sandbox::freeze_revision_candidate(
-                    &id,
-                    &task_root,
-                    &saved.candidate,
-                    &frozen_root,
-                ) {
+                match vak_sandbox::adopt_revision_drafts(&task_root, &drafts).and_then(|()| {
+                    vak_sandbox::freeze_revision_candidate(
+                        &id,
+                        &task_root,
+                        &saved.candidate,
+                        &frozen_root,
+                    )
+                }) {
                     Ok(mut candidate) => {
                         candidate.target_checks =
                             vak_sandbox::default_target_verifiers().plan(&candidate);
@@ -20978,6 +21033,131 @@ mod sandbox_promotion_tests {
                 .await
                 .unwrap(),
             "version two"
+        );
+    }
+
+    /// A revision of an Office draft edits it with `office_apply`, which
+    /// writes a draft under the task copy's `.vak/scratch/` and never the
+    /// file itself. That draft is the next version of the same draft: the
+    /// revision used to fail with "revision did not change candidate files".
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn office_revision_is_the_next_version_of_the_draft() {
+        use sha2::Digest as _;
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        core.set_route("revision-test".into(), "test-model".into());
+        pin_test_tool_worker(&core);
+        let version_one = vak_ooxml::fixtures::docx();
+        let digest: String = sha2::Sha256::digest(&version_one)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        core.set_provider_instance(Arc::new(RevisionProvider {
+            replies: Mutex::new(VecDeque::from(vec![
+                revision_message(
+                    vec![ContentBlock::ToolUse {
+                        id: "office-version-two".into(),
+                        name: "office_apply".into(),
+                        input: serde_json::json!({
+                            "path": "letter.docx",
+                            "base_digest": digest,
+                            "ops": [{"op": "replace_paragraph_text", "anchor": "p@1", "text": "Annual Report"}],
+                        }),
+                    }],
+                    StopReason::ToolUse,
+                ),
+                revision_message(
+                    vec![ContentBlock::text("Retitled the letter.")],
+                    StopReason::EndTurn,
+                ),
+            ])),
+        }));
+        seed_bound_result(&core, "session-1", "exec-1");
+        let state = AppState::new(core.clone());
+        tokio::fs::write(dir.path().join("letter.docx"), &version_one)
+            .await
+            .unwrap();
+        let scratch = dir.path().join(".vak/scratch/e1");
+        tokio::fs::create_dir_all(&scratch).await.unwrap();
+        tokio::fs::write(scratch.join("letter.docx"), &version_one)
+            .await
+            .unwrap();
+        let first = export_candidate(&state).await;
+        let parent_log = find_session_on_disk(&core, "session-1").unwrap();
+        register_handle(
+            &state,
+            "session-1".into(),
+            parent_log,
+            core.cwd().to_path_buf(),
+            core.clone(),
+        );
+
+        let response = dispatch_candidate_revision(
+            state.clone(),
+            first.clone(),
+            "comment-1".into(),
+            "Retitle the letter".into(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let newer = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let records = vak_sandbox::load_records(&sandbox_records_path(&state)).unwrap();
+                if let Some(failed) = records.iter().rev().find_map(|record| match record {
+                    vak_sandbox::DurableRecord::CandidateRevision(revision)
+                        if revision.status == vak_sandbox::CandidateRevisionStatus::Failed =>
+                    {
+                        Some(revision.clone())
+                    }
+                    _ => None,
+                }) {
+                    panic!("revision failed: {:?}", failed.detail);
+                }
+                if let Some(record) = records.iter().rev().find_map(|record| match record {
+                    vak_sandbox::DurableRecord::Candidate(candidate)
+                        if candidate.parent_candidate_id.as_deref()
+                            == Some(first.candidate.candidate_id.as_str()) =>
+                    {
+                        Some(candidate.clone())
+                    }
+                    _ => None,
+                }) {
+                    break record;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let files: Vec<&str> = newer
+            .candidate
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        assert_eq!(files, ["letter.docx"]);
+        assert_eq!(
+            newer.candidate.files[0].base_hash,
+            first.candidate.files[0].base_hash
+        );
+        let version_two = std::fs::read(newer.candidate.source_root.join("letter.docx")).unwrap();
+        let mut package = vak_ooxml::Package::open(
+            std::io::Cursor::new(version_two),
+            vak_ooxml::Limits::default(),
+        )
+        .unwrap();
+        let main = package.main_part().to_string();
+        let body = String::from_utf8(package.read_part(&main).unwrap()).unwrap();
+        assert!(body.contains("Annual Report"), "{body}");
+        // One execution's versions are one draft: this is its version 2.
+        assert_eq!(newer.execution_id, first.execution_id);
+        assert_eq!(
+            std::fs::read(dir.path().join("letter.docx")).unwrap(),
+            version_one,
+            "revision must not touch the original workspace"
         );
     }
 
