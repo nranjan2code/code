@@ -2,7 +2,7 @@
 
 Status: **plan and tracker, 2026-09-25. Decisions D1 to D5 locked; V4.1
 completed by explicit request; V1 complete (V1.12 closed as obsolete); V2.1
-complete; V3.1 to V3.9 and V3.11 done. V3.10, V3.12, V3.13 and V4.2 to V4.5 remain unstarted.**
+complete; V3.1 to V3.9, V3.11 and V3.12 done. V3.10, V3.13 and V4.2 to V4.5 remain unstarted.**
 
 - Design: `docs/design/75-visual-refresh.md` (findings, the system, the
   glossary, the disclosure setting).
@@ -275,7 +275,7 @@ V2.1 to V2.4 are done. Start a fresh session here; re-find each line first.
   remaining `!important` rules (`.good-chip`, `.prompt-page > header`,
   `.office-outline button`) and the 35 hex literals outside the tokens.
   Decide each as its screen is rebuilt.
-- [ ] **V3.12 Plain words for a failed turn.** A message sent before an AI
+- [x] **V3.12 Plain words for a failed turn.** A message sent before an AI
   service is connected fails with the server's own text ("provider auth
   missing: set ANTHROPIC_API_KEY for provider 'anthropic'"). It should say
   that no AI service is connected and offer Connect. The failure needs a
@@ -777,3 +777,23 @@ what was not.
   checked: the terminal and the Workbench chips live (no execution on these
   screens), the Office outline's narrow layout, and screens other than
   those listed.
+- 2026-09-26: V3.12 done. `provider_unavailable` (vak-server) keeps
+  `error` as the precise message an operator or the CLI needs and adds
+  `"kind": "no_ai_service"` for `CoreError::MissingAuth` only (tests pin
+  both shapes). The client's request errors are a typed `ApiError` with the
+  status and `kind`; a refused send of that kind adds a system item marked
+  `needs: "ai-service"`, drawn as "No AI service is connected yet, so this
+  message wasn't sent." with a Connect button that opens the Connect sheet.
+  Nothing matches on the message text. Done-when checked on the fresh home
+  (`/tmp/vak-fresh-v1`, no AI service): sending shows the sentence and
+  Connect, no provider or key name appears, and Connect opens "Connect an
+  AI service", at 1440 light and 390 dark. Evidence: `after/V3.12-*`.
+  Regression found and fixed on the way: V3.11's merge tool dropped a
+  declaration that followed a comment inside a rule, and so lost `.app`'s
+  `grid-template-rows`; with setup incomplete, the app-wide banner then
+  grew into a band that squashed the app. The snapshot missed it because
+  it did not compare grid rows and no snapshot screen had the banner.
+  Restored; the other 29 merged groups were re-audited declaration by
+  declaration and lost nothing else (`.composer-wrap` differs only by its
+  intended hand merge); the snapshot now compares grid rows, areas and
+  placement.
