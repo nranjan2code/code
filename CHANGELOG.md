@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.1.2 - 2026-09-27
+
+- Rebuild the public website around everyday examples with short copy,
+  white and charcoal themes, and three illustrated activity scenes featuring
+  all eight characters. Examples cover cooking, travel, writing, data, code,
+  celebrations and learning.
+- Replace the old walkthroughs with keyboard-accessible examples and native
+  request disclosures. Keep reduced-motion support and useful content without
+  JavaScript. Explain the current repository-based installation honestly.
+- Add the scene masters, generation prompts, responsive review captures and
+  LinkedIn cover artwork to the brand library.
+
 ## 5.1.1 — 2026-09-27
 
 - Keep the conversation reading position steady across run start, streaming,
