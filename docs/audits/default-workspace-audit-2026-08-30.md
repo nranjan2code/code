@@ -1,5 +1,8 @@
 # Default workspace audit — 2026-08-30
 
+Status: historical audit of the reviewed tree. Use current source and
+`docs/hosting.md` for operator behavior.
+
 ## Contract
 
 `vak_config::paths::default_workspace()` is the account-level canonical starting

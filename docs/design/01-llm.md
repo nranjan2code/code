@@ -123,9 +123,9 @@ and the discovered-model cache.
 ### Endpoint capability negotiation
 
 A usable route is `credential + provider + endpoint dialect + model +
-requested capabilities`, not merely a provider/model pair. `RouteLeg` freezes
-the dialect as well as the credential and model. This means a later retry or
-fallback cannot accidentally change a request from a native Messages,
+requested capabilities`, not merely a provider/model pair. `RouteLeg` fixes
+the dialect, credential and model for a turn. A later retry or fallback
+cannot accidentally change a request from a native Messages,
 Responses, GenerateContent, or Chat Completions contract.
 
 The admission selector owns provider-to-dialect choice and contains no model
@@ -144,8 +144,8 @@ Providers may also expose a pool through a plural environment variable:
 `OPENROUTER_API_KEYS`, or a configured gateway-key variable. Values are comma- or
 newline-separated; the singular variable remains the primary credential.
 VAK fingerprints each credential without storing or returning the secret,
-discovers models separately per credential, and freezes the selected
-fingerprint into each session route leg. Pool identity is distinct from
+discovers models separately per credential, and records the selected
+fingerprint for each dispatched turn leg. Pool identity is distinct from
 provider quota identity: provider-reported organization, project, workspace,
 model-class, and account limits remain separate observations and are never
 assumed to be per-key.

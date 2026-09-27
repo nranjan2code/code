@@ -1,7 +1,8 @@
 # 34 — Channel onboarding: lifecycle, governance, admin/desktop UX
 
-Status: **Phases 1, 2, 3, and 4 implemented, plus multi-bot-per-channel
-(Phase 5, 0.11.19)** — allowlist store, gateway pending lifecycle, admin API
+Status: **Phases 1–6 implemented, including multi-bot-per-channel and
+bot-scoped channel identity** — allowlist store, gateway pending lifecycle,
+admin API
 routes, Admin UI panels, the multi-tenant `CorePool`, the Discord and
 Slack bridges, `PATCH .../allowlist/{key}` (unified with the existing
 binding route-override path), the `vak doctor` "gateway channels" check
@@ -35,7 +36,7 @@ Two sub-pieces are deliberately **deferred**, not silently dropped:
    Slack Block Kit are the follow-up; the adapters declare
    `supports_actions: false` so nothing renders buttons that do not exist.
 
-Written after a live incident
+The original proposal was written after a live incident
 (2026-08-28): the Telegram bridge returned `403` for a chat that used to
 work, because `gateway.chat_allowlist` is a config-file-only setting with
 no UI, no runtime API, and no visible pending-request state — the operator
@@ -46,9 +47,9 @@ directory `vak self services-sync` happened to be run from (the tool's own
 source checkout, in the incident). Durable services now always use the
 canonical `~/vak-home`; this doc also answers "which workspace should this
 channel talk to?" These are the same underlying
-problem: **adding a channel/chat has no first-class lifecycle** — today
-it's an implicit side effect of config files and shell commands, not a
-flow with visible state, approval, and governance.
+problem: **adding a channel/chat had no first-class lifecycle** — it was an
+implicit side effect of config files and shell commands. The implemented
+phases below replaced that behavior with visible state, approval, and governance.
 
 ## Current state (as built, `docs/design/22-gateway.md`)
 

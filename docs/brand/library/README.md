@@ -3,6 +3,9 @@
 Status: **curated artwork and reference assets, 2026-09-27**. Open
 [the gallery](index.html) to browse the cutouts, expression atlases, 3D
 Songbird, and wallpapers on light, dark, and checkerboard grounds.
+GitHub shows the gallery HTML as source; download it with this folder's assets
+and open it in a browser for the interactive view. The asset links below open
+directly on GitHub.
 
 The optional [Dimensional visual pack](dimensional/README.md) has the eight
 individual portraits, compact glyphs, app icon, app and site lockups, and a

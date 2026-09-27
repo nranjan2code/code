@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vak Runtime Topology</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -158,12 +163,14 @@
 
   @media (max-width:720px) { .split { grid-template-columns:1fr; } }
 </style>
+</head>
+<body>
 
 <header class="masthead">
   <div class="wrap masthead-inner">
     <p class="eyebrow">Runtime Topology · v0.11.7</p>
     <h1>How the surfaces actually run together</h1>
-    <p class="lede">The static crate map shows what depends on what. This is the <b>runtime</b> view: which processes exist, who hosts whom, and what is a shared central service versus a private, local-only one. The whole picture turns on one fact — <b>the agent core is a shared object, not a shared server.</b> Every surface is a host process that constructs one or more cores in-process; the HTTP/SSE server is just a thin facade wrapped around a core.</p>
+    <p class="lede">Historical v0.11.7 runtime snapshot. It shows which processes hosted cores and which services were shared or local at that point. The current process and ownership model is documented in <code>docs/design/64-agent-owned-platform.md</code>; check the source before using this diagram as implementation evidence.</p>
     <div class="meta-row">
       <span class="tag"><span class="swatch sw-priv"></span>Private / loopback</span>
       <span class="tag"><span class="swatch sw-shared"></span>Shared / networked</span>
@@ -399,3 +406,6 @@
     <span>· Derived from vak-server (lib · core_pool · gateway), vak-desktop/main.rs, vak/main.rs &amp; docs/design/22, 34</span>
   </div>
 </footer>
+
+</body>
+</html>

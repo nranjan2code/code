@@ -1,14 +1,12 @@
 # 75 — Visual refresh: readable type, plain words and the Ink and Saffron brand
 
-Status: **implementation record, 2026-09-26; typography and neutral-surface correction 2026-09-27. Ink and Saffron, optional Newsreader,
-technical details off by default, and four themes were locked 2026-09-25.
-V1, V2 and V3 are complete; V4.4 records the maintainer-approved Vakyartha
-Songbird rollout. Desktop runtime proof and character glyph work remain in
-`docs/plans/visual-refresh-plan.md`.** The
-tracker is
-`docs/plans/visual-refresh-plan.md`. The visual reference, with
-before-and-after mockups and every review screenshot, is
-`docs/assets/visual-refresh-2026/visual-refresh.html`.
+Status: **implementation record, updated 2026-09-27.** V1, V2 and V3 are
+complete; V4.4 records the approved Vakyartha Songbird rollout. Desktop
+runtime proof and character glyph work remain in the
+[tracker](../plans/visual-refresh-plan.md). The interactive
+[visual reference](../assets/visual-refresh-2026/visual-refresh.html) opens
+locally in a browser; GitHub displays its HTML source. The
+[review screenshots](../assets/visual-refresh-2026/after/) open on GitHub.
 
 The 2026-09-27 maintainer review supersedes D1's paper-tinted surfaces and
 D2's default Newsreader display role. The shared client's default is neutral

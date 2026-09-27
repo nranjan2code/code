@@ -185,6 +185,7 @@ The [Vakyartha Songbird](docs/brand/README.md) is the public mark. Its [SVG mast
 
 | Start here | For |
 |---|---|
+| [Documentation guide](docs/README.md) | Find current guides, design records, and dated research |
 | [Install and release](docs/release-and-install.md) | Platform support, build, install, update, verification, and uninstall |
 | [Configuration](docs/design/05-config.md) | Settings layers, trust, secrets, and capability inheritance |
 | [Admin console](docs/design/33-admin-console.md) | Browser management surface and operations |

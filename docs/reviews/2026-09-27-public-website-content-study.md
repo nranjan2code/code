@@ -1,6 +1,9 @@
 # Vakyartha: explaining everyday help that continues
 
-Status: content study and proposed copy; no website implementation or publication.
+Status: historical content study and proposed copy. This document did not
+implement or publish a site; later site work is recorded in
+`docs/assets/public-site-followthrough-2026/README.md` and
+`docs/assets/public-site-security-2026/README.md`.
 Reviewed 27 September 2026.
 
 ## Recommendation

@@ -2,9 +2,8 @@
 
 The practical runbook. `docs/design/32-release-engineering.md` owns the
 installed lifecycle contract and
-`docs/design/46-stabilization-install-and-onboarding.md` owns the design;
-this is what you actually run, and what a person on each platform actually
-gets.
+`docs/design/46-stabilization-install-and-onboarding.md` records the
+historical proposal. This guide describes the current commands and artifacts.
 
 ## Platform support
 
@@ -44,7 +43,7 @@ a real seal: modification after signing is detectable
 
 ### Linux
 
-Until the first verified download is published, install from the repository:
+To install from the current source tree:
 
 ```bash
 git clone https://github.com/nranjan2code/code.git
@@ -131,9 +130,10 @@ so the artifact and the installed tree cannot diverge.
 Builds and checks run on the maintainer's machine. GitHub Actions is disabled.
 A macOS aarch64 release made on this Mac contains only that architecture;
 other platforms require separate native local builds and verification.
-No download is public while the repository is private. Keep the verified
-`dist/<version>/` directory locally; do not point the update feed at an
-unpublished host.
+The repository is public. A source checkout does not imply that a matching
+binary release has been published: check the release tag and artifact for the
+platform before linking an update feed to it. Keep an unpublished verified
+`dist/<version>/` directory locally.
 
 ## Evidence
 

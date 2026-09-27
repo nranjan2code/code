@@ -1,5 +1,8 @@
 # vak UI/UX modernization report
 
+Status: historical review of the builds named below; current UI behavior
+requires a new running-app check.
+
 **Review date:** 2026-09-09  
 **Surfaces:** Tauri desktop (`tauri://localhost`), browser client (`/app/`), admin console (`/admin/`)  
 **Build reviewed:** initial walkthrough observed local server `3.0.28`; follow-up implementation and verification target repository `v3.0.31` with regenerated desktop/web/admin bundles.

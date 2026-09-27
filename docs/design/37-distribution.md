@@ -1,9 +1,9 @@
-Status: proposal
-(does not describe shipped behavior; paths below are targets rather than
-citations and are skipped by check_doc_paths.py)
-
 Distribution Architecture
 =========================
+
+Status: historical proposal, superseded by the release engineering contract
+in `docs/design/32-release-engineering.md` and the current operator guide in
+`docs/release-and-install.md`. The target artifacts below were not all shipped.
 
 ## Goal
 

@@ -1,17 +1,18 @@
 #!/usr/bin/env python3
-"""CI gate: every backticked repo path cited in the docs must exist.
+"""Check current top-level doc citations and all local Markdown links.
 
 Catches stale citations (the AGENTS.md contract is load-bearing; a doc
 pointing at renamed files is drift). Skips URLs and anchors.
 
-Scope is every prose doc that cites paths, not just docs/design/. AGENTS.md
-carries the crate map and README.md the build commands — the two documents a
-newcomer follows literally — and both were unchecked while a crate rename
-went through them.
+Backticked path checks cover top-level docs and docs/design. AGENTS.md carries
+the crate map and README.md the build commands. Relative Markdown links are
+checked recursively under docs, including dated records and nested folders.
 """
 import os
 import re
 import sys
+from pathlib import Path
+from urllib.parse import unquote
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOC_DIRS = ["docs/design", "docs"]
@@ -124,4 +125,44 @@ if missing:
     for m in missing:
         print(" ", m)
     sys.exit(1)
-print("doc citations ok")
+
+# Markdown links in nested docs were outside the backtick citation scan above.
+# Check repository-relative destinations across the full documentation tree.
+# Absolute paths in dated reports can name the original review machine or
+# temporary evidence; URLs and fragment-only links have no local file target.
+LINK = re.compile(r"!?\[[^]]*\]\(([^)]+)\)")
+for path in sorted(Path(ROOT, "docs").rglob("*.md")):
+    body = path.read_text(encoding="utf-8")
+    open_fence = None
+    for line_no, line in enumerate(body.splitlines(), 1):
+        fence = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+        if not fence:
+            continue
+        marker = fence.group(1)
+        if open_fence is None:
+            open_fence = (marker[0], len(marker), line_no)
+        elif (
+            marker[0] == open_fence[0]
+            and len(marker) >= open_fence[1]
+            and not fence.group(2).strip()
+        ):
+            open_fence = None
+    if open_fence is not None:
+        missing.append(f"{path.relative_to(ROOT)}:{open_fence[2]}: unclosed code fence")
+    for match in LINK.finditer(body):
+        target = match.group(1).split(" ", 1)[0].strip("<>")
+        if not target or target.startswith(("/", "#", "http:", "https:", "mailto:", "data:")):
+            continue
+        target = unquote(target.split("#", 1)[0])
+        if not target or target in ("url", "…"):
+            continue
+        if not (path.parent / target).exists():
+            line_no = body.count("\n", 0, match.start()) + 1
+            missing.append(f"{path.relative_to(ROOT)}:{line_no}: {target}")
+
+if missing:
+    print(f"FAIL: {len(missing)} stale doc link(s):")
+    for item in missing:
+        print(" ", item)
+    sys.exit(1)
+print("doc citations and relative links ok")

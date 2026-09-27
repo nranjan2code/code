@@ -13,9 +13,11 @@ predecessor (`prev_hash`) and carries a stable `id` + `parent_id`:
 {"id":"…","parent_id":"…|null","ts":"…","prev_hash":"…","kind":"header|message|compaction|receipt|goal|goal_update|activity|work|intent|child_run|turn_capabilities_bound|presentation|turn_card", …}
 ```
 
-- `header` — the **frozen execution contract**: app version, provider, model,
-  full system prompt, tool list, permission mode, cwd, parent session. Audits
-  and replays explain every decision from this snapshot, never current state.
+- `header` — the **admission snapshot**: app version, initial provider/model
+  and route ladder, full system prompt, tool list, permission mode, cwd, and
+  parent session. The header explains admission. Each turn's `WorkReceipt`
+  records the route actually dispatched after fresh planning; the initial
+  provider/model and ladder do not govern every later turn.
 - `message` — neutral `Message` + optional meta (model, stop_reason, usage,
   a `control` tag for a runtime-authored nudge — see below).
 - `compaction` — a packet `{summary, first_turn_id, last_turn_id, model,

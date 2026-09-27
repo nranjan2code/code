@@ -40,10 +40,12 @@ Wake-from-sleep collapses into this: the first post-wake tick fails
 transiently (or succeeds if the network recovered before userspace), the
 backoff resets on success, nothing else changes.
 
-### 3. Inference plane — frozen ladder + endurance + breaker
+### 3. Inference plane — per-turn ladder + endurance + breaker
 
-Provider dispatch already follows invariant 7: typed failure domains,
-retry within the committed ladder honoring Retry-After under watchdog
+Provider dispatch follows invariant 7: each turn plans a fresh ladder from
+the current effective route and evidence. The session header retains its
+initial admission snapshot for audit. Dispatch uses typed failure domains and
+retries within that turn's ladder, honoring Retry-After under watchdog
 deadlines, run-level endurance when nothing was committed, and a breaker
 keyed by provider endpoint plus credential fingerprint. An open leg fails
 fast while other healthy legs remain eligible.

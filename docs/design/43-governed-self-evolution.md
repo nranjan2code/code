@@ -1,9 +1,7 @@
-Status: proposal
-(does not describe shipped behavior; paths below are targets rather than
-citations and are skipped by check_doc_paths.py)
-
 Governed Self-Evolution
 ========================
+
+Status: proposal. Paths below describe targets and may not exist yet.
 
 ## Goal
 

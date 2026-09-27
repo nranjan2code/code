@@ -1,5 +1,7 @@
 # Sandbox audit reproductions
 
+Status: historical defect reproductions from 2026-09-08.
+
 These sources deliberately assert observed defects; passing is evidence of the problem, not validation of correct behavior. All filesystem data is disposable and the `.env` fixture contains only a fake marker.
 
 `reproductions.rs` was temporarily registered as `crates/vak-tools/tests/__sandbox_audit_probe.rs` and run with `cargo test -p vak-tools --test __sandbox_audit_probe`. All four tests passed. To repeat, copy it to that unused test path, run the command, and remove only the temporary copy afterward. The control-file test is macOS-only; others exercise the raw tool as deterministic fixtures.

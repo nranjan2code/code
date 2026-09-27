@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vak Concurrency Model</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -180,12 +185,14 @@
   @media (prefers-reduced-motion: reduce){ .tok { transition:opacity .2s, background .2s, border-color .2s; }
     .lane.hot .bar i { animation:none; width:100%; } }
 </style>
+</head>
+<body>
 
 <header class="masthead">
   <div class="wrap masthead-inner">
     <p class="eyebrow">Concurrency Model · v0.11.7</p>
     <h1>What happens when 10 calls arrive at once</h1>
-    <p class="lede">It depends on <b>where</b> they land. A session's ledger is a single-owner file lock — <code class="k">Mutex&lt;Option&lt;SessionLog&gt;&gt;</code> that a run <code class="k">.take()</code>s — so <b>one run per session at a time</b>. Ten calls to one session, ten sessions in one workspace, and ten different workspaces behave completely differently. Pick a scenario and press play.</p>
+    <p class="lede">Historical v0.11.7 simulation. It compares calls to one session, many sessions in one workspace, and many workspaces as the runtime behaved when this diagram was built. Its locks, limits and pool behavior are not current capacity guarantees. Pick a scenario and press play.</p>
   </div>
 </header>
 
@@ -512,3 +519,6 @@
   setCap('Choose a scenario and press <b>Play</b>. Scenario A is loaded.');
 })();
 </script>
+
+</body>
+</html>

@@ -1,6 +1,6 @@
 # 24 — Agent security boundaries
 
-Status: **implemented and hardened in 3.0.8; current in 3.0.10**. Permission lease revocation,
+Status: **implemented; security hardening recorded from 3.0.8 onward**. Permission lease revocation,
 forwarded approval cancellation, pooled permission-ceiling refresh, and
 fail-closed budget admission are covered by runtime checks and regression tests.
 

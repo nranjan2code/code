@@ -1,5 +1,7 @@
 # Permission propagation audit — 2026-09-03
 
+Status: historical audit of the reviewed permission surfaces.
+
 ## Contract
 
 A permission answer has two halves. `vak_permission::PermissionEngine::evaluate`

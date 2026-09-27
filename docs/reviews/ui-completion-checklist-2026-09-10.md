@@ -1,5 +1,8 @@
 # UI completion checklist
 
+Status: dated review ledger. A row's recorded proof is evidence for that
+review, not a fresh verification of the current client.
+
 Review started: 2026-09-10
 Scope: shared client (`vak-client-ui`), desktop/browser hosts, and admin console.
 

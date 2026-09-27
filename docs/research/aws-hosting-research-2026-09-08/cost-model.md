@@ -130,12 +130,14 @@ an enterprise tenant typically also wants:
 - Enterprise instances are typically multi‑AZ/redundant → 2× compute.
 
 Enterprise tenant line, conservative:
+
 | t3a.small (2 GB) ×2 AZ + natgw + vpc endpoints | |
 |---|---|
 | 2× compute | ~$32/mo |
-| 1 NAT Gateway (idle) | ~$3.25/mo |
+| 1 NAT Gateway (idle, at the $0.045/hr historical rate above) | ~$32.85/mo |
+| Interface VPC endpoint (one, at the $0.01/hr historical rate above) | ~$7.30/mo |
 | Data processed | variable |
-| **~ $40–60+/mo per enterprise tenant** before margin, egress, or support. |
+| **~$72+/mo per enterprise tenant** before data processing, margin, egress, or support. |
 
 None of this is Free‑Tier‑reachable at scale.
 

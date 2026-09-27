@@ -1,5 +1,8 @@
 # Intent Kernel Scenario Review
 
+Status: historical scenario review. Counts and findings describe the build
+reviewed on the date below.
+
 **Date:** 2026-01-23
 **Scope:** `crates/vak-intent/` — the decision layer that turns a request into a typed,
 narrowing-only engagement across seven behavioural axes.

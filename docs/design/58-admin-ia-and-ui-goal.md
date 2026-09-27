@@ -43,8 +43,8 @@ Primary users are technical operators who need to answer four questions quickly:
   installation. Discovered capabilities and integrations must be loaded from
   their real registry/API and must report probe failures as state with a reason,
   never as an empty successful list.
-- Preserve append-only evidence, permission-before-dispatch, and frozen route
-  contracts. UI improvements must not bypass server authorization.
+- Preserve append-only evidence, permission-before-dispatch, and per-turn route
+  receipts. UI improvements must not bypass server authorization.
 - Keep Global/User and Workspace/Project configuration semantics explicit;
   never show an effective merged value when the screen is editing one layer.
 - Inherited, overridden, disabled, unavailable, unknown, and empty are distinct

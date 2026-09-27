@@ -1,3 +1,6 @@
+Shared / Global Configuration
+==============================
+
 Status: implemented in 3.0.24
 
 ## AWS Bedrock endpoint management
@@ -19,9 +22,6 @@ This split supports headless vak hosted in AWS: Mantle inference can use the
 scoped bearer key, while availability checks use an IAM role, SSO/web
 identity, or another standard AWS credential source. Results are cached for
 five minutes, with the credential/endpoint identity included in the cache key.
-
-Shared / Global Configuration
-==============================
 
 ## Goal
 
@@ -94,8 +94,8 @@ name a literal `.env` file — they name a *scope*, resolved through
 `vak_config::credentials` (`crates/vak-config/src/credentials.rs`) to
 whichever `CredentialStore` this host uses:
 
-- **OS-native** (macOS Keychain / Windows Credential Manager / Linux Secret
-  Service, via the `keyring` crate) — used whenever a round-trip probe
+- **OS-native** (macOS Keychain or Linux Secret Service on supported platforms,
+  via the `keyring` crate) — used whenever a round-trip probe
   against it succeeds.
 - **Encrypted-file fallback** — an AES-256-GCM-encrypted file under the
   shared data home (`credentials.enc`, keyed by a separate 0600

@@ -60,5 +60,5 @@ Scheduled work is a task (`vak_core::tasks::TaskDef`: a prompt or a script on an
 ## 3. Invariants & Guarantees
 
 1. **Workspace Boundary**: All file reading and document extraction strictly resolve inside the canonical workspace.
-2. **Non-destructive Extension**: Living outcome canvas and document ingestion enhance assistant capabilities without altering existing append-only session ledgers or frozen route contracts.
+2. **Non-destructive Extension**: Living outcome canvas and document ingestion enhance assistant capabilities without altering append-only session ledgers or per-turn route receipts.
 3. **Zero External Subprocesses**: Document parsing and tabular conversions execute entirely in-memory in pure Rust.

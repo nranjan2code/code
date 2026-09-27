@@ -1,7 +1,7 @@
-Status: implemented in 3.0.24
-
 Tavily Out-of-the-Box MCP Integration
 ====================================
+
+Status: implemented in 3.0.24
 
 ## Overview
 

@@ -148,13 +148,13 @@ payload against a `SkillRegistry` and replaces it with a deterministic
 inspectable JSON appendix. Ordinary Markdown and invalid/incomplete fences stay
 exact.
 
-renders each input through all six surfaces and asserts on the actual output
+The delivery test suite renders each input through all six surfaces and asserts on the actual output
 content — fallback preservation, coverage integrity, payload types, schema
 correctness, and surface-specific formatting. See
 `docs/audits/presentation-delivery-final-output-audit-2026-09-10.md`
 for the full test inventory.
 
-```vak fences are projected on all markup-passing surfaces (TelegramHtml,
+Structured `vak` fences are projected on all markup-passing surfaces (TelegramHtml,
 SlackMrkdwn, DiscordMarkdown, Markdown, Plain). For `Markup::Json` (the desktop
 native AST path) the raw fence is preserved for the structured component
 registry.

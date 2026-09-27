@@ -127,7 +127,7 @@ state machine per provider endpoint and credential fingerprint:
   of burning their retry budget.
 - After `circuit_breaker_cooldown_secs` (default 60) the circuit half-closes:
   one probe gets through, and any success resets the counter.
-- A frozen ladder checks each leg's circuit independently, so an open primary
+- A turn's ladder checks each leg's circuit independently, so an open primary
   fails fast while a healthy fallback can still serve. Run-level endurance
   uses normal cancel-aware backoff; each leg check prevents no-op calls until
   that leg's cooldown expires.
@@ -135,13 +135,17 @@ state machine per provider endpoint and credential fingerprint:
 Config keys: `circuit_breaker_threshold`,
 `circuit_breaker_cooldown_secs` (`0` cooldown disables opening).
 
-## Frozen route ladder (landed)
+## Route ladder history
 
-The frozen ladder is live: at session admission an
-ordered candidate ladder is computed (primary + warm-discovery fallbacks
-only — no invented ids, no network) and frozen INTO the contract header.
-Dispatch walks legs top-down on typed failure domains; the first dispatch
-of each next leg is receipted `route-fallback` and surfaced as a
+The following describes the original session-admission design. The shipped
+per-turn behavior is specified in [Turn-Level Routing](#turn-level-routing)
+below and implemented in `vak-core/src/lib.rs` by `run_turn_inner`.
+
+In the original design, session admission computed an ordered candidate
+ladder (primary + warm-discovery fallbacks only — no invented ids, no network)
+and froze it into the contract header. The current header keeps this as an
+audit snapshot. Dispatch walks the per-turn ladder on typed failure domains.
+The first dispatch of each next leg is receipted `route-fallback` and surfaced as a
 `RouteFallback` event. Ceiling, receipts, and endurance budget are shared
 across all legs, so walking the ladder is contract execution, never
 mid-contract switching (invariant 7 above carries the new wording).
@@ -161,9 +165,9 @@ Phase R (vakrouter adoption) upgrades the ordering machinery:
   reading. Until that landed, `plan_route_ladder` passed all three as
   `false` with `estimated_input_tokens: 0`, so every session scored
   identical demand and this ordering function never actually varied.
-  A turn may also restrict the frozen ladder to a **prefix** — never
-  reordering, never extending — which keeps dispatch inside the committed
-  contract and leaves replay exact.
+  A turn may also restrict its planned ladder to a **prefix** — never
+  reordering or extending it — which keeps dispatch inside the admitted
+  turn route and leaves replay exact.
 - **Cross-model fallbacks are opt-in**: `[route].fallback_models` allowlist
   ∩ warm discovery; the user's primary never loses the head position.
 - **Diversity caps + annotations**: ⌈max_total/3⌉ seats per provider;

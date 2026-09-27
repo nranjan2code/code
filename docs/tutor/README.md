@@ -1,6 +1,11 @@
-# VAK Architecture Tutor
+# Vakyartha architecture tutor
 
-This is the visual guide to VAK: start with the system map, follow one request through the runtime, then use the deep dives to understand trust, execution, state, delivery, and operations.
+This is a visual guide to the `vak` runtime: start with the system map, follow
+one request, then use the deep dives to understand trust, execution, state,
+delivery, and operations.
+
+These diagrams are explanatory snapshots. Check the current source and design
+status before using one as evidence for an implementation detail.
 
 ## Recommended path
 
@@ -16,7 +21,11 @@ This is the visual guide to VAK: start with the system map, follow one request t
 
 ### [Layered architecture](vak-architecture-overview.png)
 
-The complete crate map, organized from user surfaces and gateway operations down to orchestration, policy, intelligence, delivery, persistence, and infrastructure.
+The crate map at the time this image was drawn, organized from user surfaces
+and gateway operations down to orchestration, policy, intelligence, delivery,
+persistence, and infrastructure. Check `Cargo.toml` for current members.
+
+![Architecture overview from the dated tutor snapshot](vak-architecture-overview.png)
 
 ## 2. One request end to end
 
@@ -56,7 +65,7 @@ Shows the enforcement boundary: PermissionEngine → approval → brokered regis
 
 ### [Configuration, routing, and runtime contract](vak-config-routing-contract.png)
 
-Explains global/project/scoped configuration precedence, atomic persistence, route provenance, provider/model freezing, secrets, permission revocation, sandbox selection, and FinOps limits.
+Explains global/project/scoped configuration precedence, atomic persistence, route provenance, the session's initial route snapshot and per-turn route planning, secrets, permission revocation, sandbox selection, and FinOps limits.
 
 ## 6. State, delivery, and operations
 
@@ -90,7 +99,7 @@ Maps the Tauri desktop, SolidJS admin console, tray, CLI/TUI, secured router, SS
 
 - Every execution path authorizes before dispatch.
 - The session ledger is append-only and remains the source of truth.
-- Provider and model are one frozen route per session.
+- Provider and model are one atomic route; each turn plans its ladder from the effective route, while the session header retains the admission snapshot.
 - Channel capability overlays can restrict access but never grant secrets.
 - Managed work adds durable planning and verification; it does not replace direct chat.
 - The service manager owns process liveness; health probes do not compete with `KeepAlive` or `Restart`.

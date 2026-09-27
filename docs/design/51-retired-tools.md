@@ -1,6 +1,6 @@
-Status: implemented
-
 # 51 — Retired Tool and Plugin Lifecycle
+
+Status: implemented
 
 ## Problem
 

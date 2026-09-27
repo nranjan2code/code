@@ -1,6 +1,8 @@
 # Public site refresh, 2026-09-27
 
-Status: implemented locally, reviewed in the browser, not published.
+Status: historical local review. The site was subsequently published; see
+[the publication record](../public-site-followthrough-2026/README.md) and
+[the later security page review](../public-site-security-2026/README.md).
 
 Owner direction: rebuild the public site from scratch for everyday people and
 technical users, with very little text; reject the paper aesthetic, repeated

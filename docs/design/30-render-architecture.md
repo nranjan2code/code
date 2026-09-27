@@ -19,7 +19,7 @@ vocabulary and runtime-pluggable packs — and the contributor walkthrough for
 adding or changing a renderer is
 `docs/design/67-presentation-renderer-guide.md`. There are no per-semantic-type
 client components; one generic renderer consumes the primitive tree.
-delivery system. It is the design contract that the implementation follows,
+It is the design contract that the implementation follows,
 replacing the ad-hoc wiring that left `project_structured_fences` as dead code
 and `DeliveryPacket.presentation` as inert data.
 
@@ -27,8 +27,8 @@ and `DeliveryPacket.presentation` as inert data.
 
 Three forces pull in different directions:
 
-1. **Provider/model diversity.** Sessions walk a frozen route ladder across
-   Anthropic, OpenAI, Google, and local providers. Turn-by-turn, the model
+1. **Provider/model diversity.** Each turn walks a freshly planned route
+   ladder across Anthropic, OpenAI, Google, and local providers. Turn-by-turn, the model
    that answered is not the model that will answer next. Raw provider JSON
    shapes (`choices[0].message.content` vs `content[0].text` vs
    `candidates[0].content`) are irreconcilable per-provider. Writing N adapters
@@ -37,7 +37,7 @@ Three forces pull in different directions:
    no headings/tables. Slack sends mrkdwn with `*bold*` / `_italic_` /
    `<url|text>`, no headings/tables, ~4000 chars. Discord passes GFM but no
    hyperlinks in plain messages, no tables, 2000 chars. Desktop renders a
-   schema-v2 semantic AST as typed React/SolidJS components. Each surface's
+   schema-v2 semantic AST with SolidJS components. Each surface's
    protocol limits are immutable walls, not styling preferences.
 3. **Durability without duplication.** The session ledger (JSONL) is the sole
    source of truth. Formatting must not become a second source of truth.

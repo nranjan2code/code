@@ -61,7 +61,7 @@ legitimately discuss tests and failures without becoming a software test report.
 
 ### Existing foundations and gaps
 
-Preserve the append-only ledger, permission broker, frozen route ladder,
+Preserve the append-only ledger, permission broker, per-turn route planning,
 capability epochs, managed-work ownership, commitment scheduler, evidence
 receipts, closed presentation AST, and deterministic Markdown fallback.
 
@@ -257,7 +257,7 @@ does not bypass admission. A stale preview cannot set execution bounds.
    a structured spec before its first affected action. The host validates it.
    This can share the first ordinary dispatch; a separate classifier is optional.
 5. Invoke a separate classifier only when the expected consequence of ambiguity
-   justifies its configured latency and cost, within the frozen route contract.
+   justifies its configured latency and cost, within the admitted turn route.
    Record its dispatch and cancellation like every other model call.
 
 Host validation checks schema, references, consistency, and non-widening. It
@@ -320,7 +320,7 @@ proof. New authority is resolved independently.
 |---|---|---|
 | Context | Objective, references, constraints, active requirements | Packet plus inclusion reasons; repository presence alone does not make code relevant |
 | Discovery | Needed operations and result types | Ranked admitted candidates, availability and known gaps; descriptions are not guarantees |
-| Routing | Modalities, structured output needs, bounded demand | Existing frozen ladder selection/prefix only; preserve resilience unless an explicit bound requires otherwise |
+| Routing | Modalities, structured output needs, bounded demand | Narrow the freshly planned turn ladder within admitted bounds; preserve resilience unless an explicit bound requires otherwise |
 | Planning | Deliverables and dependencies | Optional work items; a greeting does not generate a plan graph |
 | Dispatch | Admitted revision, schema, arguments, current lease | Permission/resource decision and broker receipt before effects |
 | Evidence | Typed outputs and raw receipts | Scoped evidence graph; successful execution is not automatic task satisfaction |
@@ -718,7 +718,7 @@ only represented by this proposal:
 | Phase | Current evidence | Status |
 |---|---|---|
 | 0–1 | `OutcomeSpec`, evidence-aware recipe selection, append-only intent records, replay tests | shipped |
-| 2 | admission context, frozen ladder cap, intent turn cap, bounded child-run objective/delegation propagation, and `AgentConfig` execution context | shipped; workspace consumer matrix verified |
+| 2 | admission context, turn-ladder cap, intent turn cap, bounded child-run objective/delegation propagation, and `AgentConfig` execution context | shipped; workspace consumer matrix verified |
 | 3 | receipt timestamps, freshness policy, requirement evaluation, completion verdicts | shipped |
 | 4 | plugin-declared requirements and rejection diagnostics | shipped; revocation and restart coverage verified |
 | 5 | timeline audit, gateway envelope metadata, persistent review/actions, goal-update timeline entries, plan-change revisions, pause controls, Settings control, shared channel fallback | shipped; cross-surface acceptance verified |

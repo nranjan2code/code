@@ -1,16 +1,15 @@
-Status: implemented in 3.0.24
-(superseded in detail by docs/design/46-stabilization-install-and-onboarding.md;
-this doc records the v3.0.24 first-run wizard surface contract)
-
 First-Run Onboarding
 ====================
+
+Status: historical v3.0.24 wizard contract. For the current setup and install
+behavior use `docs/release-and-install.md` and `vak setup --help`.
 
 ## Overview
 
 The first-run onboarding wizard (`vak setup`) seeds a new workspace with
-default skills, capabilities, and a prompt seed. This document records the
-surface contract; the full lifecycle (install, upgrade, uninstall, purge) is
-specified in `docs/design/46-stabilization-install-and-onboarding.md`.
+default skills, capabilities, and a prompt seed. This document records that
+release's surface contract; `docs/design/46-stabilization-install-and-onboarding.md`
+is a historical proposal, not the current operator runbook.
 
 ## Entry Points
 

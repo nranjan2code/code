@@ -93,7 +93,7 @@ control state.
 follow-up message can add, correct, replace, pause, resume, reprioritise or
 cancel work; the runtime classifies the relation and applies only changes that
 fit the admitted authority. Changes that affect permissions, irreversible work
-or the frozen route continue through the existing approval path. Web, desktop
+or the selected route continue through the existing approval path. Web, desktop
 and channel clients consume this same projection; a channel's shorter text
 fallback does not change the underlying outcome or evidence.
 

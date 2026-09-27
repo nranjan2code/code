@@ -1,3 +1,8 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>vak Layered Architecture</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -271,14 +276,16 @@
     .node, .card { transition: border-color .14s ease; }
   }
 </style>
+</head>
+<body>
 
 <header class="masthead">
   <div class="wrap masthead-inner">
     <p class="eyebrow">Architecture Reference · v0.11.7</p>
     <h1>vak — a layered map of every component</h1>
-    <p class="lede">vak is a local-first Rust harness for running general-purpose agents without giving up the receipts. Its mechanism is <b>one core, many surfaces</b>: a single auditable, policy-gated core drives a CLI, a Tauri desktop app, an HTTP/SSE server, and chat gateways. This document lays out all 18 workspace crates plus the two web frontends as a dependency-ordered stack — foundations at the bottom, surfaces on top.</p>
+    <p class="lede">Historical architecture snapshot. This diagram covers 18 crates from an earlier workspace; the current <code>Cargo.toml</code> lists 28 members. Use the manifest for the complete current crate graph. The snapshot arranges its crates and two web frontends as a dependency-ordered stack — foundations at the bottom, surfaces on top.</p>
     <div class="meta-row">
-      <span class="tag"><span class="dot"></span><b>18</b>&nbsp;Rust crates</span>
+      <span class="tag"><span class="dot"></span><b>18</b>&nbsp;crates in this snapshot</span>
       <span class="tag"><b>2</b>&nbsp;SolidJS frontends</span>
       <span class="tag"><b>4</b>&nbsp;surfaces</span>
       <span class="tag">edition&nbsp;<b>2024</b></span>
@@ -616,7 +623,10 @@
   <div class="wrap">
     <span><b>vak 0.11.7</b></span>
     <span>· Rust edition 2024 · tokio</span>
-    <span>· 18 crates + 2 SolidJS frontends</span>
+    <span>· historical snapshot: 18 crates + 2 SolidJS frontends</span>
     <span>· Derived from the workspace manifests, README, PRODUCT.md &amp; DESIGN.md</span>
   </div>
 </footer>
+
+</body>
+</html>

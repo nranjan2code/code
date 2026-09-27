@@ -1,6 +1,10 @@
 # Public architecture page — 2026-09-27
 
-Routes: `/architecture` and `/doctor`. Requested by the maintainer as a public, illustrated,
+Status: historical publication record. The public Doctor page was later moved
+to `/meet-doctor` so the embedded server could retain its authenticated
+`GET /doctor` API; see the [security page review](../public-site-security-2026/README.md).
+
+Routes at this review: `/architecture` and `/doctor`. Requested by the maintainer as a public, illustrated,
 open-source explanation in the existing site style. Only Vakyartha's Songbird
 appears on this page. The seven other companions remain on the everyday pages.
 

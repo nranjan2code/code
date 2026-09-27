@@ -1,21 +1,22 @@
-# Hosting your vak core
+# Hosting Vakyartha
 
 The architectural bet of this project: **the core is headless and runs
-anywhere; TUI, desktop and chat bridges are just clients.** This guide makes
-that concrete — from laptop LaunchAgent to a $5 VPS.
+anywhere; the terminal, desktop and chat bridges are clients.** This guide
+covers local services and a headless host.
 
 ## Topology
 
 ```
 ┌────────────── any machine ──────────────┐     ┌── your phone ──┐
-│ vak serve --gateway --trust :8901  │◀────│ Telegram bot    │
+│ vak serve --gateway --port 8901   │◀────│ Telegram bot    │
 │ ▲ bearer token (pinned)                 │     │ (bridge process │
 │ └── sessions/, memory/, tasks/ live here │     │  can run anywhere)│
 └──────────────────────────────────────────┘     └────────────────┘
 ```
 
-- One gateway per workspace (`--trust` the workspace once).
-- Bridges (Telegram today; more later) need network access to the Bot API
+- Durable gateway services use the canonical default workspace (`~/vak-home`);
+  an admitted chat can have an explicit workspace binding.
+- Bridges need network access to their channel API
   and to your gateway — they do NOT need to be on the same machine.
 - TUI/desktop connect locally as always; remotely via SSH tunnel or
   tailnet pointing at the same port.
@@ -26,9 +27,7 @@ that concrete — from laptop LaunchAgent to a $5 VPS.
 ## Managed local install
 
 ```bash
-scripts/release.sh
-target/release/vak self install --force
-cd /path/to/the/workspace-the-gateway-should-serve
+scripts/build.sh
 /Applications/Vak.app/Contents/MacOS/vak self services-sync  # macOS
 # ~/.local/share/vak/bin/vak self services-sync              # Linux
 ```
@@ -62,19 +61,17 @@ cd /path/to/the/workspace-the-gateway-should-serve
   "Secrets Chain").
 - Re-run `self install` after upgrading binaries and `self services-sync` after
   changing the served workspace or generated-unit contract.
-- `self services-sync` records the workspace directory in each generated unit;
-  run it from the workspace that the gateway should serve. This keeps the
-  gateway's provider/model config and the project secret scope aligned with that
-  workspace instead of inheriting launchd/systemd's default directory. Units
-  also preserve non-secret `HOME`, while the shared resolver falls back to the
-  OS account home for GUI launches that omit it.
+- `self services-sync` uses the canonical default workspace for headless
+  services, regardless of the directory where it is run. Use an explicit
+  gateway chat binding for another workspace. Units preserve non-secret
+  `HOME`; GUI launches can resolve the OS account home when it is absent.
 
 ## Secrets
 
 All user-level secrets — provider keys, bot tokens, and
 `VAK_GATEWAY_TOKEN` — live in the canonical Shared secret scope, resolved
 through `vak_config::credentials` to an OS-native secret service (macOS
-Keychain / Windows Credential Manager / Linux Secret Service) or, when
+Keychain / Linux Secret Service) or, when
 none is reachable (the common case for a headless server with no D-Bus
 session), an AES-256-GCM encrypted-file fallback under the shared data
 home — never a plaintext file (docs/design/44-shared-config.md, "Secrets
@@ -186,27 +183,27 @@ rebinding is defended identically inside a container.
 7. Unattended turns auto-deny approval gates unless you configure
    `approvals = "forward"` with an approver surface (docs/design/
    22-gateway.md G2).
-8. Backups = copy `<home>` (the data home: `~/Library/Application Support/vak` on macOS, `~/.local/share/vak` on Linux): sessions, memory,
-   tasks, bindings are all plain files.
+8. Use `vak backup --help` for a supported backup. The data home contains
+   durable sessions and bindings; copying only a project directory is not
+   a complete backup.
 
 ## Updating
 
 ```bash
-git pull && cargo build --release -p vak
-target/release/vak self install --force
-cd /path/to/served/workspace
+git pull
+scripts/build.sh
 /Applications/Vak.app/Contents/MacOS/vak self services-sync
 ```
 
-Sessions and memory are append-only JSONL/markdown — upgrades require no
-migration.
+Before updating an existing data home, read the release notes for its
+supported baseline and run `vak self verify` after installation.
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
 | bridge replies "(gateway unreachable)" | gateway down or token mismatch — `vak open admin --print` prints the pinned `VAK_GATEWAY_TOKEN` as a loopback-only link; compare it against what the bridge is configured with |
-| replies "(aborted)" | pre-0.3.0 bug; upgrade. Also check `~/Library/Logs/vak/gateway.log` (macOS) or `~/.local/state/vak/logs/gateway.log` (Linux) |
+| replies "(aborted)" | Inspect the current run and gateway logs at `~/Library/Logs/vak/gateway.log` (macOS) or `~/.local/state/vak/logs/gateway.log` (Linux) |
 | tool calls denied on phone | expected in default deny mode; configure an approver surface or use TUI/desktop for escalations |
 | model errors | `/health` shows effective provider/model plus provenance/revision; keys live in the Shared secret scope (docs/design/44-shared-config.md, "Secrets Chain"), not a file — use the Settings UI or `PUT /config/key` to check/change them |
 | MCP server "spawn failed" / dies at handshake | under service managers PATH is minimal: use the absolute interpreter path (`which npx`) in `[mcp.servers.*].command`; network-client tools also need `network = true` |

@@ -1,8 +1,7 @@
 # Developing and testing Vak live
 
-How to build, run and check Vak during development, including a live run
-against a real model in the browser. Everything here was learned the hard
-way in a session; follow it instead of rediscovering it. The contract
+How to build, run and check Vakyartha during development, including a live run
+against a real model in the browser. The contract
 rules it serves are in `AGENTS.md` ("Verification before every commit",
 "Acceptance-workspace contract", "Live development runs").
 
@@ -82,6 +81,7 @@ when there is no terminal. Pin a throwaway token for the test server
 instead, kept outside git with owner-only permissions:
 
 ```bash
+mkdir -p /tmp/vak-live
 umask 077 && python3 -c "import secrets;print(secrets.token_urlsafe(32))" > /tmp/vak-live/test-gateway-token
 ```
 
@@ -141,11 +141,9 @@ TTY on stdin).
 
 For Office work, `crates/vak-ooxml/src/fixtures.rs` (feature `fixtures`)
 builds minimal Word, Excel, PowerPoint and Visio packages for tests. For a
-live run, a realistic file is better; `openpyxl` and `python-docx` are not
-installed here, so write the parts with Python's `zipfile` (shared
-strings, a styles part, and a formula with a cached value is enough to be
-realistic for a workbook). A file saved by Office itself is better still
-when one is available.
+live run, use a realistic, non-sensitive file when one is available. If
+generating a workbook fixture with Python's `zipfile`, include shared strings,
+styles and cached formula values so it tests more than the package shell.
 
 ### Cleaning up
 

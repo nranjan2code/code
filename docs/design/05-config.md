@@ -83,8 +83,8 @@ discovered to support it; docs/design/01-llm.md).
 | Plugins | `~/vak-home/.vak` plugin registry | `<cwd>/.vak` plugin registry |
 
 A secret scope is never a plaintext file — it resolves through
-`vak_config::credentials` to an OS-native secret service (macOS Keychain /
-Windows Credential Manager / Linux Secret Service) or, when none is
+`vak_config::credentials` to an OS-native secret service (macOS Keychain or
+Linux Secret Service on supported platforms) or, when none is
 reachable, an AES-256-GCM encrypted-file fallback
 (docs/design/44-shared-config.md, "Secrets Chain"). Secrets never appear in
 API responses, config TOML, ledgers, or audit detail. MCP definitions
