@@ -315,7 +315,7 @@ export interface ActiveComponentPreview {
   serverUrl?: string;
   /** Durable conversation/result identity that produced this artifact. */
   sessionId?: string;
-  /** A cited place in an Office file to open the view at (`path#anchor`). */
+  /** A cited place in an Office file or PDF to open the view at (`path#anchor`). */
   anchor?: string;
   resultId?: string;
   executionId?: string;
@@ -555,7 +555,7 @@ export function openArtifactPathInCanvas(
   });
 }
 
-/** Opens the view of a cited Office file at the place it names. */
+/** Opens the view of a cited Office file or PDF at the place it names. */
 export function openOfficeCitation(citation: { path: string; anchor: string }) {
   openArtifactPathInCanvas(citation.path, undefined, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
 }

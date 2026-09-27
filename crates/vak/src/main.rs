@@ -20,6 +20,7 @@ mod install;
 mod intent;
 mod memory;
 mod office;
+mod pdf;
 mod plugins;
 mod prompts;
 mod setup;
@@ -508,6 +509,7 @@ async fn main() {
         Some(Command::Plugins { action }) => plugins::run_plugins(cwd, action),
         Some(Command::Intent { action }) => intent::run_intent(cwd, action),
         Some(Command::Office { action }) => office::run_office(action).await,
+        Some(Command::Pdf { action }) => pdf::run_pdf(action).await,
         Some(Command::Commit { action }) => intent::run_commit(cwd, action),
         Some(Command::Grant {
             id,

@@ -51,3 +51,4 @@ workspace = true
 
 [dev-dependencies]
 vak-ooxml = { workspace = true, features = ["fixtures"] }
+vak-pdf = { workspace = true, features = ["fixtures"] }

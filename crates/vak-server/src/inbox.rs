@@ -19,7 +19,7 @@ pub(crate) fn note(filename: &str, saved: &str, bytes: &[u8]) -> String {
         .is_some();
     // The path leads and is quoted as the argument to pass: a small model
     // given the sent name first called the reader with that name instead.
-    if vak_ooxml::is_openxml_path(saved) {
+    if vak_ooxml::is_openxml_path(saved) || vak_pdf::is_pdf_path(saved) || vak_pdf::sniff(bytes) {
         format!(
             "[attached file at path \"{saved}\" ({size}, sent as '{filename}'). Read it with doc_read and that exact path; its contents are not in this message.]"
         )
@@ -29,7 +29,7 @@ pub(crate) fn note(filename: &str, saved: &str, bytes: &[u8]) -> String {
         )
     } else {
         format!(
-            "[attached file at path \"{saved}\" ({size}, sent as '{filename}'). It is not a text or Open XML file, so no reader here understands it yet; its bytes are not in this message.]"
+            "[attached file at path \"{saved}\" ({size}, sent as '{filename}'). It is not a text, PDF or Open XML file, so no reader here understands it yet; its bytes are not in this message.]"
         )
     }
 }

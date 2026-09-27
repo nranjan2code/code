@@ -140,8 +140,10 @@ TTY on stdin).
 ### Test files
 
 For Office work, `crates/vak-ooxml/src/fixtures.rs` (feature `fixtures`)
-builds minimal Word, Excel, PowerPoint and Visio packages for tests. For a
-live run, use a realistic, non-sensitive file when one is available. If
+builds minimal Word, Excel, PowerPoint and Visio packages for tests, and
+`crates/vak-pdf/src/fixtures.rs` builds PDFs byte by byte, with computed
+offsets, for the reader's cases. For a live run, use a realistic,
+non-sensitive file when one is available. If
 generating a workbook fixture with Python's `zipfile`, include shared strings,
 styles and cached formula values so it tests more than the package shell.
 

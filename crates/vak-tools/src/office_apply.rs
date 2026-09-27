@@ -265,11 +265,26 @@ impl Tool for OfficeApplyTool {
     }
 }
 
-/// The refusal a text tool gives for an Office file: a package is a ZIP of
-/// XML parts, so a text read shows nothing useful and a text edit or write
-/// can only fail or destroy it. Names the tools that do handle it.
+/// The refusal a text tool gives for an Office file or a PDF: a package is
+/// a ZIP of XML parts and a PDF a binary object graph, so a text read shows
+/// nothing useful and a text edit or write can only fail or destroy one.
+/// Names the tools that do handle it.
 pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
     let name = path.to_string_lossy();
+    if vak_pdf::is_pdf_path(&name) {
+        let display = path
+            .file_name()
+            .map(|file| file.to_string_lossy().into_owned())
+            .unwrap_or_else(|| name.into_owned());
+        return Some(match tool {
+            "read" => format!(
+                "{display} is a PDF, which {tool} cannot show. Read it with doc_read, which returns its text by page and line with anchors and a sha256."
+            ),
+            _ => format!(
+                "{display} is a PDF, a binary format {tool} can neither change nor produce; nothing was changed. Read a PDF with doc_read; to make one, run a script that writes it."
+            ),
+        });
+    }
     if !vak_ooxml::is_openxml_path(&name) {
         return None;
     }
@@ -787,6 +802,34 @@ mod tests {
             .execute(&serde_json::json!({"path": "notes.txt"}), &ctx)
             .await;
         assert!(!plain.is_error, "{}", plain.content);
+
+        let pdf = dir.path().join("scan.pdf");
+        let original = vak_pdf::fixtures::report();
+        std::fs::write(&pdf, &original).unwrap();
+        let read = crate::read::ReadTool
+            .execute(&serde_json::json!({"path": "scan.pdf"}), &ctx)
+            .await;
+        assert!(
+            read.is_error && read.content.contains("is a PDF") && read.content.contains("doc_read"),
+            "{}",
+            read.content
+        );
+        let write = crate::write::WriteTool
+            .execute(
+                &serde_json::json!({"path": "scan.pdf", "content": "x"}),
+                &ctx,
+            )
+            .await;
+        assert!(
+            write.is_error && write.content.contains("nothing was changed"),
+            "{}",
+            write.content
+        );
+        assert_eq!(
+            std::fs::read(&pdf).unwrap(),
+            original,
+            "the PDF is untouched"
+        );
     }
 
     #[tokio::test]

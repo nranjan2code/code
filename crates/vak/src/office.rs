@@ -41,7 +41,7 @@ pub(crate) async fn run_office(action: OfficeAction) -> i32 {
             .await
         }
         OfficeAction::Diff { before, after } => diff(&worker, &before, &after).await,
-        OfficeAction::Verify { file } => return verify(&worker, &file).await,
+        OfficeAction::Verify { file } => return verify(&worker, &file, "format.openxml").await,
     };
     match answer {
         Ok(value) => print(&value),
@@ -128,8 +128,9 @@ async fn diff(worker: &Path, before: &Path, after: &Path) -> Result<serde_json::
         .await
 }
 
-/// Exits 0 when the file passes the Open XML verifier, 1 when it fails.
-async fn verify(worker: &Path, file: &Path) -> i32 {
+/// Runs one target verifier on a file in the broker worker. Exits 0 when
+/// the file passes, 1 when it fails.
+pub(crate) async fn verify(worker: &Path, file: &Path, verifier: &str) -> i32 {
     let (root, name) = match absolute(file).and_then(|path| {
         let name = path
             .file_name()
@@ -146,7 +147,7 @@ async fn verify(worker: &Path, file: &Path) -> i32 {
         Err(error) => return fail(&error),
     };
     let checks = [vak_sandbox::TargetCheckPlan {
-        verifier: "format.openxml".into(),
+        verifier: verifier.into(),
         path: name,
     }];
     let results = vak_tools::broker::verify_targets(worker, &root, &checks).await;
@@ -161,11 +162,11 @@ async fn verify(worker: &Path, file: &Path) -> i32 {
     }
 }
 
-fn absolute(path: &Path) -> Result<PathBuf, String> {
+pub(crate) fn absolute(path: &Path) -> Result<PathBuf, String> {
     std::path::absolute(path).map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn print(value: &serde_json::Value) -> i32 {
+pub(crate) fn print(value: &serde_json::Value) -> i32 {
     match serde_json::to_string_pretty(value) {
         Ok(text) => {
             println!("{text}");
@@ -175,7 +176,7 @@ fn print(value: &serde_json::Value) -> i32 {
     }
 }
 
-fn fail(message: &str) -> i32 {
+pub(crate) fn fail(message: &str) -> i32 {
     eprintln!("{}", serde_json::json!({ "error": message }));
     2
 }

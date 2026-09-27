@@ -21,7 +21,7 @@ import { artifactPreviewHtml } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate, sendPrompt } from "../App";
 import OfficeWorkspacePane from "./OfficeWorkspacePane";
-import { isOfficePath } from "../officeFiles";
+import { isOfficePath, pdfAnchorPage } from "../officeFiles";
 
 export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office";
 
@@ -808,7 +808,7 @@ export default function ArtifactCanvas() {
               <Show when={displayType() === "pdf" && mediaUrl()}>
                 <iframe
                   class="artifact-canvas-pdf-frame"
-                  src={mediaUrl()!}
+                  src={pdfAnchorPage(canvasArtifact()?.anchor) ? `${mediaUrl()}#page=${pdfAnchorPage(canvasArtifact()?.anchor)}` : mediaUrl()!}
                   title={title()}
                 />
               </Show>

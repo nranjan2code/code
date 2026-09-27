@@ -21,12 +21,14 @@ toml = { workspace = true }
 tokio-util = { workspace = true }
 vak-llm = { workspace = true }
 vak-ooxml = { workspace = true }
+vak-pdf = { workspace = true }
 vak-sandbox = { workspace = true }
 walkdir = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
 vak-ooxml = { workspace = true, features = ["fixtures"] }
+vak-pdf = { workspace = true, features = ["fixtures"] }
 
 [lints]
 workspace = true

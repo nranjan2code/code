@@ -1,3 +1,16 @@
+## Unreleased
+
+- Read PDF files. A new read-only reader, `vak-pdf`, written from the PDF
+  specification with no PDF library beneath it, gives `doc_read` a PDF's
+  text by page and line with anchors, labels invisible, white, tiny and
+  off-page text, comments and form fields, and flags JavaScript, actions,
+  attachments and links without running or following them. A PDF sent on a
+  channel or dropped in a client is named for `doc_read`, a citation such as
+  `report.pdf#page:3` opens the viewer at that page, the PDF verifier runs on
+  the same reader, and `vak pdf read` and `vak pdf verify` give it to
+  scripts. Encrypted PDFs are refused with the reason, and scans are named
+  as such (there is no OCR).
+
 ## 5.1.7 — 2026-09-27
 
 - Fix FinOps in Platform Defaults by reading the installation-wide shared cost ledger, while preserving Agent-scoped ledger data.

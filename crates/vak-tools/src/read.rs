@@ -23,7 +23,7 @@ impl Tool for ReadTool {
     }
 
     fn description(&self) -> &str {
-        "Read a text file from disk. Returns numbered lines. Use offset/limit to page through large files. For Word, Excel, PowerPoint and Visio files use doc_read."
+        "Read a text file from disk. Returns numbered lines. Use offset/limit to page through large files. For Word, Excel, PowerPoint, Visio and PDF files use doc_read."
     }
 
     fn schema(&self) -> Value {

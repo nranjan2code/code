@@ -3851,11 +3851,24 @@ mod tests {
         let workspace = tempfile::tempdir().unwrap();
         let msg = compose_prompt(
             "look",
+            &[document("photo.heic", b"\x00\x00\x00\x18ftypheic\xff\xfe")],
+            workspace.path(),
+        );
+        let text = note(&msg);
+        assert!(text.contains("not a text, PDF or Open XML file"), "{text}");
+        assert!(!text.contains("ftyp"), "{text}");
+    }
+
+    #[test]
+    fn a_pdf_is_saved_and_named_for_doc_read() {
+        let workspace = tempfile::tempdir().unwrap();
+        let msg = compose_prompt(
+            "look",
             &[document("scan.pdf", b"%PDF-1.7\x00\xff\xfe binary")],
             workspace.path(),
         );
         let text = note(&msg);
-        assert!(text.contains("not a text or Open XML file"), "{text}");
+        assert!(text.contains("Read it with doc_read"), "{text}");
         assert!(!text.contains("%PDF"), "{text}");
     }
 

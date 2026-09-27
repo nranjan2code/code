@@ -86,6 +86,7 @@ The workspace is at `/app`; the management console is at `/admin` (`vak open adm
 | Keep an outcome open until it is verified | Goal mode (`vak exec --goal ...`), then `vak commit list` |
 | Inspect past work or recover a workspace | `vak sessions`, `vak checkpoints list` |
 | Work with Word, Excel, or PowerPoint files | The workspace review flow or `vak office --help` |
+| Read a PDF | Send or drop it in a conversation, or `vak pdf --help` |
 | Schedule a routine | `vak tasks --help`; review attention in `vak inbox list` |
 | Create a specialist agent | `vak agents templates`, then `vak agents init --help` |
 

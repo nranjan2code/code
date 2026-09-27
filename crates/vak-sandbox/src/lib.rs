@@ -314,6 +314,9 @@ impl TargetVerifier for ImageDecodeVerifier {
     }
 }
 
+/// Opens a PDF candidate through `vak-pdf`: bounded parsing of the header,
+/// cross-reference data, catalog and page tree, and a full read of every
+/// page's text. A file named `.pdf` that is not a PDF fails.
 pub struct PdfStructureVerifier;
 
 impl TargetVerifier for PdfStructureVerifier {
@@ -322,28 +325,39 @@ impl TargetVerifier for PdfStructureVerifier {
     }
 
     fn supports(&self, path: &str) -> bool {
-        path.to_ascii_lowercase().ends_with(".pdf")
+        vak_pdf::is_pdf_path(path)
     }
 
     fn verify(&self, path: &Path) -> Result<String, String> {
-        const MAX_DECOMPRESSED_STREAM_BYTES: usize = 64 * 1024 * 1024;
-        let document = lopdf::Document::load_with_options(
-            path,
-            lopdf::LoadOptions::with_max_decompressed_size(MAX_DECOMPRESSED_STREAM_BYTES),
-        )
-        .map_err(|error| format!("PDF structure could not be parsed: {error}"))?;
-        document
-            .catalog()
-            .map_err(|error| format!("PDF catalog is invalid: {error}"))?;
-        let pages = document.get_pages();
-        if pages.is_empty() {
-            return Err("PDF has no pages".into());
+        let limits = vak_pdf::Limits::default();
+        let size = fs::metadata(path).map_err(|error| error.to_string())?.len();
+        if size > limits.max_file_bytes {
+            return Err(vak_pdf::Error::TooLarge {
+                bytes: size,
+                limit: limits.max_file_bytes,
+            }
+            .to_string());
         }
-        Ok(format!(
-            "parsed PDF {} with {} page(s)",
-            document.version,
-            pages.len()
-        ))
+        let bytes = fs::read(path).map_err(|error| error.to_string())?;
+        let document = vak_pdf::read(&bytes, limits).map_err(|error| error.to_string())?;
+        let stats = document
+            .stats()
+            .iter()
+            .map(|(name, count)| format!("{count} {name}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut evidence = format!("PDF {} parsed; {stats}", document.version);
+        let flags = document.inspection.flags();
+        if !flags.is_empty() {
+            evidence.push_str("; flags: ");
+            evidence.push_str(&flags.join("; "));
+        }
+        if !document.not_read.is_empty() {
+            evidence.push_str("; not read: ");
+            evidence.push_str(&document.not_read.join("; "));
+        }
+        evidence.push_str("; signatures and rendering were not checked");
+        Ok(evidence)
     }
 }
 
@@ -1601,7 +1615,6 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use super::*;
-    use lopdf::dictionary;
 
     fn promote(candidate: &CandidateManifest) -> Result<PromotionReceipt, Error> {
         let control = tempfile::tempdir()?;
@@ -1741,32 +1754,25 @@ mod tests {
         let target = tempfile::tempdir().unwrap();
         let complete = target.path().join("complete.pdf");
         let truncated = target.path().join("truncated.pdf");
-        let mut document = lopdf::Document::with_version("1.7");
-        let pages_id = document.new_object_id();
-        let page_id = document.add_object(lopdf::dictionary! {
-            "Type" => "Page",
-            "Parent" => pages_id,
-            "MediaBox" => vec![0.into(), 0.into(), 200.into(), 300.into()],
-        });
-        document.objects.insert(
-            pages_id,
-            lopdf::Object::Dictionary(lopdf::dictionary! {
-                "Type" => "Pages",
-                "Kids" => vec![page_id.into()],
-                "Count" => 1,
-            }),
-        );
-        let catalog_id = document.add_object(lopdf::dictionary! {
-            "Type" => "Catalog",
-            "Pages" => pages_id,
-        });
-        document.trailer.set("Root", catalog_id);
-        document.save(&complete).unwrap();
+        let renamed = target.path().join("renamed.pdf");
+        fs::write(&complete, vak_pdf::fixtures::report()).unwrap();
         fs::write(&truncated, b"%PDF-1.7\nnot a document\n%%EOF\n").unwrap();
+        fs::write(&renamed, vak_ooxml::fixtures::docx()).unwrap();
 
+        assert!(PdfStructureVerifier.supports("Report.PDF"));
         let evidence = PdfStructureVerifier.verify(&complete).unwrap();
-        assert!(evidence.contains("1 page(s)"));
+        assert!(evidence.contains("PDF 1.7 parsed; 2 pages"), "{evidence}");
+        assert!(
+            evidence.contains("1 JavaScript action (never run)"),
+            "{evidence}"
+        );
+        assert!(
+            evidence.contains("rendering were not checked"),
+            "{evidence}"
+        );
         assert!(PdfStructureVerifier.verify(&truncated).is_err());
+        let refused = PdfStructureVerifier.verify(&renamed).unwrap_err();
+        assert!(refused.contains("not a PDF"), "{refused}");
     }
 
     #[test]

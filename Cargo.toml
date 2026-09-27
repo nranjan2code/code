@@ -28,6 +28,7 @@ members = [
     "crates/vak-voice",
     "crates/vak-presentation",
     "crates/vak-ooxml",
+    "crates/vak-pdf",
     "crates/vak",
 ]
 
@@ -63,6 +64,7 @@ vak-terminal = { path = "crates/vak-terminal" }
 vak-voice = { path = "crates/vak-voice" }
 vak-presentation = { path = "crates/vak-presentation" }
 vak-ooxml = { path = "crates/vak-ooxml" }
+vak-pdf = { path = "crates/vak-pdf" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
@@ -102,7 +104,8 @@ zip = { version = "=4.6.1", default-features = false, features = ["deflate"] }
 csv = "1"
 quick-xml = "=0.41.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-lopdf = { version = "0.45", default-features = false }
+# FlateDecode for PDF streams (vak-pdf); already in the tree through zip.
+flate2 = "=1.1.9"
 dom_query = "0.27"
 # checkpoint file-content encoding
 base64 = "0.22"

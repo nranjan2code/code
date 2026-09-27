@@ -188,6 +188,12 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: OfficeAction,
     },
+    /// PDF files from a script: read and verify, as JSON
+    /// (docs/design/77-pdf-documents.md)
+    Pdf {
+        #[command(subcommand)]
+        action: PdfAction,
+    },
     /// Durable commitments: what this agent owes, and what closed it
     Commit {
         #[command(subcommand)]
@@ -1404,6 +1410,27 @@ pub(crate) enum OfficeAction {
     Diff { before: PathBuf, after: PathBuf },
     /// Check that a file is a well-formed package of the format its name
     /// says. Exits 1 when it is not.
+    Verify { file: PathBuf },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum PdfAction {
+    /// Print the file's facts, flags and outline with a window of its pages,
+    /// each line anchored `page:<n>/line:<m>`, as the reader projects it.
+    Read {
+        file: PathBuf,
+        /// The page to start at, counted from 1.
+        #[arg(long, default_value_t = 1)]
+        from: usize,
+        /// Start at the page this anchor names (`page:3`, `page:3/line:12`).
+        #[arg(long, conflicts_with = "from")]
+        at: Option<String>,
+        /// Facts, flags and outline only; no page text.
+        #[arg(long, conflicts_with = "at")]
+        facts: bool,
+    },
+    /// Check that a file is a PDF the reader can open, page tree and all.
+    /// Exits 1 when it is not.
     Verify { file: PathBuf },
 }
 

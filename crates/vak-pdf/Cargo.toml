@@ -1,0 +1,20 @@
+[package]
+name = "vak-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Bounded, read-only PDF parser with security inspection (docs/design/77-pdf-documents.md)"
+
+[dependencies]
+flate2 = { workspace = true }
+serde = { workspace = true }
+
+[features]
+# Synthetic test documents (src/fixtures.rs); never enabled in a shipped build.
+fixtures = []
+
+[dev-dependencies]
+vak-pdf = { path = ".", features = ["fixtures"] }
+
+[lints]
+workspace = true

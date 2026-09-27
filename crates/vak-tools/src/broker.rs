@@ -69,6 +69,23 @@ enum WorkerTask {
         keep: Vec<String>,
         out: PathBuf,
     },
+    /// `vak pdf read`: a PDF's facts and a window of its pages.
+    PdfRead {
+        path: PathBuf,
+        view: PdfView,
+    },
+}
+
+/// Which view of a PDF a read asks for (docs/design/77).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PdfView {
+    /// Pages from page `from` (counted from 1) as far as one reply holds.
+    Content { from: usize },
+    /// Pages from the one an anchor (`page:3`, `page:3/line:12`) names.
+    At { anchor: String },
+    /// What the file is, its counts, flags and outline, and no page text.
+    Facts,
 }
 
 /// Which projection of an Office file a view asks for (docs/design/72, P4).
@@ -584,6 +601,19 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::PdfRead { path, view } => {
+            let (content, is_error) = match pdf_read_in_worker(&path, view) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::VerifyTargets { root, checks } => {
             let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
             let content = serde_json::to_string(&results).unwrap_or_default();
@@ -896,6 +926,111 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
     }
     .map_err(|error| error.to_string())?;
     body["sha256"] = Value::String(sha256);
+    serde_json::to_string(&body).map_err(|error| error.to_string())
+}
+
+/// A PDF's facts and pages, parsed in a worker under the read-only sandbox
+/// like every PDF read (invariant 14), with the file's digest.
+pub async fn pdf_read(worker_exe: &Path, path: &Path, view: PdfView) -> Result<Value, String> {
+    let Some(dir) = path.parent() else {
+        return Err("the file has no directory".into());
+    };
+    let task = WorkerTask::PdfRead {
+        path: path.to_path_buf(),
+        view,
+    };
+    let content = run_task(worker_exe, dir, &[dir], false, task).await?;
+    serde_json::from_str(&content)
+        .map_err(|error| format!("worker returned an invalid reply: {error}"))
+}
+
+/// Most bytes of page JSON one reply carries, well inside the protocol
+/// limit. A page too big alone keeps the lines that fit and says so.
+const PDF_PAGE_BYTES: usize = 1024 * 1024;
+
+fn pdf_read_in_worker(path: &Path, view: PdfView) -> Result<String, String> {
+    let limits = vak_pdf::Limits::default();
+    let size = std::fs::metadata(path)
+        .map_err(|error| format!("cannot open {}: {error}", path.display()))?
+        .len();
+    if size > limits.max_file_bytes {
+        return Err(vak_pdf::Error::TooLarge {
+            bytes: size,
+            limit: limits.max_file_bytes,
+        }
+        .to_string());
+    }
+    let bytes =
+        std::fs::read(path).map_err(|error| format!("cannot open {}: {error}", path.display()))?;
+    let sha256 = crate::office_apply::sha256_hex(&bytes);
+    let document = vak_pdf::read(&bytes, limits)
+        .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+    let (from, focus) = match &view {
+        PdfView::Content { from } => ((*from).max(1), None),
+        PdfView::At { anchor } => {
+            let page = document.locate(anchor).ok_or_else(|| {
+                format!(
+                    "{anchor:?} names no page that was read; the document has {} pages",
+                    document.page_count
+                )
+            })?;
+            (page, Some(anchor.clone()))
+        }
+        PdfView::Facts => (usize::MAX, None),
+    };
+    let mut pages = Vec::new();
+    let mut used = 0usize;
+    let mut next_page = None;
+    for page in document.pages.iter().filter(|page| page.number >= from) {
+        let mut value = serde_json::to_value(page).map_err(|error| error.to_string())?;
+        let size = value.to_string().len();
+        if used + size > PDF_PAGE_BYTES {
+            if !pages.is_empty() {
+                next_page = Some(page.number);
+                break;
+            }
+            let mut kept = Vec::new();
+            let mut kept_bytes = 0usize;
+            for line in &page.lines {
+                let line = serde_json::to_value(line).map_err(|error| error.to_string())?;
+                kept_bytes += line.to_string().len();
+                if kept_bytes > PDF_PAGE_BYTES {
+                    break;
+                }
+                kept.push(line);
+            }
+            value["lines"] = Value::Array(kept);
+            value["partial"] = Value::Bool(true);
+            pages.push(value);
+            next_page = document
+                .pages
+                .iter()
+                .find(|later| later.number > page.number)
+                .map(|later| later.number);
+            break;
+        }
+        used += size;
+        pages.push(value);
+    }
+    let stats: serde_json::Map<String, Value> = document
+        .stats()
+        .into_iter()
+        .map(|(name, count)| (name.to_string(), Value::from(count)))
+        .collect();
+    let body = serde_json::json!({
+        "sha256": sha256,
+        "version": document.version,
+        "info": document.info,
+        "page_count": document.page_count,
+        "stats": stats,
+        "flags": document.inspection.flags(),
+        "not_read": document.not_read,
+        "outline": document.outline,
+        "external_links": document.inspection.external_links,
+        "pages": pages,
+        "next_page": next_page,
+        "focus": focus,
+    });
     serde_json::to_string(&body).map_err(|error| error.to_string())
 }
 

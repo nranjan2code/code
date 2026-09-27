@@ -1,9 +1,9 @@
-// Office files as the client names them (docs/design/72): which paths are
-// Word, Excel, PowerPoint or Visio files, the shapes of the reader's
-// anchors, and a citation of a place, `path#anchor`, the form doc_read tells
-// the model to use. An anchor is checked for shape only
-// (vak_ooxml::is_anchor); whether the place exists is answered by the view
-// that opens it.
+// Office files and PDFs as the client names them (docs/design/72, 77): which
+// paths are Word, Excel, PowerPoint, Visio or PDF files, the shapes of the
+// readers' anchors, and a citation of a place, `path#anchor`, the form
+// doc_read tells the model to use. An anchor is checked for shape only
+// (vak_ooxml::is_anchor, vak_pdf::is_anchor); whether the place exists is
+// answered by the view that opens it.
 
 const OFFICE_EXTENSIONS = new Set([
   "docx", "docm", "dotx", "dotm", "xlsx", "xlsm", "xltx", "xltm", "xlam",
@@ -58,12 +58,28 @@ export function isAnchor(anchor: string): boolean {
   return extra.length === 0 && cell(first) && (second === undefined || cell(second));
 }
 
-/** `inbox/deck.pptx#slide:256` → its path and anchor; null otherwise. */
+export function isPdfPath(path: string): boolean {
+  return path.split(".").pop()?.toLowerCase() === "pdf";
+}
+
+/** A PDF place, `page:3` or `page:3/line:12`, mirroring `vak_pdf::is_anchor`. */
+export function isPdfAnchor(anchor: string): boolean {
+  return /^page:[1-9][0-9]{0,6}(\/line:[1-9][0-9]{0,6})?$/.test(anchor);
+}
+
+/** The page a PDF anchor names, for the viewer's `#page=` fragment. */
+export function pdfAnchorPage(anchor: string | undefined): number | null {
+  return anchor && isPdfAnchor(anchor) ? Number(anchor.slice(5).split("/")[0]) : null;
+}
+
+/** `inbox/deck.pptx#slide:256` or `inbox/scan.pdf#page:3` → its path and
+ * anchor; null otherwise. */
 export function parseOfficeCitation(text: string): OfficeCitation | null {
   const trimmed = text.trim();
   const hash = trimmed.indexOf("#");
   if (hash <= 0) return null;
   const path = trimmed.slice(0, hash);
   const anchor = trimmed.slice(hash + 1);
-  return isOfficePath(path) && isAnchor(anchor) ? { path, anchor } : null;
+  const cited = (isOfficePath(path) && isAnchor(anchor)) || (isPdfPath(path) && isPdfAnchor(anchor));
+  return cited ? { path, anchor } : null;
 }
