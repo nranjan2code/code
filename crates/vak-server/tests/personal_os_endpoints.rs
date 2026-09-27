@@ -762,5 +762,4 @@ async fn finops_platform_scope_uses_shared_home_and_agent_scope_adds_private_hom
         .unwrap();
     assert_eq!(platform["day_usd"], 1.25);
     assert_eq!(platform["total_rows"], 1);
-
 }
