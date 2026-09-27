@@ -24,7 +24,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 - Sessions are append-only JSONL ledgers; branching and compaction append rather than rewrite history.
 - Agent turns, tools, workers, flows, plans, evals, server runs, and desktop runs all pass through the same permission/policy engine before any effect.
 - Every turn is resolved into a typed, recorded "intent": a reading on seven behavioural axes, and an engagement derived from it that can only *narrow* what the run may do. Work that outlives a session becomes a durable commitment whose completion the runtime verifies against the world rather than accepting from the model.
-- Supports multiple model providers (Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, Ollama for local use).
+- Supports multiple model providers, selected from the models available to the user's credentials.
 - Extensibility (skills, hooks, MCP servers, custom commands, flows) is additive and does not bloat the core.
 - Can run as a durable background service (macOS LaunchAgent / Linux systemd user service) via the server, in addition to interactive CLI/desktop use.
 
@@ -46,7 +46,7 @@ vak's mechanism is "one core, many surfaces": a single auditable, policy-gated c
 ## Evidence on Hand
 
 - README.md documents quick start, architecture ("one core, many surfaces"), and a features/documentation index.
-- `docs/design/` contains architecture design docs (e.g. `20-tauri-desktop.md`, `24-agent-security.md`, `00-roadmap.md`).
+- `docs/design/` contains architecture design docs (e.g. `24-agent-security.md`, `00-roadmap.md`).
 - No testimonials, customer names, benchmarks, or pricing exist; future work must not fabricate them.
 - Current version: 3.0.24 (per README badge and CHANGELOG), actively developed.
 

@@ -148,7 +148,7 @@ This single matrix eliminates over 90% of useless agent interruptions while guar
 
 Every systems engineer reading this will ask the obvious performance question: *"Doesn't classifying seven different axes on every turn add massive latency and burn thousands of tokens?"*
 
-If you called a frontier model like GPT-6 Astra or Claude Fable 5.1 on every turn just to classify intent, the answer would be yes.
+If you called a frontier model on every turn just to classify intent, the answer would be yes.
 
 To prevent this, the runtime uses a **4-tier resolution cascade**, resolving from cheapest to most expensive:
 

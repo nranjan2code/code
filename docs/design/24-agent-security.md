@@ -27,26 +27,17 @@ defences: DNS rebinding (a visited page resolving its own domain to
 127.0.0.1 to become same-origin) and cross-site request forgery (a cookie
 the browser attaches to whoever asks). See invariant 34.
 
-## Lessons from other harnesses
+## Security failure classes
 
-Primary-source review on 2026-08-23 found recurring failure classes:
-
-- OpenAI Codex published a high-severity sandbox bypass caused by path-policy
-  configuration logic. Path normalization and policy composition are security
-  code, not convenience helpers.
-  <https://github.com/openai/codex/security/advisories/GHSA-w5fx-fh39-j5rw>
-- Claude Code advisories include symlink escapes, worktree/trust confusion,
-  command injection around directory changes, insecure temporary files, and
-  exfiltration through a pre-approved web domain. A boundary must bind the
-  resolved resource and outbound destination, not a plausible-looking string.
-  <https://github.com/anthropics/claude-code/security>
-- OpenClaw advisories include wrapper-based approval bypass, host-environment
-  sanitizer gaps, symlink-following during workspace synchronization, and
-  authorization omissions in plugin and provider paths. Its hardened baseline
-  uses workspace-only filesystem tools, default-denied execution, loopback
-  gateway binding, explicit plugin trust, and a deep policy-drift audit.
-  <https://github.com/openclaw/openclaw/security/advisories>
-  <https://github.com/openclaw/openclaw/blob/main/docs/gateway/security/index.md>
+Security reviews across agent runtimes repeatedly expose the same failure
+classes: path-policy composition errors, symlink escapes, trust confusion,
+command injection around directory changes, insecure temporary files,
+overbroad outbound access, wrapper-based approval bypasses, incomplete
+environment sanitization, and missing authorization checks in plugin and
+provider paths. A boundary must bind the resolved resource and outbound
+destination, not a plausible-looking string. Hardened systems use workspace-only
+filesystem tools, default-denied execution, loopback gateway binding, explicit
+plugin trust, and deep policy-drift audits.
 - Hermes separates credential passthrough by tool/backend, clears the MCP
   environment except for a small safe set, mounts declared credential files
   read-only, redacts common secret forms, supports website restrictions, and

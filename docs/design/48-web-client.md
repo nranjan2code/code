@@ -12,8 +12,7 @@ Status: **Phases 0–4 shipped.** What follows describes what exists, with
 the places implementation corrected the plan called out in place. Phase E
 (multi-user cloud) remains explicitly out of scope.
 
-Related: 13-server (HTTP+SSE contract), 20-tauri-desktop (the client this
-generalizes), 33-admin-console (the *operations* surface, which this does
+Related: 13-server (HTTP+SSE contract), 33-admin-console (the *operations* surface, which this does
 not replace), 34-channel-onboarding (CorePool), 46-stabilization (trust and
 onboarding), 47-commitment-kernel (intent/commitments).
 

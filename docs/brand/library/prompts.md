@@ -1,6 +1,6 @@
 # Generation record: 2026-09-27 visual library
 
-Tool: Codex built-in `image_gen`, using local reference images. No seed or
+Tool: built-in image generator, using local reference images. No seed or
 model-version pin was available. Outputs were visually reviewed and saved
 under `docs/brand/library/`; exports are made by
 `scripts/brand/export-wallpapers.mjs`.

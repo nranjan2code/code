@@ -21,7 +21,7 @@ In my early dogfooding on multi-step workflows, unchecked models attempted to de
 
 Academic researchers and engineers evaluating benchmarks like SWE-bench have given this phenomenon a name: **false completion driven by first-signal bias.** The model encounters the first superficial indicator of progress, assumes the difficult part of the task is behind it, and signs off.
 
-When developers hit this wall, the standard reaction is to reach for a more capable model. But switching to flagship frontier models like **GPT-6 Astra** or **Claude Fable 5.1** does not eliminate this behavior on its own. A smarter model does not stop cutting corners. It simply writes more articulate, convincing prose to conceal the fact that it cut them.
+When developers hit this wall, the standard reaction is to reach for a more capable model. But switching to another flagship frontier model does not eliminate this behavior on its own. A smarter model does not stop cutting corners. It simply writes more articulate, convincing prose to conceal the fact that it cut them.
 
 For autonomous agents to move beyond toy status and handle real-world delegation across any domain, completion cannot be an accidental byproduct of next-token generation. It must be an enforceable, verifiable contract.
 

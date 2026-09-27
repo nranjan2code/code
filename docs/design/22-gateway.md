@@ -7,8 +7,8 @@ sessions, plus unattended scheduled work with delivery back out.
 
 vak's structural advantage: **the core was always headless.** TUI and
 desktop were built as consumers of the server contract from day one. The
-gateway is therefore not a new product bolted on the side (OpenClaw's mistake
-— its gateway owns everything) but one more consumer of the exact same
+gateway is therefore not a new product bolted on the side, but one more
+consumer of the exact same
 contract the desktop already speaks. Core stays hostable anywhere — a $5 VPS,
 a homelab box, a cloud worker — and every surface keeps working unchanged.
 
@@ -305,7 +305,7 @@ Telegram chat id and `sender` to Telegram's own numeric `from.id`.
 
 ## Security posture
 
-Lessons from OpenClaw's incident history, inverted:
+Security posture:
 
 1. Bearer-token auth on every route (existing middleware), `/health` open.
 2. Gateway **off by default**; enabling requires trusted config or CLI flag.

@@ -8,8 +8,8 @@ The public product name is **Vakyartha** (https://vakyartha.com), approved on
 2026-09-25. The `vak` command, crates, identifiers and data paths keep their
 internal names. Brand assets and platform exceptions are in `docs/brand/README.md`.
 
-vak is a Rust general-purpose agent harness. Thesis: Codex-grade safety, pi-grade
-transparency, Claude Code-grade extensibility, opencode-grade simplicity.
+vak is a Rust general-purpose agent harness. Thesis: strong safety, transparent
+operation, extensible integrations, and a simple core.
 When a feature request conflicts with simplicity, resolve it as an extension,
 not core.
 
@@ -51,7 +51,7 @@ Read before changing behaviour in these areas:
   local, crash-only channels, ladder+endurance inference, store-and-forward
   delivery), `53-distributed-bus.md` (`crates/vak-bus`).
 - **Surfaces** — `33-admin-console.md` (admin), `48-web-client.md` (browser and
-  the `[server]` exposure rules), `20-tauri-desktop.md` (desktop shell),
+  the `[server]` exposure rules),
   `55-rich-terminal-surface.md` (`vak term`), `34-channel-onboarding.md`
   (channels, multi-bot identity), `38-voice-personality.md` and
   `49-live-voice.md` (voice), `29-personal-os.md` (the personal-use surface).
@@ -751,7 +751,7 @@ in progress, and the rest of V4 follows it.
     resolved once per turn too, re-planned only by an explicit over-length
     rejection or incremental compaction, so a message the turn already sent
     never silently changes shape underneath a replayed thinking block
-    (required for Claude's preserved-thinking check and for cache hits).
+    (required for provider-specific preserved-thinking checks and for cache hits).
     Only a handoff reset clears the frozen plan. Cache breakpoints/keys are
     rendered per provider. Presentations and TurnCards are hash-linked
     ledger entries, never rebuilt from tool arguments. A directive with
@@ -1442,7 +1442,7 @@ crates/vak-desktop   Tauri 2 SHELL over an embedded secured_router. The UI
                      best-of-N, tasks (cron/script/pin), side chats,
                      memory tier editor, global search, diagnostics,
                      backup/digest cards, budget banner
-                     (docs/design/20-tauri-desktop.md, 29-personal-os.md) +
+                     (29-personal-os.md) +
                      voice narration of turn completions and approval
                      prompts via a shared `<audio>` element and
                      `/voice/speak` (no native audio crate — the webview

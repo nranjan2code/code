@@ -315,7 +315,7 @@ only after current source, runtime behavior, and the appropriate focused test ag
   explicit architectural follow-up rather than an untested failure.
 - 2026-09-10: Compound offline regression initially exposed a machine setup
   prerequisite: no skills existed at the product's conventional macOS global
-  path. Rerunning with the repository's available Codex-managed skill source
+  path. Rerunning with the repository's bundled skill source
   completed all 10 cases successfully: skills validation, deterministic eval,
   feed concurrency/load, hooks/MCP, plugin lifecycle/runtime, memory
   add/amend/forget provenance, scheduler/heartbeat/learning/MCP endpoints, and
@@ -512,7 +512,7 @@ only after current source, runtime behavior, and the appropriate focused test ag
 ## Stabilization checkpoint — 2026-09-10
 
 This review is intentionally paused at a clean incremental checkpoint while
-weekly Codex capacity is nearly exhausted. The current source and generated
+the weekly work budget is nearly exhausted. The current source and generated
 web/Tauri/Admin artifacts pass `git diff --check` and
 `scripts/ui-acceptance-check.sh`. No broad refactor or unverified release claim
 is being made from this checkpoint.

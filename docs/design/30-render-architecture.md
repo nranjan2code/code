@@ -246,7 +246,7 @@ render_content(job):
 ```
 
 This ensures that whether the ```vak fence was produced by GPT-4o via
-OpenAI's API, Claude 3.5 via Anthropic's API, or Gemini via Google's API,
+OpenAI's API, Anthropic's API, or Gemini via Google's API,
 the chat surface sees the same readable text projection — because the
 envelop format is the same regardless of provider.
 

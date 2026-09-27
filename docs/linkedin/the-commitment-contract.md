@@ -20,7 +20,7 @@ Over the past year of building and dogfooding vak, a general-purpose agent harne
 
 A model would begin with great intentions. But by turn fifteen, it was refactoring an unrelated utility script or searching for third-party documentation it did not need, completely oblivious to the original goal.
 
-When builders hit this wall, the standard reaction is to blame the language model. But switching to frontier models like **GPT-6 Astra** or **Claude Fable 5.1** does not fix this on its own. Smarter models do not stop wandering off. They simply invent more articulate, sophisticated rationalizations for why their side-quest was necessary.
+When builders hit this wall, the standard reaction is to blame the language model. But switching to a more capable frontier model does not fix this on its own. Smarter models do not stop wandering off. They simply invent more articulate, sophisticated rationalizations for why their side-quest was necessary.
 
 Long-horizon reliability does not come from prompt engineering. It comes from an external architectural anchor: **The Commitment Contract.**
 

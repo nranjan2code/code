@@ -107,7 +107,7 @@ Supported Theme Suites:
   1. **System Gauges & Radar**: Shared telemetry dials for continuity.
   2. **Live Network Traffic Waveform**: Real-time throughput graph for `vak-bus`.
   3. **Distributed Bus Queue Health**: JetStream topic depths and throughput.
-  4. **Model Provider Latency**: Anthropic Claude 3.7 and Ollama Local p50/p95 latency bars.
+  4. **Model Provider Latency**: Hosted and local provider p50/p95 latency bars.
 
 ---
 

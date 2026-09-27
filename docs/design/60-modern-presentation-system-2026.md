@@ -10,7 +10,7 @@ and for how to change it `docs/design/67-presentation-renderer-guide.md`.
 
 ## 1. Overview & Vision
 
-Vak is a universal, always-on agent platform. This design document establishes the modern 2026 presentation layer across Desktop (Tauri) and Web (`crates/vak-client-ui`), elevating the conversational experience from an austere developer transcript to a luminous, peppy, and universal agent workspace inspired by 2026 state-of-the-art agent interfaces (Muse, Claude Desktop, ChatGPT macOS, Granola, and Linear AI).
+Vak is a universal, always-on agent platform. This design document establishes the modern 2026 presentation layer across Desktop (Tauri) and Web (`crates/vak-client-ui`), elevating the conversational experience from an austere developer transcript to a luminous, peppy, and universal agent workspace inspired by current consumer software interfaces.
 
 ### Core Principles
 1. **Universal Scope**: Not just code. Seamless presentation across everyday research, news, weather, lifestyle/cooking, planning, and deep sandboxed software engineering.

@@ -59,7 +59,7 @@ A retry can overlap the old request, invalidating concurrency and cost assumptio
 
 ### F06 — P2 — Routing evidence records adapter identity instead of provider identity (existing; reproduced)
 
-[Dispatch receipts](/Users/nisheethranjan/Projects/vakcoder/crates/vak-agent/src/lib.rs:2492) stamp `provider_arc.name()`. Probes show configured `openrouter`, `ollama`, and `opencode-zen` all report `openai-completions`; `openrouter-responses` reports `openai-responses`. Admission candidates and [evidence lookup](/Users/nisheethranjan/Projects/vakcoder/crates/vak-core/src/routing.rs:102) use configured provider names.
+[Dispatch receipts](/Users/nisheethranjan/Projects/vakcoder/crates/vak-agent/src/lib.rs:2492) stamp `provider_arc.name()`. Probes show configured compatible gateways and `ollama` report `openai-completions`; `openrouter-responses` reports `openai-responses`. Admission candidates and [evidence lookup](/Users/nisheethranjan/Projects/vakcoder/crates/vak-core/src/routing.rs:102) use configured provider names.
 
 Evidence therefore misses its intended candidate or merges unrelated endpoints. OpenAI's automatic Responses selection has the same mismatch. Preserve the canonical RouteLeg identity, endpoint/credential scope, and wire dialect separately through dispatch and receipts. An adapter name is not a provider/account identity.
 

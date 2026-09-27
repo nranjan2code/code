@@ -10,7 +10,7 @@ Frontmatter `name:` +
 `description:`. Names must be lowercase kebab-case, 1–64 characters; descriptions
 are required and capped at 1024 characters. Only the name/description/
 path line enters the system prompt; the model reads the file with `read`
-when relevant — progressive disclosure, Claude Code-skill compatible.
+when relevant — progressive disclosure using the portable skill format.
 Discovered skills are recorded in the frozen contract.
 
 Optional frontmatter `serves:` declares what the skill is for, against the

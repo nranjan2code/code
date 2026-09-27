@@ -20,7 +20,7 @@ that owns its contract.
 | Skills, workers, hooks, MCP, plugins, custom commands | `docs/design/09-extensibility.md`, `docs/design/39-plugin-ecosystem.md` |
 | Static flows, dynamic planner, run-graph projection | `docs/design/10-flows.md`, `docs/design/11-planner.md` |
 | Eval harness, checkpoints/rewind, worktree isolation | `docs/design/12-evals.md`, `docs/design/14-checkpoints.md` |
-| HTTP+SSE server, and one workspace client over it in three hosts — Tauri shell, browser on loopback, browser against a headless box | `docs/design/13-server.md`, `docs/design/20-tauri-desktop.md`, `docs/design/48-web-client.md` |
+| HTTP+SSE server, and one workspace client over it in three hosts — Tauri shell, browser on loopback, browser against a headless box | `docs/design/13-server.md`, `docs/design/48-web-client.md` |
 | Gateway, chat surfaces, channel governance, multi-bot identity | `docs/design/22-gateway.md`, `docs/design/34-channel-onboarding.md` |
 | Web admin console | `docs/design/33-admin-console.md` |
 | Memory, cross-session search, learning loop | `docs/design/23-memory.md`, `docs/design/26-learning.md` |

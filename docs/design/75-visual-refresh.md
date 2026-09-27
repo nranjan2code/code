@@ -162,8 +162,8 @@ message, with raw IDs:
   bird, so the list had no identity.
 - The interface accent is terracotta on cream (`#A8462A` on `#F4F1EA`), or
   terracotta on brown-black in dark mode (`#DF795F` on `#171714`). Cream with
-  a clay-orange accent is the look people associate with Claude's own app,
-  and one many AI products now share.
+  a clay-orange accent is widely used across assistant products, making the
+  Vakyartha mark and palette less distinctive.
 - The approved reference screens use deep green (`#476A58`) and a serif.
 - `docs/brand/README.md` itself lists terracotta as "the one accent on
   paper" and sage green for primary buttons, beside the mark's navy and
@@ -199,8 +199,7 @@ All five were locked by the maintainer on 2026-09-25.
 The directions considered for D1 are recorded in the visual reference: A,
 Ink and Saffron (chosen); B, Sage and Paper (the reference screens' green,
 which would have needed the mark and mascot recoloured); C, refined
-terracotta (least work, but Vak keeps looking like Claude and the mark still
-clashes).
+terracotta (least work, but it keeps the existing mark and palette in conflict).
 
 ## 5. The system
 

@@ -1,6 +1,6 @@
 # Individual character generation record
 
-Tool: Codex built-in `image_gen`, 2026-09-27. Each image was generated from
+Tool: built-in image generator, 2026-09-27. Each image was generated from
 the corresponding `docs/brand/characters/<id>.png` reference with
 `transparent_background: true`. The five approved generated PNGs below are
 the preserved source assets; the model is nondeterministic, so the prompts

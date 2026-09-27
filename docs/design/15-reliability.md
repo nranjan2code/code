@@ -81,8 +81,8 @@ The standard failure matrix and where each case is handled.
   bypass the agent loop, so they carry their own bounded retry (3 attempts,
   exponential backoff, `Retry-After` honored, cancel-aware). A transient
   failure mid-planning no longer fails the whole run closed.
-- **Truncated SSE streams on OpenAI-compatible proxies**: some endpoints
-  (OpenCode Zen free tier) end the body after the last content chunk without
+- **Truncated SSE streams on OpenAI-compatible proxies**: some free-tier endpoints
+  end the body after the last content chunk without
   `[DONE]`/`finish_reason`. The openai-completions adapter treats a clean
   close *with content* as de facto completion (`EndTurn`); a close with no
   content still fails closed as `Parse`.

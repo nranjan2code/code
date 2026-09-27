@@ -72,7 +72,7 @@ model calls, Review, acceptance, undo.
   Do not pass `--gateway`, so no channel traffic is involved.
 - **Never open credential files** (`credentials.enc`, `.credential_key`,
   the credential index) or read ledgers in the real data home. Nothing in a
-  live run needs them, and Claude Code's auto mode refuses such reads.
+  live run needs them, and restricted execution modes should refuse such reads.
   Inspect state through the app and its HTTP API instead (below).
 
 ### Signing in
@@ -100,9 +100,8 @@ VAK_GATEWAY_TOKEN=$(cat /tmp/vak-live/test-gateway-token) target/debug/vak open 
 The link carries `?token=`, which works only on loopback (invariant 34).
 Opening `/app` without it shows the client but every call answers 401.
 
-In Claude Code, run the server through the preview tools rather than a
-shell: add an entry to `.claude/launch.json` in the main checkout, for
-example
+In a graphical development environment, register the server as a dev-server
+preview using its preview configuration, for example:
 
 ```json
 {
@@ -161,8 +160,8 @@ credentials.
 - `node_modules` can be a symlink to the main checkout's when the
   lockfiles match; exclude it locally (`.git/info/exclude` of the main
   repository) rather than in `.gitignore`.
-- `.claude/launch.json` is read from the main checkout; entries for a
-  worktree point at the worktree's paths.
+- Dev-server preview configuration is read from the main checkout; entries
+  for a worktree point at the worktree's paths.
 - Merge the base branch into the feature branch and verify there before
   fast-forwarding the base. When the base checkout has uncommitted work
   that touches the same files, ask the owner whether to commit, stash or

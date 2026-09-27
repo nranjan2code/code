@@ -346,8 +346,8 @@ turn, every step after the first appends more messages (tool results,
 control nudges) after the directive, and re-deriving "last message" each
 step used to move the tail onto whichever one came last, silently changing
 the shape of an already-sent, earlier message between requests — exactly
-what an append-only request must never do (required for Claude's
-preserved-thinking check, and it maximises cache hits generally). The tail
+what an append-only request must never do (required for provider-specific
+preserved-thinking checks, and it maximises cache hits generally). The tail
 sits before any text in the directive's own content, after any leading
 `tool_result` blocks, so the last thing the model reads there is the user's
 own words — the directive on the first step, a runtime nudge (appended
@@ -723,7 +723,7 @@ behind OpenRouter or a proxy may not pass any of this through, and a local
 runner may have none of it.
 
 Registry: `anthropic`, `openai` (chat), `openai-responses`, `google`,
-`openrouter`, `openrouter-responses`, `opencode-zen`, `ollama` (native
+`openrouter`, `openrouter-responses`, compatible gateways, `ollama` (native
 `/api/chat`), `bedrock` (Mantle, OpenAI-compat). Realtime/live voice
 providers are out of scope here.
 
@@ -734,9 +734,9 @@ providers are out of scope here.
 | **OpenAI Responses** (`openai-responses`) | as above | as above; `instructions` cannot carry a breakpoint, so the stable prefix must be a developer message | reasoning items must be carried: either replay them (stateless) or chain with `previous_response_id` (server-held); `configuration_update` items change effort without breaking the prefix | none (client-side `find_tools`) | `context_management: {compact_threshold}` server-side, or `POST /responses/compact`; compaction items are **opaque and encrypted** | within a turn prefer `previous_response_id` (no reasoning replay); across turns Vak's own projection with stateless input; native compaction off by default because its output cannot be audited in the ledger |
 | **Google** (`google`) | implicit on Gemini 2.5+, min 2,048 (2.5) / 4,096 (3.x); reported as `usage.total_cached_tokens`; explicit `cachedContents` for long stable prefixes | none per block; explicit cache object with TTL | thinking models require **thought signatures** replayed exactly (stateless) or `store: true` + `previous_interaction_id` (Interactions API, server-managed) | none | none client-visible | keep the prefix identical; replay thought blocks within a turn; explicit cache for a prefix above the minimum when the session is long-lived; `thinking_level` chosen by intent stakes, not fixed |
 | **OpenRouter** (`openrouter`, `-responses`) | pass-through: OpenAI automatic + explicit, Anthropic `cache_control`, Gemini implicit/explicit, DeepSeek/Grok/Groq/Moonshot/Z.AI automatic, Qwen explicit | Anthropic-style `cache_control` on content blocks is translated per upstream; top-level `cache_control` for auto; `session_id` pins the upstream for cache reuse; `usage.prompt_tokens_details.{cached_tokens, cache_write_tokens, cache_discount}` | depends on upstream; treat as stateless replay | none | none | always send `session_id`; place `cache_control` as for Anthropic and let OpenRouter translate; the probe decides whether hits actually occur for the routed upstream |
-| **Bedrock Mantle** (`bedrock`) | GPT-5.6 (Sol/Terra/Luna) explicit caching via the OpenAI-compatible Responses API; Anthropic models via the Messages API with `cache_control` | `cache_control` / `prompt_cache_key` as documented by AWS | as OpenAI Responses | as upstream | as upstream | same rules as the upstream family; the probe verifies pass-through |
+| **Bedrock Mantle** (`bedrock`) | OpenAI-compatible Responses models with explicit caching; Anthropic models via the Messages API with `cache_control` | `cache_control` / `prompt_cache_key` as documented by AWS | as OpenAI Responses | as upstream | as upstream | same rules as the upstream family; the probe verifies pass-through |
 | **Ollama** (`ollama`, 0.34.2) | runner-side prefix cache (`matched=` in the log), independent of context; lost on unload (`keep_alive`, default 5m) | none in usage; the native `/api/chat` adapter passes `keep_alive` and `options.num_ctx` explicitly and reads prompt-eval timing into `Usage` | thinking returned but not required back | 0.34 adds "OpenAI-compatible client tool search"; semantics unverified — probe before relying on it | 0.34 adds "response compaction"; same caveat | over-length is a hard 400, mapped to `LlmError::Context` and replanned once (§4); the probe measures prefill tok/s and cache from timing since usage does not report it |
-| **OpenCode Zen** (`opencode-zen`) | OpenAI-compatible gateway; caching depends on the routed upstream | unknown | unknown | unknown | unknown | treat as OpenRouter without pass-through guarantees; everything comes from the probe |
+| Compatible gateway | OpenAI-compatible gateway; caching depends on the routed upstream | unknown | unknown | unknown | unknown | treat as a routed gateway without pass-through guarantees; everything comes from the probe |
 
 **Future providers** (Groq, Mistral, DeepSeek, xAI, Moonshot, Z.AI, Qwen,
 vLLM, llama.cpp, LM Studio, MLX-native) all fit one of three shapes the

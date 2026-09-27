@@ -3,8 +3,8 @@ Status: implemented in 2.0.0
 
 ## Decisions
 
-1. **Raw provider APIs, no meta-SDK.** pi's lesson: Vercel-AI-style
-   lowest-common-denominator abstractions leak. We own request/response shape
+1. **Raw provider APIs, no meta-SDK.** Broad lowest-common-denominator
+   abstractions leak. We own request/response shape
    per provider family. Cost: ~2K LOC per family; acceptable.
 2. **Every streaming event carries delta AND accumulated snapshot**
    (`StreamEvent::TextDelta { delta, partial }`). Consumers render incrementally
@@ -43,15 +43,15 @@ blocks: `Text | Thinking{signature} | ToolUse{id,name,input} | ToolResult{tool_u
 | openai-completions | `openai.rs` | OpenRouter, Ollama, Groq, Together, vLLM, any `/v1/chat/completions` endpoint that supports the requested feature set |
 | openai-responses | `openai_responses.rs` | OpenAI and OpenRouter (`/v1/responses`, for models/features that require the Responses dialect) |
 | google-generative-ai | `google.rs` | Gemini (`streamGenerateContent?alt=sse`) |
-| openai-completions (zen) | `openai.rs` | OpenCode Zen (`opencode.ai/zen/v1`) |
+| openai-completions (compatible gateway) | `openai.rs` | OpenAI-compatible gateway |
 
 Registry names: `anthropic`, `openai`, `openai-responses`, `openrouter`,
-`openrouter-responses`, `opencode-zen`, `ollama`, `google` (lazy-built,
+`openrouter-responses`, compatible gateways, `ollama`, `google` (lazy-built,
 cached). Auth via
 `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OPENROUTER_API_KEY` /
-`GEMINI_API_KEY` / `OPENCODE_API_KEY`; Ollama needs no key. Base-URL
+`GEMINI_API_KEY`; Ollama needs no key. Base-URL
 overrides: `VAK_{ANTHROPIC,OPENAI,OPENROUTER,OLLAMA,GOOGLE,
-OPENCODE_ZEN}_BASE_URL`.
+compatible gateways).
 
 The adapters intentionally implement these API dialects, rather than infer
 features from a model-name prefix:
@@ -62,7 +62,7 @@ features from a model-name prefix:
 | `openai-responses` | OpenAI Responses + named SSE events | Preferred for native OpenAI reasoning/tool combinations. |
 | `openai` | OpenAI-compatible Chat Completions + delta SSE | The endpoint must accept the requested model and features. |
 | `openrouter-responses` | OpenRouter Responses | Use when OpenRouter's selected model/feature combination requires Responses. |
-| `openrouter`, `opencode-zen`, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
+| `openrouter`, compatible gateways, `ollama` | OpenAI-compatible Chat Completions | Compatibility is endpoint- and model-specific; reject live mismatches rather than assuming support. |
 | `google` | Gemini `streamGenerateContent` + SSE | Client function declarations/results are supported; Google recommends its newer Interactions API for new agent integrations, but this route remains a distinct supported wire contract. |
 
 ### Anthropic: reasoning depth and fast mode
@@ -93,7 +93,7 @@ whenever a key is stored or revoked).
 
 | shape | providers | request | response |
 |---|---|---|---|
-| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, `opencode-zen`, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
+| OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, compatible gateways, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
 | Anthropic | `anthropic` | `GET {base}/v1/models`, `x-api-key` + `anthropic-version` | `{ data: [{ id }], has_more, last_id }` |
 | Google | `google` | `GET {base}/models?key=…` | `{ models: [{ name: "models/x" }], nextPageToken }` |
 
@@ -141,7 +141,7 @@ unannounced post-admission route switch.
 
 Providers may also expose a pool through a plural environment variable:
 `ANTHROPIC_API_KEYS`, `GEMINI_API_KEYS`, `OPENAI_API_KEYS`,
-`OPENROUTER_API_KEYS`, or `OPENCODE_API_KEYS`. Values are comma- or
+`OPENROUTER_API_KEYS`, or a configured gateway-key variable. Values are comma- or
 newline-separated; the singular variable remains the primary credential.
 VAK fingerprints each credential without storing or returning the secret,
 discovers models separately per credential, and freezes the selected

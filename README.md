@@ -155,7 +155,7 @@ Vakyartha keeps normal work and operations in separate views. Start the server a
 
 The agent loop streams responses and tool output, accepts steering and cancellation, and records an append-only session. Every model-visible input must be reconstructable from that record. Tool calls cross a broker boundary into disposable workers; permissions are checked before dispatch. The client shows a reviewable result while the underlying ledger retains the evidence.
 
-Providers are selected from what your credentials can actually reach. Vakyartha supports Anthropic, OpenAI, OpenRouter, Gemini, OpenCode Zen, Ollama, AWS Bedrock, and compatible endpoints; model lists are discovered from providers rather than baked into the source. A turn plans its route from current evidence and can retry transient failures within bounded deadlines. See the [agent loop](docs/design/03-agent-loop.md), [sessions](docs/design/02-sessions.md), and [reliability contract](docs/design/15-reliability.md).
+Providers are selected from what your credentials can actually reach; model lists are discovered from providers rather than baked into the source. A turn plans its route from current evidence and can retry transient failures within bounded deadlines. See the [agent loop](docs/design/03-agent-loop.md), [sessions](docs/design/02-sessions.md), and [reliability contract](docs/design/15-reliability.md).
 
 ## Develop and extend
 

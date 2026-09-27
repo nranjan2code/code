@@ -1,9 +1,8 @@
 # 29 — Personal OS
 Status: implemented in 2.0.0
 
-Personal-use completion pass. Source: 2026 market study (OpenClaw complaint
-taxonomy, Hermes Agent feature set, Claude Code friction) cross-referenced
-against a codebase inventory. Enterprise concerns are explicitly deferred.
+Personal-use completion pass, cross-referenced against a codebase inventory.
+Enterprise concerns are explicitly deferred.
 
 Thesis: vak already neutralizes the two worst failure modes in the
 category — **lying** (stop-gate, audited goal completion, receipts) and
@@ -12,17 +11,17 @@ the system compounds for a single person: memory that follows the user,
 automation that can be trusted unattended, first-run trust, reach, and
 self-curating skills.
 
-## Market evidence (2026-08)
+## User needs (2026-08)
 
 | Signal | Source | Implication |
 |---|---|---|
-| #1 OpenClaw complaint: breaking updates rug-pull setups | Reddit/Discord complaint tracking | frozen contracts stay; add update *awareness*, never auto-update |
+| Breaking updates can disrupt established setups | User feedback tracking | frozen contracts stay; add update *awareness*, never auto-update |
 | Agents corrupt their own memory/config ("Alzheimer's") | 150+ tracked complaints | memory writes provenance-stamped; forget is explicit + audited |
 | Cron/heartbeat unreliably fire; cheap-model jobs wake expensive models | same | per-task model pinning; silent-tick watchdog jobs never touch inference |
 | $2,100 overnight bills; caps discovered only at denial | same | proactive budget alerts at 80%/100%, delivered to surfaces |
-| Hermes wins on USER.md + MEMORY.md + procedural skills + Curator pruning | Nous docs/releases | adopt the tiered-memory shape, keep promotion human-gated |
-| Claude Code top complaint: session memory reset | community reviews | global profile tier recalled in every run |
-| Skill pollution degrades agents over weeks | Hermes issue tracking → fixed by Curator | dedup at proposal time + consolidation review |
+| People value editable profiles, procedural skills, and memory cleanup | User feedback and product review | adopt tiered memory, keep promotion human-gated |
+| Session memory can be lost between runs | Community feedback | global profile tier recalled in every run |
+| Skill collections become noisy over time | Product review | deduplicate proposals and require consolidation review |
 
 ## Phases
 

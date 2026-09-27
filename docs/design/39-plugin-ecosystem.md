@@ -87,10 +87,10 @@ Vak owns the runtime contract and uses adapters at ingestion:
 |---|---|---|
 | Agent Skills directory | native | `SKILL.md` plus scripts/references/assets |
 | Agent Plugins 1.0 `plugin.json` | native import | canonical portable skills + `mcp.json`; client extensions remain namespaced |
-| `.codex-plugin/plugin.json` | import | normalize supported skills, commands, MCP, hooks, assets |
+| Compatible agent-plugin manifest | import | normalize supported skills, commands, MCP, hooks, assets |
 | `.agents/plugins/marketplace.json` | catalog import | catalog metadata only; packages still inspected locally |
-| `.claude-plugin/plugin.json` / marketplace | import | skills, agents, commands, hooks, MCP, LSP and metadata through explicit adapters |
-| GitHub Copilot plugin / marketplace | import | root/alternate manifest locations, including Agent Plugins and Claude catalog compatibility |
+| External plugin manifest / marketplace | import | skills, agents, commands, hooks, MCP, LSP and metadata through explicit adapters |
+| GitHub Copilot plugin / marketplace | import | root/alternate manifest locations, including Agent Plugins and compatible catalog locations |
 | `.cursor-plugin/plugin.json` / marketplace | import | supported declarative pieces; Agent Plugins use the portable adapter |
 | `gemini-extension.json` | import | skills, commands, hooks, agents, MCP, settings; policies may narrow, never allow |
 | MCP | protocol | stdio first; streamable HTTP and OAuth are later governed transports |

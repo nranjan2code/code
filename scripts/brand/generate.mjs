@@ -99,7 +99,6 @@ for (const app of ['vak-client-ui', 'vak-admin-ui']) {
 await save('docs/brand/exports/vakyartha-app-icon.svg', source);
 await save('docs/brand/exports/vakyartha-app-icon.png', await png(source, 1024));
 await save('docs/brand/exports/vakyartha-lockup-web.svg', lockup(ink, '#F5A400'));
-await save('docs/market/vak-icon.png', await png(source, 512));
 await save('docs/assets/visual-refresh-2026/img/vak-icon.png', await png(source, 512));
 await save('crates/vak-desktop/app-icon.png', await png(dock, 1024));
 await save(`${icons}/icon.png`, await png(dock, 512));
