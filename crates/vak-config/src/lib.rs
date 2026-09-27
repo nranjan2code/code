@@ -2609,7 +2609,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus, feeds";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2691,6 +2691,13 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             fc.server = ServerSettings::default();
             fc.plugins.network_allow = None;
             fc.plugins.allow = None;
+            // The feed pipeline is an unattended surface: `feeds.enabled`
+            // makes the scheduler fetch and run the pipeline every tick, and
+            // the pipeline is executable code with network access. A cloned
+            // repository that could switch it on would be handing itself an
+            // unattended runner (invariant 15). The whole section is
+            // privileged, like [server] and [gateway].
+            fc.feeds = FeedSettings::default();
             warnings.push(format!(
                 "project .vak/config.toml is not trusted for this workspace; \
                  ignored privileged keys ({PRIVILEGED_KEYS_NOTICE}). \

@@ -58,7 +58,7 @@ fn feed_environment(
 ) -> Vec<(&'static str, String)> {
     let data = vak_config::paths::data_home();
     let path = |p: PathBuf| p.to_string_lossy().into_owned();
-    vec![
+    let mut env = vec![
         ("PYTHONPATH", path(scripts.to_path_buf())),
         ("VAK_FEED_WORKSPACE", path(cwd.to_path_buf())),
         (
@@ -70,22 +70,34 @@ fn feed_environment(
             path(data.join("feeds").join("security.log")),
         ),
         ("VAK_FEEDS_CONFIG", path(global_feeds_config_path())),
-    ]
+    ];
+    // The subprocess runs with `env_clear` (see `run_feed_script`), so pass
+    // the operational minimum the interpreter needs and nothing else: PATH to
+    // resolve `python3`, HOME for the per-user source registry. The parent's
+    // secrets — `VAK_GATEWAY_TOKEN`, provider keys — never reach a feed
+    // subprocess (invariant 12); before this they were inherited wholesale.
+    for key in ["PATH", "HOME"] {
+        if let Ok(value) = std::env::var(key) {
+            env.push((key, value));
+        }
+    }
+    env
 }
 
-/// Feed pipeline Python script directory.
-fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
-    let workspace_dir = cwd.join("scripts").join("feeds");
-    if workspace_dir.join("feed_ingest.py").exists() {
-        return workspace_dir;
-    }
+/// Feed pipeline Python script directory, resolved **only** from the running
+/// binary's own location — the install's bundled `feeds`, or, in a dev build,
+/// the source checkout the binary was built in. It is never resolved from the
+/// session workspace: a workspace is untrusted input, and taking the script to
+/// run from `cwd/scripts/feeds` let a cloned repository supply the code the
+/// server executed unattended (invariants 12, 14, 15).
+fn feeds_dir() -> PathBuf {
     let Ok(exe) = std::env::current_exe() else {
-        return workspace_dir;
+        return PathBuf::from("feeds");
     };
     let Some(bin_dir) = exe.parent() else {
-        return workspace_dir;
+        return PathBuf::from("feeds");
     };
-    let candidates = [
+    let mut candidates = vec![
         bin_dir.join("feeds"),
         bin_dir.join("..").join("Resources").join("feeds"),
         bin_dir.join("..").join("share").join("vak").join("feeds"),
@@ -96,10 +108,16 @@ fn feeds_dir(cwd: &std::path::Path) -> PathBuf {
             .join("vak")
             .join("feeds"),
     ];
+    // Dev build: the binary lives under the checkout's `target/`, so the
+    // repo's `scripts/feeds` is an ancestor of the executable — trusted
+    // because it is where this binary came from, and never the workspace.
+    for ancestor in exe.ancestors() {
+        candidates.push(ancestor.join("scripts").join("feeds"));
+    }
     candidates
         .into_iter()
         .find(|candidate| candidate.join("feed_ingest.py").exists())
-        .unwrap_or(workspace_dir)
+        .unwrap_or_else(|| bin_dir.join("feeds"))
 }
 
 fn validate_source_url(raw: &str) -> Result<(), String> {
@@ -144,7 +162,7 @@ async fn run_feed_script(
     script: &str,
     args: &[&str],
 ) -> Result<Value, (StatusCode, String)> {
-    let dir = feeds_dir(cwd);
+    let dir = feeds_dir();
     let script_path = dir.join(script);
 
     if !script_path.exists() {
@@ -158,6 +176,7 @@ async fn run_feed_script(
         .arg(&script_path)
         .args(args)
         .current_dir(&dir)
+        .env_clear()
         .envs(feed_environment(cwd, &dir))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -200,7 +219,7 @@ async fn run_feed_admin_script(
     script: &str,
     args: &[&str],
 ) -> Result<Value, (StatusCode, String)> {
-    let dir = feeds_dir(cwd);
+    let dir = feeds_dir();
     let script_path = dir.join(script);
 
     if !script_path.exists() {
@@ -214,6 +233,7 @@ async fn run_feed_admin_script(
         .arg(&script_path)
         .args(args)
         .current_dir(&dir)
+        .env_clear()
         .envs(feed_environment(cwd, &dir))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -241,7 +261,7 @@ async fn run_feed_mcp_request(
     cwd: &std::path::Path,
     request: &Value,
 ) -> Result<Value, (StatusCode, String)> {
-    let dir = feeds_dir(cwd);
+    let dir = feeds_dir();
     let script = dir.join("feed_mcp.py");
 
     if !script.exists() {
@@ -258,6 +278,7 @@ async fn run_feed_mcp_request(
     let mut child = Command::new("python3")
         .arg(&script)
         .current_dir(&dir)
+        .env_clear()
         .envs(feed_environment(cwd, &dir))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -1226,10 +1247,61 @@ pub fn routes() -> Router<AppState> {
 }
 
 #[cfg(test)]
-#[allow(clippy::panic)]
+#[allow(clippy::panic, clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{authorize_feed_scope, feed_environment, validate_source_url};
+    use super::{authorize_feed_scope, feed_environment, feeds_dir, validate_source_url};
     use vak_config::PermissionMode;
+
+    /// The feed subprocess runs with `env_clear`, so `feed_environment` is the
+    /// complete list of what it sees. It must carry the operational minimum
+    /// (PATH, so `python3` resolves) and never a parent secret — before this,
+    /// the subprocess inherited the whole server environment, `VAK_GATEWAY_TOKEN`
+    /// and provider keys included (invariant 12).
+    #[test]
+    fn feed_subprocess_environment_is_a_secret_free_allowlist() {
+        let _home = vak_config::paths::isolate_home_for_tests();
+        let environment = feed_environment(
+            std::path::Path::new("/tmp/ws"),
+            std::path::Path::new("/tmp/scripts"),
+        );
+        let allowed = [
+            "PYTHONPATH",
+            "VAK_FEED_WORKSPACE",
+            "VAK_FEEDS_DB",
+            "VAK_FEEDS_LOG",
+            "VAK_FEEDS_CONFIG",
+            "PATH",
+            "HOME",
+        ];
+        for (key, _) in &environment {
+            assert!(allowed.contains(key), "{key} is not in the feed allowlist");
+        }
+        assert!(
+            environment.iter().any(|(key, _)| *key == "PATH"),
+            "PATH must be passed so python3 resolves under env_clear"
+        );
+        for secret in ["VAK_GATEWAY_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] {
+            assert!(
+                !environment.iter().any(|(key, _)| *key == secret),
+                "{secret} must never be passed to a feed subprocess"
+            );
+        }
+    }
+
+    /// The script the server runs is located only from the binary, never from
+    /// the session workspace: a workspace with its own `scripts/feeds` cannot
+    /// supply the code the server executes (invariants 12, 14, 15).
+    #[test]
+    fn feeds_dir_never_resolves_from_a_workspace() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let planted = workspace.path().join("scripts").join("feeds");
+        std::fs::create_dir_all(&planted).expect("mkdir");
+        std::fs::write(planted.join("feed_ingest.py"), b"raise SystemExit\n").expect("write");
+        assert!(
+            !feeds_dir().starts_with(workspace.path()),
+            "feeds_dir resolved a script from the session workspace"
+        );
+    }
 
     /// Every path a feed script writes comes from the canonical data home,
     /// so an overridden `VAK_HOME` holds the feed store, its log and its

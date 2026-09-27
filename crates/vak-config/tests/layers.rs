@@ -282,6 +282,42 @@ fn untrusted_project_cannot_redirect_the_updater() {
     );
 }
 
+/// An untrusted project must not be able to switch on the feed pipeline: it is
+/// an unattended runner (the scheduler fetches every tick) executing code with
+/// network access, so a cloned repository that could set `feeds.enabled` would
+/// be handing itself an unattended runner (invariant 15).
+#[test]
+fn untrusted_project_cannot_enable_the_feed_pipeline() {
+    let dir = tempfile::tempdir().unwrap();
+    let project = dir.path().join(".vak");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("config.toml"),
+        "[feeds]\nenabled = true\ndefault_check_interval = \"5m\"\n",
+    )
+    .unwrap();
+
+    let untrusted = load_with_trust(dir.path(), false).unwrap();
+    assert!(
+        !untrusted.feeds.enabled,
+        "an untrusted project must not enable feeds"
+    );
+    assert!(
+        untrusted
+            .warnings
+            .iter()
+            .any(|w| w.contains("not trusted") && w.contains("feeds")),
+        "the strip must be announced: {:?}",
+        untrusted.warnings
+    );
+
+    let trusted = load_with_trust(dir.path(), true).unwrap();
+    assert!(
+        trusted.feeds.enabled,
+        "a trusted workspace keeps its own choice"
+    );
+}
+
 /// `inherit_* = false` clears the corresponding lower layer during merge, so
 /// an untrusted project setting it would switch off the user's own hooks and
 /// MCP servers. Disabling a protection is as privileged as adding capability.
