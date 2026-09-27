@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vakyartha | Ask. Then go live your day.</title>
-    <meta name="description" content="Help with everyday plans, unfinished work, and your next idea. Explore Vakyartha through simple examples." />
+    <meta name="description" content="An AI helper that stays with the work. Everyday plans, useful documents, ongoing commitments and your next idea." />
     <meta property="og:title" content="Vakyartha | Ask. Then go live your day." />
-    <meta property="og:description" content="Help with everyday plans, unfinished work, and your next idea. Explore Vakyartha through simple examples." />
+    <meta property="og:description" content="An AI helper that stays with the work. Everyday plans, useful documents, ongoing commitments and your next idea." />
     <meta property="og:type" content="website" />
     <meta name="color-scheme" content="light dark" />
     <meta
@@ -986,6 +986,57 @@ details[open] > summary:after {
 .chapter-play .chapter-copy {
   padding-left: 6%;
 }
+.companion-section h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 24px;
+}
+.companion-lineup {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 24px;
+  list-style: none;
+  padding: 24px 0 0;
+  margin: 0;
+}
+.companion-lineup img { width: 100%; height: auto; max-width: 128px; }
+.companion-lineup h3 { font-size: 18px; margin: 14px 0 8px; }
+.companion-lineup p { font-size: 14px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .companion-lineup { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 32px; }
+}
+@media (max-width: 480px) {
+  .companion-lineup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.chapter-lead {
+  font-size: 16px;
+  line-height: 1.65;
+  max-width: 440px;
+  margin: 0 0 22px;
+}
+.continuity-story {
+  background: var(--soft);
+}
+.continuity-story .cast {
+  margin-bottom: 18px;
+}
+.commitment-story {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: start;
+}
+.commitment-story h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .commitment-story { grid-template-columns: 1fr; gap: 24px; }
+  .continuity-story .chapter-art { width: 100%; margin: 0; }
+}
 .request-list {
   width: 100%;
 }
@@ -1642,17 +1693,16 @@ details[open] > summary:after {
     <main id="main"><section class="hero">
   <div class="wrap hero-composition">
     <div class="hero-copy">
-      <p class="eyebrow">For the many tabs open in your life.</p>
+      <p class="eyebrow">Less to keep in your head.</p>
       <h1>Ask.<br />Then go live<br /><span>your day.</span></h1>
       <p class="hero-description">
-        Dinner plans. Tricky emails. That side project.<br />Give Vakyartha
-        something to work on.
+        An AI helper that stays with the work.<br />Everyday jobs, unfinished plans, and what comes next.
       </p>
-      <a class="button primary" href="#your-day"
-        >Find your thing <span aria-hidden="true">↓</span></a
+      <a class="button primary" href="#follow-through"
+        >See how it follows through <span aria-hidden="true">↓</span></a
       >
       <p class="hero-source">
-        Open source under MIT. <a href="https://github.com/nranjan2code/code">Explore the code ↗</a>
+        Your pace. Your choices. <a href="/security">Your control ↗</a>
       </p>
     </div>
     <figure class="hero-art">
@@ -1666,6 +1716,31 @@ details[open] > summary:after {
         Vakyartha, Moss & Beni. Getting into the everyday.
       </figcaption>
     </figure>
+  </div>
+</section>
+<section class="day-chapter continuity-story" id="follow-through" aria-labelledby="continuity-title">
+  <div class="wrap chapter-composition">
+    <figure class="chapter-art">
+      <img src="/site/continuity.webp" width="1536" height="1024" loading="lazy" alt="Vakyartha and Mira review a draft while Moss keeps their notebook open" />
+      <figcaption class="cast">A little help with the next chapter.</figcaption>
+    </figure>
+    <div class="chapter-copy">
+      <p class="eyebrow">Today. Tomorrow. Still on it.</p>
+      <h2 id="continuity-title">Pick up<br />the thread.</h2>
+      <p class="chapter-lead">Some things take more than one conversation. An ongoing goal can become a commitment, with progress, decisions, and what’s still open kept in view.</p>
+      <div class="request-list">
+        <details open>
+          <summary><span class="request-person">You start</span><span>“Help me finish this proposal for Friday.”</span></summary>
+          <div class="request-result"><strong>A draft. One missing detail.</strong><p>“I’ve worked your notes into a draft. What price should I include?”</p></div>
+        </details>
+        <details>
+          <summary><span class="request-person">You return</span><span>“₹18,000. And make the opening shorter.”</span></summary>
+          <div class="request-result"><strong>The next version, ready to review.</strong><p>The price is added and the opening is shorter. Review the changes before keeping the file. Nothing has been sent.</p></div>
+        </details>
+      </div>
+      <p class="cast">An illustrated conversation, not a live result.</p>
+      <a class="text-link" href="/tour#commitments">How ongoing work stays in view ↗</a>
+    </div>
   </div>
 </section>
 <div class="story-intro wrap" id="your-day">
@@ -1690,7 +1765,7 @@ details[open] > summary:after {
             <strong>Three dinners. One list.</strong>
             <p>
               Lemon pasta, chickpea bowls, veggie tacos. A plan that reuses
-              ingredients.
+              ingredients. Ask for a quicker option and the list can change with it.
             </p>
           </div>
         </details>
@@ -1700,8 +1775,8 @@ details[open] > summary:after {
             ><span>“A Saturday with room to breathe.”</span>
           </summary>
           <div class="request-result">
-            <strong>A loose plan.</strong>
-            <p>A walk at ten, lunch nearby, and the afternoon left open.</p>
+            <strong>“Let’s leave a little breathing room.”</strong>
+            <p>A walk at ten, lunch nearby, and the afternoon left open. Rain in the forecast? Come back and rethink the plan together.</p>
           </div>
         </details>
         <details id="packing">
@@ -1710,7 +1785,7 @@ details[open] > summary:after {
             ><span>“Two nights away. What do I pack?”</span>
           </summary>
           <div class="request-result">
-            <strong>The essentials.</strong>
+            <strong>“The essentials first. We’ll take it step by step.”</strong>
             <p>
               Clothes for two days, toiletries, a charger and ID. Check the
               forecast before you leave.
@@ -1745,10 +1820,9 @@ details[open] > summary:after {
             ><span>“Help me write this reply.”</span>
           </summary>
           <div class="request-result">
-            <strong>A warmer, shorter reply.</strong>
+            <strong>“Clear, kind, and still sounds like you.”</strong>
             <p>
-              Thanks for the update. Tuesday works for me. Shall we start at
-              ten?
+              A draft in the tone you ask for. Make it warmer, shorten it, or add a detail before you send it.
             </p>
           </div>
         </details>
@@ -1758,7 +1832,7 @@ details[open] > summary:after {
             ><span>“Find the bug. Show me the fix.”</span>
           </summary>
           <div class="request-result">
-            <strong>The empty list case.</strong>
+            <strong>“Found a clue: the empty list.”</strong>
             <p>
               A proposed guard for an empty list, with a test to inspect before
               keeping the change.
@@ -1771,9 +1845,9 @@ details[open] > summary:after {
             ><span>“What stands out in this sheet?”</span>
           </summary>
           <div class="request-result">
-            <strong>A clearer picture.</strong>
+            <strong>“Let’s see what the numbers are telling us.”</strong>
             <p>
-              A summary of the rows you provided, with the cells it refers to.
+              A summary of the rows you provided, with the cells it refers to. Explore the numbers, then review any changes you ask for.
             </p>
           </div>
         </details>
@@ -1805,7 +1879,7 @@ details[open] > summary:after {
             ><span>“Birthday at home. Any ideas?”</span>
           </summary>
           <div class="request-result">
-            <strong>Keep it simple.</strong>
+            <strong>“A little imagination goes a long way.”</strong>
             <p>Make-your-own pizzas, a playlist from each decade, and cake.</p>
           </div>
         </details>
@@ -1815,10 +1889,10 @@ details[open] > summary:after {
             ><span>“Explain it so it sticks.”</span>
           </summary>
           <div class="request-result">
-            <strong>Why bread rises.</strong>
+            <strong>“Start with what you can observe.”</strong>
             <p>
               Yeast feeds on sugars. Gas makes little pockets. Heat sets the
-              shape. Now try explaining it back.
+              shape. Now try explaining it back. Come back to the parts you want to practise.
             </p>
           </div>
         </details>
@@ -1830,16 +1904,30 @@ details[open] > summary:after {
   </div>
 </section>
 <div class="wrap example-disclosure">
-  Illustrated examples, not live results. All eight characters are companion
-  choices, not fixed job roles.
+  Illustrated examples, not live results. Vakyartha and seven companions each have a distinct personality. Any can help across these examples.
 </div>
+<section class="section" aria-label="Help that fits the work">
+  <div class="wrap process-lines">
+    <article><span>01</span><h2>Bring what you have.</h2><p>A rough idea, a document, a spreadsheet. Start with what you want to get done.</p></article>
+    <article><span>02</span><h2>Make something useful.</h2><p>A draft to review. A comparison to explore. A file you can take away and use.</p></article>
+    <article><span>03</span><h2>Keep your say.</h2><p>Choose access, review changes, and set spending limits. <a class="text-link" href="/security">Your control ↗</a></p></article>
+  </div>
+</section>
+<section class="section companion-section" id="companions" aria-labelledby="companions-title">
+  <div class="wrap">
+    <p class="eyebrow">Vakyartha &amp; seven distinct personalities</p>
+    <h2 id="companions-title">Your kind of company.</h2>
+    <p class="chapter-lead">Mira’s warmth. Moss’s patience. Pip’s spark. Choose the personality you enjoy working with. Each can help across different kinds of work.</p>
+    <ul class="companion-lineup"><li><img src="/site/companions/vak.webp" width="128" height="128" loading="lazy" alt="" /><h3>Vakyartha</h3><p>Attentive, capable, and reassuring.</p></li><li><img src="/site/companions/mira.webp" width="128" height="128" loading="lazy" alt="" /><h3>Mira</h3><p>Warm, perceptive, and quietly confident.</p></li><li><img src="/site/companions/moss.webp" width="128" height="128" loading="lazy" alt="" /><h3>Moss</h3><p>Patient, grounded, and thoughtful.</p></li><li><img src="/site/companions/nori.webp" width="128" height="128" loading="lazy" alt="" /><h3>Nori</h3><p>Curious, practical, and encouraging.</p></li><li><img src="/site/companions/pip.webp" width="128" height="128" loading="lazy" alt="" /><h3>Pip</h3><p>Bright, attentive, and resourceful.</p></li><li><img src="/site/companions/lumi.webp" width="128" height="128" loading="lazy" alt="" /><h3>Lumi</h3><p>Gentle, imaginative, and reassuring.</p></li><li><img src="/site/companions/tavi.webp" width="128" height="128" loading="lazy" alt="" /><h3>Tavi</h3><p>Observant, measured, and wise.</p></li><li><img src="/site/companions/beni.webp" width="128" height="128" loading="lazy" alt="" /><h3>Beni</h3><p>Steady, calm, and dependable.</p></li></ul>
+  </div>
+</section>
 <section class="closing-scene">
   <div class="wrap">
-    <p class="eyebrow">Your turn.</p>
+    <p class="eyebrow">Your turn. Start with one thing.</p>
     <h2>What’s on<br />your mind?</h2>
     <a class="button primary" href="/install"
-      >Meet Vakyartha <span aria-hidden="true">↗</span></a
-    ><a class="text-link" href="/security"
+      >See setup options <span aria-hidden="true">↗</span></a
+    ><p class="hero-source">Build for macOS or Linux today.</p><a class="text-link" href="/security"
       >Your files. Your choices. Your control. ↗</a
     >
   </div>

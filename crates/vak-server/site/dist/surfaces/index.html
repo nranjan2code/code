@@ -986,6 +986,57 @@ details[open] > summary:after {
 .chapter-play .chapter-copy {
   padding-left: 6%;
 }
+.companion-section h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 24px;
+}
+.companion-lineup {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 24px;
+  list-style: none;
+  padding: 24px 0 0;
+  margin: 0;
+}
+.companion-lineup img { width: 100%; height: auto; max-width: 128px; }
+.companion-lineup h3 { font-size: 18px; margin: 14px 0 8px; }
+.companion-lineup p { font-size: 14px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .companion-lineup { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 32px; }
+}
+@media (max-width: 480px) {
+  .companion-lineup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.chapter-lead {
+  font-size: 16px;
+  line-height: 1.65;
+  max-width: 440px;
+  margin: 0 0 22px;
+}
+.continuity-story {
+  background: var(--soft);
+}
+.continuity-story .cast {
+  margin-bottom: 18px;
+}
+.commitment-story {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: start;
+}
+.commitment-story h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .commitment-story { grid-template-columns: 1fr; gap: 24px; }
+  .continuity-story .chapter-art { width: 100%; margin: 0; }
+}
 .request-list {
   width: 100%;
 }
@@ -1649,25 +1700,25 @@ details[open] > summary:after {
 
 <section class="wrap surface-story" aria-labelledby="surface-story-title">
   <figure class="surface-scene">
-    <img src="/site/work.webp" alt="A fox, Songbird and seal working together around a table" />
-    <figcaption>Different places. The same helpful conversation.</figcaption>
+    <img src="/site/work.webp" alt="Mira the fox, Pip the penguin and Nori the seal working together around a table" />
+    <figcaption>Your chosen helper. More than one way to reach it.</figcaption>
   </figure>
   <div class="surface-copy">
     <p class="eyebrow">A little company, wherever you are</p>
     <h2 id="surface-story-title">Choose your kind of hello.</h2>
-    <p>Vakyartha meets you where your day already is. You can move between places and keep the thread of your work with you.</p>
+    <p>Use the installation you run, with the connections you choose. Each place keeps its own access rules; private history is shared only where authorised.</p>
     <div class="surface-list">
       <article class="surface-option">
         <span class="surface-mark" aria-hidden="true">⌂</span>
-        <div><h3>At your desk</h3><p>A calm home for longer conversations, files and plans.</p></div>
+        <div><h3>At your desk</h3><p>The desktop app and browser give conversations, files and plans room to breathe.</p></div>
       </article>
       <article class="surface-option">
         <span class="surface-mark" aria-hidden="true">♡</span>
-        <div><h3>In your everyday chat</h3><p>Ask from the chat you already use. A friend can help you pick up the thread.</p></div>
+        <div><h3>In your everyday chat</h3><p>Connect Telegram, Slack or Discord to reach an Agent from a familiar chat. Each connection needs setup and permission.</p></div>
       </article>
       <article class="surface-option">
         <span class="surface-mark" aria-hidden="true">✦</span>
-        <div><h3>Beside your work</h3><p>For makers who like a quiet, direct way to turn an idea into a next step.</p></div>
+        <div><h3>Beside your work</h3><p>The terminal offers a direct way to work with code and tools. Use the app when you prefer a visual result.</p></div>
       </article>
     </div>
   </div>
@@ -1677,7 +1728,7 @@ details[open] > summary:after {
   <div class="wrap">
     <p class="eyebrow">The important part</p>
     <h2 id="surface-invite-title">You stay in charge.</h2>
-    <p>Every place uses the same Vakyartha you run and choose. See what it can access, review what it does, and take the conversation with you.</p>
+    <p>Choose the folders and tools your Agent can use. Connected chats do not automatically inherit access to your computer or private conversations.</p>
     <a class="button primary" href="/security">See your control <span aria-hidden="true">↗</span></a>
   </div>
 </section>

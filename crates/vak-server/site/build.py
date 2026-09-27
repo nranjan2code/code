@@ -32,11 +32,11 @@ DIST = SITE / "dist"
 # Order matters: it is the order of the rail, and of the reading.
 PAGES = [
     ("index.html", "/", "Home", "Vakyartha | Ask. Then go live your day.",
-     "Help with everyday plans, unfinished work, and your next idea. Explore Vakyartha through simple examples."),
+     "An AI helper that stays with the work. Everyday plans, useful documents, ongoing commitments and your next idea."),
     ("outcomes.html", "/outcomes", "Examples", "Everyday examples | Vakyartha",
      "Dinner plans, clearer writing, documents, spreadsheets and code. Find a starting point for your own request."),
     ("tour.html", "/tour", "How it works", "How it works | Vakyartha",
-     "Bring a question or a file. Shape the result together. Review the work and make it yours."),
+     "Start in your own words, return to ongoing work, and see what is ready or waiting for you."),
     ("security.html", "/security", "Your control", "Your control | Vakyartha",
      "Choose access, review changes and see what happened. Plain answers about your information and your control."),
     ("vak.html", "/vak", "Our name", "Our name | Vakyartha",

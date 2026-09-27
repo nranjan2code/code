@@ -986,6 +986,57 @@ details[open] > summary:after {
 .chapter-play .chapter-copy {
   padding-left: 6%;
 }
+.companion-section h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 24px;
+}
+.companion-lineup {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 24px;
+  list-style: none;
+  padding: 24px 0 0;
+  margin: 0;
+}
+.companion-lineup img { width: 100%; height: auto; max-width: 128px; }
+.companion-lineup h3 { font-size: 18px; margin: 14px 0 8px; }
+.companion-lineup p { font-size: 14px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .companion-lineup { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 32px; }
+}
+@media (max-width: 480px) {
+  .companion-lineup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.chapter-lead {
+  font-size: 16px;
+  line-height: 1.65;
+  max-width: 440px;
+  margin: 0 0 22px;
+}
+.continuity-story {
+  background: var(--soft);
+}
+.continuity-story .cast {
+  margin-bottom: 18px;
+}
+.commitment-story {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: start;
+}
+.commitment-story h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .commitment-story { grid-template-columns: 1fr; gap: 24px; }
+  .continuity-story .chapter-art { width: 100%; margin: 0; }
+}
 .request-list {
   width: 100%;
 }
@@ -1670,6 +1721,7 @@ details[open] > summary:after {
       </p>
     </div>
     <div class="control-list">
+      <article><h3>You set the spending limits.</h3><p>Put bounds on AI usage. See when work reaches a limit and needs your attention.</p></article>
       <article>
         <h3>You choose the access.</h3>
         <p>Decide which folders and tools Vakyartha can use.</p>
@@ -1711,6 +1763,10 @@ details[open] > summary:after {
         easier to review, but it is not a guarantee of correctness.
       </p>
     </details>
+    <details><summary>How do I know what is actually done?</summary><p>Look at the result and the checks behind it. A draft, an accepted file change, and a sent message are different outcomes. Some checks can be verified directly; others rely on the AI’s judgment. Incomplete or unverified work should remain visible as such.</p></details>
+    <details><summary>What does it remember about me?</summary><p>Saved preferences and relevant earlier conversations can help with future work. You can review, edit and remove saved memories. They are scoped to the Agent and authorised audience; connecting another chat does not automatically share private history.</p></details>
+    <details><summary>Can it learn how I like things done?</summary><p>It can save useful preferences and propose reusable ways of working. You review and approve new reusable skills before they guide future work. A learned preference does not grant extra access.</p></details>
+    <details><summary>What if work gets interrupted?</summary><p>Stopped work preserves partial output, and temporary service failures have retry paths. Some work may still need your help to continue. You can inspect its status and what remains.</p></details>
     <details>
       <summary>Technical details</summary>
       <p>

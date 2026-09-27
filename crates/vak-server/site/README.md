@@ -55,6 +55,13 @@ implicitly becomes a public page.
 
 ## Direction
 
+The follow-through content pass adds ongoing-work storytelling, commitments,
+memory and control in everyday language. Vakyartha and the seven companions
+retain distinct personalities from the canonical `agentGlyph.ts` registry;
+their personalities are not fixed job roles. A new transparent continuity
+scene accompanies the existing three activity scenes. Review evidence and
+preview status: `docs/assets/public-site-followthrough-2026/README.md`.
+
 The owner requested a complete visual rethink on 2026-09-27: minimal text,
 modern and peppy across generations, all eight characters actively doing
 things, no paper treatment, no repeated marketing-card grid, no em dashes.
