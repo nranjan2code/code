@@ -1,39 +1,14 @@
 #!/usr/bin/env python3
-"""Build the public website that vak-server serves at `/`.
+"""Build the seven static public pages embedded by vak-server.
 
-Why a builder at all, for four static pages
--------------------------------------------
+CSS and shared behavior are inlined so the page renders independently of
+application state. Character WebP scenes and optional vendored Motion are
+served through the existing /site asset registry. Commit dist/ with source;
+the Rust build and --check reject a stale bundle.
 
-The front door started as one hand-written `landing.html` with its CSS and
-JS inline. That is the right shape for one page and the wrong shape for
-four: a shared rail, a shared footer and a shared design system copied four
-times drift the moment anyone edits three of them. This turns the copies
-into one source and one command.
-
-What it emits, and why
-----------------------
-
-- CSS and `site.js` are **inlined into every page**. The front door has to
-  render before, and independently of, anything else being up; an external
-  stylesheet is one more round trip between "the server answered" and "the
-  reader sees the product", and a theme that resolves in a second request
-  flashes the wrong ground. They are small, they gzip, and there are four
-  pages.
-- `vendor/motion.js` is emitted as a **hashed, shared file**. It is 140 KB
-  and identical on every page, so it is the one thing that must be cached
-  across a visit rather than repeated inside it. It is also deferred, and
-  the site is fully usable if it never arrives (see `site.js`).
-- `dist/` is **committed**, like the two UI bundles, so a clone builds
-  without Python or Node. `dist/.src-manifest` is the same format
-  `scripts/ui_bundle_check.rs` verifies, so `cargo build` refuses to embed
-  a `dist/` that no longer matches `src/` — the failure this repository has
-  already been bitten by twice.
-
-Usage
------
-
-    python3 crates/vak-server/site/build.py            # build
-    python3 crates/vak-server/site/build.py --check    # CI: fail if stale
+Usage:
+    python3 crates/vak-server/site/build.py
+    python3 crates/vak-server/site/build.py --check
     python3 crates/vak-server/site/build.py --vendor-motion 13.2.0
 """
 
@@ -56,64 +31,23 @@ DIST = SITE / "dist"
 
 # Order matters: it is the order of the rail, and of the reading.
 PAGES = [
-    # (source, route, nav label, <title>, meta description)
-    (
-        "index.html",
-        "/",
-        "Home",
-        "Vakyartha — an agent you can inspect, constrain, and extend",
-        "Vakyartha is a local-first Rust harness for running serious general-purpose "
-        "agents without giving up the receipts. Append-only ledgers, permission "
-        "before every effect, a receipt for every dispatch.",
-    ),
-    (
-        "outcomes.html",
-        "/outcomes",
-        "Outcomes",
-        "Outcomes — Vakyartha",
-        "How Vakyartha turns intent into bounded work, evaluates evidence, supports live steering, and presents trustworthy results across every surface.",
-    ),
-    (
-        "vak.html",
-        "/vak",
-        "Meaning",
-        "Meaning — Vakyartha",
-        "The philosophy behind Vakyartha: meaningful expression made durable, intelligible, and accountable before it becomes action.",
-    ),
-    (
-        "surfaces.html",
-        "/surfaces",
-        "Surfaces",
-        "Surfaces — Vakyartha",
-        "One auditable core behind a CLI, a desktop app, a browser client, an "
-        "HTTP/SSE server and chat gateways. The same session contract, the same "
-        "policy gate, the same ledger, whichever way you come in.",
-    ),
-    (
-        "tour.html",
-        "/tour",
-        "3D Tour",
-        "3D World Tour — Vakyartha",
-        "An interactive 3D virtual world tour of the Vakyartha harness. Walk through the 10 sectors of execution from inbound surface to settled receipt.",
-    ),
-    (
-        "security.html",
-        "/security",
-        "Security",
-        "Security — Vakyartha",
-        "Permission before dispatch, three permission modes, OS-level sandboxing, "
-        "a broker boundary for restricted tools, and secrets that never enter the "
-        "agent's ambient environment.",
-    ),
-    (
-        "install.html",
-        "/install",
-        "Install",
-        "Install — Vakyartha",
-        "Install Vakyartha on macOS or Linux, run it headless behind a browser, or in "
-        "Docker. Configuration, secrets, services, updating and uninstalling.",
-    ),
+    ("index.html", "/", "Home", "Vakyartha | Ask. Then go live your day.",
+     "Help with everyday plans, unfinished work, and your next idea. Explore Vakyartha through simple examples."),
+    ("outcomes.html", "/outcomes", "Examples", "Everyday examples | Vakyartha",
+     "Dinner plans, clearer writing, documents, spreadsheets and code. Find a starting point for your own request."),
+    ("tour.html", "/tour", "How it works", "How it works | Vakyartha",
+     "Bring a question or a file. Shape the result together. Review the work and make it yours."),
+    ("security.html", "/security", "Your control", "Your control | Vakyartha",
+     "Choose access, review changes and see what happened. Plain answers about your information and your control."),
+    ("vak.html", "/vak", "Our name", "Our name | Vakyartha",
+     "Vakyartha takes its name from the meaning of a sentence. Meet the Songbird behind the name."),
+    ("surfaces.html", "/surfaces", "Ways to use it", "Ways to use it | Vakyartha",
+     "Use Vakyartha on your desktop, in a browser, in a connected chat or from a terminal."),
+    ("install.html", "/install", "Get started", "Get started | Vakyartha",
+     "Set up the Vakyartha private preview on macOS or Linux, or open an existing installation."),
 ]
+
+NAV_ROUTES = {"/outcomes", "/tour", "/security"}
 
 # Files that are inlined into every page rather than linked.
 INLINE_CSS = SRC / "styles.css"
@@ -135,6 +69,8 @@ def read(path: Path) -> str:
 def nav_html(current_route: str) -> str:
     out = []
     for _src, route, label, _title, _desc in PAGES:
+        if route not in NAV_ROUTES:
+            continue
         on = ' class="on" aria-current="page"' if route == current_route else ""
         out.append(f'<a href="{route}"{on}>{html.escape(label)}</a>')
     return "\n      ".join(out)
@@ -188,6 +124,8 @@ def build() -> dict[str, bytes]:
     motion_src = f"/site/{motion_name}"
 
     out: dict[str, bytes] = {f"site/{motion_name}": motion}
+    for asset in sorted((SRC / "assets").glob("*.webp")):
+        out[f"site/{asset.name}"] = asset.read_bytes()
 
     for src_name, route, _label, title, desc in PAGES:
         body = read(SRC / "pages" / src_name)

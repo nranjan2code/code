@@ -1,87 +1,80 @@
-# The public site at `/`
+# Vakyartha public site
 
-Five pages — `/`, `/outcomes`, `/surfaces`, `/security`, `/install` — built from this
-directory into `dist/`, which `crates/vak-server/src/site.rs` embeds with
-`include_dir!`.
+Seven static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+The public route names remain stable; the navigation uses plain labels.
 
-## Change something
+| Route | Purpose |
+| --- | --- |
+| `/` | Character scenes and expandable everyday, work and learning examples |
+| `/outcomes` | All eight companions with example requests and possible results |
+| `/tour` | Interactive request/result illustrations and a short walkthrough |
+| `/security` | Access, review, privacy and an explicitly illustrative decision |
+| `/install` | Honest private-preview setup and access to an existing installation |
+| `/surfaces` | Desktop, browser, connected chats and terminal |
+| `/vak` | The name and Songbird identity |
 
-```
-$EDITOR src/pages/security.html          # or src/styles.css, src/site.js
-python3 crates/vak-server/site/build.py  # rebuild dist/
-git add crates/vak-server/site           # dist/ is committed
-```
+## Edit and build
 
-`cargo build -p vak-server` refuses to compile against a `dist/` that no
-longer matches `src/`, so forgetting the middle step fails loudly on the
-next build rather than quietly shipping the previous pages. CI runs
-`build.py --check`, and `scripts/release.sh` runs the full rebuild-and-diff.
-
-## Add a page
-
-1. Write `src/pages/<name>.html` — body markup only; the shell is
-   `src/layout.html`.
-2. Add it to `PAGES` in `build.py` (source, route, nav label, title,
-   meta description). That list is also the order of the rail.
-3. Add the route to `ROUTES` in `crates/vak-server/src/site.rs`. That table
-   is what the router serves *and* what `auth_exempt_path` reads, so the two
-   cannot drift apart, and a file appearing in `dist/` never becomes a
-   public URL without someone writing it down.
-4. Rebuild, and commit `dist/`.
-
-## What lives where
-
-| Path | What it is |
-|---|---|
-| `src/layout.html` | The shell: head, rail, footer, and the placeholders the builder fills. |
-| `src/pages/*.html` | One file per page, body markup only. |
-| `src/styles.css` | The whole design system for the site. Inlined into every page. |
-| `src/site.js` | Shared behaviour. Inlined into every page. |
-| `src/vendor/motion.js` | motion.dev (MIT), pinned and vendored. Emitted as one hashed, shared, deferred file. |
-| `dist/` | Generated. Committed, so a clone builds with no Python and no Node. |
-
-## Rules this site has to keep
-
-**It renders before anything else is up.** CSS and `site.js` are inlined,
-not linked: the front door must not need a second round trip to show the
-product, and a theme that resolves in a second request flashes the wrong
-ground. Only `motion.js` is a separate file, because it is 140 KB and
-identical on every page.
-
-**It works without JavaScript.** `.reveal` only hides anything once the
-inline head script has added `html.js`, so a reader with no script gets the
-finished page immediately. `site.js` then upgrades the animation, and every
-feature in it is wrapped so that a throw cannot leave content invisible.
-
-**It works without Motion.** `motion.js` is deferred and optional. Without
-it the CSS transitions in `styles.css` do the reveals and the scroll
-progress rule simply stays empty.
-
-**It discloses nothing.** Every route here answers an unauthenticated
-stranger. The only server data a page may read is `/version` — version and
-commit, which that endpoint already publishes — and a test enforces exactly
-that. `/health` reports provider, model, sandbox and permission mode, and is
-not for strangers.
-
-**Product truth only.** No testimonials, customers, benchmarks or pricing
-exist, and none may be invented (PRODUCT.md). The gate simulator on
-`/security` reproduces the real precedence in
-`crates/vak-permission/src/engine.rs`; if that engine changes, the simulator
-is wrong until someone changes it too.
-
-## Updating motion.dev
-
-```
-python3 crates/vak-server/site/build.py --vendor-motion 13.2.0
+```sh
 python3 crates/vak-server/site/build.py
+python3 crates/vak-server/site/build.py --check
 ```
 
-The first command re-fetches `framer-motion`'s browser build and its
-licence, keeping the provenance header; the second re-hashes and re-emits.
+Edit `src/pages/*.html`, `src/layout.html`, `src/styles.css` or `src/site.js`,
+then regenerate `dist/`. The generated bundle is committed. The Rust build
+checks its source manifest; it must not embed a stale bundle.
 
-## Design
+The builder copies `src/assets/*.webp` to `/site/`. CSS and the shared script
+are inlined. The optional, pinned Motion library is emitted under its content
+hash. Only the walkthrough's example transition uses Motion; content does not
+wait for it, and reduced motion disables the transition.
 
-The visual world is DESIGN.md ("The Auditor's Desk"), with this surface's
-larger type ramp recorded there under *the landing surface's ramp*. The
-direction contract for the site is the comment at the top of
-`src/pages/index.html`; the strategy is `.impeccable/surfaces/`.
+To add a page, update `PAGES` in `build.py` and `ROUTES` in `src/site.rs`.
+`NAV_ROUTES` selects the primary navigation. A file appearing in `dist/` never
+implicitly becomes a public page.
+
+## Direction
+
+The owner requested a complete visual rethink on 2026-09-27: minimal text,
+modern and peppy across generations, all eight characters actively doing
+things, no paper treatment, no repeated marketing-card grid, no em dashes.
+The public site therefore uses crisp white and charcoal, system sans type,
+large transparent character scenes and varied compositions. This is an
+explicit site-specific departure from the old Auditor's Desk and cream-paper
+marketing treatment. It does not change the client's design tokens.
+
+Official Songbird and wordmark exports remain the identity. The three new
+activity scenes use the existing Dimensional character identities. Originals,
+reference list and generation prompts are in
+`docs/brand/library/public-site-scenes/`. The WebP exports total about 750 KB;
+only the hero loads eagerly. No remote fonts or image services are required.
+
+## Contracts
+
+- Public pages read only `/version`, and show it inside Build details.
+  Never fetch authenticated machine state or `/health`.
+- Examples and review interactions are illustrations, not live AI runs or
+  real file mutations. Characters are choices of companion, not fixed roles.
+- No invented testimonials, pricing, customer counts, benchmarks or downloads.
+  Setup states the current repository-access and local-build requirements.
+- Native request disclosures and navigation work without JavaScript. The
+  walkthrough keeps its first complete example and links to the examples page.
+  Script-only controls start hidden. Theme storage failure is harmless.
+- Keep keyboard operation, visible focus, reduced motion, readable text and
+  both themes. Body copy is 16px and no text is below 12px.
+- Do not edit generated brand masters or `dist/` by hand.
+
+## Verification
+
+The site has been checked in a browser at 1440 × 900 and 390 × 844 in both
+light and dark. Screenshots and the review record are under
+`docs/assets/public-site-refresh-2026/`.
+
+```sh
+node --check crates/vak-server/site/src/site.js
+python3 crates/vak-server/site/build.py --check
+cargo test -p vak-server --lib site::tests
+```
+
+The focused Rust tests cover every public page, trailing slashes, referenced
+`/site/` assets and the public-data fetch boundary.

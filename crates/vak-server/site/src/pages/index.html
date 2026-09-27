@@ -1,429 +1,202 @@
-<!--
-  DIRECTION CONTRACT — surface concept seed bdd3f44f
-
-  THESIS: A runtime you can audit proves it in the first viewport, not in a
-  feature list. This site refuses the screenshot-and-three-cards landing:
-  the hero is the instrument itself, and the visitor works its controls.
-
-  OWN-WORLD: The Auditor's Desk. Warm near-black, one burnt-terracotta
-  accent spent only on primary and active, fixed green/yellow/red status
-  roles, flat surfaces layered by tone, 1px rules, system sans on odd
-  weights against SF Mono readouts.
-
-  STORY: Every effect is gated, every dispatch leaves a receipt, every
-  session replays from an append-only ledger — and the same core drives
-  every surface. The visitor opens the workspace or installs it.
-
-  FIRST VIEWPORT: Tagline left at 60px/620 with the live build readout
-  right; beneath it a full-width session console that plays itself and
-  stops on a real approval gate the visitor must answer — Approve or Deny,
-  each with its honest consequence. Primary action sits under the console.
-
-  FORM: The instrument panel — fifth of seven derived structures, dealt
-  lead, locked by the user with no steer.
-
-  FINISH: unreviewed and undocumented is unfinished; this build ends with
-  the finish review, the verdict, DESIGN.md, and every shipping raster
-  carrying its provenance.
--->
-<div id="top"></div>
-
-<!-- ================= hero: the instrument ================= -->
-<div class="hero">
-  <div class="wrap">
-    <div class="hero-top">
-      <div>
-        <h1>Give intention a durable voice<span class="soft">—then make it accountable.</span></h1>
-        <p class="lead">
-          Named for <em>Vākyārtha</em>, the meaning of a complete sentence,
-          Vakyartha carries language from thought to understanding to authorized
-          action. Text, code, plans, memory, voice, and evidence are different
-          forms of the same thing: intent made legible.
-        </p>
-      </div>
-      <aside class="build-card" id="buildcard" hidden aria-label="This build">
-        <p class="head">This build</p>
-        <dl>
-          <dt>version</dt><dd id="bv">—</dd>
-          <dt>commit</dt><dd id="bc">—</dd>
-          <dt>surfaces</dt><dd>/app · /admin</dd>
-          <dt>status</dt><dd><span class="state"><span class="dot done" aria-hidden="true"></span>responding</span></dd>
-        </dl>
-      </aside>
+<section class="hero">
+  <div class="wrap hero-composition">
+    <div class="hero-copy">
+      <p class="eyebrow">For the many tabs open in your life.</p>
+      <h1>Ask.<br />Then go live<br /><span>your day.</span></h1>
+      <p class="hero-description">
+        Dinner plans. Tricky emails. That side project.<br />Give Vakyartha
+        something to work on.
+      </p>
+      <a class="button primary" href="#your-day"
+        >Find your thing <span aria-hidden="true">↓</span></a
+      >
     </div>
-
-    <div class="signal" aria-label="How Vakyartha carries an idea into action">
-      <span class="signal-word active">what you mean</span><i></i><span class="signal-word">what Vakyartha understands</span><i></i><span class="signal-word">what you authorize</span><i></i><span class="signal-word">what comes back proven</span>
-    </div>
-
-    <!-- The console. Rendered complete; script rewinds and plays it. -->
-    <section class="panel" id="run" aria-label="A Vakyartha session, replayed">
-      <div class="panel-head">
-        <span class="sid">session&nbsp; s_01K7Q4WCE2</span>
-        <span class="state" id="runstate">
-          <span class="dot run" aria-hidden="true"></span>
-          <span id="runword">running</span>
-        </span>
-        <span class="mode">workspace-write</span>
-      </div>
-
-      <div class="tape" id="tape">
-        <div class="row step" data-step="1">
-          <span class="t">14:02:11</span><span class="k k-turn">turn</span>
-          <span class="v">“fix the failing parser test”</span><span class="m">from /app</span>
-        </div>
-        <div class="row step" data-step="2">
-          <span class="t"></span><span class="k k-reading">reading</span>
-          <span class="v">engineering · session-scoped · reversible · proof: cited</span>
-          <span class="m">narrows to 6 tools</span>
-        </div>
-        <div class="row step" data-step="3">
-          <span class="t">14:02:11</span><span class="k k-gate">gate</span>
-          <span class="v">read <span class="path">crates/vak-parser/src/lib.rs</span></span>
-          <span class="m"><span class="verdict allow">allow</span></span>
-        </div>
-        <div class="row step" data-step="4">
-          <span class="t">14:02:12</span><span class="k k-tool">tool</span>
-          <span class="v">read <span class="path">crates/vak-parser/src/lib.rs</span></span>
-          <span class="m">2.1 KiB</span>
-        </div>
-        <div class="row step" data-step="5">
-          <span class="t">14:02:19</span><span class="k k-gate">gate</span>
-          <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
-          <span class="m"><span class="verdict allow">allow</span></span>
-        </div>
-        <div class="row step" data-step="6">
-          <span class="t">14:02:19</span><span class="k k-tool">tool</span>
-          <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
-          <span class="m">+6 −2</span>
-        </div>
-        <div class="row step" data-step="7">
-          <span class="t">14:02:20</span><span class="k k-gate">gate</span>
-          <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
-          <span class="m"><span class="verdict ask" id="gateverdict">ask</span></span>
-        </div>
-
-        <div class="gate step" data-step="8" id="gatecard">
-          <p class="gate-title">This run has stopped and is waiting on you.</p>
-          <div class="gate-facts">
-            <span><b>bash</b> cargo test -p vak-parser</span>
-            <span><b>mode</b> workspace-write</span>
-            <span><b>network</b> none</span>
-            <span><b>reversible</b> yes</span>
-          </div>
-          <div class="gate-actions" id="gateactions">
-            <button class="btn primary" type="button" id="approve">Approve</button>
-            <button class="btn danger" type="button" id="deny">Deny</button>
-            <span class="gate-hint">Nothing has run yet.</span>
-          </div>
-        </div>
-
-        <div class="outcome" id="outcome">
-          <div id="approved">
-            <div class="row">
-              <span class="t">14:02:41</span><span class="k k-tool">tool</span>
-              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
-              <span class="m"><span class="verdict allow">27 passed</span></span>
-            </div>
-            <div class="row">
-              <span class="t">14:02:42</span><span class="k k-receipt">receipt</span>
-              <span class="v">anthropic · purpose: turn · settled</span>
-              <span class="m">6 118 in / 412 out</span>
-            </div>
-            <div class="row">
-              <span class="t">14:02:42</span><span class="k k-ledger">ledger</span>
-              <span class="v">12 entries appended · nothing rewritten</span>
-              <span class="m">replayable</span>
-            </div>
-          </div>
-          <div id="denied">
-            <div class="row">
-              <span class="t">14:02:31</span><span class="k k-gate">gate</span>
-              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
-              <span class="m"><span class="verdict deny">denied by you</span></span>
-            </div>
-            <div class="row">
-              <span class="t">14:02:31</span><span class="k k-run">run</span>
-              <span class="v">stopped · the edit it had already made is kept</span>
-              <span class="m">partial work preserved</span>
-            </div>
-            <div class="row">
-              <span class="t">14:02:31</span><span class="k k-ledger">ledger</span>
-              <span class="v">10 entries appended · the denial is one of them</span>
-              <span class="m">replayable</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="panel-foot">
-        <span id="footnote">A real session, replayed. The gate is yours to answer.</span>
-        <span class="grow"></span>
-        <button class="btn sm" type="button" id="replay">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-               stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path d="M3 12a9 9 0 1 0 2.6-6.4"/><path d="M3 4.5V10h5.5"/>
-          </svg>
-          Replay
-        </button>
-      </div>
-    </section>
-
-    <div class="hero-actions">
-      <a class="btn primary lg" href="/app">Open the workspace</a>
-      <a class="btn lg" href="/admin">Operations console</a>
-    </div>
-    <p class="hero-note">
-      Both open directly on this machine. Reaching them from another device is
-      an explicit opt-in — see <code>Start</code>, below.
-    </p>
+    <figure class="hero-art">
+      <img
+        src="/site/day.webp"
+        width="1536"
+        height="1024"
+        alt="Vakyartha cooking, Moss making a plan and Beni packing a weekend bag"
+      />
+      <figcaption>
+        Vakyartha, Moss & Beni. Getting into the everyday.
+      </figcaption>
+    </figure>
   </div>
+</section>
+<div class="story-intro wrap" id="your-day">
+  <p>Pick a place to start.</p>
+  <span>Tap a request. See an example. ↓</span>
 </div>
-
-<section class="vak-callout" aria-labelledby="vak-thesis">
-  <div class="wrap vak-callout-grid">
-    <div class="vak-glyph" aria-hidden="true">
-      <svg viewBox="0 0 360 220"><path d="M24 110h48M288 110h48"/><path d="M72 110c34-72 78-72 108 0s74 72 108 0M72 110c34 72 78 72 108 0s74-72 108 0"/><circle cx="180" cy="110" r="12"/><path d="M180 38v144M108 110h144"/></svg>
-      <span id="vak-prompt">intent · expression · action</span>
-    </div>
-    <div><h2 id="vak-thesis">From meaning to useful action.</h2><p class="section-lead">It is the passage from what a person means to what a system can understand, preserve, and do.</p><a class="text-link" href="/vak">Read the philosophy behind the name →</a></div>
-  </div>
-</section>
-
-<!-- ================= instruments ================= -->
-<section aria-labelledby="reads">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="reads" class="reveal">Four readings, on every surface</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        The console above is not a viewer bolted onto an agent. It is the record
-        the runtime keeps anyway, rendered. These are the four things it always
-        has to say, whether the run came from a terminal, a browser, or a chat
-        message.
-      </p>
-    </div>
-
-    <div class="instruments">
-      <article class="instrument reveal">
-        <div class="readout">
-          <span class="dim">sessions/…/ledger.jsonl</span><hr />
-          <span class="key">0009</span> {"kind":"tool_call","name":<span class="hit">"edit"</span>,…}<br />
-          <span class="key">0010</span> {"kind":"gate","verdict":<span class="warn">"ask"</span>,…}<br />
-          <span class="key">0011</span> {"kind":"gate","verdict":<span class="ok">"allow"</span>,"by":"user"}<br />
-          <span class="key">0012</span> {"kind":"receipt","settlement":<span class="ok">"settled"</span>,…}<hr />
-          <span class="strike">rewrite entry 0010</span> &nbsp;<span class="dim">— there is no such verb</span>
-        </div>
-        <div>
-          <h3>The ledger is append-only</h3>
-          <p>
-            Every session is a JSONL tree on disk, written as it happens. Anything
-            the model could see can be reconstructed from it, in order.
-          </p>
-          <p>
-            Branching and compaction <em>append</em> — they create entries rather
-            than editing them, so history has no writable past. A record you can
-            quietly correct is not evidence.
-          </p>
-          <p class="cmd">~/…/sessions/&lt;id&gt;/ledger.jsonl</p>
-        </div>
-      </article>
-
-      <article class="instrument reveal">
-        <div class="readout">
-          <span class="dim">effective policy</span><hr />
-          <span class="no">deny</span>&nbsp;&nbsp; bash(<span class="hit">rm -rf *</span>)<br />
-          <span class="no">deny</span>&nbsp;&nbsp; write(<span class="hit">**/.env</span>)<br />
-          <span class="warn">ask</span>&nbsp;&nbsp;&nbsp; bash(<span class="hit">*</span>)<br />
-          <span class="ok">allow</span>&nbsp; read(<span class="hit">&lt;workspace&gt;/**</span>)<hr />
-          <span class="dim">deny wins · then ask · then allow · then the mode</span>
-        </div>
-        <div>
-          <h3>Permission comes before dispatch</h3>
-          <p>
-            Agent turns, tools, workers, flows, plans, evals, server runs and
-            desktop runs all pass through the same policy engine before anything
-            happens. There is no second path that skips it.
-          </p>
-          <p>
-            Rules compose as <b>allow</b>, <b>ask</b> and <b>deny</b>, and deny
-            takes precedence. Changing the policy cancels work already in flight
-            and rejects approvals granted under the old one.
-          </p>
-          <p class="cmd"><a href="/security">Try the gate yourself →</a></p>
-        </div>
-      </article>
-
-      <article class="instrument reveal">
-        <div class="readout">
-          <div class="kv">
-            <span class="key">purpose</span><span>turn</span>
-            <span class="key">provider</span><span>anthropic</span>
-            <span class="key">model</span><span class="hit">claude-…</span>
-            <span class="key">failure domain</span><span>provider</span>
-            <span class="key">settlement</span><span class="ok">settled</span>
-            <span class="key">usage</span><span>6 118 in / 412 out</span>
+<section
+  class="day-chapter chapter-day day-requests"
+  aria-labelledby="chapter-day"
+>
+  <div class="wrap chapter-composition">
+    <div class="chapter-copy">
+      <p class="eyebrow">Everyday</p>
+      <h2 id="chapter-day">A little less<br />life admin.</h2>
+      <div class="request-list">
+        <details id="everyday">
+          <summary>
+            <span class="request-person">Vakyartha</span
+            ><span>“Dinner for two. Keep it easy.”</span>
+          </summary>
+          <div class="request-result">
+            <strong>Three dinners. One list.</strong>
+            <p>
+              Lemon pasta, chickpea bowls, veggie tacos. A plan that reuses
+              ingredients.
+            </p>
           </div>
-        </div>
-        <div>
-          <h3>Every dispatch leaves a receipt</h3>
-          <p>
-            A receipt records what a call to a model was <em>for</em>, which model
-            answered, where a failure would belong, whether the exchange settled,
-            and what it cost.
-          </p>
-          <p>
-            It is written for the dispatch that failed as readily as the one that
-            worked — typed errors, bounded retries and preserved partial output
-            are part of the contract, not an edge case to hide.
-          </p>
-          <p class="cmd">purpose · model · failure domain · settlement · usage</p>
-        </div>
-      </article>
-
-      <article class="instrument reveal">
-        <div class="readout">
-          <div class="axes">
-            <div class="axis"><span class="name">kind</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">engineering</span></div>
-            <div class="axis"><span class="name">horizon</span><span class="track"><i class="seg fill"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i></span><span class="val">session</span></div>
-            <div class="axis"><span class="name">blast radius</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">reversible</span></div>
-            <div class="axis"><span class="name">proof owed</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i><i class="seg"></i></span><span class="val">cited</span></div>
-            <div class="axis"><span class="name">clarity</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg"></i></span><span class="val">clear</span></div>
-            <div class="axis"><span class="name">modality</span><span class="track"><i class="seg fill"></i><i class="seg"></i><i class="seg"></i><i class="seg"></i></span><span class="val">text</span></div>
-            <div class="axis"><span class="name">attendance</span><span class="track"><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i><i class="seg fill"></i></span><span class="val">watched</span></div>
+        </details>
+        <details id="weekend">
+          <summary>
+            <span class="request-person">Moss</span
+            ><span>“A Saturday with room to breathe.”</span>
+          </summary>
+          <div class="request-result">
+            <strong>A loose plan.</strong>
+            <p>A walk at ten, lunch nearby, and the afternoon left open.</p>
           </div>
-        </div>
-        <div>
-          <h3>The run knows what it was asked</h3>
-          <p>
-            Every turn is read on seven behavioural axes — what kind of work, how
-            long it lives, what it can break, what standard of proof it owes, how
-            clear it is, what it needs, and whether anyone is watching.
-          </p>
-          <p>
-            That reading only ever <em>narrows</em> the run: fewer tools when fewer
-            will do, a higher approval floor for anything irreversible. A misreading
-            can make Vakyartha more cautious; it can never grant a tool or skip a gate.
-          </p>
-          <p class="cmd">vak intent explain "deploy the billing service"</p>
-        </div>
-      </article>
-    </div>
-  </div>
-</section>
-
-<!-- ================= surfaces ================= -->
-<section id="surfaces" aria-labelledby="surfaces-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="surfaces-h" class="reveal">One core, many surfaces</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        The surface you happen to be using is a way in, not a different product.
-        Each speaks the same session contract to the same core, so behaviour and
-        auditability do not change when you switch.
-      </p>
-    </div>
-
-    <div class="bus reveal" style="--d:120ms">
-      <ul class="taps">
-        <li class="tap"><span class="tap-name">CLI</span><span class="tap-desc"><code>exec</code>, <code>plan</code>, goal mode — for scripts and CI.</span></li>
-        <li class="tap"><span class="tap-name">Desktop</span><span class="tap-desc">Tauri 2 app: worktrees, diffs, editor, terminal.</span></li>
-        <li class="tap"><span class="tap-name">Browser</span><span class="tap-desc">The same client at <code>/app</code>, against a headless box.</span></li>
-        <li class="tap"><span class="tap-name">Server</span><span class="tap-desc">HTTP + SSE for clients of your own.</span></li>
-        <li class="tap"><span class="tap-name">Gateways</span><span class="tap-desc">Telegram, Discord, Slack, outbound webhooks.</span></li>
-      </ul>
-      <div class="bus-line" aria-hidden="true"></div>
-      <div class="bus-drop" aria-hidden="true"></div>
-      <div class="core">
-        <p class="core-title">One core</p>
-        <div class="core-parts">
-          <span>append-only ledger</span>
-          <span>policy gate</span>
-          <span>receipts</span>
-          <span>intent reading</span>
-          <span>commitments</span>
-        </div>
+        </details>
+        <details id="packing">
+          <summary>
+            <span class="request-person">Beni</span
+            ><span>“Two nights away. What do I pack?”</span>
+          </summary>
+          <div class="request-result">
+            <strong>The essentials.</strong>
+            <p>
+              Clothes for two days, toiletries, a charger and ID. Check the
+              forecast before you leave.
+            </p>
+          </div>
+        </details>
       </div>
-      <p class="bus-note">
-        Where a host genuinely cannot do something — a native file dialog, a real
-        shell — the capability is absent rather than broken.
-        <a href="/surfaces">See one session in three of them →</a>
+      <p class="cast">
+        Vakyartha cooks, Moss plans, Beni gets ready for the weekend.
       </p>
     </div>
   </div>
 </section>
-
-<!-- ================= start ================= -->
-<section id="start" aria-labelledby="start-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="start-h" class="reveal">Start in three commands</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        Private preview: repository access is required to build locally.
-        Setup runs once; afterwards it shows a review.
+<section class="day-chapter chapter-work" aria-labelledby="chapter-work">
+  <div class="wrap chapter-composition">
+    <div class="chapter-art">
+      <img
+        src="/site/work.webp"
+        width="1536"
+        height="1024"
+        loading="lazy"
+        alt="Mira writes, Pip codes, Nori makes sense of the numbers."
+      />
+    </div>
+    <div class="chapter-copy">
+      <p class="eyebrow">Work & side projects</p>
+      <h2 id="chapter-work">That thing you’ve<br />been putting off.</h2>
+      <div class="request-list">
+        <details id="work">
+          <summary>
+            <span class="request-person">Mira</span
+            ><span>“Help me write this reply.”</span>
+          </summary>
+          <div class="request-result">
+            <strong>A warmer, shorter reply.</strong>
+            <p>
+              Thanks for the update. Tuesday works for me. Shall we start at
+              ten?
+            </p>
+          </div>
+        </details>
+        <details id="code">
+          <summary>
+            <span class="request-person">Pip</span
+            ><span>“Find the bug. Show me the fix.”</span>
+          </summary>
+          <div class="request-result">
+            <strong>The empty list case.</strong>
+            <p>
+              A proposed guard for an empty list, with a test to inspect before
+              keeping the change.
+            </p>
+          </div>
+        </details>
+        <details id="numbers">
+          <summary>
+            <span class="request-person">Nori</span
+            ><span>“What stands out in this sheet?”</span>
+          </summary>
+          <div class="request-result">
+            <strong>A clearer picture.</strong>
+            <p>
+              A summary of the rows you provided, with the cells it refers to.
+            </p>
+          </div>
+        </details>
+      </div>
+      <p class="cast">
+        Mira writes, Pip codes, Nori makes sense of the numbers.
       </p>
     </div>
-
-    <ol class="steps reveal" style="--d:120ms">
-      <li class="step-row">
-        <span class="step-n">1</span>
-        <span class="step-what"><b>Install</b><span>With repository access, clone and run scripts/build.sh (Rust, Node.js and Python 3 required).</span></span>
-        <code class="step-cmd" id="cmd1">git clone https://github.com/nranjan2code/code.git &amp;&amp; cd code &amp;&amp; scripts/build.sh</code>
-        <button class="btn sm copy" type="button" data-copy="cmd1">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">2</span>
-        <span class="step-what"><b>Set up</b><span>Pick a workspace, connect a provider, verify a model, choose a posture.</span></span>
-        <code class="step-cmd" id="cmd2">vak setup</code>
-        <button class="btn sm copy" type="button" data-copy="cmd2">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">3</span>
-        <span class="step-what"><b>Work</b><span>Or open the workspace below and type it there instead.</span></span>
-        <code class="step-cmd" id="cmd3">vak exec "fix the failing test"</code>
-        <button class="btn sm copy" type="button" data-copy="cmd3">Copy</button>
-      </li>
-    </ol>
-
-    <nav class="doors" aria-label="Surfaces on this server">
-      <a class="door" href="/app">
-        <span class="door-top">
-          <span class="door-icon" aria-hidden="true">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M20 15a3 3 0 0 1-3 3H9l-5 3v-6a3 3 0 0 1-1-2V7a3 3 0 0 1 3-3h11a3 3 0 0 1 3 3Z"/>
-            </svg>
-          </span>
-          <span class="door-name">Workspace</span>
-        </span>
-        <span class="door-desc">Run tasks, review diffs, answer approvals, steer a run.</span>
-        <span class="door-go">/app</span>
-      </a>
-      <a class="door" href="/admin">
-        <span class="door-top">
-          <span class="door-icon" aria-hidden="true">
-            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                 stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 3 4 6v6c0 4.5 3.4 8.3 8 9 4.6-.7 8-4.5 8-9V6Z"/>
-            </svg>
-          </span>
-          <span class="door-name">Operations</span>
-        </span>
-        <span class="door-desc">Sessions, receipts, commitments, services, incidents.</span>
-        <span class="door-go">/admin</span>
-      </a>
-    </nav>
-
-    <p class="start-note">
-      On this machine both surfaces open without a prompt. The server binds
-      loopback by default; reaching it by a real hostname is an explicit opt-in
-      (<code>[server] trusted_hosts</code>) that it refuses to start without, and
-      from there a browser signs in once with the access token the server printed.
-      <a href="/install">The full install, service and update path →</a>
-    </p>
-
-    <div class="next">
-      <span class="lbl">Next</span>
-      <a href="/outcomes">How Vakyartha turns intent into a trustworthy result</a>
+  </div>
+</section>
+<section class="day-chapter chapter-play" aria-labelledby="chapter-play">
+  <div class="wrap chapter-composition">
+    <div class="chapter-art">
+      <img
+        src="/site/play.webp"
+        width="1536"
+        height="1024"
+        loading="lazy"
+        alt="Lumi makes a birthday plan. Tavi explores how things grow."
+      />
     </div>
+    <div class="chapter-copy">
+      <p class="eyebrow">Just because</p>
+      <h2 id="chapter-play">Follow your<br />“what if?”</h2>
+      <div class="request-list">
+        <details id="ideas">
+          <summary>
+            <span class="request-person">Lumi</span
+            ><span>“Birthday at home. Any ideas?”</span>
+          </summary>
+          <div class="request-result">
+            <strong>Keep it simple.</strong>
+            <p>Make-your-own pizzas, a playlist from each decade, and cake.</p>
+          </div>
+        </details>
+        <details id="learn">
+          <summary>
+            <span class="request-person">Tavi</span
+            ><span>“Explain it so it sticks.”</span>
+          </summary>
+          <div class="request-result">
+            <strong>Why bread rises.</strong>
+            <p>
+              Yeast feeds on sugars. Gas makes little pockets. Heat sets the
+              shape. Now try explaining it back.
+            </p>
+          </div>
+        </details>
+      </div>
+      <p class="cast">
+        Lumi makes a birthday plan. Tavi explores how things grow.
+      </p>
+    </div>
+  </div>
+</section>
+<div class="wrap example-disclosure">
+  Illustrated examples, not live results. All eight characters are companion
+  choices, not fixed job roles.
+</div>
+<section class="closing-scene">
+  <div class="wrap">
+    <p class="eyebrow">Your turn.</p>
+    <h2>What’s on<br />your mind?</h2>
+    <a class="button primary" href="/install"
+      >Meet Vakyartha <span aria-hidden="true">↗</span></a
+    ><a class="text-link" href="/security"
+      >Your files. Your choices. Your control. ↗</a
+    >
   </div>
 </section>

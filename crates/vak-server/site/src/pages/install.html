@@ -1,219 +1,97 @@
-<div class="page-head">
+<section class="page-hero">
   <div class="wrap">
-    <h1>Install it, run it, and take it back off</h1>
+    <p class="eyebrow">Get started</p>
+    <h1>A place for your<br />next “can you help?”</h1>
     <p class="lead">
-      macOS and Linux. Build from source while verified downloads are prepared, with a lifecycle that
-      is a set of verbs rather than a folklore of manual steps — install,
-      verify, update, uninstall, each one checkable against a manifest.
+      Vakyartha is currently a private preview for macOS and Linux.
     </p>
-    <nav class="page-toc" aria-label="On this page">
-      <a href="#start">Three commands</a>
-      <a href="#where">Where things live</a>
-      <a href="#headless">Headless and Docker</a>
-      <a href="#services">Always-on services</a>
-      <a href="#lifecycle">Verify, update, uninstall</a>
-      <a href="#build">Building from source</a>
-    </nav>
+  </div>
+</section>
+<div class="wrap columns wide-section">
+  <div>
+    <div class="setup-card">
+      <span class="setup-tag">Already set up on this server?</span>
+      <h2>Pick up where you left off.</h2>
+      <p>Open your Vakyartha app. Your server may ask you to sign in.</p>
+      <a class="button primary" href="/app">Open Vakyartha ↗</a>
+    </div>
+    <div class="setup-card">
+      <span class="setup-tag">New here?</span>
+      <h2>A little setup first.</h2>
+      <p>
+        The preview currently requires repository access and a local build. A
+        public one-click download is not available yet.
+      </p>
+      <p>
+        You’ll also need to connect an AI service or configure a local model.
+        External AI services may charge for use.
+      </p>
+    </div>
+  </div>
+  <div class="faq">
+    <details open>
+      <summary>Build the preview</summary>
+      <p>
+        For people with repository access. Install Rust, Node.js and Python 3
+        first.
+      </p>
+      <div class="code-block">
+        <code id="install-command"
+          >git clone https://github.com/nranjan2code/code.git cd code
+          scripts/build.sh</code
+        ><button class="copy" type="button" data-copy="install-command" hidden>
+          Copy
+        </button>
+      </div>
+      <p>Then choose your working folder and connect an AI service:</p>
+      <div class="code-block">
+        <code id="setup-command">vak setup vak doctor</code
+        ><button class="copy" type="button" data-copy="setup-command" hidden>
+          Copy
+        </button>
+      </div>
+    </details>
+    <details>
+      <summary>Open in your browser</summary>
+      <p>Start the server, then open the app from a second terminal:</p>
+      <div class="code-block">
+        <code id="serve-command">vak serve</code
+        ><button class="copy" type="button" data-copy="serve-command" hidden>
+          Copy
+        </button>
+      </div>
+      <div class="code-block">
+        <code id="open-command">vak open app</code
+        ><button class="copy" type="button" data-copy="open-command" hidden>
+          Copy
+        </button>
+      </div>
+      <p>
+        The server starts on your own machine. Access from another device needs
+        explicit server configuration.
+      </p>
+    </details>
+    <details>
+      <summary>Which computers are supported?</summary>
+      <p>macOS and Linux. Windows is not currently supported.</p>
+    </details>
+    <details>
+      <summary>Update or remove Vakyartha</summary>
+      <p>
+        Use the built-in commands to inspect your installation, update it, or
+        remove it:
+      </p>
+      <div class="code-block">
+        <code>vak self status vak self update vak self uninstall</code>
+      </div>
+      <p>Check the command’s help before removing any saved data.</p>
+    </details>
+    <details>
+      <summary>Manage a running server</summary>
+      <p>
+        The <a href="/admin">operations console</a> contains technical settings
+        and diagnostics. It requires the server’s access permissions.
+      </p>
+    </details>
   </div>
 </div>
-
-<section id="start" aria-labelledby="start-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="start-h" class="reveal">Three commands</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        Setup runs once. Afterwards it shows a review rather than a wizard.
-      </p>
-    </div>
-
-    <ol class="steps reveal" style="--d:100ms">
-      <li class="step-row">
-        <span class="step-n">1</span>
-        <span class="step-what"><b>Install</b><span>Private preview: repository access is required. Build locally with Rust, Node.js and Python 3.</span></span>
-        <code class="step-cmd" id="i1">git clone https://github.com/nranjan2code/code.git &amp;&amp; cd code &amp;&amp; scripts/build.sh</code>
-        <button class="btn sm copy" type="button" data-copy="i1">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">2</span>
-        <span class="step-what"><b>Set up</b><span>Choose a workspace, connect a provider, verify a model, pick a permission mode, and — only if you ask — bring up services.</span></span>
-        <code class="step-cmd" id="i2">vak setup</code>
-        <button class="btn sm copy" type="button" data-copy="i2">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">3</span>
-        <span class="step-what"><b>Check it</b><span>Readiness, layer by layer: provider auth, model route, config warnings, sandbox, extensions.</span></span>
-        <code class="step-cmd" id="i3">vak doctor</code>
-        <button class="btn sm copy" type="button" data-copy="i3">Copy</button>
-      </li>
-    </ol>
-
-    <div class="facts reveal" style="--d:140ms">
-      <div class="facts-row">
-        <span class="k">macOS</span>
-        <span class="v"><code>Vakyartha-&lt;version&gt;-&lt;arch&gt;.dmg</code> — drag <code>Vakyartha.app</code> to Applications. The build is not yet signed, so the first launch needs right-click → Open; every launch after that is normal.</span>
-      </div>
-      <div class="facts-row">
-        <span class="k">Linux</span>
-        <span class="v"><code>vak-&lt;version&gt;-&lt;arch&gt;.tar.gz</code>, or the bootstrap script above.</span>
-      </div>
-      <div class="facts-row">
-        <span class="k">Windows</span>
-        <span class="v">Not supported, and not shipped half-done: paths, service management and sandboxing are all two-platform today, and an installer over a binary with no containment backend would be a less safe product than this one claims to be.</span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="where" aria-labelledby="where-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="where-h" class="reveal">Where things live</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        Configuration resolves broadest to narrowest. Secrets stay out of TOML,
-        and real environment variables beat any <code>.env</code>.
-      </p>
-    </div>
-    <div class="facts reveal" style="--d:100ms">
-      <div class="facts-row"><span class="k">Shared configuration</span><span class="v"><code>~/vak-home/.vak/config.toml</code></span></div>
-      <div class="facts-row"><span class="k">Shared secrets</span><span class="v"><code>~/vak-home/.env</code></span></div>
-      <div class="facts-row"><span class="k">Project overrides</span><span class="v"><code>&lt;workspace&gt;/.vak/config.toml</code> — loaded only after you trust that workspace</span></div>
-      <div class="facts-row"><span class="k">Project secrets</span><span class="v"><code>&lt;workspace&gt;/.env</code> — same condition</span></div>
-      <div class="facts-row"><span class="k">Sessions, ledgers, gateway state</span><span class="v">the platform data home</span></div>
-      <div class="facts-row"><span class="k">See what is actually in force</span><span class="v"><code>vak config dump</code></span></div>
-    </div>
-  </div>
-</section>
-
-<section id="headless" aria-labelledby="headless-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="headless-h" class="reveal">Headless, and in Docker</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        The workspace client and the operations console are served by the same
-        binary, so a headless box needs nothing else installed to be usable from
-        a browser.
-      </p>
-    </div>
-
-    <div class="prose reveal" style="--d:100ms">
-      <p>
-        <code>vak serve</code> binds loopback and serves the workspace client at
-        <code>/app</code>, the operations console at <code>/admin</code>, and
-        this site at <code>/</code>.
-      </p>
-      <p>
-        Binding any other interface requires <code>[server] trusted_hosts</code>,
-        and the server refuses to start without it. Reach a remote box over a
-        tunnel, a tailnet, or a TLS-terminated hostname; set
-        <code>[server] public_url</code> to an https origin and the session
-        cookie becomes <code>Secure</code>.
-      </p>
-      <p>
-        <code>vak open</code> opens a running server's web surface in a browser,
-        already signed in, without you handling a token at all.
-      </p>
-    </div>
-
-    <ol class="steps reveal" style="--d:140ms">
-      <li class="step-row">
-        <span class="step-n">·</span>
-        <span class="step-what"><b>Serve</b><span>Loopback by default; <code>--host</code> needs trusted_hosts first.</span></span>
-        <code class="step-cmd" id="h1">vak serve --port 8901</code>
-        <button class="btn sm copy" type="button" data-copy="h1">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">·</span>
-        <span class="step-what"><b>Open a surface</b><span>Signs the browser in for you.</span></span>
-        <code class="step-cmd" id="h2">vak open app</code>
-        <button class="btn sm copy" type="button" data-copy="h2">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">·</span>
-        <span class="step-what"><b>Docker</b><span>Multi-stage, non-root, root-owned binaries, health-checked. No Node and no Python in the image — every embedded bundle is committed.</span></span>
-        <code class="step-cmd" id="h3">docker/build.sh --up</code>
-        <button class="btn sm copy" type="button" data-copy="h3">Copy</button>
-      </li>
-    </ol>
-  </div>
-</section>
-
-<section id="services" aria-labelledby="services-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="services-h" class="reveal">Always-on services</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        Opt-in, never implicit. A macOS LaunchAgent or a Linux systemd user
-        service, generated from the installed manifest rather than hand-written.
-      </p>
-    </div>
-    <div class="facts reveal" style="--d:100ms">
-      <div class="facts-row"><span class="k">Bring services onto this build</span><span class="v"><code>vak self services-sync</code> — regenerates the units and reloads them against the installed binary</span></div>
-      <div class="facts-row"><span class="k">See the drift</span><span class="v"><code>vak self status</code> — build vs manifest vs per-service units, in one matrix</span></div>
-      <div class="facts-row"><span class="k">Chat bridges</span><span class="v">Telegram, Discord and Slack, plus outbound webhooks. An unknown chat lands as a reviewable pending request — approve, deny or edit access from the console, never a config-file hand-edit.</span></div>
-    </div>
-  </div>
-</section>
-
-<section id="lifecycle" aria-labelledby="lifecycle-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="lifecycle-h" class="reveal">Verify, update, uninstall</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        The install is a manifest of digests, not a pile of files someone
-        remembers copying. Every verb below can be checked against it.
-      </p>
-    </div>
-    <div class="facts reveal" style="--d:100ms">
-      <div class="facts-row"><span class="k"><code>vak self install</code></span><span class="v">Place this build into the managed prefix and write its manifest.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self reinstall</code></span><span class="v">Clear the prefix and place the build fresh — the honest repair for a half-finished install.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self verify</code></span><span class="v">Check every installed component against the manifest digests. A component that does not match is named, not glossed.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self status</code></span><span class="v">The drift matrix: what this build is, what the manifest says, and what each service unit actually points at.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self state</code></span><span class="v">Digest every durable file the state registry declares — or check a snapshot taken before an update against what is on disk now, which is how an update proves it lost nothing.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self update</code></span><span class="v">Opt-in pull-and-replace from a release feed. Nothing updates itself behind your back.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self uninstall</code></span><span class="v">The exact reverse of install: binaries, symlinks and service units. Your data home is left alone.</span></div>
-      <div class="facts-row"><span class="k"><code>vak self uninstall --purge</code></span><span class="v">Also deletes the data home — sessions, ledgers, memory, receipts. Confirmed before it runs, because nothing here is recoverable afterwards.</span></div>
-    </div>
-    <p class="switch-note">
-      A release carries supply-chain evidence, and an update is proven not to
-      lose data by digesting the durable state before and after rather than by
-      assuming it.
-    </p>
-  </div>
-</section>
-
-<section id="build" aria-labelledby="build-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="build-h" class="reveal">Building from source</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        Only contributors need this. A stable Rust toolchain, Git, and Node for
-        the client bundles.
-      </p>
-    </div>
-    <ol class="steps reveal" style="--d:100ms">
-      <li class="step-row">
-        <span class="step-n">1</span>
-        <span class="step-what"><b>Build everything</b><span>Builds the shipped components, then hands placement to the managed installer.</span></span>
-        <code class="step-cmd" id="b1">scripts/build.sh</code>
-        <button class="btn sm copy" type="button" data-copy="b1">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">2</span>
-        <span class="step-what"><b>Client bundles</b><span>One source tree, two bundles: <code>dist/</code> for the Tauri shell, <code>dist-web/</code> for the copy the server serves at <code>/app</code>.</span></span>
-        <code class="step-cmd" id="b2">cd crates/vak-client-ui &amp;&amp; npm ci &amp;&amp; npm run build</code>
-        <button class="btn sm copy" type="button" data-copy="b2">Copy</button>
-      </li>
-      <li class="step-row">
-        <span class="step-n">3</span>
-        <span class="step-what"><b>This site</b><span>Five pages from one source; <code>cargo build</code> refuses to embed a stale <code>dist/</code>.</span></span>
-        <code class="step-cmd" id="b3">python3 crates/vak-server/site/build.py</code>
-        <button class="btn sm copy" type="button" data-copy="b3">Copy</button>
-      </li>
-    </ol>
-
-    <div class="next">
-      <span class="lbl">Next</span>
-      <a href="/">Back to the front</a>
-    </div>
-  </div>
-</section>

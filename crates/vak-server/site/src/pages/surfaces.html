@@ -1,372 +1,55 @@
-<div class="page-head">
+<section class="page-hero">
   <div class="wrap">
-    <h1>One session, whichever way you came in</h1>
-    <p class="lead">
-      Vakyartha is one auditable core with several front doors. The core owns the
-      ledger, the policy gate, the receipts and the intent reading; a surface
-      owns nothing but the rendering. So the same run looks different and
-      <em>behaves</em> identically, and the record it leaves is the same record.
-    </p>
-    <nav class="page-toc" aria-label="On this page">
-      <a href="#three">The same run, three ways</a>
-      <a href="#engine">The turn in motion</a>
-      <a href="#what">What each surface is</a>
-      <a href="#absent">Absent, not broken</a>
-      <a href="#contract">The contract they share</a>
-    </nav>
+    <p class="eyebrow">Ways to use it</p>
+    <h1>At your desk.<br />Within reach.</h1>
+    <p class="lead">Choose the way that fits what you’re doing.</p>
+  </div>
+</section>
+<div class="wrap">
+  <p class="illustration-note">
+    Simplified illustrations of the available interfaces.
+  </p>
+  <div class="gallery">
+    <article class="surface-card">
+      <div class="mini-art">
+        <div class="device">
+          <div class="device-bar"><i></i><i></i><i></i></div>
+          <div class="device-content">
+            <span class="brand-bird" aria-hidden="true"></span
+            ><span>Here’s a shorter version of your notes.</span>
+          </div>
+          <div class="device-input">Keep the dates, please.</div>
+        </div>
+      </div>
+      <h2>On your computer.</h2>
+      <p>
+        The desktop app and browser put your conversation and work together.
+      </p>
+    </article>
+    <article class="surface-card">
+      <div class="mini-art">
+        <div class="device phone">
+          <div class="device-bar"><i></i><i></i><i></i></div>
+          <div class="device-content">
+            <span class="brand-bird" aria-hidden="true"></span
+            ><span>Here’s a shorter version of your notes.</span>
+          </div>
+          <div class="device-input">Keep the dates, please.</div>
+        </div>
+      </div>
+      <h2>In a connected chat.</h2>
+      <p>
+        Connect Telegram, Discord or Slack to reach an agent there. Each
+        connection needs setup and permission.
+      </p>
+    </article>
+  </div>
+  <div class="setup-card">
+    <h2>Prefer a terminal?</h2>
+    <p>Use the same agent from your project folder.</p>
+    <div class="code-block">
+      <code>vak exec "find the failing test and propose a fix"</code>
+    </div>
+    <a class="text-link" href="/install">Setup details ↗</a>
   </div>
 </div>
-
-<section id="three" aria-labelledby="three-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="three-h" class="reveal">The same run, three ways</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        One session — <code>s_01K7Q4WCE2</code>, the one on the home page — as a
-        terminal transcript, as the workspace client, and as a chat message.
-        Same ledger, same gate, same receipt. Switch between them.
-      </p>
-    </div>
-
-    <div class="switch reveal" style="--d:120ms">
-      <div class="switch-tabs" role="tablist" aria-label="Surface">
-        <button role="tab" type="button" aria-selected="true" data-panel="cli">CLI</button>
-        <button role="tab" type="button" aria-selected="false" data-panel="app">Workspace</button>
-        <button role="tab" type="button" aria-selected="false" data-panel="chat">Chat</button>
-      </div>
-      <div class="switch-stage">
-        <div class="switch-panel" data-panel="cli" role="tabpanel" aria-label="CLI">
-          <div class="term">
-<span class="p">$</span> <span class="cmd">vak exec "fix the failing parser test"</span><br />
-<span class="dim">session</span> s_01K7Q4WCE2 &nbsp;<span class="dim">·</span>&nbsp; workspace-write<br />
-<span class="dim">reading</span> engineering · session-scoped · reversible · proof: cited<br />
-<br />
-<span class="ok">allow</span>&nbsp; read &nbsp;crates/vak-parser/src/lib.rs<br />
-<span class="ok">allow</span>&nbsp; edit &nbsp;crates/vak-parser/src/lib.rs &nbsp;<span class="dim">+6 −2</span><br />
-<span class="warn">ask</span>&nbsp;&nbsp;&nbsp; bash &nbsp;cargo test -p vak-parser<br />
-<br />
-&nbsp;&nbsp;<span class="warn">This run has stopped and is waiting on you.</span><br />
-&nbsp;&nbsp;<span class="dim">workspace-write · no network · reversible</span><br />
-&nbsp;&nbsp;Approve? <span class="cmd">[y/N]</span> <span class="ok">y</span><br />
-<br />
-<span class="ok">allow</span>&nbsp; bash &nbsp;cargo test -p vak-parser &nbsp;<span class="ok">27 passed</span><br />
-<span class="dim">receipt</span> anthropic · turn · settled · 6 118 in / 412 out<br />
-<span class="dim">ledger</span>&nbsp; 12 entries appended · nothing rewritten
-          </div>
-        </div>
-
-        <div class="switch-panel" data-panel="app" role="tabpanel" aria-label="Workspace" hidden>
-          <div class="panel-head">
-            <span class="sid">session&nbsp; s_01K7Q4WCE2</span>
-            <span class="state"><span class="dot wait" aria-hidden="true"></span>awaiting you</span>
-            <span class="mode">workspace-write</span>
-          </div>
-          <div class="tape">
-            <div class="row">
-              <span class="t">14:02:19</span><span class="k k-tool">tool</span>
-              <span class="v">edit <span class="path">crates/vak-parser/src/lib.rs</span></span>
-              <span class="m">+6 −2</span>
-            </div>
-            <div class="row">
-              <span class="t">14:02:20</span><span class="k k-gate">gate</span>
-              <span class="v">bash <span class="path">cargo test -p vak-parser</span></span>
-              <span class="m"><span class="verdict ask">ask</span></span>
-            </div>
-            <div class="gate">
-              <p class="gate-title">This run has stopped and is waiting on you.</p>
-              <div class="gate-facts">
-                <span><b>bash</b> cargo test -p vak-parser</span>
-                <span><b>mode</b> workspace-write</span>
-                <span><b>network</b> none</span>
-                <span><b>reversible</b> yes</span>
-              </div>
-              <div class="gate-actions">
-                <span class="gate-resolved">the same approval, with a diff and a transcript beside it</span>
-              </div>
-            </div>
-            <div class="row">
-              <span class="t">14:02:42</span><span class="k k-receipt">receipt</span>
-              <span class="v">anthropic · purpose: turn · settled</span>
-              <span class="m">6 118 in / 412 out</span>
-            </div>
-          </div>
-        </div>
-
-        <div class="switch-panel" data-panel="chat" role="tabpanel" aria-label="Chat" hidden>
-          <div class="chat">
-            <div class="bubble you">
-              <span class="who">you</span>
-              fix the failing parser test
-            </div>
-            <div class="bubble them">
-              <span class="who">Vakyartha · s_01K7Q4WCE2</span>
-              Edited <code>crates/vak-parser/src/lib.rs</code> (+6 −2). To verify it I need
-              to run <code>cargo test -p vak-parser</code>.
-              <span class="gate-facts" style="margin-top:9px">
-                <span><b>mode</b> workspace-write</span>
-                <span><b>network</b> none</span>
-                <span><b>reversible</b> yes</span>
-              </span>
-              <span class="approve-row">
-                <span class="btn sm">Approve</span>
-                <span class="btn sm">Deny</span>
-              </span>
-            </div>
-            <div class="bubble them">
-              <span class="who">Vakyartha</span>
-              27 passed. Receipt: anthropic · settled · 6 118 in / 412 out.
-              12 entries appended to the ledger.
-            </div>
-          </div>
-        </div>
-      </div>
-      <p class="switch-note">
-        The chat bridge is fail-closed: an approval it cannot deliver is never
-        assumed, and a message from an unknown chat lands as a reviewable pending
-        request rather than access granted by a config-file edit.
-      </p>
-    </div>
-  </div>
-</section>
-
-<section id="engine" aria-labelledby="engine-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="engine-h" class="reveal">The turn in motion</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        What happens under the hood the millisecond a request enters from any surface.
-        From admission and intent resolution to provider streaming, sandboxed worker isolation,
-        permission engine evaluation, and work receipt settlement. Switch modes to inspect a single turn,
-        a multi-turn tool chain, or a 100-turn concurrent swarm.
-      </p>
-    </div>
-
-    <div class="turn-engine reveal" id="turn-engine" style="--d:100ms">
-      <div class="engine-bar">
-        <div class="engine-modes" role="tablist" aria-label="Simulation scale">
-          <button role="tab" type="button" class="btn-tab" data-scale="single" aria-selected="true">Single turn</button>
-          <button role="tab" type="button" class="btn-tab" data-scale="multi" aria-selected="false">Multi-turn chain</button>
-          <button role="tab" type="button" class="btn-tab" data-scale="swarm" aria-selected="false">100-turn swarm</button>
-        </div>
-
-        <div class="engine-surfaces" role="tablist" aria-label="Inbound surface">
-          <span class="engine-lbl">Surface:</span>
-          <button role="tab" type="button" class="btn-chip" data-surface="cli" aria-selected="true">CLI</button>
-          <button role="tab" type="button" class="btn-chip" data-surface="chat" aria-selected="false">Telegram/Slack</button>
-          <button role="tab" type="button" class="btn-chip" data-surface="web" aria-selected="false">Desktop/Web</button>
-          <button role="tab" type="button" class="btn-chip" data-surface="cron" aria-selected="false">Heartbeat</button>
-        </div>
-
-        <div class="engine-actions">
-          <button type="button" class="btn sm" id="te-play">Pause</button>
-          <button type="button" class="btn sm" id="te-step">Step</button>
-          <button type="button" class="btn sm" id="te-speed" data-speed="1">1×</button>
-          <button type="button" class="btn sm" id="te-reset">Reset</button>
-        </div>
-      </div>
-
-      <div class="engine-hud" id="te-hud">
-        <div class="hud-stat">
-          <span class="hud-k">Session</span>
-          <span class="hud-v mono" id="hud-sid">s_01K7Q4WCE2</span>
-        </div>
-        <div class="hud-stat">
-          <span class="hud-k">Dispatches</span>
-          <span class="hud-v mono" id="hud-turns">1 / 1</span>
-        </div>
-        <div class="hud-stat">
-          <span class="hud-k">Route Leg</span>
-          <span class="hud-v mono" id="hud-route">anthropic · claude-3-7-sonnet</span>
-        </div>
-        <div class="hud-stat">
-          <span class="hud-k">Tokens (In / Out)</span>
-          <span class="hud-v mono" id="hud-tokens">6,118 / 412</span>
-        </div>
-        <div class="hud-stat">
-          <span class="hud-k">Spend Gate</span>
-          <span class="hud-v mono" id="hud-spend">$0.021 / $5.00</span>
-        </div>
-        <div class="hud-stat">
-          <span class="hud-k">Ledger Entries</span>
-          <span class="hud-v mono" id="hud-entries">14 appended</span>
-        </div>
-        <div class="hud-stat">
-          <span class="hud-k">Invariants</span>
-          <span class="hud-v ok" id="hud-invariants">100% audited</span>
-        </div>
-      </div>
-
-      <div class="engine-canvas-wrap">
-        <canvas id="te-canvas" width="1128" height="260" aria-label="Turn kinetic pipeline simulation"></canvas>
-      </div>
-
-      <div class="engine-pipeline" id="te-stages" role="tablist" aria-label="Pipeline stages"></div>
-
-      <div class="engine-lab">
-        <span class="engine-lbl">Simulate condition:</span>
-        <div class="lab-buttons">
-          <button type="button" class="btn sm" id="fault-rate-limit" title="Inject provider rate limit (429) to trigger turn-ladder failover">⚡ Inject 429 Overload</button>
-          <button type="button" class="btn sm" id="fault-deny-rule" title="Inject rm -rf / to verify explicit deny precedence">🛑 Inject rm -rf /</button>
-          <button type="button" class="btn sm" id="fault-ask-gate" title="Inject out-of-bounds write to trigger human approval gate">✋ Inject Out-of-Bounds Write</button>
-          <button type="button" class="btn sm" id="fault-context-spike" title="Inject context window overflow to trigger compaction & proactive retrieval">📦 Inject Context Overflow</button>
-        </div>
-        <span class="lab-status" id="te-status">Pipeline active · Nominal execution</span>
-      </div>
-
-      <div class="engine-inspector" id="te-inspector">
-        <div class="inspector-head">
-          <div class="inspector-badge" id="insp-badge">Stage 8 · Broker Boundary & Permission Engine</div>
-          <span class="inspector-source mono" id="insp-source">crates/vak-permission/src/engine.rs</span>
-        </div>
-        <div class="inspector-grid">
-          <div class="inspector-col">
-            <span class="inspector-label">What happens here</span>
-            <p class="inspector-desc" id="insp-desc">
-              Tools execute across a broker boundary into a disposable process group. Built-in tools use the versioned <code>__tool_worker</code> protocol; MCP tools run as separately sandboxed workers. The permission engine evaluates precedence: explicit deny rules, then ask rules, then allow rules, and only then the mode's own default.
-            </p>
-            <div class="inspector-rule" id="insp-rule">
-              <b>Non-negotiable Invariant 14:</b> Model tools cross a broker boundary. Never give a worker the policy engine, credentials, or control-plane handles.
-            </div>
-          </div>
-          <div class="inspector-col">
-            <span class="inspector-label">Live Rust Struct / Data Packet</span>
-            <pre class="inspector-code mono" id="insp-code"><code>Decision::Ask {
-    reason: "write outside canonical workspace path (~/.ssh/config)",
-    source: AskSource::ModeDefault,
-}</code></pre>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="what" aria-labelledby="what-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="what-h" class="reveal">What each surface is</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        Pick by where you are and what you need to see, not by what it can do —
-        the policy and the record do not vary.
-      </p>
-    </div>
-
-    <div class="facts reveal" style="--d:100ms">
-      <div class="facts-row">
-        <span class="k">CLI</span>
-        <span class="v">
-          <code>vak exec</code>, <code>vak plan</code>, goal mode with acceptance
-          criteria, <code>vak intent explain</code>, <code>vak commit list</code>,
-          <code>vak config dump</code>, <code>vak doctor</code>. The headless
-          surface, and the one CI uses.
-        </span>
-      </div>
-      <div class="facts-row">
-        <span class="k">Desktop app</span>
-        <span class="v">
-          Tauri 2. Isolated worktrees, streaming chat, diff review, an editor, a
-          PTY terminal, previews, side chats, best-of-N comparison, and the
-          commitment portfolio.
-        </span>
-      </div>
-      <div class="facts-row">
-        <span class="k">Browser client — <code>/app</code></span>
-        <span class="v">
-          The <em>same</em> client source as the desktop app, built a second time
-          for the browser, served by the server itself. Made for a headless Linux
-          box you reach over a tunnel, a tailnet, or a TLS hostname.
-        </span>
-      </div>
-      <div class="facts-row">
-        <span class="k">Operations console — <code>/admin</code></span>
-        <span class="v">
-          Live activity, session transcripts with search, approval gates,
-          receipts, commitments, services, incidents, config editing, and channel
-          onboarding.
-        </span>
-      </div>
-      <div class="facts-row">
-        <span class="k">HTTP + SSE server</span>
-        <span class="v">
-          The contract everything above speaks: sessions, runs, approvals,
-          transcripts, diffs and steering, with <code>Last-Event-ID</code> resume
-          so a dropped connection rebuilds rather than silently losing events.
-        </span>
-      </div>
-      <div class="facts-row">
-        <span class="k">Chat gateways</span>
-        <span class="v">
-          Telegram, Discord and Slack bridges plus outbound webhooks, with
-          fail-closed approval forwarding.
-        </span>
-      </div>
-    </div>
-  </div>
-</section>
-
-<section id="absent" aria-labelledby="absent-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="absent-h" class="reveal">Absent, not broken</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        A browser tab has no native file dialog. A chat message has no diff
-        viewer. The rule for that is one line long.
-      </p>
-    </div>
-    <div class="prose reveal" style="--d:100ms">
-      <p>
-        Where a host genuinely cannot provide a capability, the capability is
-        <strong>absent</strong> — the control is not rendered at all — rather than
-        present and failing when pressed. A disabled button that never explains
-        itself, or a dialog that opens onto nothing, teaches a reader to distrust
-        every other control on the page.
-      </p>
-      <p>
-        So the browser client asks the <em>server's</em> filesystem for a directory
-        rather than pretending to open a native picker, and the terminal is off by
-        default over a network because a shell reached from a browser is a
-        different security question from a shell on your own desk.
-      </p>
-      <ul>
-        <li>Capabilities are declared by the host, not guessed by the client.</li>
-        <li>What a host cannot do is hidden, never stubbed.</li>
-        <li>What it can do behaves identically to every other surface.</li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section id="contract" aria-labelledby="contract-h">
-  <div class="wrap">
-    <div class="section-head">
-      <h2 id="contract-h" class="reveal">The contract they share</h2>
-      <p class="section-lead reveal" style="--d:60ms">
-        This is the part that makes "one core, many surfaces" a claim you can
-        check rather than a diagram.
-      </p>
-    </div>
-    <div class="facts reveal" style="--d:100ms">
-      <div class="facts-row">
-        <span class="k">One policy engine</span>
-        <span class="v">Agent turns, tools, workers, flows, plans, evals, server runs and desktop runs all pass the same gate before dispatch.</span>
-      </div>
-      <div class="facts-row">
-        <span class="k">One ledger format</span>
-        <span class="v">Append-only JSONL with branch lineage and compaction-as-entry, wherever the run started.</span>
-      </div>
-      <div class="facts-row">
-        <span class="k">One receipt</span>
-        <span class="v">Purpose, model, failure domain, settlement and usage, for every provider dispatch on every surface.</span>
-      </div>
-      <div class="facts-row">
-        <span class="k">One frozen execution contract</span>
-        <span class="v">Recorded at admission, so what a session was allowed to do cannot drift underneath it while it runs.</span>
-      </div>
-    </div>
-
-    <div class="next">
-      <span class="lbl">Next</span>
-      <a href="/security">How the gate actually decides</a>
-    </div>
-  </div>
-</section>
