@@ -2,7 +2,7 @@
   <div class="wrap">
     <h1>Install it, run it, and take it back off</h1>
     <p class="lead">
-      macOS and Linux. No toolchain, nothing to compile, and a lifecycle that
+      macOS and Linux. Build from source while verified downloads are prepared, with a lifecycle that
       is a set of verbs rather than a folklore of manual steps — install,
       verify, update, uninstall, each one checkable against a manifest.
     </p>
@@ -29,8 +29,8 @@
     <ol class="steps reveal" style="--d:100ms">
       <li class="step-row">
         <span class="step-n">1</span>
-        <span class="step-what"><b>Install</b><span>Downloads the release for your platform and places it. Re-running it is an update.</span></span>
-        <code class="step-cmd" id="i1">curl -fsSL https://get.vak.dev/install.sh | sh</code>
+        <span class="step-what"><b>Install</b><span>Private preview: repository access is required. Build locally with Rust, Node.js and Python 3.</span></span>
+        <code class="step-cmd" id="i1">git clone https://github.com/nranjan2code/code.git &amp;&amp; cd code &amp;&amp; scripts/build.sh</code>
         <button class="btn sm copy" type="button" data-copy="i1">Copy</button>
       </li>
       <li class="step-row">

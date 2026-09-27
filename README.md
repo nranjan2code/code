@@ -8,7 +8,7 @@
 
 **A local-first Rust harness for running serious general-purpose agents without giving up the receipts.**
 
-[![Version](https://img.shields.io/badge/version-5.0.0-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.1.0-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
 [![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
@@ -61,11 +61,16 @@ product than this one claims to be.
 The macOS build is not yet signed, so the first launch needs a right-click
 → Open rather than a double-click. Every launch after that is normal.
 
+For maintainers with access to this private repository, build and install locally
+with Rust, Node.js, npm, and Python 3 available:
+
 ```bash
-curl -fsSL https://get.vak.dev/install.sh | sh
+git clone https://github.com/nranjan2code/code.git
+cd code
+scripts/build.sh
 ```
 
-Re-running the script is an update.
+Re-running `scripts/build.sh` updates the managed local install.
 
 ### 2. Run setup
 

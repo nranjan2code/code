@@ -2,7 +2,7 @@
 # The one-command install (docs/design/46-stabilization-install-and-onboarding.md
 # D1, S7):
 #
-#   curl -fsSL https://get.vak.dev/install.sh | sh
+#   VAK_FEED_URL=<published-release-feed> sh install.sh
 #
 # Detects the platform, downloads that platform's components, verifies each
 # digest, and then hands off to `vak self install`. It never writes the
@@ -21,7 +21,11 @@
 
 set -eu
 
-FEED_URL="${VAK_FEED_URL:-https://get.vak.dev/release.json}"
+[ -n "${VAK_FEED_URL:-}" ] || {
+    printf '%s\n' 'error: VAK_FEED_URL is required until an official release feed is published.' >&2
+    exit 1
+}
+FEED_URL="$VAK_FEED_URL"
 STAGING=""
 
 say() { printf '%s\n' "$*"; }

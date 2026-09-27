@@ -284,12 +284,8 @@ printf '  ✓ %-44s %s\n' "commit" "$GIT_SHA"
 # re-releasing it silently would leave two different binaries claiming
 # the same version.
 #
-# Unless the tag IS this commit. `.github/workflows/release.yml` fires on
-# `push: tags: v*` and `actions/checkout` materialises that tag, so a
-# gate that refuses every existing tag refuses the exact tag it was asked
-# to build — the automated release path could never succeed, and every
-# tag push failed here. The real defect is a tag pointing somewhere else,
-# which means this version already shipped from different code.
+# A tag at this commit is a repeatable local build; a tag at a different
+# commit means the version has already been released from different code.
 if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null 2>&1; then
     tagged="$(git rev-parse "v$VERSION^{commit}")"
     head_commit="$(git rev-parse "HEAD^{commit}")"

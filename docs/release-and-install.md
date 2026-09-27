@@ -44,8 +44,12 @@ a real seal: modification after signing is detectable
 
 ### Linux
 
+Until the first verified download is published, install from the repository:
+
 ```bash
-curl -fsSL https://get.vak.dev/install.sh | sh
+git clone https://github.com/nranjan2code/code.git
+cd code
+scripts/build.sh
 ```
 
 Or download `vak-<version>-<arch>.tar.gz` and run `vak self install`.
@@ -98,7 +102,7 @@ stops it authenticating within a poll cycle.
 ### Locally
 
 ```bash
-scripts/release.sh --base-url https://get.vak.dev
+scripts/release.sh
 ```
 
 Gates first — version singularity, both frontends rebuilt and matching
@@ -122,16 +126,14 @@ cannot notarize something that does not exist until install. It is produced
 by `self install --prefix …/Vakyartha.app`, the same code path an install uses,
 so the artifact and the installed tree cannot diverge.
 
-### In CI
+### Current local release policy
 
-`.github/workflows/release.yml` runs on a `v*` tag: a matrix over
-macos-14, macos-13, and ubuntu, each leg declaring what it built with
-`--platform-key`, then a merge leg combining every leg's feed into one.
-
-`scripts/release.sh` derived one platform key from `uname`, so a laptop
-release could only ever describe the machine that ran it — every other
-platform was absent from the feed and `self update` had nothing to offer
-those installs.
+Builds and checks run on the maintainer's machine. GitHub Actions is disabled.
+A macOS aarch64 release made on this Mac contains only that architecture;
+other platforms require separate native local builds and verification.
+No download is public while the repository is private. Keep the verified
+`dist/<version>/` directory locally; do not point the update feed at an
+unpublished host.
 
 ## Evidence
 

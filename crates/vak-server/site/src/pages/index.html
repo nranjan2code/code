@@ -358,16 +358,16 @@
     <div class="section-head">
       <h2 id="start-h" class="reveal">Start in three commands</h2>
       <p class="section-lead reveal" style="--d:60ms">
-        macOS and Linux. No toolchain to install, nothing to compile, and setup
-        runs once — afterwards it shows a review rather than a wizard.
+        Private preview: repository access is required to build locally.
+        Setup runs once; afterwards it shows a review.
       </p>
     </div>
 
     <ol class="steps reveal" style="--d:120ms">
       <li class="step-row">
         <span class="step-n">1</span>
-        <span class="step-what"><b>Install</b><span>Download and place the release. Re-running it is an update.</span></span>
-        <code class="step-cmd" id="cmd1">curl -fsSL https://get.vak.dev/install.sh | sh</code>
+        <span class="step-what"><b>Install</b><span>With repository access, clone and run scripts/build.sh (Rust, Node.js and Python 3 required).</span></span>
+        <code class="step-cmd" id="cmd1">git clone https://github.com/nranjan2code/code.git &amp;&amp; cd code &amp;&amp; scripts/build.sh</code>
         <button class="btn sm copy" type="button" data-copy="cmd1">Copy</button>
       </li>
       <li class="step-row">

@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 5.1.0 — 2026-09-27
+
+- **Optional Dimensional 3D visual pack.** Choose it in Appearance to switch
+  the Agent portraits and compact glyphs, Songbird branding, and browser icon.
+  The eight characters keep their expression motion. A documented asset
+  library includes transparent sources, reproducible exports, and day and
+  dusk wallpapers in five laptop and desktop sizes. Installed platform icons
+  remain a build-time choice.
 
 - **Word documents, workbooks and decks from scratch.** Ask for "a memo on
   the Q3 results", "a budget workbook" or "a launch deck" in an empty
