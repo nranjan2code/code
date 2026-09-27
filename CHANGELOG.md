@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.1.1 — 2026-09-27
+
+- Keep the conversation reading position steady across run start, streaming,
+  completion and conversation switches. Sending a new prompt follows its turn.
+- Retain settled answer elements during live updates to avoid repaint flicker.
+- Put Pause and Resume in the input tray beside the existing Stop button,
+  without inserting a toolbar above the conversation.
+- Isolate flow test workspaces so concurrent temporary-file changes cannot
+  contaminate prompt substitution fixtures.
+
 ## 5.1.0 — 2026-09-27
 
 - **Optional Dimensional 3D visual pack.** Choose it in Appearance to switch
