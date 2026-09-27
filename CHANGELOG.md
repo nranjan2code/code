@@ -1,3 +1,14 @@
+## 5.1.6 — 2026-09-27
+
+- Simplify first-time and everyday AI service setup, with clear API account
+  billing and message destination details, and a single flow for changing a
+  service or model from Settings or the message menu.
+- Preserve the selected model when refreshing a service catalogue, reject
+  stale discovery results, and keep Bedrock models unavailable when access is
+  unknown.
+- Surface failed provider, model and key writes in admin instead of reporting
+  success before the server responds.
+
 # Changelog
 
 ## 5.1.5 — 2026-09-27
