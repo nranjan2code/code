@@ -90,7 +90,12 @@ Read before changing behaviour in these areas:
   refactor; see "Pending" below),
   `75-visual-refresh.md` (the pending visual refresh: readable type, plain
   words, technical detail on request and the Ink and Saffron brand; see
-  "Pending: the visual refresh" below).
+  "Pending: the visual refresh" below),
+  `76-intake-and-knowledge.md` (the pending redesign of the feed system into
+  one intake path feeding the catalog, agent-reachable, with shared
+  lifecycle; supersedes the target model of `51-feed-system.md` and depends on
+  the data-architecture catalog at M6.5. Its §9 is a standalone security fix
+  for the shipped pipeline).
 
 ### What is authoritative
 

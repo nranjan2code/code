@@ -1,10 +1,17 @@
 # Feed system
 
-Status: implementation contract. The feed system is a scoped knowledge
-extension, not a source CRUD panel. It owns source discovery, fetching,
-normalisation, quarantine, indexing, retrieval, alert evaluation, and the
-evidence needed to operate those activities. Transport, permissions, and
-delivery remain host-owned capabilities.
+Status: implementation contract for the **shipped 5.x Python pipeline**, and
+the accurate description of it. Its **target model is superseded by
+`docs/design/76-intake-and-knowledge.md`**, which folds feeds into one intake
+path feeding the catalog (`docs/design/73-data-architecture-and-lifecycle.md`,
+`docs/design/74-lifecycle-and-data-administration.md`); until that lands
+(M6.5) this
+is what runs, with the one exception of the security fix in doc 76 §9, which
+lands independently and now. The feed system is a scoped knowledge extension,
+not a source CRUD panel. It owns source discovery, fetching, normalisation,
+quarantine, indexing, retrieval, alert evaluation, and the evidence needed to
+operate those activities. Transport, permissions, and delivery remain
+host-owned capabilities.
 
 ## Scope and identity
 
