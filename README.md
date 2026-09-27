@@ -15,7 +15,7 @@ A local-first agent for work that crosses code, documents, research, and everyda
 
 [![Version](https://img.shields.io/badge/version-5.1.3-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
-[![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
+[![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](LICENSE)
 
 </div>
 
@@ -65,7 +65,7 @@ vak exec "Explain this project and suggest a safe first improvement"
 vak plan "Investigate the failing tests and propose a fix"
 ```
 
-`vak term` opens the interactive terminal workspace. `vak exec` runs one request and prints its result. `vak plan` breaks an open-ended task into a bounded plan. Use `vak -C /path/to/project ...` to target another workspace from any directory. Run `vak --help` or `vak <command> --help` for exact options.
+`vak term` opens the interactive terminal workspace. `vak exec` runs one request and prints its result. `vak plan` plans and executes an open-ended task. Use `vak exec -C /path/to/project "your request"` to target another workspace from any directory. Run `vak --help` or `vak <command> --help` for exact options.
 
 Want the browser workspace? Start the server in one terminal, then open its signed-in client from another:
 
@@ -177,8 +177,6 @@ scripts/check-version.sh
 python3 scripts/check_doc_paths.py
 ```
 
-Code changes to this repository are maintained solely by [@nranjan2code](https://github.com/nranjan2code). External pull requests are not accepted. The software source is available under the [MIT License](https://opensource.org/license/mit); the Vakyartha name, Songbird mark, character artwork, and wallpapers are outside that software license. Third-party components retain their own notices.
-
 ## Brand and assets
 
 The [Vakyartha Songbird](docs/brand/README.md) is the public mark. Its [SVG master](docs/brand/mark/vakyartha-songbird.svg) and [ready-to-use exports](docs/brand/exports/) include light, dark, one-ink, wordmark, and app-icon variants. The [asset gallery](docs/brand/library/index.html) collects the canonical artwork, characters, and wallpapers. Use the full **Vakyartha** name in public writing; `vak` remains the CLI and internal identifier.
@@ -197,3 +195,9 @@ The [Vakyartha Songbird](docs/brand/README.md) is the public mark. Its [SVG mast
 | [Brand guide](docs/brand/README.md) | Logo, artwork, exports, colour, and usage |
 
 The `docs/design/` files each declare a **Status**. Read that line before treating a design as shipped behavior.
+
+## License and contributions
+
+The original software and documentation are available under the [MIT License](LICENSE). The Vakyartha name, Songbird mark, character artwork, and wallpapers are excluded from that license; see the scope note in `LICENSE` and the [brand guide](docs/brand/README.md). Third-party components retain their own license notices.
+
+[@nranjan2code](https://github.com/nranjan2code) alone maintains changes to this repository. External pull requests are not accepted.

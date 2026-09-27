@@ -71,6 +71,13 @@ collects those with the canonical sources and wallpapers. The pack is a
 runtime Appearance choice in the client; the default generated platform
 icons continue to come from the SVG master.
 
+## License scope
+
+The repository's [MIT License](../../LICENSE) covers its original software and
+textual documentation. It does not license the Vakyartha name, Songbird logo,
+character designs or artwork, or wallpapers. Third-party material, including
+the Manrope font, retains its own license notice.
+
 ## Colour and type
 
 | Token | Value | Role |
