@@ -778,7 +778,14 @@ export function providerLabel(list: readonly import("./types").ProviderInfo[] | 
 }
 
 /** Live model list for one provider, discovered from its API. */
-export function discoverModels(provider: string): Promise<{ provider: string; models: string[] }> {
+export interface DiscoveredModels {
+  provider: string;
+  models: string[];
+  availability?: { model_id: string; invokable: boolean }[];
+  availability_error?: string;
+}
+
+export function discoverModels(provider: string): Promise<DiscoveredModels> {
   return req(`/providers/${encodeURIComponent(provider)}/models`);
 }
 
@@ -867,6 +874,10 @@ export function getGlobalMcpServers(): Promise<{ scope: "user"; path: string; se
 
 export function putGlobalMcpServers(servers: Record<string, McpServerDef>): Promise<{ saved: boolean; scope: "user"; count: number }> {
   return req("/config/mcp/global", { method: "PUT", body: JSON.stringify({ servers }) });
+}
+
+export function getGlobalRoute(): Promise<{ provider?: string | null; model?: string | null }> {
+  return req("/config/global");
 }
 
 export function patchGlobalConfig(body: ConfigPatch): Promise<void> {

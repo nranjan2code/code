@@ -106,6 +106,11 @@ async function handle<T>(res: Response): Promise<T> {
   return body as T;
 }
 
+/** Preserve HTTP failures for callers that need to refresh after a write. */
+async function handleVoid(res: Response): Promise<void> {
+  await handle(res);
+}
+
 /// Like `handle`, but for an endpoint that answers with raw bytes
 /// (`audio/wav`) rather than JSON — `/voice/speak`. A non-JSON error body
 /// still parses fine (`body` stays undefined), it just falls back to the
@@ -210,12 +215,12 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   stopWorker: (sessionId: string, childId: string): Promise<void> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/workers/${encodeURIComponent(childId)}/stop`, {
       method: "POST",
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   search: (
     q: string,
@@ -275,7 +280,7 @@ export const api = {
     }).then((r) => handle(r)),
 
   deleteBusConfig: (): Promise<void> =>
-    fetch("/config/bus", { method: "DELETE" }).then((r) => void handle(r)),
+    fetch("/config/bus", { method: "DELETE" }).then(handleVoid),
 
   // ---- Sandbox (docs/design/2026-sandboxed-execution) --------------------
 
@@ -304,15 +309,15 @@ export const api = {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(route),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   rotateGatewayBinding: (target: string): Promise<void> =>
     fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}/rotate`, { method: "POST" })
-      .then((r) => void handle(r)),
+      .then(handleVoid),
 
   deleteGatewayBinding: (target: string): Promise<void> =>
     fetch(`/admin/api/gateway/bindings/${encodeURIComponent(target)}`, { method: "DELETE" })
-      .then((r) => void handle(r)),
+      .then(handleVoid),
 
   gatewayAllowlist: (): Promise<{ entries: AllowlistEntry[] }> =>
     fetch("/admin/api/gateway/allowlist").then((r) => handle(r)),
@@ -367,7 +372,7 @@ export const api = {
 
   revokeGatewayAllowlist: (key: string): Promise<void> =>
     fetch(`/admin/api/gateway/allowlist/${encodeURIComponent(key)}`, { method: "DELETE" })
-      .then((r) => void handle(r)),
+      .then(handleVoid),
 
   approvals: (): Promise<{ approvals: PendingApproval[]; total: number }> =>
     fetch("/admin/api/approvals").then((r) => handle(r)),
@@ -425,7 +430,7 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   cancelRun: (sessionId: string): Promise<void> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" }).then((r) =>
@@ -463,14 +468,14 @@ export const api = {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ prompt }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   steer: (sessionId: string, text: string): Promise<void> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/steering`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   startBestofn: (sessionId: string, prompt: string, n: number): Promise<{ runs: { session_id: string; branch: string }[] }> =>
     fetch(`/sessions/${encodeURIComponent(sessionId)}/bestofn`, {
@@ -523,7 +528,7 @@ export const api = {
   restoreCheckpoint: (sessionId: string, seq: number, agent?: string): Promise<void> =>
     fetch(withAgent(`/sessions/${encodeURIComponent(sessionId)}/checkpoints/${seq}/restore`, agent), {
       method: "POST",
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   providers: (): Promise<ProviderListResponse> =>
     fetch("/providers").then((r) => handle(r)),
@@ -539,14 +544,14 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ provider, key, scope }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   deleteProviderKey: (provider: string, scope: ConfigScope): Promise<void> =>
     fetch("/config/key", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ provider, scope }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   finops: (agent?: string): Promise<FinOpsStatus> =>
     fetch(withAgent("/finops", agent)).then((r) => handle(r)),
@@ -560,7 +565,7 @@ export const api = {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...patch, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   opsStatus: (): Promise<OpsStatus> =>
     fetch("/ops/status").then((r) => handle(r)),
@@ -581,7 +586,7 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ scope, block, text, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   promptEffective: (agent?: string): Promise<PromptEffective> =>
     fetch(withAgent("/config/prompts/effective", agent)).then((r) => handle(r)),
@@ -604,7 +609,7 @@ export const api = {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ ...patch, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   mcpServers: (scope: ConfigScope = "project", agent?: string): Promise<McpListResponse> =>
     fetch(withAgent(scope === "user" ? "/config/mcp/global" : "/config/mcp", agent)).then((r) => handle(r)),
@@ -627,7 +632,7 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ servers, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   hooks: (scope: ConfigScope = "project", agent?: string): Promise<{ hooks: HookConfig[] }> =>
     fetch(withAgent(scope === "user" ? "/config/hooks/global" : "/config/hooks", agent)).then((r) => handle(r)),
@@ -637,7 +642,7 @@ export const api = {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ hooks, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   skills: (agent?: string): Promise<{ skills: SkillItem[] }> =>
     fetch(withAgent("/skills", agent)).then((r) => handle(r)),
@@ -691,17 +696,17 @@ export const api = {
     }).then((r) => handle(r)),
 
   runTaskNow: (id: string): Promise<void> =>
-    fetch(`/tasks/${encodeURIComponent(id)}/run-now`, { method: "POST" }).then((r) => void handle(r)),
+    fetch(`/tasks/${encodeURIComponent(id)}/run-now`, { method: "POST" }).then(handleVoid),
 
   patchTask: (id: string, patch: Partial<TaskItem>): Promise<void> =>
     fetch(`/tasks/${encodeURIComponent(id)}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   deleteTask: (id: string): Promise<void> =>
-    fetch(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }).then((r) => void handle(r)),
+    fetch(`/tasks/${encodeURIComponent(id)}`, { method: "DELETE" }).then(handleVoid),
 
   memory: (agent?: string): Promise<{ notes: MemoryItem[] }> =>
     fetch(agent ? `/memory?agent=${encodeURIComponent(agent)}` : "/memory").then((r) => handle(r)),
@@ -716,12 +721,12 @@ export const api = {
         tag: tag || undefined,
         agent,
       }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   forgetMemory: (noteId: string, scope: "workspace" | "profile", agent?: string): Promise<void> => {
     const params = new URLSearchParams({ scope });
     if (agent) params.set("agent", agent);
-    return fetch(`/memory/${encodeURIComponent(noteId)}?${params}`, { method: "DELETE" }).then((r) => void handle(r));
+    return fetch(`/memory/${encodeURIComponent(noteId)}?${params}`, { method: "DELETE" }).then(handleVoid);
   },
 
   amendMemory: (noteId: string, scope: "workspace" | "profile", text: string, agent?: string): Promise<void> =>
@@ -729,7 +734,7 @@ export const api = {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ text, scope, agent }),
-    }).then((r) => void handle(r)),
+    }).then(handleVoid),
 
   cleanupMemory: (agent?: string): Promise<{ removed_locks: number; removed_temps: number; removed_empty_dirs: number }> =>
     fetch(agent ? `/memory/cleanup?agent=${encodeURIComponent(agent)}` : "/memory/cleanup", { method: "POST" }).then((r) => handle(r)),
@@ -746,7 +751,7 @@ export const api = {
   },
 
   inboxAck: (id: string): Promise<void> =>
-    fetch(`/inbox/${encodeURIComponent(id)}/ack`, { method: "POST" }).then((r) => void handle(r)),
+    fetch(`/inbox/${encodeURIComponent(id)}/ack`, { method: "POST" }).then(handleVoid),
 
   unreadCount: (): Promise<{ count: number }> =>
     fetch("/inbox/unread_count").then((r) => handle(r)),

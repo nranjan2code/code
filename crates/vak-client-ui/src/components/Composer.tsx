@@ -14,7 +14,7 @@ import {
   setArmedGoal,
   setDockTab,
   setShowShortcuts,
-  switchModel,
+  openConnect,
   workspaceSwitching,
   agentForSession,
   agentOpening,
@@ -96,10 +96,8 @@ export default function Composer(props: { cwd: string }) {
   const [dragOver, setDragOver] = createSignal(false);
   const [historyIdx, setHistoryIdx] = createSignal(-1);
   let draftText = "";
-  const [modelList, setModelList] = createSignal<string[]>([]);
   const [lookupError, setLookupError] = createSignal("");
-  // Why the model switch is empty; it only matters to that switch.
-  const [modelError, setModelError] = createSignal("");
+
   let ta!: HTMLTextAreaElement;
   let fileInput!: HTMLInputElement;
   const drafts = new Map<string, {text: string; files: { name: string; mime: string; data: string }[]; inbox: InboxChip[]}>();
@@ -147,18 +145,6 @@ export default function Composer(props: { cwd: string }) {
     onCleanup(() => window.removeEventListener(ATTACH_FILES_EVENT, onAttachFiles));
   });
 
-
-  createEffect(() => {
-    const p = health()?.provider;
-    if (!p) return;
-    api.discoverModels(p).then((r) => {
-      setModelList(r.models);
-      setModelError("");
-    }).catch((error) => {
-      setModelList([]);
-      setModelError(error instanceof Error ? error.message : String(error));
-    });
-  });
 
   const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
@@ -679,20 +665,8 @@ export default function Composer(props: { cwd: string }) {
                 <button type="button" onClick={() => void switchWorkspace()}><Icon name="folder" size={14} /><span>{workspaceSwitching() ? "Opening…" : `Folder: ${props.cwd.split("/").pop() || "root"}`}</span></button>
                 <button type="button" onClick={beginMention}><Icon name="at" size={14} /><span>Mention a file</span></button>
                 <button type="button" onClick={beginSlash}><Icon name="slash" size={14} /><span>Use a skill or command</span></button>
+                <button type="button" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; openConnect(); }}><Icon name="layers" size={14} /><span>AI service and model</span></button>
                 <Show when={technicalDetails()}>
-                <select
-                  class="composer-mode composer-model-select"
-                  aria-label="Model"
-                  title={modelError() || undefined}
-                  value={health()?.model ?? ""}
-                  onChange={(e) => void switchModel(e.currentTarget.value)}
-                  disabled={modelList().length === 0}
-                >
-                  <Show when={modelList().length === 0}><option>Model unavailable</option></Show>
-                  <For each={modelList()}>
-                    {(m) => <option value={m}>{m}</option>}
-                  </For>
-                </select>
                 <select class="composer-mode" aria-label="Permission mode" value={health()?.permission_mode ?? ""} onChange={(e) => void changeMode(e.currentTarget.value)}>
                   <option value="ReadOnly">Look only</option>
                   <option value="WorkspaceWrite">Edit files in this folder</option>

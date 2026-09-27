@@ -69,3 +69,18 @@ prompt, disengaging follow after a small upward scroll, one existing Stop
 button, and Pause/Resume in the input tray with server readback. It also checks
 horizontal overflow. Verified at 1440×900 and 390×844, in light and dark.
 These component checks do not update or certify the installed desktop binary.
+
+# AI service settings
+
+Run the guided connect flow with provider and error fixtures (no real key is
+written):
+
+```sh
+npm run dev:web -- --port 1421
+agent-browser --session vak-ai-service open http://localhost:1421/app/tests/ai-service.html
+agent-browser --session vak-ai-service eval 'window.runChecks()'
+node tests/model-choices.mjs
+```
+
+The admin race and Bedrock availability fixture is
+`crates/vak-admin-ui/tests/model-settings.html`.

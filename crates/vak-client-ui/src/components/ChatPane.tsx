@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, setAgentCreateOpen, setConnectOpen, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, activeAgentId, backend, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -620,7 +620,7 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
     return (
       <div class="sysnote needs-service" role="status">
         <span>{item.text}</span>
-        <button type="button" class="btn primary sm" onClick={() => setConnectOpen(true)}>Connect</button>
+        <button type="button" class="btn primary sm" onClick={() => openConnect()}>Connect</button>
       </div>
     );
   }

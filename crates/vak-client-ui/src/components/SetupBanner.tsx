@@ -1,7 +1,7 @@
 import { createResource, Show } from "solid-js";
 import { host } from "../host";
 import * as api from "../api";
-import { setConnectOpen, setupEpoch } from "../store";
+import { openConnect, setupEpoch } from "../store";
 import Icon from "./Icon";
 
 /// Presentation order, matching `OnboardingState::steps` server-side.
@@ -82,7 +82,7 @@ export default function SetupBanner(props: { inGreeting?: boolean }) {
           </div>
           <button
             class="btn primary"
-            onClick={() => (IN_APP.has(step().key) ? setConnectOpen(true) : host.openAdmin("#/setup"))}
+            onClick={() => (IN_APP.has(step().key) ? openConnect() : host.openAdmin("#/setup"))}
           >
             {step().action}
           </button>

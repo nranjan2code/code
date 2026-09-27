@@ -118,18 +118,6 @@ export function recordPrompt(prompt: string) {
   });
 }
 
-export async function switchModel(newModel: string) {
-  if (!newModel) return;
-  try {
-    await api.patchConfig({ model: newModel }, activeAgentId());
-    const cur = health();
-    if (cur) setHealth({ ...cur, model: newModel });
-  } catch (err) {
-    console.error("Failed to switch model", err);
-    setNotice({ kind: "error", text: `Could not switch model: ${err instanceof Error ? err.message : String(err)}` });
-  }
-}
-
 // Provider/model picker state. Whether *setup* is complete is not tracked
 // here: it is derived from `GET /onboarding` on every read, so there is no
 // local flag that can disagree with the server about what is configured.
@@ -609,6 +597,11 @@ export const [agentsEpoch, setAgentsEpoch] = createSignal(0);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** The in-app "Connect an AI service" sheet (docs/design/75 §6.2). */
 export const [connectOpen, setConnectOpen] = createSignal(false);
+export const [connectScope, setConnectScope] = createSignal<"project" | "user">("project");
+export function openConnect(scope: "project" | "user" = "project") {
+  setConnectScope(scope);
+  setConnectOpen(true);
+}
 /** Bumped by anything that can change setup; every `GET /onboarding`
  * reader refetches on it, so the banner and the header agree at once. */
 export const [setupEpoch, setSetupEpoch] = createSignal(0);

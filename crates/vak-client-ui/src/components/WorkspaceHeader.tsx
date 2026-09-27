@@ -2,7 +2,7 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { host } from "../host";
 import {
   activeId,
-  setConnectOpen,
+  openConnect,
   setupEpoch,
   dockTab,
   inboxOpen,
@@ -189,7 +189,7 @@ export default function WorkspaceHeader() {
                   {taskStatus()}
                 </span>
               }>
-                <button type="button" class="run-state attention" onClick={() => setConnectOpen(true)}>{taskStatus()}</button>
+                <button type="button" class="run-state attention" onClick={() => openConnect()}>{taskStatus()}</button>
               </Show>
             </Show>
             <Show when={coworkingPresence(activeId()).length > 0}>

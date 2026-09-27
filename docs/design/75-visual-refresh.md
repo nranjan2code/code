@@ -429,7 +429,7 @@ on the old terms in user-facing strings, like vak-eval's banned-token gate.
 | Message box menu | Target: vak-screen1-live | Folder: vak-screen1-live |
 | Permissions | Read only · Workspace write · Full access | Look only · Edit files in this folder · Full access to this computer |
 | Approvals | Approve automatically | Don't ask. Vak keeps going unless a rule requires your approval. |
-| Model settings | Existing tasks retain their frozen provider/model contract. | Conversations already started keep the model they began with. |
+| Model settings | Work already running keeps its current choice. | The change applies from the next message. |
 | Model settings | Evidence freshness: how long a successful tool receipt remains fresh for outcome verification | Technical details: how long a successful check still counts as current |
 | Model settings | Workers: allow the agent to delegate bounded parallel work | Helpers: Vak can split big jobs across helpers that work in parallel |
 | General | Transcript detail: Outcome | Replaced by the disclosure setting (§8) |

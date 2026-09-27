@@ -5831,7 +5831,7 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<v
 /// One page, six self-contained panels. Each answers a single question about
 /// how this instance is configured; nothing here is a summary of a screen
 /// that already exists elsewhere.
-function Settings() {
+export function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(() => api.config());
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [providersData, { refetch: refetchProviders }] = createResource(() => api.providers());
@@ -5867,19 +5867,22 @@ function Settings() {
     const start = performance.now();
     try {
       const res = await api.models(prov);
+      if (prov !== selectedProvider() || mod !== selectedModel()) return;
       const latency = Math.round(performance.now() - start);
       const models = res.models ?? [];
-      const hasActive = models.includes(mod);
+      const hasActive = models.includes(mod) && (prov !== "bedrock" ||
+        (!res.availability_error && res.availability?.some((item) => item.model_id === mod && item.invokable) === true));
       setProbeResult({
         ok: true,
         latency_ms: latency,
         model_count: models.length,
         has_active_model: hasActive,
         message: hasActive
-          ? `Successfully reached ${providerLabel(prov)} API (${latency}ms) and verified active model "${mod}".`
+          ? `Successfully reached ${providerLabel(prov)} API (${latency}ms) and found selected model "${mod}".`
           : `Reached ${providerLabel(prov)} API (${models.length} models discovered), but selected model "${mod}" was not listed in the catalogue.`,
       });
     } catch (err) {
+      if (prov !== selectedProvider() || mod !== selectedModel()) return;
       const latency = Math.round(performance.now() - start);
       setProbeResult({
         ok: false,
@@ -5924,24 +5927,31 @@ function Settings() {
     }
   });
 
+  let discoveryRevision = 0;
+  onCleanup(() => { discoveryRevision++; });
   const discover = async (provider: string) => {
+    const revision = ++discoveryRevision;
     setLoadingModels(true);
     setModelError("");
+    setDiscoveredModels([]);
+    setBedrockAvailability([]);
+    const current = () => revision === discoveryRevision && provider === selectedProvider();
     try {
       const res = await api.models(provider);
+      if (!current()) return;
       const models = res.models ?? [];
       setDiscoveredModels(models);
       setBedrockAvailability(res.availability ?? []);
       setModelError(res.availability_error ?? "");
-      if (models.length > 0 && !models.includes(selectedModel())) setSelectedModel(models[0]);
+      // Refreshing a catalogue must not replace an operator's saved/custom choice.
     } catch (err) {
-      setDiscoveredModels([]);
-      setBedrockAvailability([]);
-      setModelError(`${err}`);
+      if (current()) setModelError(`${err}`);
     } finally {
-      setLoadingModels(false);
+      if (current()) setLoadingModels(false);
     }
   };
+  const modelAllowed = () => selectedProvider() !== "bedrock" ||
+    (!modelError() && bedrockAvailability().some((item) => item.model_id === selectedModel() && item.invokable));
 
   createEffect(() => {
     const provider = selectedProvider();
@@ -6005,13 +6015,14 @@ function Settings() {
 
   const saveKey = async () => {
     if (!providerKeyInput().trim() || savingKey()) return;
+    const provider = selectedProvider();
+    const scope = configScope();
     setSavingKey(true);
     try {
-      await api.setProviderKey(selectedProvider(), providerKeyInput().trim(), configScope());
+      await api.setProviderKey(provider, providerKeyInput().trim(), scope);
       await refetchProviders();
-      pushToast("info", `Key saved for ${providerLabel(selectedProvider())} in ${configScope() === "user" ? "Global" : "Workspace"}`);
-      setProviderKeyInput("");
-      await discover(selectedProvider());
+      pushToast("info", `Key saved for ${providerLabel(provider)} in ${scope === "user" ? "Global" : "Workspace"}`);
+      if (provider === selectedProvider()) { setProviderKeyInput(""); await discover(provider); }
     } catch (err) {
       if (err instanceof AuthRequired) setAuthed(false);
       else pushToast("alert", `${err}`);
@@ -6062,7 +6073,7 @@ function Settings() {
     <div class="view">
       <PageHeader
         title="Settings & Configuration"
-        description="Configure LLM routing, runtime permissions, event fabric, and local preferences."
+        description="Choose an AI service and model, manage account keys, and set platform rules."
       />
       <Show when={config.error || layer.error || providersData.error}>
         <div class="error-state" role="alert">
@@ -6132,7 +6143,8 @@ function Settings() {
                     aria-label="Provider"
                     value={selectedProvider()}
                     ref={(el) => syncSelect(el, selectedProvider, () => providersData()?.providers)}
-                    onChange={(e) => setSelectedProvider(e.currentTarget.value)}
+                    disabled={savingKey() || probing()}
+                    onChange={(e) => { setSelectedModel(""); setProviderKeyInput(""); setProbeResult(null); setSelectedProvider(e.currentTarget.value); }}
                   >
                     <For each={providersData()?.providers ?? []}>
                       {(p) => <option value={p.name}>
@@ -6164,6 +6176,7 @@ function Settings() {
                           class="model-search-input"
                           placeholder={`Filter ${discoveredModels().length} models or type custom name…`}
                           value={modelSearch()}
+                          disabled={probing() || savingKey()}
                           onInput={(e) => setModelSearch(e.currentTarget.value)}
                         />
                         <Show when={modelSearch()}>
@@ -6174,13 +6187,16 @@ function Settings() {
                       <select
                         aria-label="Model"
                         value={selectedModel()}
+                        disabled={probing() || savingKey()}
                         ref={(el) => syncSelect(el, selectedModel, filteredDiscoveredModels)}
                         onChange={(e) => setSelectedModel(e.currentTarget.value)}
                       >
+                        <option value="">Choose a model…</option>
+                        <Show when={selectedModel() && !filteredDiscoveredModels().includes(selectedModel())}><option value={selectedModel()}>{selectedModel()} (current choice)</option></Show>
                         <For each={filteredDiscoveredModels()}>{(m) => {
-                          const status = bedrockAvailability().find((item) => item.model_id === m);
-                          return <option value={m} disabled={selectedProvider() === "bedrock" && !!status && !status.invokable}>
-                            {status && !status.invokable ? `${m} (not invokable)` : m}
+                          const status = () => bedrockAvailability().find((item) => item.model_id === m);
+                          return <option value={m} disabled={selectedProvider() === "bedrock" && (Boolean(modelError()) || !status()?.invokable)}>
+                            {selectedProvider() === "bedrock" && !status()?.invokable ? `${m} (access not confirmed)` : m}
                           </option>;
                         }}</For>
                       </select>
@@ -6225,7 +6241,7 @@ function Settings() {
 
                 <div class="row-gap" style="margin-top:10px">
                   <button
-                    disabled={!selectedModel().trim()}
+                    disabled={loadingModels() || savingKey() || probing() || !selectedModel().trim() || !modelAllowed()}
                     onClick={() =>
                       void guard(
                         () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }, selectedAgentIdOrUndefined()),
@@ -6243,15 +6259,15 @@ function Settings() {
                 <div class="route-probe-panel">
                   <div class="route-probe-header">
                     <div>
-                      <strong style={{ "font-size": "12.5px" }}>Live Connection Probe</strong>
-                      <span class="dim" style={{ "font-size": "11px", "display": "block" }}>
-                        Direct round-trip authentication and model availability ping.
+                      <strong style={{ "font-size": "var(--fs-meta, 13px)" }}>Live Connection Probe</strong>
+                      <span class="dim" style={{ "font-size": "12px", "display": "block" }}>
+                        Checks the model catalogue; does not send a test prompt.
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      class="button ghost small"
-                      disabled={probing()}
+                <button
+                  type="button"
+                  class="button ghost small"
+                  disabled={probing() || loadingModels()}
                       onClick={() => void testProviderConnection()}
                     >
                       {probing() ? "Probing Route…" : "Test Provider Connection"}
@@ -6297,7 +6313,7 @@ function Settings() {
                     <div>
                       <h2>Provider Credentials</h2>
                       <p class="dim">
-                        Provider keys are managed globally at the platform level and securely inherited by <strong>✦ {adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</strong>.
+                        Provider keys are saved in the host’s secure credential store and shared by <strong>✦ {adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</strong>.
                       </p>
                     </div>
                     <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
@@ -6325,7 +6341,7 @@ function Settings() {
                     <h2>Provider Key Vault</h2>
                     <p class="dim">
                       Authentication credential for {providerLabel(selectedProvider())}. Written to the selected
-                      scope’s private <code>.env</code> and never shown again.
+                      scope’s secure credential store and never shown again.
                     </p>
                   </div>
                   <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>

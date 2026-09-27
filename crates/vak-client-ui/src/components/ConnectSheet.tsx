@@ -1,160 +1,158 @@
-import { createSignal, For, onMount, Show } from "solid-js";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import * as api from "../api";
 import { loadHealth } from "../App";
-import { activeAgentId, connectOpen, setConnectOpen, setNotice, setSetupEpoch } from "../store";
+import { host } from "../host";
+import { availableModels, initialModel } from "../modelChoices";
+import { activeAgentId, connectOpen, connectScope, setConnectOpen, setNotice, setProviders, setSetupEpoch } from "../store";
 import type { ProviderInfo } from "../types";
-import Icon from "./Icon";
 import Sheet from "./Sheet";
 
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
+const message = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-/**
- * The in-app "Connect an AI service" sheet (docs/design/75 §6.2).
- *
- * It is the wizard's provider and model steps, not a second setup: the
- * same calls with the same scopes (the key in the Shared scope, the
- * provider and model in the active Agent's project layer), so identical
- * choices produce identical configuration (docs/design/46 D7), and
- * `GET /onboarding` stays the only judge of "ready".
- */
 export default function ConnectSheet() {
   return <Show when={connectOpen()}><ConnectForm /></Show>;
 }
 
 function ConnectForm() {
-  const [providers, setProviders] = createSignal<ProviderInfo[]>([]);
-  const [local, setLocal] = createSignal<{ provider: string; models: string[] } | null>(null);
-  const [localModel, setLocalModel] = createSignal("");
-  const [looking, setLooking] = createSignal(true);
-  const [account, setAccount] = createSignal("");
+  // The destination cannot follow a background change of agent or settings scope.
+  const agent = activeAgentId();
+  const scope = connectScope();
+  const [providers, setList] = createSignal<ProviderInfo[]>([]);
+  const [loading, setLoading] = createSignal(true);
+  const [provider, setProvider] = createSignal("");
   const [key, setKey] = createSignal("");
   const [models, setModels] = createSignal<string[]>([]);
   const [model, setModel] = createSignal("");
+  const [search, setSearch] = createSignal("");
+  const [checked, setChecked] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
-
-  const close = () => setConnectOpen(false);
-  // Several ids can share one key (another API flavour of the same
-  // account); a person has the key, so each key is offered once.
+  const [savedKey, setSavedKey] = createSignal(false);
+  let current = { provider: "", model: "" };
+  let alive = true;
+  onCleanup(() => { alive = false; });
+  const chosen = () => providers().find((p) => p.name === provider());
+  // Protocol variants stay in admin; preserve one already deliberately selected.
   const accounts = () => {
-    const keys = new Set<string>();
-    return providers().filter((p) => {
-      if (!p.requires_key) return false;
-      if (!p.env_var) return true;
-      if (keys.has(p.env_var)) return false;
-      keys.add(p.env_var);
+    const seen = new Set<string>();
+    const preferred = providers().find((p) => p.name === current.provider);
+    return [...(preferred ? [preferred] : []), ...providers()].filter((p) => {
+      const id = p.env_var || p.name;
+      if (seen.has(id)) return false;
+      seen.add(id);
       return true;
     });
   };
-  const chosen = () => accounts().find((p) => p.name === account());
-  const serviceName = (id: string) => api.providerLabel(providers(), id);
-
-  onMount(() => void (async () => {
+  const resetChoice = (name: string) => {
+    setProvider(name); setKey(""); setSavedKey(false); setModels([]);
+    setModel(""); setSearch(""); setChecked(false); setError(null);
+  };
+  const load = async () => {
+    setLoading(true); setError(null);
     try {
-      const list = (await api.listProviders()).providers;
-      setProviders(list);
-      // A model already running on this computer is the one-step path.
-      for (const p of list.filter((item) => !item.requires_key)) {
-        try {
-          const found = (await api.discoverModels(p.name)).models;
-          if (found.length) {
-            setLocal({ provider: p.name, models: found });
-            setLocalModel(found[0]);
-            break;
-          }
-        } catch { /* nothing is serving models here */ }
+      const [list, config] = await Promise.all([api.listProviders(), scope === "user" ? api.getGlobalRoute() : api.getConfig(agent)]);
+      if (!alive) return;
+      setList(list.providers);
+      current = { provider: config.provider || "", model: config.model || "" };
+      resetChoice(list.providers.some((p) => p.name === current.provider) ? current.provider : "");
+    } catch (e) { if (alive) setError(message(e)); }
+    finally { if (alive) setLoading(false); }
+  };
+  onMount(() => void load());
+
+  const check = async () => {
+    if (busy() || !chosen()) return;
+    const name = provider();
+    setBusy(true); setError(null);
+    try {
+      if (key().trim()) {
+        await api.putProviderKey(name, key().trim());
+        if (!alive) return;
+        setKey(""); setSavedKey(true);
+        setList((list) => list.map((p) => p.name === name ? { ...p, configured: true } : p));
+        setSetupEpoch((n) => n + 1);
       }
-    } catch (e) {
-      setError(message(e));
-    } finally {
-      setLooking(false);
-    }
-  })());
-
-  const run = async (step: () => Promise<void>) => {
-    setBusy(true);
-    setError(null);
-    try { await step(); } catch (e) { setError(message(e)); } finally { setBusy(false); }
+      const result = await api.discoverModels(name);
+      if (!alive) return;
+      const found = availableModels(result);
+      if (!found.length) throw new Error(result.availability_error || (name === "bedrock"
+        ? "No models have confirmed access. Check AWS access in the admin portal, then try again."
+        : "No models are available from this service. Check your account or model server, then try again."));
+      setModels(found);
+      setModel(initialModel(found, current.provider === name ? current.model : ""));
+      setChecked(true);
+    } catch (e) { if (alive) setError(message(e)); }
+    finally { if (alive) setBusy(false); }
   };
 
-  const finish = async (provider: string, chosenModel: string) => {
-    await api.patchConfig({ provider, model: chosenModel }, activeAgentId());
+  const finish = async () => {
+    if (busy() || !checked() || !models().includes(model())) return;
+    const name = provider();
+    const selected = model();
+    setBusy(true); setError(null);
+    try {
+      if (scope === "user") await api.patchGlobalConfig({ provider: name, model: selected });
+      else await api.patchConfig({ provider: name, model: selected }, agent);
+    } catch (e) { if (alive) { setError(message(e)); setBusy(false); } return; }
     setSetupEpoch((n) => n + 1);
-    await loadHealth();
-    close();
-    setNotice({ kind: "info", text: `Connected to ${serviceName(provider)}. Ask anything.` });
-    window.dispatchEvent(new CustomEvent("vak:focus-composer"));
+    setConnectOpen(false);
+    setNotice({ kind: "info", text: `${api.providerLabel(providers(), name)} · ${selected} saved${scope === "user" ? " as the shared default" : " for this agent"}. Used from the next message; work already running keeps its current choice.` });
+    void loadHealth();
+    void api.listProviders().then(setProviders).catch(() => {});
   };
 
-  const checkAccount = () => run(async () => {
-    const name = account();
-    if (key().trim()) {
-      await api.putProviderKey(name, key().trim());
-      setKey("");
-    }
-    // A stored key is not success: the service has to say what it can run.
-    const found = (await api.discoverModels(name)).models;
-    if (!found.length) throw new Error(`${serviceName(name)} offered no models to this key.`);
-    setModels(found);
-    setModel(found[0]);
-  });
+  const KeyFields = () => <div class="connect-form">
+    <Show when={chosen()?.key_in_process || chosen()?.key_in_project}><p class="connect-note">A server or workspace key can take priority over a shared key saved here. Manage those keys in admin.</p></Show>
+    <label class="connect-field"><span>Account key{chosen()?.configured ? " (optional)" : ""}</span>
+      <input type="password" autocomplete="off" spellcheck={false} disabled={busy()} value={key()} placeholder={chosen()?.configured ? "Leave blank to keep the available key" : "Paste your API key"} onInput={(e) => setKey(e.currentTarget.value)} />
+    </label>
+    <p class="connect-note">Saved securely where Vakyartha runs. Replacing a shared key affects other agents using this account.</p>
+    <details><summary>Where do I find a key?</summary><p class="connect-note">In your AI service’s API or developer settings. An API key lets Vakyartha use your account. A chat subscription may not include API usage; check the service’s billing settings.</p></details>
+  </div>;
 
-  return (
-    <Sheet class="connect-sheet" title="Connect an AI service" subtitle="Vakyartha needs a model to think with. You can change it later in Settings." onClose={close}>
-        <Show when={!looking()} fallback={<p class="connect-note" role="status">Looking for a model on this computer…</p>}>
-          <Show when={local()}>
-            {(found) => (
-              <section class="connect-option">
-                <span class="connect-option-icon"><Icon name="lock" size={18} /></span>
-                <div class="connect-option-text">
-                  <strong>Use the model on this computer</strong>
-                  <span>Private and free: what you ask stays on this machine.</span>
-                  <Show when={found().models.length > 1} fallback={<span class="connect-model">{localModel()}</span>}>
-                    <select aria-label="Model on this computer" value={localModel()} onChange={(e) => setLocalModel(e.currentTarget.value)}>
-                      <For each={found().models}>{(m) => <option value={m}>{m}</option>}</For>
-                    </select>
-                  </Show>
-                </div>
-                <button type="button" class="btn primary" disabled={busy()} onClick={() => void run(() => finish(found().provider, localModel()))}>Use this model</button>
-              </section>
-            )}
+  return <Sheet class="connect-sheet" title="AI service and model" busy={busy()} onClose={() => setConnectOpen(false)}
+    subtitle={scope === "user" ? "Shared default for agents that have not chosen their own service and model." : "Choose what this agent uses for its next message. Work already running keeps its current choice."}
+    footer={<>
+      <button type="button" class="settings-button" disabled={busy()} onClick={() => { setConnectOpen(false); void host.openAdmin("#/settings/models"); }}>Advanced settings in admin</button>
+      <Show when={providers().length > 0}>
+        <button type="button" class="btn primary" disabled={busy() || !provider() || (checked() ? !model() : !!chosen()?.requires_key && !chosen()?.configured && !key().trim())}
+          onClick={() => void (checked() ? finish() : check())}>{busy() ? "Checking and saving…" : checked() ? "Save choice" : key().trim() ? "Save key and check" : "Check service"}</button>
+      </Show>
+    </>}>
+    <Show when={!loading()} fallback={<p class="connect-note" role="status">Loading your AI services…</p>}>
+      <Show when={providers().length > 0} fallback={<button class="btn" onClick={() => void load()}>Try again</button>}>
+        <div class="connect-form">
+          <Show when={current.provider && current.model}><p class="connect-note">Current choice: {api.providerLabel(providers(), current.provider)} · {current.model}</p></Show>
+          <label class="connect-field"><span>AI service</span>
+            <select value={provider()} disabled={busy()} onChange={(e) => resetChoice(e.currentTarget.value)}>
+              <option value="">Choose a service…</option>
+              <For each={accounts()}>{(p) => <option value={p.name}>{p.label}{p.configured && p.requires_key ? " (key available)" : ""}</option>}</For>
+            </select>
+          </label>
+          <Show when={chosen()?.requires_key && !checked()}>
+            <p class="connect-note">Messages go to this service. Usage is billed to your AI service account.</p>
+            <Show when={chosen()?.configured} fallback={<KeyFields />}>
+              <details class="connect-key-details"><summary>Replace account key</summary><KeyFields /></details>
+            </Show>
           </Show>
-          <section class="connect-option">
-            <span class="connect-option-icon"><Icon name="plug" size={18} /></span>
-            <div class="connect-option-text">
-              <strong>{local() ? "Or use an account" : "Use an account"}</strong>
-              <span>Paste the key from your AI service account. It is kept on this device.</span>
-              <select aria-label="AI service" value={account()} onChange={(e) => { setAccount(e.currentTarget.value); setModels([]); setModel(""); setError(null); }}>
-                <option value="">Choose a service…</option>
-                <For each={accounts()}>{(p) => <option value={p.name}>{p.label}{p.configured ? " (key saved)" : ""}</option>}</For>
+          <Show when={chosen() && !chosen()?.requires_key}>
+            <p class="connect-note">Uses your configured model server without an account key. Where messages go depends on that server’s address; manage it in admin.</p>
+          </Show>
+          <Show when={savedKey()}><p class="connect-note" role="status">Account key saved. You can retry the check without pasting it again.</p></Show>
+          <Show when={checked()}>
+            <Show when={models().length > 12}><label class="connect-field"><span>Find a model</span><input type="search" value={search()} onInput={(e) => setSearch(e.currentTarget.value)} placeholder="Search available models" /></label></Show>
+            <label class="connect-field"><span>Model</span>
+              <select value={model()} disabled={busy()} onChange={(e) => setModel(e.currentTarget.value)}>
+                <option value="">Choose a model…</option>
+                <For each={models().filter((m) => m === model() || m.toLowerCase().includes(search().trim().toLowerCase()))}>{(m) => <option value={m}>{m}</option>}</For>
               </select>
-              <Show when={account() && models().length === 0}>
-                <div class="connect-row">
-                  <input
-                    type="password"
-                    autocomplete="off"
-                    aria-label="Key"
-                    placeholder={chosen()?.configured ? "Saved. Paste a new key to replace it" : "Paste your key"}
-                    value={key()}
-                    onInput={(e) => setKey(e.currentTarget.value)}
-                  />
-                  <button type="button" class="btn primary" disabled={busy() || (!key().trim() && !chosen()?.configured)} onClick={() => void checkAccount()}>
-                    {busy() ? "Checking…" : "Continue"}
-                  </button>
-                </div>
-              </Show>
-              <Show when={models().length > 0}>
-                <div class="connect-row">
-                  <select aria-label="Model" value={model()} onChange={(e) => setModel(e.currentTarget.value)}>
-                    <For each={models()}>{(m) => <option value={m}>{m}</option>}</For>
-                  </select>
-                  <button type="button" class="btn primary" disabled={busy()} onClick={() => void run(() => finish(account(), model()))}>Use this model</button>
-                </div>
-              </Show>
-            </div>
-          </section>
-          <Show when={error()}>{(text) => <p class="connect-error" role="alert">{text()}</p>}</Show>
-        </Show>
-    </Sheet>
-  );
+            </label>
+            <p class="connect-note">Models differ in capability, speed and price. This list comes from your service; it is not ranked. Checking the list does not test an answer.</p>
+            <button type="button" class="settings-button" disabled={busy()} onClick={() => { setChecked(false); setError(null); }}>Recheck service or replace key</button>
+          </Show>
+        </div>
+      </Show>
+    </Show>
+    <Show when={error()}>{(text) => <p class="connect-error" role="alert">Could not complete this step. {text()} Your model choice has not changed.</p>}</Show>
+  </Sheet>;
 }

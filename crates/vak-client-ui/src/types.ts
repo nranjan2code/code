@@ -326,6 +326,9 @@ export interface SkillInfo {
 }
 
 export interface ProviderInfo {
+  key_in_user?: boolean;
+  key_in_project?: boolean;
+  key_in_process?: boolean;
   name: string;
   /** The name people know the service by; `name` is the id. */
   label: string;

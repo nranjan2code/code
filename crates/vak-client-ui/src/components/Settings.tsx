@@ -3,6 +3,7 @@ import { createEffect, createMemo, createResource, createSignal, For, onCleanup,
 import { host } from "../host";
 import {
   technicalDetails,
+  openConnect,
   openInEditor,
   pendingSettingsPage,
   setPendingSettingsPage,
@@ -11,6 +12,7 @@ import {
   setNotice,
   setProviders,
   setSettingsOpen,
+  setSetupEpoch,
   setSettingsScope,
   settingsScope,
   setShowShortcuts,
@@ -42,20 +44,7 @@ import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
 import Skeleton from "./Skeleton";
 
-/** Sentinel option that swaps the model select for a free-text field. */
-const CUSTOM_MODEL = "\u0000custom";
-
 type Page = SettingsPageId;
-
-/** The Model row's words for a failed catalogue. A missing key arrives typed
- * (`no_ai_service`) so it is said plainly, never by reading the message,
- * which names an environment variable. */
-function catalogFailure(error: unknown): string {
-  if (error instanceof api.ApiError && error.kind === "no_ai_service") {
-    return "This AI service needs an account key. Add one under Account key below.";
-  }
-  return error instanceof Error ? error.message : String(error);
-}
 
 // Everyday pages are what anyone changes; Agents holds one page per agent;
 // Advanced is shown only with technical details on (docs/design/75 §6.3).
@@ -820,18 +809,8 @@ export default function Settings() {
       setNotice({ kind: "error", text: e instanceof Error ? e.message : String(e) });
     }
   }
-  const [provider, setProvider] = createSignal("");
-  const [model, setModel] = createSignal("");
-  // Discovered from the provider's API with the configured key — never a
-  // baked-in list, which goes stale the moment a provider ships a model.
-  const [catalog, setCatalog] = createSignal<string[]>([]);
-  const [catalogNote, setCatalogNote] = createSignal<string | null>(null);
-  // Any identifier the provider accepts is valid, so the list never becomes a
-  // cage: this switches the control to free text.
-  const [customModel, setCustomModel] = createSignal(false);
   const [maxTurns, setMaxTurns] = createSignal(40);
   const [saving, setSaving] = createSignal(false);
-  const [keyDraft, setKeyDraft] = createSignal<string | null>(null);
   const [keyBusy, setKeyBusy] = createSignal(false);
   // Per-surface token drafts, keyed by surface name — one Telegram-shaped
   // field per chat bridge (docs/design/34 Phase 3) instead of three copies.
@@ -865,45 +844,22 @@ export default function Settings() {
     void refreshCapabilities();
   });
 
-  // Re-run whenever the selected provider changes; a stale response from a
-  // provider the user has since moved off is discarded.
-  createEffect(() => {
-    const name = provider();
-    // Track the configured flag too: adding or revoking a key changes what
-    // this provider can reach, so the catalogue must be re-derived.
-    providers()?.providers.find((p) => p.name === name)?.configured;
-    if (!name) return;
-    setCatalog([]);
-    setCatalogNote("Looking for models…");
-    void (async () => {
-      try {
-        const r = await api.discoverModels(name);
-        if (name !== provider()) return;
-        setCatalog(r.models);
-        setCatalogNote(r.models.length ? null : "This AI service offers no models to this account.");
-        if (r.models.length && !r.models.includes(model())) setModel(r.models[0]);
-      } catch (error) {
-        if (name !== provider()) return;
-        setCatalogNote(catalogFailure(error));
-      }
-    })();
-  });
-
-  // The provider the credential controls act on — the selected one, or the
-  // active one before any selection has been made.
-  const keyProvider = () => provider() || providers()?.current || "";
-  const keyProviderLabel = () => api.providerLabel(providers()?.providers, keyProvider());
-
-  const currentProviderInfo = () =>
-    providers()?.providers.find((p) => p.name === (provider() || providers()?.current));
+  const [sharedRoute, { refetch: refreshSharedRoute }] = createResource(() => api.getGlobalRoute());
+  const displayedProvider = () => scope() === "user" ? sharedRoute()?.provider || "" : config()?.provider || "";
+  const displayedModel = () => scope() === "user" ? sharedRoute()?.model || "" : config()?.model || "";
+  const currentProviderInfo = () => providers()?.providers.find((p) => p.name === displayedProvider());
+  const keyProviderLabel = () => api.providerLabel(providers()?.providers, displayedProvider());
+  const changeService = () => {
+    const targetScope = scope() === "user" ? "user" : "project";
+    setSettingsOpen(false);
+    openConnect(targetScope);
+  };
 
   const load = async () => {
     setLoading(true);
     try {
       const next = await api.getConfig(activeAgentId());
       setConfig(next);
-      setProvider(next.provider);
-      setModel(next.model);
       setMaxTurns(next.max_turns);
       setEvidenceAgeHours(Math.max(0, Math.round((next.intent_evidence_max_age_secs ?? 86400) / 3600)));
     } catch (error) {
@@ -917,7 +873,7 @@ export default function Settings() {
   // another client) instead of only ever showing what was true at mount
   // time (docs/design/44-shared-config.md, "Liveness").
   onMount(() => {
-    const stop = watchConfig(() => void load());
+    const stop = watchConfig(() => { void load(); void loadProviders(); void refreshSharedRoute(); });
     onCleanup(stop);
   });
   const matches = (text: string) => {
@@ -1092,14 +1048,14 @@ export default function Settings() {
   const agentDirty = () => {
     const c = config();
     if (!c) return false;
-    return provider() !== c.provider || model() !== c.model || maxTurns() !== c.max_turns || evidenceAgeHours() * 3600 !== (c.intent_evidence_max_age_secs ?? 86400);
+    return maxTurns() !== c.max_turns || evidenceAgeHours() * 3600 !== (c.intent_evidence_max_age_secs ?? 86400);
   };
 
   const applyAgent = async () => {
     setSaving(true);
     try {
-      if (scope() === "user") await api.patchGlobalConfig({ provider: provider(), model: model(), max_turns: maxTurns() });
-      else await api.patchConfig({ provider: provider(), model: model(), max_turns: maxTurns() }, activeAgentId());
+      if (scope() === "user") await api.patchGlobalConfig({ max_turns: maxTurns() });
+      else await api.patchConfig({ max_turns: maxTurns() }, activeAgentId());
       const saved = await api.patchEvidencePolicy(evidenceAgeHours() * 3600, capabilityScope());
       setConfig((current) => current ? { ...current, intent_evidence_max_age_secs: saved.seconds } : current);
       await Promise.all([load(), loadHealth()]);
@@ -1111,43 +1067,18 @@ export default function Settings() {
     }
   };
 
-  const saveKey = async () => {
-    const draft = keyDraft()?.trim();
-    if (!draft) return;
-    setKeyBusy(true);
-    try {
-      const res = await api.putProviderKey(provider() || providers()?.current || "", draft);
-      setKeyDraft(null);
-      // A new key can reach a different set of models.
-      try {
-        const fresh = await api.discoverModels(provider() || providers()?.current || "");
-        setCatalog(fresh.models);
-        setCatalogNote(fresh.models.length ? null : "This AI service offers no models to this account.");
-      } catch (e) {
-        setCatalogNote(catalogFailure(e));
-      }
-      await Promise.all([loadProviders(), loadHealth()]);
-      setNotice({ kind: "info", text: "Key saved on this device." });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not store key: ${error instanceof Error ? error.message : String(error)}` });
-    } finally {
-      setKeyBusy(false);
-    }
-  };
-
-
   const removeKey = async () => {
-    const name = provider() || providers()?.current || "";
+    const name = displayedProvider();
     setKeyBusy(true);
     try {
       const res = await api.removeProviderKey(name);
-      await Promise.all([loadProviders(), loadHealth()]);
-      // The catalogue is meaningless without a key; re-derive it.
-      setCatalog([]);
-      setCatalogNote(null);
+      await loadHealth();
+      const refreshed = await api.listProviders();
+      setProviders(refreshed);
+      setSetupEpoch((n) => n + 1);
       setNotice(
-        res.shadowed_by_env
-          ? { kind: "error", text: `Removed the saved key, but this computer still supplies one from its environment, so ${api.providerLabel(providers()?.providers, name)} stays connected.` }
+        (res.shadowed_by_env || refreshed.providers.find((p) => p.name === name)?.configured)
+          ? { kind: "error", text: `Removed the shared key, but another key is still available, so ${api.providerLabel(providers()?.providers, name)} can still use it.` }
           : { kind: "info", text: "Key removed." },
       );
     } catch (error) {
@@ -1387,88 +1318,34 @@ export default function Settings() {
               <header class="agent-settings-header">
                 <div class="agent-settings-title">
                   <Show when={scope() !== "user"}><AgentMark character={agentLook().character} motion={agentLook().animation} size={60} /></Show>
-                  <div><h1>{scope() === "user" ? "Shared defaults" : agentName()}</h1><p>{scope() === "user" ? "Every agent starts from these unless it sets its own." : "Changes apply to new conversations. Conversations already started keep the model they began with."}</p></div>
+                  <div><h1>{scope() === "user" ? "Shared defaults" : agentName()}</h1><p>{scope() === "user" ? "Every agent starts from these unless it sets its own." : "Service and model changes apply from the next message. Work already running keeps its current choice."}</p></div>
                 </div>
                 <button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); setAgentPickerTab("fleet"); setAgentPickerOpen(true); }}>Manage agents</button>
               </header>
-              <Group title="Model">
-                <Row title="AI service" description="Where this agent's answers come from.">
-                  <select
-                    class="settings-input"
-                    value={provider()}
-                    onChange={(event) => {
-                      const next = event.currentTarget.value;
-                      setProvider(next);
-                      setKeyDraft(null);
-                      // The catalogue effect re-runs off provider() and
-                      // reconciles the model against what the key reaches.
-                    }}
-                  >
-                    <For each={providers()?.providers ?? []}>{(p) => <option value={p.name}>{p.label}{p.configured ? " ✓" : ""}</option>}</For>
-                    <Show when={provider() && !providers()?.providers.some((p) => p.name === provider())}><option value={provider()}>{provider()}</option></Show>
-                  </select>
+              <Group title="AI service and model">
+                <Show when={scope() === "user" && sharedRoute.error}><p class="connect-error" role="alert">Could not load shared settings. <button class="settings-button" onClick={() => void refreshSharedRoute()}>Try again</button></p></Show>
+                <Row title="AI service" description={currentProviderInfo()?.requires_key ? "Uses your own account with this service." : "Uses the configured model server."}>
+                  <span class="settings-value">{keyProviderLabel() || "Not chosen"}</span>
                 </Row>
-                <Row title="Model" description={catalogNote() ?? `${catalog().length} models available with this account.`}>
-                  <Show
-                    when={!customModel()}
-                    fallback={
-                      <span class="key-edit">
-                        <input
-                          class="settings-input wide"
-                          placeholder="exact model id"
-                          value={model()}
-                          onInput={(event) => setModel(event.currentTarget.value)}
-                        />
-                        <button class="settings-button" onClick={() => setCustomModel(false)}>Choose from list</button>
-                      </span>
-                    }
-                  >
-                    <select
-                      class="settings-input wide"
-                      value={model()}
-                      onChange={(event) => {
-                        const next = event.currentTarget.value;
-                        if (next === CUSTOM_MODEL) setCustomModel(true);
-                        else setModel(next);
-                      }}
-                    >
-                      {/* The configured model may predate this key or be a
-                          bare id the provider accepts but does not list. */}
-                      <Show when={model() && !catalog().includes(model())}>
-                        <option value={model()}>{model()}</option>
+                <Row title="Model" description="Your chosen model. Automatic recovery may use an alternative allowed in admin.">
+                  <span class="settings-value">{displayedModel() || "Not chosen"}</span>
+                </Row>
+                <Row title="Change service or model" description="Check an account, choose an available model, then save. Nothing changes just by opening the list.">
+                  <button class="btn primary" onClick={changeService}>Change</button>
+                </Row>
+                <Show when={currentProviderInfo()?.requires_key}>
+                  <Row title="Account key" description="Keys are stored securely where Vakyartha runs. A shared key can be used by several agents; the AI service bills your account.">
+                    <span class="key-edit">
+                      <span class="settings-status">{currentProviderInfo()?.configured ? "Key available · connection not tested" : "Key needed"}</span>
+                      <button class="settings-button" onClick={changeService}>{currentProviderInfo()?.configured ? "Check or replace key" : "Add key"}</button>
+                      <Show when={currentProviderInfo()?.key_in_user}>
+                        <button class="settings-button danger" disabled={keyBusy()} onClick={() => setConfirmConfig({ title: `Remove the shared ${keyProviderLabel()} key?`, description: "Other agents using this account may stop responding. Keys supplied by the server or an individual workspace remain available.", confirmLabel: "Remove shared key", isDanger: true, onConfirm: removeKey })}>Remove shared key</button>
                       </Show>
-                      <For each={catalog()}>{(m) => <option value={m}>{m}</option>}</For>
-                      <option value={CUSTOM_MODEL}>Enter a model id…</option>
-                    </select>
-                  </Show>
-                </Row>
-                <Row
-                  title="Account key"
-                  description={
-                    currentProviderInfo()?.requires_key
-                      ? (currentProviderInfo()?.configured ? "Saved securely on this device." : "Not added yet.")
-                      : `${keyProviderLabel()} runs on this computer and needs no key.`
-                  }
-                >
-                  <Show
-                    when={keyDraft() === null}
-                    fallback={
-                      <span class="key-edit">
-                        <input type="password" autocomplete="off" spellcheck={false} placeholder="Paste your key" aria-label={`Account key for ${keyProviderLabel()}`} value={keyDraft() ?? ""} onInput={(e) => setKeyDraft(e.currentTarget.value)} onKeyDown={(e) => e.key === "Enter" && void saveKey()} />
-                        <button class="btn primary sm" disabled={keyBusy() || !keyDraft()?.trim()} onClick={() => void saveKey()}>{keyBusy() ? "Saving…" : "Save"}</button>
-                        <button class="settings-button" onClick={() => setKeyDraft(null)}>Cancel</button>
-                      </span>
-                    }
-                  >
-                    <Show when={currentProviderInfo()?.requires_key} fallback={<span class="settings-status good">Not required</span>}>
-                      <span class="key-edit">
-                        <button class="settings-button" onClick={() => setKeyDraft("")}>{currentProviderInfo()?.configured ? "Replace key" : "Add key"}</button>
-                        <Show when={currentProviderInfo()?.configured}>
-                          <button class="settings-button danger" disabled={keyBusy()} onClick={() => void removeKey()}>Remove key</button>
-                        </Show>
-                      </span>
-                    </Show>
-                  </Show>
+                    </span>
+                  </Row>
+                </Show>
+                <Row title="Advanced AI settings" description="Manage exact model IDs, account-key scopes, connection checks and routing in the admin portal.">
+                  <button class="settings-button" onClick={() => host.openAdmin("#/settings/models")}>Open admin portal</button>
                 </Row>
                 <TechnicalRow>
                   <Row title="Maximum turns" description="Hard limit for one task before the agent stops."><input class="settings-number" type="number" min="1" max="1000" value={maxTurns()} onInput={(event) => setMaxTurns(Number(event.currentTarget.value))} /></Row>
@@ -1478,21 +1355,19 @@ export default function Settings() {
                   <Row title="Maximum output" description="Most the model writes in one reply."><span class="metric">{fmt(config()?.max_tokens ?? 0)} tokens</span></Row>
                   <Row title="Where these come from" description={`AI service: ${config()?.provider_source ?? "unknown"} · model: ${config()?.model_source ?? "unknown"}`}><span /></Row>
                   <Show when={currentProviderInfo()?.requires_key}>
-                    <Row title="Key storage" description={`${currentProviderInfo()?.env_var ?? "API key"} · ${currentProviderInfo()?.pool_size ?? 0} in the routing pool · kept in this device's secure credential store (the OS keychain, or an encrypted file when there is none). A real environment variable takes precedence.`}><span /></Row>
+                    <Row title="Key storage" description={`${currentProviderInfo()?.env_var ?? "API key"} · ${currentProviderInfo()?.pool_size ?? 0} in the routing pool · kept in the Vakyartha host's secure credential store (the OS keychain, or an encrypted file when there is none). A real environment variable takes precedence.`}><span /></Row>
                   </Show>
                 </TechnicalRow>
               </Group>
-              <div class="settings-actions">
-                <button class="btn primary" disabled={saving() || !agentDirty() || !provider().trim() || !model().trim()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
+              <Show when={technicalDetails()}><div class="settings-actions">
+                <button class="btn primary" disabled={saving() || !agentDirty()} onClick={() => void applyAgent()}>{saving() ? "Applying…" : "Apply changes"}</button>
                 <Show when={technicalDetails()}>
                   <button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit configuration file</button>
                 </Show>
-                {/* Selecting in the dropdowns changes nothing until this is
-                    pressed; without a marker that reads as a silent no-op. */}
                 <Show when={agentDirty()} fallback={<span class="settings-status good">Saved</span>}>
                   <span class="settings-status warn">Unsaved changes — press Apply</span>
                 </Show>
-              </div>
+              </div></Show>
             </Show>
 
             <Show when={page() === "privacy"}>

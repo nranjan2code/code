@@ -1,0 +1,10 @@
+import assert from 'node:assert/strict';
+import { availableModels, initialModel } from '../src/modelChoices.ts';
+assert.equal(initialModel(['b', 'a'], 'a'), 'a', 'keep the chosen model regardless of list order');
+assert.equal(initialModel(['b', 'a'], 'missing'), '', 'multiple models need an explicit choice');
+assert.equal(initialModel(['only'], ''), 'only');
+assert.deepEqual(availableModels({ provider: 'bedrock', models: ['unknown'] }), [], 'unknown authorization fails closed');
+assert.deepEqual(availableModels({ provider: 'bedrock', models: ['ok', 'no'], availability: [{ model_id: 'ok', invokable: true }, { model_id: 'no', invokable: false }] }), ['ok']);
+assert.deepEqual(availableModels({ provider: 'bedrock', models: ['ok'], availability_error: 'failed', availability: [{ model_id: 'ok', invokable: true }] }), []);
+assert.deepEqual(availableModels({ provider: 'service', models: ['b', 'a'] }), ['b', 'a']);
+console.log('model-choices: 7 checks passed');
