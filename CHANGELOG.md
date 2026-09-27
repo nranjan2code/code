@@ -1,5 +1,13 @@
 # Changelog
 
+## 5.1.5 — 2026-09-27
+
+- Open generated files from the Agent execution that produced them, so a
+  workbook or other draft can be previewed and downloaded before Review.
+- Keep draft reads confined to the owning conversation, recorded artifact and
+  execution scratch directory. Saved versions continue to use their immutable
+  candidate route.
+
 ## 5.1.4 — 2026-09-27
 
 - Put the desktop window controls on the header's line. The top of the
