@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.1.4 — 2026-09-27
+
+- Put the desktop window controls on the header's line. The top of the
+  sidebar, the header, Settings and the Details panel share one row, and
+  the sidebar button stays in place whether the sidebar is shown or hidden.
+- Move the desktop window by dragging any empty part of that row, and
+  double-click it for what System Settings says a title-bar double-click
+  does: zoom, minimise or nothing.
+- Keep the Details panel and a full-window Canvas clear of the window
+  controls, and keep the header on one row beside them in a narrow window.
+- Keep the conversation full width at phone size with the sidebar open, and
+  open the sidebar above the header.
+- Fix creating an agent, from a starting point or from scratch, when an
+  older agent still has a retired character. A new agent now appears in the
+  sidebar at once.
+- Explain Vakyartha's architecture, Doctor and security controls on the
+  website with illustrated stories, tell the follow-through story with the
+  companions, add privacy and terms pages, and link the documentation.
+- Add the repository license, rewrite the README for onboarding and
+  administration, and describe Vakyartha on its own terms throughout the
+  documentation.
+
 ## 5.1.3 — 2026-09-27
 
 - Add daylight and dusk mobile wallpapers, composed for phone lock screens
