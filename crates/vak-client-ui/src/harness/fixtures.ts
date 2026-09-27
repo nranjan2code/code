@@ -56,8 +56,8 @@ const researchFixtures: Fixture[] = [
         { title: "Secondary Source", url: "https://example.com/b" },
       ],
       takeaways: [
-        { text: "First finding, tied to source 1.", citation_indices: [0] },
-        { text: "Second finding, tied to source 2.", citation_indices: [1] },
+        { text: "First finding, tied to source 1.", citation_indices: [1] },
+        { text: "Second finding, tied to source 2.", citation_indices: [2] },
       ],
     },
   },
@@ -322,8 +322,8 @@ export const SCENARIO_FIXTURES: ScenarioFixture[] = [
           { title: "RBI holds rates steady amid inflation watch", url: "https://example-news.in/rbi-rates", source_name: "Example Business Daily", published_at: "2026-09-18" },
         ],
         takeaways: [
-          { text: "Parliament is debating a proposed UPI transaction fee, opposed by several state governments.", citation_indices: [0] },
-          { text: "RBI held its policy rate steady, citing inflation risk from global oil prices.", citation_indices: [1] },
+          { text: "Parliament is debating a proposed UPI transaction fee, opposed by several state governments.", citation_indices: [1] },
+          { text: "RBI held its policy rate steady, citing inflation risk from global oil prices.", citation_indices: [2] },
         ],
       }),
     expectation: "grounded_card",
@@ -401,8 +401,8 @@ export const MULTI_CARD_FIXTURES: MultiCardFixture[] = [
           { title: "Competitor B pricing page", url: "https://competitor-b.example.com/pricing" },
         ],
         takeaways: [
-          { text: "Competitor A undercuts us on the entry tier by 20%.", citation_indices: [0] },
-          { text: "Competitor B has no free tier, unlike us and Competitor A.", citation_indices: [1] },
+          { text: "Competitor A undercuts us on the entry tier by 20%.", citation_indices: [1] },
+          { text: "Competitor B has no free tier, unlike us and Competitor A.", citation_indices: [2] },
         ],
       }) +
       "\n\n" +

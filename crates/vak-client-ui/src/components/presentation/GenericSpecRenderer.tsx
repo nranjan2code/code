@@ -60,6 +60,25 @@ function str(props: Record<string, unknown>, key: string): string | undefined {
   return typeof value === "string" ? value : typeof value === "number" ? String(value) : undefined;
 }
 
+function sourcePublisher(props: Record<string, unknown>, url: string): string {
+  const name = str(props, "source_name");
+  if (name) return name;
+  if (!safeUrl(url)) return url;
+  try { return new URL(url).hostname.replace(/^www\./, "") || url; }
+  catch { return url; }
+}
+
+function sourceDate(value?: string): string | undefined {
+  if (!value) return undefined;
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value);
+  return Number.isFinite(date.getTime())
+    ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date)
+    : value;
+}
+
 /**
  * Render one primitive node. Every registered primitive (timeline, metric,
  * metric_grid, table, comparison, recipe, research, diff, terminal,
@@ -658,11 +677,13 @@ function renderResearch(node: AdaptiveRenderNode, surface: RenderSurface) {
       <div class="card-header">
         <div class="card-title-group">
           <span class="card-badge badge-indigo">{str(node.props, "title") ?? "Research Synthesis"}</span>
-          <span class="card-subtitle">{sources().length} sources</span>
+          <span class="card-subtitle">
+            {sources().length} {sources().length === 1 ? "source" : "sources"}
+          </span>
         </div>
         <div class="card-actions">
           <button type="button" class="pill-action-btn" onClick={handleCopy}>
-            {copied() ? "\u2713 Copied" : "Copy Synthesis"}
+            {copied() ? "Copied" : "Copy synthesis"}
           </button>
         </div>
       </div>
@@ -684,7 +705,7 @@ function renderResearch(node: AdaptiveRenderNode, surface: RenderSurface) {
                       {(citeIdx) => {
                         const source = sourceProps(Number(citeIdx) - 1);
                         return (
-                          <span class="inline-cite">
+                          <button type="button" class="inline-cite" aria-label={`Citation ${citeIdx}: ${source && str(source, "title") ? str(source, "title") : "source details"}`}>
                             [{citeIdx}]
                             <Show when={source}>
                               <div class="cite-popover">
@@ -695,7 +716,7 @@ function renderResearch(node: AdaptiveRenderNode, surface: RenderSurface) {
                                 </Show>
                               </div>
                             </Show>
-                          </span>
+                          </button>
                         );
                       }}
                     </For>
@@ -714,10 +735,10 @@ function renderResearch(node: AdaptiveRenderNode, surface: RenderSurface) {
                 const url = str(p, "url") ?? "";
                 return (
                   <a class="source-tile" href={safeUrl(url) ? url : undefined} target="_blank" rel="noreferrer noopener">
-                    <div class="source-favicon">🌐</div>
+                    <div class="source-favicon"><Icon name="link" size={15} /></div>
                     <div class="source-info">
-                      <strong>{str(p, "title")}</strong>
-                      <small>{str(p, "source_name") ?? url}</small>
+                      <strong>{str(p, "title") ?? "Source"}</strong>
+                      <small>{[sourcePublisher(p, url), sourceDate(str(p, "published_at"))].filter(Boolean).join(" · ") || url}</small>
                     </div>
                   </a>
                 );
@@ -981,7 +1002,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
               <div style={{ "font-size": "14px", "font-weight": "700", color: "var(--text-main)" }}>
                 {hasReportedOutcome() ? `${successPercent()}% Success Rate` : totalCount() === 0 ? "No tests reported" : "Results unavailable"}
               </div>
-              <div style={{ "font-size": "11.5px", color: "var(--text-muted)" }}>
+              <div style={{ "font-size": "var(--fs-caption)", color: "var(--text-muted)" }}>
                 {passedCount()} of {totalCount()} tests verified
               </div>
             </div>
@@ -1021,7 +1042,7 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
                         <strong style={{ color: "var(--text-main)" }}>{str(t, "name")}</strong>
                       </div>
                       <Show when={duration !== undefined}>
-                        <span style={{ color: "var(--text-muted)", "font-size": "11px" }}>{duration}ms</span>
+                        <span style={{ color: "var(--text-muted)", "font-size": "var(--fs-caption)" }}>{duration}ms</span>
                       </Show>
                     </div>
                     <Show when={detail}>

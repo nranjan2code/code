@@ -42,8 +42,9 @@ import DiffInspector from "./presentation/DiffInspector";
 import { downloadCsv } from "./presentation/data";
 import MermaidViewer from "./presentation/MermaidViewer";
 
-// Runtime diagnostics belong in explicit task details and receipt views.
-const showOperatorChrome = () => false;
+// Technical details are a disclosure preference only; they never change the
+// result, route, authority, or which safety states remain visible.
+const showOperatorChrome = () => technicalDetails();
 import GenericSpecRenderer, { PresentationInteractionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildOptionsTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
@@ -356,19 +357,19 @@ function InteractiveTable(props: {
               type="text"
               class="grid-search-input"
               placeholder="Filter table..."
-              style={{ "font-size": "11px", padding: "3px 8px", width: "160px", "border-radius": "4px" }}
+              style={{ "font-size": "var(--fs-control)", padding: "5px 8px", width: "min(220px, 42vw)", "border-radius": "var(--radius-sm)" }}
               value={search()}
               onInput={(e) => setSearch(e.currentTarget.value)}
               aria-label="Filter table rows"
             />
-            <span style={{ "font-size": "11px", opacity: "0.7" }}>
+            <span style={{ "font-size": "var(--fs-caption)", color: "var(--muted)" }}>
               {processedRows().length} of {props.rows.length} rows
             </span>
           </div>
           <button
             type="button"
             class="pill-action-btn"
-            style={{ "font-size": "11px", padding: "2px 8px" }}
+            style={{ "font-size": "var(--fs-control)", padding: "5px 10px" }}
             onClick={handleDownloadCsv}
           >
             {downloaded() ? "Downloaded" : "CSV"}
@@ -477,9 +478,8 @@ function Blocks(props: { blocks: DocumentBlock[]; recipeId?: string } & Presenta
                 }
                 // A genuinely malformed vak/semantic-type fence (the model
                 // emitted invalid JSON, e.g. mismatched brackets) used to
-                // `return null` here whenever operator chrome was off —
-                // which it always is (`showOperatorChrome` is hardcoded
-                // `false`). That produced a real answer that rendered as
+                // `return null` here whenever operator chrome was off. That
+                // produced a real answer that rendered as
                 // total silence: no card, no error, no raw JSON, nothing.
                 // Same fallback contract as assistantParts()'s equivalent
                 // fix (structured.ts) — never leave a parse failure with no

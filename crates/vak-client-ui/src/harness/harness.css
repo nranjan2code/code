@@ -39,15 +39,22 @@ html, body, #root {
 .harness-character-card > span { font-size: 12px; text-transform: capitalize; }
 .harness-character-card > small { line-height: 1.35; }
 .harness-cell {
-  border: 1px solid #ccc;
-  border-radius: 8px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 10px;
   overflow: auto;
   max-height: 480px;
+  background: var(--surface);
 }
 .harness-cell-failed {
-  border-color: #d33;
-  box-shadow: 0 0 0 2px rgba(221, 51, 51, 0.3);
+  border-color: var(--red);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--red) 30%, transparent);
+}
+/* Let the source-detail popover escape the gallery's scroll viewport too. */
+.harness-cell:has(.research-card-wrap) {
+  max-height: none;
+  overflow: visible;
 }
 .harness-cell-head {
   display: flex;
@@ -62,9 +69,9 @@ html, body, #root {
   text-align: right;
 }
 .harness-error {
-  color: #d33;
+  color: var(--red);
   font-weight: 600;
-  font-size: 13px;
+  font-size: max(12px, var(--fs-meta));
   padding: 6px 0;
 }
 .harness-section-note {
