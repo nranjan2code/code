@@ -137,6 +137,9 @@ tauri-plugin-dialog = "2.7"
 tauri-plugin-notification = "2.3"
 # Enforces one running instance; a second launch refocuses the first window
 tauri-plugin-single-instance = "2.3"
+# macOS only: reads the system's title-bar double-click setting for the title
+# bar the desktop page draws itself. Already in the tree through tao and wry.
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSString", "NSUserDefaults"] }
 # Real PTY for the integrated terminal pane
 portable-pty = "0.9"
 # Menu-bar controller (vak-tray): native tray icon + event loop

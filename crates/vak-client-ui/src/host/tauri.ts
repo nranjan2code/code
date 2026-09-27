@@ -68,6 +68,14 @@ export const activeHost: Host = {
     };
   },
 
+  dragWindow(): void {
+    void getCurrentWindow().startDragging().catch((error) => console.warn("Could not move the window:", error));
+  },
+
+  titleBarDoubleClick(): void {
+    void invoke("title_bar_double_click").catch((error) => console.warn("Title bar double-click failed:", error));
+  },
+
   async setWindowIcon(visualPack: "classic" | "dimensional"): Promise<void> {
     const asset = visualPack === "dimensional"
       ? "assets/brand/dimensional/app-icon-512.png"

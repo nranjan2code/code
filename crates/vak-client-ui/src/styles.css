@@ -98,6 +98,9 @@
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
+  /* The header row, which the sidebar head and the dock tabs match. The
+     desktop shell centres its window controls on it (tauri.conf.json). */
+  --header-height: 64px;
   /* Room for window controls drawn over the page (data-chrome="overlay"). */
   --titlebar-inset: 0px;
   --titlebar-lead: 0px;
@@ -288,15 +291,21 @@ code, pre, kbd { font-family: var(--mono); }
 
 /* Sidebar */
 /* The macOS desktop shell draws the window controls over the top-left of
- * the page: the sidebar and Settings keep a draggable strip above their
- * content for them, and a header that reaches the left edge starts after
- * them. In full screen the attribute goes and so does the room. */
-:root[data-chrome="overlay"] { --titlebar-inset: 34px; --titlebar-lead: 76px; }
+ * the page, on the header's centre line. The sidebar and Settings keep a
+ * title band the header's height above their content, and the sidebar
+ * button sits just past the controls whether the sidebar is shown or not:
+ * in the band, or at the start of a header that reaches the left edge. In
+ * full screen the attribute goes and so does the room. */
+:root[data-chrome="overlay"] { --titlebar-inset: var(--header-height); --titlebar-lead: 84px; }
 .window-drag-strip { flex: none; height: var(--titlebar-inset); }
-.app.sidebar-collapsed .workspace-head { padding-left: calc(18px + var(--titlebar-lead)); }
+.app.sidebar-collapsed .workspace-head { padding-left: max(18px, var(--titlebar-lead)); }
+:root[data-chrome="overlay"] .sb-head { height: 52px; }
+:root[data-chrome="overlay"] .sb-head-actions { position: absolute; top: calc((var(--titlebar-inset) - 30px) / 2); left: var(--titlebar-lead); }
+:root[data-chrome="overlay"] .settings-nav { padding-top: 0; }
+:root[data-chrome="overlay"] .settings-nav > .window-drag-strip { margin-inline: calc(-1 * var(--space-3)); }
 /* A Settings page reaches the top-left only on a phone-width window. */
 .settings-main-strip { display: none; }
-.sidebar { grid-area: sidebar; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-soft); background: color-mix(in srgb, var(--sidebar) 78%, var(--bg)); border-color: transparent; border-right-color: color-mix(in srgb, var(--border) 42%, transparent); }
+.sidebar { grid-area: sidebar; position: relative; display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-soft); background: color-mix(in srgb, var(--sidebar) 78%, var(--bg)); border-color: transparent; border-right-color: color-mix(in srgb, var(--border) 42%, transparent); }
 
 .sb-head-actions { display: flex; align-items: center; gap: 1px; }
 .brand { display: flex; align-items: center; gap: 10px; font-family: var(--display); font-size: var(--fs-title); font-weight: 600; letter-spacing: -.01em; color: var(--text); }
@@ -389,7 +398,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 
 /* Main workspace */
 
-.workspace-head { flex: none; height: 64px; display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 9px var(--space-4) var(--space-2) 22px; border-bottom: 1px solid var(--border-soft); background: var(--surface); min-width: 0; padding-inline: 18px; }
+.workspace-head { flex: none; height: var(--header-height); display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 9px var(--space-4) var(--space-2) 22px; border-bottom: 1px solid var(--border-soft); background: var(--surface); min-width: 0; padding-inline: 18px; }
 
 .workspace-title { min-width: 0; }
 .workspace-title-row { display: flex; align-items: center; gap: 9px; }
@@ -1972,7 +1981,7 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .dock-resizer { right: calc(var(--dock-width, 520px) - 4px); }
 body.is-resizing { cursor: col-resize; user-select: none; }
 body.is-resizing iframe { pointer-events: none; }
-.dock-tabs { display: flex; align-items: center; overflow: visible; flex-wrap: wrap; border-bottom: 1px solid var(--border-soft); min-height: 52px; padding: var(--space-2) var(--space-3); gap: 5px; background: transparent; border-bottom-color: color-mix(in srgb, var(--border) 44%, transparent); }
+.dock-tabs { display: flex; align-items: center; overflow: visible; flex-wrap: wrap; border-bottom: 1px solid var(--border-soft); min-height: var(--header-height); padding: var(--space-2) var(--space-3); gap: 5px; background: transparent; border-bottom-color: color-mix(in srgb, var(--border) 44%, transparent); }
 .dock-tab { display: inline-flex; align-items: center; gap: 6px; padding: var(--space-1) var(--space-2); white-space: nowrap; font-size: var(--fs-caption); min-height: 34px; padding-inline: 11px; border-radius: 12px; color: var(--text-muted); transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease); }
 
 .dock-more { position: relative; }
@@ -2727,7 +2736,8 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   .sidebar {
     position: fixed;
     inset: 0 auto 30px 0;
-    z-index: 40;
+    /* Over the header (50), which now spans the width beneath it. */
+    z-index: 52;
     width: min(300px, 84vw);
     box-shadow: var(--shadow-lg);
     transform: translateX(0);
@@ -2748,12 +2758,17 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   /* Dragging a column edge is meaningless once the columns are overlays. */
   .resize-handle { display: none; }
   .dock-tabs { overflow-x: auto; }
+  /* The dock now covers the window, so its tabs start past the controls. */
+  :root[data-chrome="overlay"] .dock-tabs { padding-left: var(--titlebar-lead); }
   /* Task details become a phone overlay; keep its close control reachable. */
   .workspace-head { position: relative; z-index: 50; }
 }
 
 @media (max-width: 600px) {
   .workspace-head { height: auto; padding-block: var(--space-2); gap: var(--space-2); flex-wrap: wrap; }
+  /* Beside the window controls the header stays one row on their centre
+     line; its title shortens instead. */
+  :root[data-chrome="overlay"] .workspace-head { height: var(--header-height); padding-block: 0; flex-wrap: nowrap; }
   /* The row wraps before anything overlaps. */
   .composer-toolbar { flex-wrap: wrap; }
   .composer-lead { flex-wrap: wrap; }
@@ -3172,7 +3187,7 @@ body.is-resizing .split-divider { background: var(--accent); }
 .pane:not(.focused) { opacity: .86; transition: opacity var(--dur-fast) var(--ease); }
 .pane.focused { background: color-mix(in srgb, var(--surface) 22%, transparent); }
 
-@media (max-width: 1200px) {
+@media (min-width: 901px) and (max-width: 1200px) {
   .app { --sidebar-width: 236px; --dock-width: 390px; grid-template-columns: var(--sidebar-width) minmax(360px, 1fr) auto; }
   .dock { max-width: 42vw; }
 }
@@ -5119,7 +5134,7 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .media-preview audio, .media-preview video { max-width: 100%; }
 
 /* Assistant-first navigation shared by desktop and web. */
-.sb-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 10px var(--space-2) 15px; height: 68px; padding-inline: var(--space-4); }
+.sb-head { display: flex; align-items: center; justify-content: space-between; height: var(--header-height); padding-inline: var(--space-4); }
 .sb-nav { display: flex; flex-direction: column; padding-inline: 10px; gap: var(--space-1); padding: var(--space-2) var(--space-3) var(--space-3); }
 .sb-nav-item { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; min-height: 39px; padding: var(--space-2) 11px; border: 1px solid transparent; border-radius: 12px; color: color-mix(in srgb, var(--text-muted) 88%, var(--text)); transition: background var(--dur) var(--ease), color var(--dur) var(--ease), transform var(--dur) var(--ease); }
 .sb-nav-item:hover { background: color-mix(in srgb, var(--surface-hover) 72%, transparent); color: var(--text); }
@@ -5231,6 +5246,9 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   border-radius: 0;
   border-left: none;
 }
+/* Covering the whole window, the canvas's title bar starts past the window
+   controls and shares their centre line. */
+:root[data-chrome="overlay"] .artifact-canvas.canvas-focused .artifact-canvas-header { min-height: var(--header-height); padding-left: var(--titlebar-lead); }
 
 @keyframes canvasSlideIn {
   from {
@@ -5806,6 +5824,7 @@ html[data-theme="light"] .artifact-canvas-body {
     border-left: none;
   }
   .artifact-canvas-header { align-items: flex-start; flex-wrap: wrap; }
+  :root[data-chrome="overlay"] .artifact-canvas-header { padding-left: var(--titlebar-lead); }
   .artifact-canvas-title-group { width: 100%; }
   .artifact-canvas-controls { width: 100%; overflow-x: auto; padding-bottom: 2px; }
   .artifact-canvas-feedback-compose { align-items: stretch; }

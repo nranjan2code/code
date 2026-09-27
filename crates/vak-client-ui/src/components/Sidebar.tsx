@@ -1,5 +1,5 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
-import { activeAgentId, agentOpening, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
+import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
+import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
@@ -35,6 +35,7 @@ export default function Sidebar() {
     };
     void refresh();
     const timer = window.setInterval(refresh, 10000);
+    createEffect(on(agentsEpoch, () => void refresh(), { defer: true }));
     onCleanup(() => { disposed = true; window.clearInterval(timer); });
   });
 
@@ -64,14 +65,14 @@ export default function Sidebar() {
 
   return (
     <aside class="sidebar">
-      <div class="window-drag-strip" data-tauri-drag-region aria-hidden="true" />
-      <div class="sb-head" data-tauri-drag-region>
+      <div class="window-drag-strip" data-titlebar aria-hidden="true" />
+      <div class="sb-head" data-titlebar>
         <div class="brand" aria-label="Vakyartha">
           <span class="brand-mark"><img src={`${import.meta.env.BASE_URL}assets/brand/songbird-colour.svg`} alt="" /></span>
           <span class="brand-wordmark" aria-hidden="true" />
         </div>
         <div class="sb-head-actions">
-          <button type="button" class="icon-button subtle" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>
+          <button type="button" class="icon-button has-tooltip" data-tooltip="Hide sidebar ⌘B" aria-label="Hide sidebar" onClick={() => setSidebarOpen(false)}><Icon name="sidebar" /></button>
         </div>
       </div>
 

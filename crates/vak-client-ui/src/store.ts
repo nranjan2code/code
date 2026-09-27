@@ -603,6 +603,9 @@ export const [showShortcuts, setShowShortcuts] = createSignal(false);
 export const [agentPickerOpen, setAgentPickerOpen] = createSignal(false);
 export const [agentPickerTab, setAgentPickerTab] = createSignal<"fleet" | "target">("fleet");
 export const [agentCreateOpen, setAgentCreateOpen] = createSignal(false);
+/** Bumped after a saved change to the agent list, so the sidebar shows a
+ * new, renamed or paused agent at once rather than on its next refresh. */
+export const [agentsEpoch, setAgentsEpoch] = createSignal(0);
 export const [settingsOpen, setSettingsOpen] = createSignal(false);
 /** The in-app "Connect an AI service" sheet (docs/design/75 §6.2). */
 export const [connectOpen, setConnectOpen] = createSignal(false);

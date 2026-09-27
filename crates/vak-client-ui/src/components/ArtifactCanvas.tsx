@@ -609,7 +609,7 @@ export default function ArtifactCanvas() {
         aria-modal={mode() === "focused" ? "true" : "false"}
       >
         {/* Title bar */}
-        <header class="artifact-canvas-header">
+        <header class="artifact-canvas-header" data-titlebar>
           <div class="artifact-canvas-title-group">
             <span class="artifact-canvas-badge">
               {canvasArtifact()?.candidateId ? `Draft preview${candidateVersion() ? ` · Version ${candidateVersion()}` : ""}` : displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Live preview" : displayType() === "office" ? "Document" : "Preview"}

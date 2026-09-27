@@ -1121,3 +1121,38 @@ what was not.
   above "Back to Vakyartha" in Settings. The desktop app ran with it (the
   maintainer moved the window); still to confirm in the running app: drag,
   double-click to zoom, full screen and the controls' exact position.
+- 2026-09-27: V4.3 continued (not ticked). Measured in the running desktop
+  app, `trafficLightPosition` 18,22 put the window controls' centre 19.75pt
+  from the top while the header's content sits on 32pt; 18,34 puts it on
+  32.0pt (the circles span x 18 to 77.5pt on macOS 27). The sidebar,
+  Settings and header now share one title band the header's height
+  (`--header-height`, 64px, which the sidebar head and the dock's tab row
+  also match; the tab row was 52px). The sidebar keeps the band above its
+  content with only the sidebar button in it, 84px in, and a header that
+  reaches the left edge starts with its sidebar button at the same place,
+  so the button stays put when the sidebar hides or shows. The title bar is
+  one mechanism, `data-titlebar` (`crates/vak-client-ui/src/titleBar.ts`),
+  replacing `data-tauri-drag-region`, whose regions reacted only to presses
+  on the region element itself, so only the header's padding moved the
+  window. A region and everything inside it, except what a person operates,
+  moves the window on a press and on a double-click does what System
+  Settings says ("Double-click a window's title bar to": zoom, minimise or
+  nothing; `title_bar_double_click` in the shell reads
+  `AppleActionOnDoubleClick`), where Tauri's handler always zoomed. Fixed on
+  the way: with the sidebar open at phone width, a later 1200px rule
+  replaced the one-column grid and squeezed the conversation to the
+  sidebar's width, and the header (z 50) covered the sidebar drawer (z 40);
+  the 1200px rule now starts at 901px and the drawer sits above the header.
+  Checked in the running desktop app (dark): the window controls, the
+  sidebar button and the header title measure on one line (32.0, 31.5 and
+  32pt), `after/V4.3-desktop-title-band-dark.png`. Checked in the browser
+  with the attribute forced and the controls drawn where the desktop app
+  measured them, at 1440 × 900 and 390 × 844, light and dark
+  (`after/V4.3-simulated-*` regenerated, `dock-*` new): the sidebar button
+  is at (84, 17) whether the sidebar is shown or hidden, the dock's tab row
+  and the header centre on 32px, and at 390 the header stays one row beside
+  the controls and the drawer covers it. Not yet checked: dragging,
+  double-click and full screen in the running app, because this session
+  could not send mouse input to a native window. The gesture rules are
+  covered by `tests/title-bar.mjs` and the setting's values by a unit test
+  in `vak-desktop`.

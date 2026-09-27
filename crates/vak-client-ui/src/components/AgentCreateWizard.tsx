@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show } from "solid-js";
-import { agentCreateOpen, setAgentCreateOpen, technicalDetails } from "../store";
+import { agentCreateOpen, setAgentCreateOpen, setAgentsEpoch, technicalDetails } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { AGENT_CHARACTERS, AGENT_CHARACTER_IDS, type AgentCharacter } from "../agentGlyph";
@@ -67,8 +67,8 @@ export default function AgentCreateWizard() {
     if (agentCreateOpen()) {
       reset();
       void api.listAgentTemplates().then((r) => setTemplates(r.templates)).catch(() => setTemplates([]));
-      // This wizard writes the Shared layer, so seed the replacement from
-      // that exact layer rather than copying workspace overrides into it.
+      // The Shared layer this wizard writes, for the name-in-use check; the
+      // save itself reads the layer again.
       void api.listAgents("user").then((r) => setAgents(r.agents)).catch(() => setAgents([]));
       void api.listAgents().then((r) => setEveryAgent(r.agents)).catch(() => setEveryAgent([]));
     }
@@ -120,7 +120,12 @@ export default function AgentCreateWizard() {
         animation: "subtle",
         voice: "default",
       };
-      await api.saveAgents([...agents(), agent], "user");
+      // The save replaces the whole Shared layer, so it is built from a
+      // fresh read of that layer: a list that failed to load, or went stale
+      // while the sheet was open, would drop the agents missing from it.
+      const layer = await api.listAgents("user");
+      await api.saveAgents([...layer.agents, agent], "user");
+      setAgentsEpoch((n) => n + 1);
       setAgentCreateOpen(false);
       await openAgentChat(agent.id);
     } catch (e) {

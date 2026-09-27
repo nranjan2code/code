@@ -131,6 +131,7 @@ import AgentPickerModal from "./components/AgentPickerModal";
 import AgentCreateWizard from "./components/AgentCreateWizard";
 import ConnectSheet from "./components/ConnectSheet";
 import { closeOpenMenus, dismissMenusOnPressOutside } from "./menus";
+import { titleBarGestures } from "./titleBar";
 import Skeleton from "./components/Skeleton";
 
 /** Unsubscribe handles for the sessions this tab follows (streamHub.ts). */
@@ -1236,13 +1237,15 @@ export default function App() {
 
   // Where the window controls overlay the page (the macOS desktop shell),
   // `data-chrome="overlay"` makes the sidebar, header and Settings leave
-  // room for them, except in full screen, where the system hides them.
+  // room for them and the page's title bar moves and zooms the window,
+  // except in full screen, where the system hides the controls.
   const [fullscreen, setFullscreen] = createSignal(false);
   onMount(() => onCleanup(host.onFullscreenChange(setFullscreen)));
   createEffect(() => {
     const overlay = backend().window_chrome === "overlay" && !fullscreen();
     if (overlay) document.documentElement.dataset.chrome = "overlay";
     else delete document.documentElement.dataset.chrome;
+    if (overlay && host.dragWindow) onCleanup(titleBarGestures(host));
   });
 
   // "system" is resolved here rather than in CSS so one attribute always
@@ -1363,7 +1366,7 @@ export default function App() {
                 role="complementary"
                 aria-label={`Task details: ${dockLabel(tab())}`}
               >
-                <div class="dock-tabs">
+                <div class="dock-tabs" data-titlebar>
                   {/* Only general-purpose views are pinned — pinning a
                       dev-only tool (Changes/Terminal) here would show up as
                       permanent chrome in every conversation, undoing the
@@ -1388,7 +1391,7 @@ export default function App() {
                   </For>
                   <details class="dock-more">
                     <summary class="dock-tab" aria-label="More workspace views"><Icon name="tune" /><span>More</span></summary>
-                    <div class="dock-more-menu">
+                    <div class="dock-more-menu" data-titlebar="false">
                       <For each={[
                         ["agents", "Parallel work", "grid"],
                         ["feeds", "Sources", "bell"],

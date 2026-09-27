@@ -902,6 +902,58 @@ fn open_admin(route: String) {
     open_web_path(&format!("/admin{route}"));
 }
 
+/// What a double-click on a window's title bar does, as set under "Double-click
+/// a window's title bar to" in System Settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TitleBarAction {
+    Zoom,
+    Minimize,
+    Nothing,
+}
+
+impl TitleBarAction {
+    /// Reads `AppleActionOnDoubleClick`: "Minimize", "None", or a zoom
+    /// ("Maximize", "Fill", or unset, which is the system default).
+    fn from_setting(setting: Option<&str>) -> Self {
+        match setting {
+            Some("Minimize") => Self::Minimize,
+            Some("None") => Self::Nothing,
+            _ => Self::Zoom,
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn current() -> Self {
+        use objc2_foundation::{NSString, NSUserDefaults};
+        let setting = NSUserDefaults::standardUserDefaults()
+            .stringForKey(&NSString::from_str("AppleActionOnDoubleClick"))
+            .map(|value| value.to_string());
+        Self::from_setting(setting.as_deref())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn current() -> Self {
+        Self::Zoom
+    }
+}
+
+/// A double-click on the title bar the page draws under the overlaid window
+/// controls. The webview receives those clicks, so the system never sees
+/// them; this does what the system would.
+#[tauri::command]
+fn title_bar_double_click(window: tauri::Window) -> Result<(), String> {
+    let done = match TitleBarAction::current() {
+        TitleBarAction::Zoom => match window.is_maximized() {
+            Ok(true) => window.unmaximize(),
+            Ok(false) => window.maximize(),
+            Err(error) => Err(error),
+        },
+        TitleBarAction::Minimize => window.minimize(),
+        TitleBarAction::Nothing => Ok(()),
+    };
+    done.map_err(|error| error.to_string())
+}
+
 #[tauri::command]
 fn backend_info(state: State<'_, BackendState>) -> BackendInfo {
     let guard = state
@@ -1119,6 +1171,7 @@ fn main() {
             set_desktop_autostart,
             open_admin,
             review_workspace,
+            title_bar_double_click,
             start_backend,
             export_file,
             open_workspace_file,
@@ -1152,7 +1205,24 @@ fn main() {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use super::{TRAY_FLAG, is_tray_launch, requested_project, startup_workspace};
+    use super::{TRAY_FLAG, TitleBarAction, is_tray_launch, requested_project, startup_workspace};
+
+    /// The values System Settings writes for "Double-click a window's title
+    /// bar to"; anything else, including no setting at all, zooms.
+    #[test]
+    fn title_bar_double_click_follows_the_system_setting() {
+        assert_eq!(
+            TitleBarAction::from_setting(Some("Minimize")),
+            TitleBarAction::Minimize
+        );
+        assert_eq!(
+            TitleBarAction::from_setting(Some("None")),
+            TitleBarAction::Nothing
+        );
+        for zoom in [Some("Maximize"), Some("Fill"), None] {
+            assert_eq!(TitleBarAction::from_setting(zoom), TitleBarAction::Zoom);
+        }
+    }
 
     /// The single-instance plugin hands a second process's whole argv
     /// (program name included) to the live app. A login launch from the

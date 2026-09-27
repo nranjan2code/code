@@ -10,6 +10,7 @@ import {
   setAgentCreateOpen,
   setAgentPickerOpen,
   setAgentPickerTab,
+  setAgentsEpoch,
   workspaceSwitching,
   technicalDetails,
 } from "../store";
@@ -130,6 +131,7 @@ export default function AgentPickerModal() {
     const layer = workspaceOwned ? workspaceAgents() : userAgents();
     const next = layer.map((candidate) => candidate.id === agent.id ? agent : candidate);
     await api.saveAgents(next, scope);
+    setAgentsEpoch((n) => n + 1);
     if (workspaceOwned) setWorkspaceAgents(next); else setUserAgents(next);
     setAgents((current) => current.map((candidate) => candidate.id === agent.id ? agent : candidate));
   };

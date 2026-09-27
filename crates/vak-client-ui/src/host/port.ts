@@ -71,6 +71,14 @@ export interface Host {
    * not change the icon installed by the operating system. */
   setWindowIcon?(visualPack: "classic" | "dimensional"): Promise<void>;
 
+  /** Move the window with the pointer, from a press on the title bar the
+   *  page draws under overlaid window controls (`titleBar.ts`). Present
+   *  only on a host whose controls overlay the page. */
+  dragWindow?(): void;
+  /** Do what the system's settings say a double-click on a title bar does:
+   *  zoom, minimise or nothing. Present with `dragWindow`. */
+  titleBarDoubleClick?(): void;
+
   /** Open `cwd` as the active workspace. `trust` is the operator's answer
    *  when they have just been asked, and undefined when nobody is being
    *  asked — in which case the decision already on record governs. */
