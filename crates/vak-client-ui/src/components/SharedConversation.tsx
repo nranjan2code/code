@@ -4,7 +4,7 @@ import Icon from "./Icon";
 import { AdaptiveTreeView, StructuredView } from "./PresentationRenderer";
 import AgentMark from "./AgentMark";
 import OfficeWorkspacePane from "./OfficeWorkspacePane";
-import { isOfficePath } from "../officeFiles";
+import { isDocumentPath } from "../officeFiles";
 
 type SharedCandidate = {
   kind: "Candidate" | "Promotion" | "Environment";
@@ -198,7 +198,7 @@ export default function SharedConversation() {
     setFileError(null);
     if (openFile()?.imageUrl) URL.revokeObjectURL(openFile()!.imageUrl!);
     setOpenFile(null);
-    if (isOfficePath(path)) {
+    if (isDocumentPath(path)) {
       setOpenFile({ candidateId, path, kind: "office" });
       try { const history = await read(current.conversationId, current.token, `/sandbox/candidates/${encodeURIComponent(candidateId)}/comments`); if (credential()?.token === current.token) setComments(history.comments ?? []); }
       catch (cause) { setFileError(cause instanceof Error ? cause.message : String(cause)); }

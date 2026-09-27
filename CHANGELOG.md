@@ -1,15 +1,21 @@
 ## Unreleased
 
-- Read PDF files. A new read-only reader, `vak-pdf`, written from the PDF
-  specification with no PDF library beneath it, gives `doc_read` a PDF's
+- Read and write PDF files with `vak-pdf`, a new engine written from the
+  PDF specification with no PDF library beneath it. `doc_read` gives a PDF's
   text by page and line with anchors, labels invisible, white, tiny and
-  off-page text, comments and form fields, and flags JavaScript, actions,
-  attachments and links without running or following them. A PDF sent on a
-  channel or dropped in a client is named for `doc_read`, a citation such as
-  `report.pdf#page:3` opens the viewer at that page, the PDF verifier runs on
-  the same reader, and `vak pdf read` and `vak pdf verify` give it to
-  scripts. Encrypted PDFs are refused with the reason, and scans are named
-  as such (there is no OCR).
+  off-page text, comments, highlights and form fields, and flags
+  JavaScript, actions, attachments and links without running or following
+  them. Encrypted PDFs are refused with the reason, and scans are named as
+  such (there is no OCR).
+- Draft PDF changes the way Office changes are drafted: `office_apply`
+  creates a PDF from scratch in the Word styles, or rewrites and deletes
+  lines, adds comments and highlights, fills form fields, and rotates,
+  moves, deletes and adds pages. Every change is a draft a person reviews,
+  with its change list and the changes they can keep one by one, before it
+  reaches the workspace; shared drafts, channel file-out, the verifier,
+  citations such as `report.pdf#page:3`, and `vak office` read, apply,
+  compare and verify PDFs too. Written files are clean rewrites, so removed
+  text is gone from the file.
 
 ## 5.1.7 — 2026-09-27
 

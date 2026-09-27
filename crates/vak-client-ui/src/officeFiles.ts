@@ -62,6 +62,12 @@ export function isPdfPath(path: string): boolean {
   return path.split(".").pop()?.toLowerCase() === "pdf";
 }
 
+/** A file the document loop reads, drafts, reviews and shares: the Office
+ * family or a PDF. */
+export function isDocumentPath(path: string): boolean {
+  return isOfficePath(path) || isPdfPath(path);
+}
+
 /** A PDF place, `page:3` or `page:3/line:12`, mirroring `vak_pdf::is_anchor`. */
 export function isPdfAnchor(anchor: string): boolean {
   return /^page:[1-9][0-9]{0,6}(\/line:[1-9][0-9]{0,6})?$/.test(anchor);

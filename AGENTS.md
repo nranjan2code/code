@@ -84,9 +84,10 @@ Read before changing behaviour in these areas:
 - **Office documents** — `72-openxml-documents.md` (the file-in, cite,
   redline, review, file-out loop is shipped; its ledger lists what is
   deferred and why).
-- **PDF documents** — `77-pdf-documents.md` (the read-only reader in
-  `crates/vak-pdf` and every surface that uses it; its deferred list says
-  what is not built and why).
+- **PDF documents** — `77-pdf-documents.md` (the reader and writer in
+  `crates/vak-pdf`, carried by the Office loop's own surfaces: `doc_read`,
+  `office_apply`, Review with choices and shared drafts; its deferred list
+  says what is not built and why).
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture
@@ -364,9 +365,8 @@ in progress, and the rest of V4 follows it.
     validated Bash command; never try to execute a host worker binary inside
     an image that does not contain the pinned worker artifact. A parser of
     untrusted file formats never runs in the server, desktop or gateway
-    process: `doc_read` and `office_apply` are worker tools, `vak pdf read`
-    is the `PdfRead` worker task, and every target verifier and every
-    Review of an Office file runs in a worker task
+    process: `doc_read` and `office_apply` are worker tools, and every target
+    verifier and every Review of an Office file or PDF runs in a worker task
     (`VerifyTargets`, `OfficeReview`) under a read-only, network-denied
     sandbox rooted at the files being read, whatever the session's mode,
     within a deadline; `OfficeNarrow`, which writes a narrower version of a
@@ -802,11 +802,13 @@ in progress, and the rest of V4 follows it.
       token-efficient extraction across Markdown, plain text, CSV, TSV, JSON,
       YAML, TOML, INI, ENV, HTML/XML, and the Open XML family (Word, Excel,
       PowerPoint and Visio, with their template and macro-enabled variants,
-      subject to invariant 39) and PDF (read-only and parsed only by
+      subject to invariant 39) and PDF (parsed and written only by
       `crates/vak-pdf`: invisible, white, tiny and off-page text is
       labelled, and JavaScript, actions, attachments and links are flagged,
-      never run or followed; docs/design/77-pdf-documents.md), strictly
-      confined to the canonical workspace root (Invariant 10).
+      never run or followed; a PDF changes only through an `office_apply`
+      draft and Review, like an Office file, and every write is a clean
+      rewrite confirmed by a re-read; docs/design/77-pdf-documents.md),
+      strictly confined to the canonical workspace root (Invariant 10).
     - **Outcome presentation** treats all tables and datasets as living
       interactive surfaces: every markdown table generated in conversation
       provides client-side column sorting, search filtering, and instant CSV
@@ -1147,17 +1149,21 @@ crates/vak-ooxml     the Open XML package engine, with NO vak dependencies so
                      as plain XML in `blank/`). Every vak call
                      site runs it in the broker worker (invariants 14, 39;
                      docs/design/72-openxml-documents.md)
-crates/vak-pdf       the read-only PDF parser, written from ISO 32000-2
-                     with NO PDF library beneath it and NO vak
-                     dependencies: L0 lexer, objects and bounded stream
-                     filters, the cross-reference chain (tables, streams,
-                     hybrids), object streams and a rebuild by scanning; L1
-                     encodings, ToUnicode CMaps, fonts and a content
-                     interpreter that places and labels text (invisible,
-                     white, tiny, off-page); L2 the anchored read
-                     projection (`page:<n>/line:<m>`) and the security
-                     inspection. Every vak call site runs it in the broker
-                     worker (invariant 14; docs/design/77-pdf-documents.md)
+crates/vak-pdf       the PDF engine, written from ISO 32000-2 with NO PDF
+                     library beneath it and NO vak dependencies: L0 lexer,
+                     objects and bounded stream filters, the cross-
+                     reference chain (tables, streams, hybrids), object
+                     streams and a rebuild by scanning; L1 encodings,
+                     ToUnicode CMaps, fonts and a content interpreter that
+                     places and labels text (invisible, white, tiny,
+                     off-page); L2 the anchored read projection
+                     (`page:<n>/line:<m>`), the security inspection and the
+                     client projection; L3 the typed op engine (`edit`)
+                     behind `office_apply`, a clean whole-file writer and
+                     a Helvetica layout engine for new content; L4/L5 the
+                     semantic diff and review choices. Every vak call site
+                     runs it in the broker worker (invariant 14;
+                     docs/design/77-pdf-documents.md)
 crates/vak-sandbox   the isolated-execution contract, deliberately ignorant
                      of models, prompts, sessions, approvals and
                      presentation: environment lifecycle + state machine,
@@ -1480,11 +1486,11 @@ crates/vak           binary. Run: exec / plan / flow / eval /
                      export / checkpoints / memory / entities / agents /
                      tasks / inbox / intent (explain, show) /
                      commit (list, show, close, supersede, attest) /
-                     grant / revoke / office (read, apply, diff, verify:
-                     JSON over the same worker tasks as the Agent's tools,
-                     docs/design/72-openxml-documents.md) / pdf (read,
-                     verify: the same, docs/design/77-pdf-documents.md).
-                     Configure: config / prompts / skills /
+                     grant / revoke / office (read, apply, diff, verify,
+                     for Office files and PDFs: JSON over the same worker
+                     tasks as the Agent's tools, docs/design/72-openxml-
+                     documents.md, 77-pdf-documents.md). Configure: config /
+                     prompts / skills /
                      skills-review / plugins / setup / doctor / backup /
                      digest / self (state, install, reinstall, verify,
                      update, uninstall, status, services-sync), plus the

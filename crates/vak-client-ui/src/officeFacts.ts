@@ -1,8 +1,8 @@
-// The one line a file card says about an Office file (docs/design/72, U6):
-// what it is and its headline counts, from the reader's own stats.
+// The one line a file card says about an Office file or PDF (docs/design/72
+// U6, 77): what it is and its headline counts, from the reader's own stats.
 
 type Facts = {
-  vocabulary: "word" | "excel" | "power_point" | "visio";
+  vocabulary: "word" | "excel" | "power_point" | "visio" | "pdf";
   kind: string;
   stats: [string, number][];
   flags: string[];
@@ -13,6 +13,7 @@ const HEADLINE: Record<Facts["vocabulary"], string[]> = {
   excel: ["sheets", "formulas"],
   power_point: ["slides", "hidden slides"],
   visio: ["pages", "shapes"],
+  pdf: ["pages", "comments", "form fields"],
 };
 
 /** "3 slides", "1 slide", "1 hidden slide", "1 slide with notes". */

@@ -378,3 +378,42 @@ pub fn encrypted() -> Vec<u8> {
     builder.set(catalog, &format!("<< /Type /Catalog /Pages {tree} 0 R >>"));
     builder.finish(catalog, &format!("/Encrypt {encrypt} 0 R"))
 }
+
+/// A one-page form: a text field `Name` holding `Old` and an unchecked
+/// check box `Agree` with `Yes` and `Off` appearances.
+pub fn form() -> Vec<u8> {
+    let mut builder = Builder::new();
+    let catalog = builder.reserve();
+    let tree = builder.reserve();
+    let page = builder.reserve();
+    let font = builder.object(
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+    );
+    let content = builder.stream("", b"BT /F1 12 Tf 72 720 Td (Application) Tj ET");
+    let yes = builder.stream(
+        "/Type /XObject /Subtype /Form /BBox [0 0 15 15]",
+        b"0 g 2 2 11 11 re f",
+    );
+    let off = builder.stream("/Type /XObject /Subtype /Form /BBox [0 0 15 15]", b"");
+    let name = builder.object(&format!(
+        "<< /Type /Annot /Subtype /Widget /FT /Tx /T (Name) /V (Old) /Rect [100 680 300 700] /P {page} 0 R >>"
+    ));
+    let agree = builder.object(&format!(
+        "<< /Type /Annot /Subtype /Widget /FT /Btn /T (Agree) /V /Off /AS /Off /Rect [100 640 115 655] /P {page} 0 R /AP << /N << /Yes {yes} 0 R /Off {off} 0 R >> >> >>"
+    ));
+    builder.set(
+        page,
+        &format!(
+            "<< /Type /Page /Parent {tree} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font} 0 R >> >> /Contents {content} 0 R /Annots [{name} 0 R {agree} 0 R] >>"
+        ),
+    );
+    builder.set(
+        tree,
+        &format!("<< /Type /Pages /Kids [{page} 0 R] /Count 1 >>"),
+    );
+    builder.set(
+        catalog,
+        &format!("<< /Type /Catalog /Pages {tree} 0 R /AcroForm << /Fields [{name} 0 R {agree} 0 R] >> >>"),
+    );
+    builder.finish(catalog, "")
+}

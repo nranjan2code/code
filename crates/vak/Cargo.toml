@@ -35,6 +35,7 @@ vak-permission = { workspace = true }
 vak-plugin = { workspace = true }
 vak-tools = { workspace = true }
 vak-ooxml = { workspace = true }
+vak-pdf = { workspace = true }
 vak-sandbox = { workspace = true }
 # Opt-in update check ([update] url, docs/design/29 P3); blocking client on
 # its own thread so startup never waits past the 2s timeout.

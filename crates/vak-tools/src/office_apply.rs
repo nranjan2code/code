@@ -33,7 +33,8 @@ static DESCRIPTION: LazyLock<String> = LazyLock::new(|| {
          To create a new file from scratch, give path (a new .docx, .xlsx or .pptx name) and ops, and leave out source and base_digest. A new Word document offers the styles {styles}; add content with add_paragraph and add_table. A new workbook has one empty sheet, {sheet}; use rename_sheet, set_cells, format_cells and set_column_widths. A new deck has the layouts {layouts}; add slides with add_slide_from_layout, with notes if wanted. \
          To create a file from a template in the workspace, set source to the template, base_digest to its sha256, and path to the new file. \
          To edit a file, read it with doc_read first and pass the sha256 it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, a table cell's paragraph as its row shows it, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits to an existing file become tracked changes; a new file is written clean. \
-         Text is plain: Markdown is not interpreted, so headings and lists come from styles. Excel calculates formulas when the file is opened. To keep editing a draft, pass the draft as source with its sha256. Macros are never added or run. A Visio drawing cannot be created or edited: say so, and never build one with a command or script.",
+         Text is plain: Markdown is not interpreted, so headings and lists come from styles. Excel calculates formulas when the file is opened. To keep editing a draft, pass the draft as source with its sha256. Macros are never added or run. A Visio drawing cannot be created or edited: say so, and never build one with a command or script. \
+         A PDF works the same way, created from scratch in the same styles or edited after a doc_read, whose anchors are page:3 and page:3/line:12: replace_paragraph_text and delete_paragraph act on one line (a replaced line is drawn in Helvetica), add_comment and highlight mark a line, fill_field sets a form field, rotate_page, delete_page and move_page rearrange pages, and add_paragraph, add_table and add_page_break set new content on new pages after a page (after: page:3) or at the end. Only Latin text can be written into a PDF.",
         styles = vak_ooxml::blank::DOCUMENT_STYLES.join(", "),
         sheet = vak_ooxml::blank::WORKBOOK_SHEET,
         layouts = vak_ooxml::blank::DECK_LAYOUTS
@@ -117,16 +118,29 @@ impl Tool for OfficeApplyTool {
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|digest| !digest.is_empty());
-        let ops: Vec<vak_ooxml::edit::OfficeOp> = match args.get("ops") {
-            Some(ops) => match serde_json::from_value(ops.clone()) {
-                Ok(ops) => ops,
+        let Some(raw_ops) = args.get("ops") else {
+            return ToolOutput::error("missing required parameter: ops");
+        };
+        let pdf = vak_pdf::is_pdf_path(path);
+        let (ops, pdf_ops): (Vec<vak_ooxml::edit::OfficeOp>, Vec<vak_pdf::edit::PdfOp>) = if pdf {
+            match serde_json::from_value(raw_ops.clone()) {
+                Ok(ops) => (Vec::new(), ops),
+                Err(error) => {
+                    return ToolOutput::error(format!(
+                        "ops are not valid for a PDF: {error}. A PDF takes {}; each op is an object with an \"op\" name and only that op's fields",
+                        crate::office_pdf::OPS
+                    ));
+                }
+            }
+        } else {
+            match serde_json::from_value(raw_ops.clone()) {
+                Ok(ops) => (ops, Vec::new()),
                 Err(error) => {
                     return ToolOutput::error(format!(
                         "ops are not valid: {error}. Each op is an object with an \"op\" name and only that op's fields"
                     ));
                 }
-            },
-            None => return ToolOutput::error("missing required parameter: ops"),
+            }
         };
         let destination = match confined_destination(&ctx.cwd, path) {
             Ok(destination) => destination,
@@ -164,15 +178,15 @@ impl Tool for OfficeApplyTool {
                 }
             }
         };
-        let Some(target) = destination
+        let target = destination
             .extension()
             .and_then(|extension| extension.to_str())
-            .and_then(vak_ooxml::Format::from_extension)
-        else {
+            .and_then(vak_ooxml::Format::from_extension);
+        if target.is_none() && !pdf {
             return ToolOutput::error(format!(
-                "{path} is not named as a Word, Excel or PowerPoint file (.docx, .xlsx, .pptx and their variants)"
+                "{path} is not named as a Word, Excel, PowerPoint or PDF file (.docx, .xlsx, .pptx and their variants, or .pdf)"
             ));
-        };
+        }
         let root = match canonical_root(&ctx.cwd) {
             Ok(root) => root,
             Err(error) => return ToolOutput::error(error),
@@ -221,19 +235,33 @@ impl Tool for OfficeApplyTool {
         let relative_path = relative.to_string_lossy().replace('\\', "/");
         let exists = destination.is_file();
         let tracked = exists && !ctx.new_documents.contains(&relative_path);
-        let job = Job {
-            origin,
-            destination,
-            draft: draft.clone(),
-            ops,
-            context: vak_ooxml::edit::EditContext {
-                author,
-                date,
-                tracked,
-            },
-            target,
+        let work = match target {
+            Some(target) => {
+                let job = Job {
+                    origin,
+                    destination,
+                    draft: draft.clone(),
+                    ops,
+                    context: vak_ooxml::edit::EditContext {
+                        author,
+                        date,
+                        tracked,
+                    },
+                    target,
+                };
+                tokio::task::spawn_blocking(move || job.run()).await
+            }
+            None => {
+                let job = crate::office_pdf::Job {
+                    origin,
+                    destination,
+                    draft: draft.clone(),
+                    ops: pdf_ops,
+                    context: vak_pdf::edit::EditContext { author, date },
+                };
+                tokio::task::spawn_blocking(move || job.run()).await
+            }
         };
-        let work = tokio::task::spawn_blocking(move || job.run()).await;
         let duration = started.elapsed().as_millis() as u64;
         let finish = |code: i32, artifacts: Vec<String>| {
             if let Some(sink) = &ctx.sandbox_sink {
@@ -281,7 +309,7 @@ pub fn text_tool_refusal(path: &Path, tool: &str) -> Option<String> {
                 "{display} is a PDF, which {tool} cannot show. Read it with doc_read, which returns its text by page and line with anchors and a sha256."
             ),
             _ => format!(
-                "{display} is a PDF, a binary format {tool} can neither change nor produce; nothing was changed. Read a PDF with doc_read; to make one, run a script that writes it."
+                "{display} is a PDF, which {tool} would corrupt; nothing was changed. Read it with doc_read, then change it with office_apply, which writes a draft for review."
             ),
         });
     }
@@ -361,15 +389,15 @@ fn op_schemas() -> Value {
     serde_json::json!([
         op(
             "replace_paragraph_text",
-            serde_json::json!({ "anchor": anchor("paragraph anchor, e.g. p@12"), "text": text }),
+            serde_json::json!({ "anchor": anchor("paragraph anchor, e.g. p@12; in a PDF, a line, e.g. page:3/line:12"), "text": text }),
             &["anchor", "text"],
-            "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are"
+            "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are. PDF: the line's whole new text, drawn in Helvetica where the old text was"
         ),
         op(
             "add_paragraph",
-            serde_json::json!({ "text": text, "style": { "type": "string", "description": "style id or name, e.g. Heading 1, List Bullet, List Number" }, "after": anchor("paragraph anchor to add after; omit to add at the end of the document") }),
+            serde_json::json!({ "text": text, "style": { "type": "string", "description": "style id or name, e.g. Heading 1, List Bullet, List Number" }, "after": anchor("paragraph anchor to add after (in a PDF, a page, e.g. page:3); omit to add at the end of the document") }),
             &["text"],
-            "Word: add a paragraph, at the end or after one. A List Number paragraph continues the list just above it, else starts at 1"
+            "Word: add a paragraph, at the end or after one. A List Number paragraph continues the list just above it, else starts at 1. PDF: set on new pages, after a page or at the end"
         ),
         op(
             "add_table",
@@ -379,9 +407,9 @@ fn op_schemas() -> Value {
         ),
         op(
             "delete_paragraph",
-            serde_json::json!({ "anchor": anchor("paragraph anchor") }),
+            serde_json::json!({ "anchor": anchor("paragraph anchor; in a PDF, a line, e.g. page:3/line:12") }),
             &["anchor"],
-            "Word: delete a paragraph (a tracked change in an existing file; removed outright in a new one)"
+            "Word: delete a paragraph (a tracked change in an existing file; removed outright in a new one). PDF: remove a line from its page"
         ),
         op(
             "set_cells",
@@ -454,6 +482,48 @@ fn op_schemas() -> Value {
             serde_json::json!({ "title": text }),
             &["title"],
             "Any: set the document title property"
+        ),
+        op(
+            "add_page_break",
+            serde_json::json!({ "after": anchor("page anchor to add after, e.g. page:3; omit to add at the end") }),
+            &[],
+            "PDF: start a new page for the content that follows"
+        ),
+        op(
+            "add_comment",
+            serde_json::json!({ "anchor": anchor("line anchor, e.g. page:3/line:12"), "text": text }),
+            &["anchor", "text"],
+            "PDF: a sticky-note comment beside a line"
+        ),
+        op(
+            "highlight",
+            serde_json::json!({ "anchor": anchor("line anchor, e.g. page:3/line:12"), "note": { "type": "string", "description": "an optional note on the highlight" } }),
+            &["anchor"],
+            "PDF: highlight a line"
+        ),
+        op(
+            "fill_field",
+            serde_json::json!({ "field": { "type": "string", "description": "the field's name, as the read lists it" }, "value": { "type": "string", "description": "text, a choice, or on/off for a check box" } }),
+            &["field", "value"],
+            "PDF: fill a form field"
+        ),
+        op(
+            "rotate_page",
+            serde_json::json!({ "anchor": anchor("page anchor, e.g. page:3"), "degrees": { "type": "integer", "description": "a multiple of 90, clockwise" } }),
+            &["anchor", "degrees"],
+            "PDF: turn a page"
+        ),
+        op(
+            "delete_page",
+            serde_json::json!({ "anchor": anchor("page anchor, e.g. page:3") }),
+            &["anchor"],
+            "PDF: remove a page"
+        ),
+        op(
+            "move_page",
+            serde_json::json!({ "anchor": anchor("page anchor, e.g. page:3"), "after": anchor("page anchor to move after; omit to move to the front") }),
+            &["anchor"],
+            "PDF: move a page"
         ),
     ])
 }

@@ -399,6 +399,16 @@ impl<'a> Lexer<'a> {
 pub(crate) struct Operations<'a> {
     lexer: Lexer<'a>,
     operands: Vec<Object>,
+    start: Option<usize>,
+}
+
+/// One operation and the bytes it spans, operands included, so an editor
+/// can replace exactly those bytes and leave the rest of the stream as it
+/// was.
+pub(crate) struct Operation<'a> {
+    pub(crate) operator: &'a [u8],
+    pub(crate) operands: Vec<Object>,
+    pub(crate) span: std::ops::Range<usize>,
 }
 
 impl<'a> Operations<'a> {
@@ -406,6 +416,7 @@ impl<'a> Operations<'a> {
         Self {
             lexer: Lexer::new(content, 0),
             operands: Vec::new(),
+            start: None,
         }
     }
 
@@ -433,14 +444,14 @@ impl<'a> Operations<'a> {
         }
         self.lexer.pos = data.len();
     }
-}
 
-impl<'a> Iterator for Operations<'a> {
-    type Item = (&'a [u8], Vec<Object>);
-
-    fn next(&mut self) -> Option<Self::Item> {
+    /// The next operation with its span.
+    pub(crate) fn next_operation(&mut self) -> Option<Operation<'a>> {
         loop {
+            self.lexer.skip_whitespace();
+            let at = self.lexer.pos;
             let token = self.lexer.next_token()?;
+            let start = *self.start.get_or_insert(at);
             let operand = match token {
                 Token::Keyword(b"true") => Some(Object::Bool(true)),
                 Token::Keyword(b"false") => Some(Object::Bool(false)),
@@ -448,10 +459,20 @@ impl<'a> Iterator for Operations<'a> {
                 Token::Keyword(b"BI") => {
                     self.skip_inline_image();
                     self.operands.clear();
-                    return Some((b"BI", Vec::new()));
+                    self.start = None;
+                    return Some(Operation {
+                        operator: b"BI",
+                        operands: Vec::new(),
+                        span: start..self.lexer.pos,
+                    });
                 }
                 Token::Keyword(operator) => {
-                    return Some((operator, std::mem::take(&mut self.operands)));
+                    self.start = None;
+                    return Some(Operation {
+                        operator,
+                        operands: std::mem::take(&mut self.operands),
+                        span: start..self.lexer.pos,
+                    });
                 }
                 token => self.lexer.object_from(token, false),
             };
@@ -461,6 +482,15 @@ impl<'a> Iterator for Operations<'a> {
                 self.operands.push(operand);
             }
         }
+    }
+}
+
+impl<'a> Iterator for Operations<'a> {
+    type Item = (&'a [u8], Vec<Object>);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_operation()
+            .map(|operation| (operation.operator, operation.operands))
     }
 }
 
@@ -509,6 +539,17 @@ c)"
         assert_eq!(parse(&deep), None);
         assert_eq!(parse("<< /A [1 2 endobj"), None);
         assert!(parse(&format!("{}1{}", "[".repeat(10), "]".repeat(10))).is_some());
+    }
+
+    #[test]
+    fn operations_carry_their_spans() {
+        let content = b"q BT /F1 12 Tf (Hi) Tj ET Q";
+        let mut operations = Operations::new(content);
+        let mut spans = Vec::new();
+        while let Some(operation) = operations.next_operation() {
+            spans.push(String::from_utf8_lossy(&content[operation.span]).into_owned());
+        }
+        assert_eq!(spans, ["q", "BT", "/F1 12 Tf", "(Hi) Tj", "ET", "Q"]);
     }
 
     #[test]

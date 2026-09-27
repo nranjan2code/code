@@ -14,6 +14,7 @@ serde = { workspace = true }
 fixtures = []
 
 [dev-dependencies]
+serde_json = { workspace = true }
 vak-pdf = { path = ".", features = ["fixtures"] }
 
 [lints]

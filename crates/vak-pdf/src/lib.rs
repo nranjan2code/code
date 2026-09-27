@@ -18,15 +18,21 @@
 //! - [`read`]: L2, the anchored read projection and security inspection.
 
 mod content;
+pub mod diff;
+pub mod edit;
 mod file;
 mod filter;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
 mod font;
+mod layout;
 mod lexer;
 mod object;
+pub mod projection;
 pub mod read;
+pub mod review;
 mod text;
+mod write;
 
 pub use read::{
     Bookmark, Document, ExternalLink, Info, Inspection, Line, MAX_LINE_CHARS, Page, read,

@@ -10438,6 +10438,21 @@ fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::Pat
     confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean))
 }
 
+/// A file the Office loop reads, drafts, reviews and shares: the Open XML
+/// family or a PDF (docs/design/72, 77).
+pub(crate) fn is_document_path(path: &str) -> bool {
+    vak_ooxml::is_openxml_path(path) || vak_pdf::is_pdf_path(path)
+}
+
+/// Whether `anchor` has the shape the reader for `path`'s kind gives.
+pub(crate) fn is_document_anchor(path: &str, anchor: &str) -> bool {
+    if vak_pdf::is_pdf_path(path) {
+        vak_pdf::is_anchor(anchor)
+    } else {
+        vak_ooxml::is_anchor(anchor)
+    }
+}
+
 #[derive(Debug, serde::Deserialize)]
 struct OfficeProjectionQuery {
     path: String,
@@ -10459,7 +10474,7 @@ impl OfficeProjectionQuery {
         match (self.view.as_deref(), &self.at) {
             (Some("structure"), _) => OfficeView::Structure,
             (Some("facts"), _) => OfficeView::Facts,
-            (_, Some(anchor)) if vak_ooxml::is_anchor(anchor) => OfficeView::At {
+            (_, Some(anchor)) if is_document_anchor(&self.path, anchor) => OfficeView::At {
                 anchor: anchor.clone(),
             },
             _ => OfficeView::Content { from: self.from },
@@ -10520,10 +10535,10 @@ async fn read_office_projection(
     axum::extract::Query(q): axum::extract::Query<OfficeProjectionQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if !vak_ooxml::is_openxml_path(&q.path) {
+    if !is_document_path(&q.path) {
         return (
             StatusCode::BAD_REQUEST,
-            "not a Word, Excel, PowerPoint or Visio file",
+            "not a Word, Excel, PowerPoint, Visio or PDF file",
         )
             .into_response();
     }
@@ -10916,7 +10931,7 @@ async fn read_execution_artifact_office(
     axum::extract::Query(q): axum::extract::Query<OfficeProjectionQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if !vak_ooxml::is_openxml_path(&q.path) {
+    if !is_document_path(&q.path) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     let path = match execution_artifact_path(&state, &session_id, &execution_id, &q.path) {
@@ -11510,6 +11525,8 @@ fn office_lineage(
             .map(std::path::Path::to_path_buf)
     };
     let mut ops = Vec::new();
+    let pdf = vak_pdf::is_pdf_path(path);
+    let mut pdf_steps: Vec<Vec<vak_pdf::edit::PdfOp>> = Vec::new();
     let mut call_id = execution_id.to_string();
     let mut wanted = std::path::PathBuf::from(path);
     for _ in 0..64 {
@@ -11529,13 +11546,24 @@ fn office_lineage(
                 wanted.display()
             ));
         }
-        let mut call_ops: Vec<vak_ooxml::edit::OfficeOp> = args
-            .get("ops")
-            .cloned()
-            .and_then(|ops| serde_json::from_value(ops).ok())
-            .ok_or("a recorded office_apply call has ops this version cannot read")?;
-        call_ops.append(&mut ops);
-        ops = call_ops;
+        if pdf {
+            // A PDF call's anchors name the file that call started from, so
+            // each call stays its own step.
+            let call_ops: Vec<vak_pdf::edit::PdfOp> = args
+                .get("ops")
+                .cloned()
+                .and_then(|ops| serde_json::from_value(ops).ok())
+                .ok_or("a recorded office_apply call has ops this version cannot read")?;
+            pdf_steps.insert(0, call_ops);
+        } else {
+            let mut call_ops: Vec<vak_ooxml::edit::OfficeOp> = args
+                .get("ops")
+                .cloned()
+                .and_then(|ops| serde_json::from_value(ops).ok())
+                .ok_or("a recorded office_apply call has ops this version cannot read")?;
+            call_ops.append(&mut ops);
+            ops = call_ops;
+        }
         let source_text = args
             .get("source")
             .and_then(serde_json::Value::as_str)
@@ -11585,6 +11613,7 @@ fn office_lineage(
                         agent.as_deref().unwrap_or("vak"),
                     ),
                     new_file: new_file || from_blank,
+                    pdf: pdf_steps,
                 });
             }
         }
@@ -11602,10 +11631,10 @@ async fn read_sandbox_candidate_office_review(
     axum::extract::Query(q): axum::extract::Query<FileQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if !vak_ooxml::is_openxml_path(&q.path) {
+    if !is_document_path(&q.path) {
         return (
             StatusCode::BAD_REQUEST,
-            "not a Word, Excel, PowerPoint or Visio file",
+            "not a Word, Excel, PowerPoint, Visio or PDF file",
         )
             .into_response();
     }
@@ -11693,10 +11722,10 @@ async fn read_sandbox_candidate_office_projection(
     axum::extract::Query(q): axum::extract::Query<OfficeProjectionQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    if !vak_ooxml::is_openxml_path(&q.path) {
+    if !is_document_path(&q.path) {
         return (
             StatusCode::BAD_REQUEST,
-            "not a Word, Excel, PowerPoint or Visio file",
+            "not a Word, Excel, PowerPoint, Visio or PDF file",
         )
             .into_response();
     }
@@ -11745,10 +11774,10 @@ async fn narrow_sandbox_candidate_office(
     let refuse = |status: StatusCode, message: String| {
         (status, Json(serde_json::json!({ "error": message }))).into_response()
     };
-    if !vak_ooxml::is_openxml_path(&body.path) {
+    if !is_document_path(&body.path) {
         return refuse(
             StatusCode::BAD_REQUEST,
-            "not a Word, Excel, PowerPoint or Visio file".into(),
+            "not a Word, Excel, PowerPoint, Visio or PDF file".into(),
         );
     }
     if body.keep.is_empty() {
@@ -12071,11 +12100,11 @@ async fn comment_on_sandbox_candidate(
         .as_deref()
         .map(str::trim)
         .filter(|anchor| !anchor.is_empty());
-    let office = path.is_some_and(vak_ooxml::is_openxml_path);
+    let office = path.is_some_and(is_document_path);
     if office && body.line_start.is_some() {
         return (
             StatusCode::BAD_REQUEST,
-            "line numbers mean nothing in an Office file; point at a cell, paragraph or slide with anchor",
+            "line numbers mean nothing in an Office file or PDF; point at a cell, paragraph, slide or PDF line with anchor",
         )
             .into_response();
     }
@@ -12083,14 +12112,14 @@ async fn comment_on_sandbox_candidate(
         if !office {
             return (
                 StatusCode::BAD_REQUEST,
-                "anchor requires an Office file path; use line numbers for text files",
+                "anchor requires an Office or PDF file path; use line numbers for text files",
             )
                 .into_response();
         }
-        if !vak_ooxml::is_anchor(anchor) {
+        if !path.is_some_and(|path| is_document_anchor(path, anchor)) {
             return (
                 StatusCode::BAD_REQUEST,
-                "anchor is not a cell, paragraph, slide or shape anchor",
+                "anchor is not a cell, paragraph, slide, shape or PDF page or line anchor",
             )
                 .into_response();
         }
@@ -20651,6 +20680,178 @@ mod sandbox_promotion_tests {
             !text.contains("[inserted by"),
             "a new document is clean: {text}"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_pdf_draft_is_reviewed_narrowed_and_accepted_through_promotion() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        let report = dir.path().join("report.pdf");
+        tokio::fs::write(&report, vak_pdf::fixtures::report())
+            .await
+            .unwrap();
+        let digest: String = {
+            use sha2::Digest as _;
+            sha2::Sha256::digest(vak_pdf::fixtures::report())
+                .iter()
+                .take(8)
+                .map(|byte| format!("{byte:02x}"))
+                .collect()
+        };
+        let tool = vak_tools::brokered_default_tools(state.core.tool_worker_exe())
+            .into_iter()
+            .find(|tool| tool.name() == "office_apply")
+            .unwrap();
+        let args = serde_json::json!({
+            "path": "report.pdf",
+            "base_digest": digest,
+            "ops": [
+                {"op": "replace_paragraph_text", "anchor": "page:1/line:2", "text": "Revenue grew 15%"},
+                {"op": "add_comment", "anchor": "page:1/line:1", "text": "Checked against the ledger"},
+                {"op": "set_title", "title": "Q3 Report, revised"}
+            ]
+        });
+        let (sink, _events) = vak_tools::SandboxEventSink::new_with_id("exec-1".into());
+        let output = tool
+            .execute(
+                &args,
+                &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
+            )
+            .await;
+        assert!(!output.is_error, "{}", output.content);
+        seed_office_calls(&state.core, "session-1", &[("exec-1", args)]);
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-1",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-1".into(),
+                owner_session_id: Some("session-1".into()),
+                tool: "office_apply".into(),
+                code_preview: "{}".into(),
+                language: "json".into(),
+                scratch_dir: ".vak/scratch/vak/exec-1".into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-1".into(),
+                source: ".vak/scratch/vak/exec-1".into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(
+            candidate.draft_checks[0].status, "passed",
+            "{}",
+            candidate.draft_checks[0].evidence
+        );
+        assert!(
+            candidate.draft_checks[0]
+                .evidence
+                .contains("PDF 1.7 parsed")
+        );
+        let candidate_id = candidate.candidate.candidate_id.clone();
+
+        let response = read_sandbox_candidate_office_review(
+            State(state.clone()),
+            Path(("session-1".into(), candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "report.pdf".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let review = body_json(response).await;
+        assert_eq!(review["compared_with"], "workspace", "{review}");
+        assert!(
+            review["changes"].to_string().contains("Revenue grew 15%"),
+            "{review}"
+        );
+        let labels: Vec<&str> = review["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|choice| choice["label"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "Rewrite page:1/line:2 as “Revenue grew 15%”",
+                "Comment on page:1/line:1: “Checked against the ledger”",
+                "Set the title to “Q3 Report, revised”"
+            ],
+            "{review}"
+        );
+
+        let response = narrow_sandbox_candidate_office(
+            State(state.clone()),
+            Path(("session-1".into(), candidate_id.clone())),
+            Json(OfficeNarrowBody {
+                path: "report.pdf".into(),
+                keep: vec!["1".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(narrowed) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(narrowed.draft_checks[0].status, "passed");
+        let response = promote_sandbox_candidate(
+            State(state.clone()),
+            Path("session-1".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: narrowed.candidate.candidate_id.clone(),
+                files: vec!["report.pdf".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let document = vak_pdf::read(
+            &tokio::fs::read(&report).await.unwrap(),
+            vak_pdf::Limits::default(),
+        )
+        .unwrap();
+        let text = document.lines().join("\n");
+        assert!(
+            text.contains("Checked against the ledger  ⟨comment by Vakyartha⟩"),
+            "{text}"
+        );
+        assert!(
+            text.contains("Revenue grew 12%"),
+            "the left-out rewrite is not applied: {text}"
+        );
+        assert_eq!(document.title(), Some("Q3 Report"));
+
+        let response = read_office_projection(
+            State(state.clone()),
+            axum::extract::Query(OfficeProjectionQuery {
+                path: "report.pdf".into(),
+                from: 0,
+                view: None,
+                at: Some("page:2/line:1".into()),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let page = body_json(response).await;
+        assert_eq!(page["vocabulary"], "pdf", "{page}");
+        assert_eq!(page["focus"], "page:2/line:1");
+        assert_eq!(page["path"], "report.pdf");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

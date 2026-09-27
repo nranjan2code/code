@@ -1,5 +1,6 @@
-//! `vak office`: the Office engine for scripts and headless machines
-//! (docs/design/72-openxml-documents.md, P5). Each verb only parses its
+//! `vak office`: the Office and PDF engines for scripts and headless
+//! machines (docs/design/72-openxml-documents.md P5,
+//! docs/design/77-pdf-documents.md). Each verb only parses its
 //! arguments and prints the worker's JSON answer: reading, applying,
 //! comparing and verifying run in the same broker worker tasks, over the
 //! same op schema, as the Agent's tools and the Review screen, so a file is
@@ -41,7 +42,14 @@ pub(crate) async fn run_office(action: OfficeAction) -> i32 {
             .await
         }
         OfficeAction::Diff { before, after } => diff(&worker, &before, &after).await,
-        OfficeAction::Verify { file } => return verify(&worker, &file, "format.openxml").await,
+        OfficeAction::Verify { file } => {
+            let verifier = if vak_pdf::is_pdf_path(&file.to_string_lossy()) {
+                "format.pdf-structure"
+            } else {
+                "format.openxml"
+            };
+            return verify(&worker, &file, verifier).await;
+        }
     };
     match answer {
         Ok(value) => print(&value),
@@ -84,9 +92,18 @@ async fn apply(
     } else {
         std::fs::read_to_string(ops).map_err(|error| format!("could not read {ops}: {error}"))?
     };
-    let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_str(&text).map_err(|error| {
-        format!("ops are not valid: {error}. Pass a JSON array of ops, each an object with an \"op\" name and only that op's fields")
-    })?;
+    let pdf = vak_pdf::is_pdf_path(&out.to_string_lossy());
+    let (ops, pdf_ops): (Vec<vak_ooxml::edit::OfficeOp>, Vec<vak_pdf::edit::PdfOp>) = if pdf {
+        let ops = serde_json::from_str(&text).map_err(|error| {
+            format!("ops are not valid for a PDF: {error}. Pass a JSON array of ops, each an object with an \"op\" name and only that op's fields")
+        })?;
+        (Vec::new(), ops)
+    } else {
+        let ops = serde_json::from_str(&text).map_err(|error| {
+            format!("ops are not valid: {error}. Pass a JSON array of ops, each an object with an \"op\" name and only that op's fields")
+        })?;
+        (ops, Vec::new())
+    };
     let origin = match (file, base_digest) {
         (Some(file), Some(base_digest)) => vak_tools::broker::OfficeOrigin::File {
             path: absolute(file)?,
@@ -119,6 +136,7 @@ async fn apply(
         ops,
         author: vak_tools::office_apply::tracked_change_author(agent),
         new_file,
+        pdf: if pdf { vec![pdf_ops] } else { Vec::new() },
     };
     vak_tools::broker::office_apply_to(worker, &lineage, &absolute(out)?).await
 }

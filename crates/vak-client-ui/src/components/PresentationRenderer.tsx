@@ -35,7 +35,7 @@ import { relAgo } from "../time";
 import Skeleton from "./Skeleton";
 import * as api from "../api";
 import { host } from "../host";
-import { isOfficePath, parseOfficeCitation } from "../officeFiles";
+import { isDocumentPath, parseOfficeCitation } from "../officeFiles";
 import { officeFactsLine, officeFlagsLabel } from "../officeFacts";
 import { highlight, languageForFence } from "../highlight";
 import DiffInspector from "./presentation/DiffInspector";
@@ -631,7 +631,7 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
     executionId: saved ? undefined : executionId ?? undefined,
   });
   const [facts] = createResource(
-    () => { const value = path(); return value && isOfficePath(value) ? value : null; },
+    () => { const value = path(); return value && isDocumentPath(value) ? value : null; },
     (value) => api.readOfficeFacts(source(value)),
   );
   const [problem, setProblem] = createSignal<string | null>(null);

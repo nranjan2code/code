@@ -76,6 +76,9 @@ impl Matrix {
 struct State {
     ctm: Matrix,
     font: Option<Rc<Font>>,
+    /// The resource name the font was selected by, for an editor that must
+    /// select it again.
+    font_name: Vec<u8>,
     size: f64,
     char_spacing: f64,
     word_spacing: f64,
@@ -91,6 +94,7 @@ impl Default for State {
         Self {
             ctm: Matrix::IDENTITY,
             font: None,
+            font_name: Vec::new(),
             size: 0.0,
             char_spacing: 0.0,
             word_spacing: 0.0,
@@ -111,10 +115,51 @@ pub(crate) enum FontKey {
 
 pub(crate) type FontCache = HashMap<FontKey, Rc<Font>>;
 
+/// One line of a page, with where it is and which top-level operations
+/// drew it, so an editor can address exactly those operations.
+#[derive(Debug, Clone)]
+pub(crate) struct TextLine {
+    pub(crate) text: String,
+    pub(crate) labels: u8,
+    /// `[left, bottom, right, top]` in default user space.
+    pub(crate) rect: [f64; 4],
+    /// The line's text size in user space.
+    pub(crate) size: f64,
+    /// Indices of the page-level operations that showed its text.
+    pub(crate) ops: Vec<usize>,
+    /// False when part of it came from a form XObject, which an edit of the
+    /// page's content cannot reach.
+    pub(crate) editable: bool,
+}
+
+/// How a text-showing operator moved and what state it drew with, for an
+/// editor that replaces it by an equal move.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum TextOperator {
+    Show,
+    ShowArray,
+    NextLineShow,
+    NextLineSpacedShow { word: f64, character: f64 },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct TextOp {
+    pub(crate) operator: TextOperator,
+    /// Total horizontal advance in text space units.
+    pub(crate) advance: f64,
+    pub(crate) font: Vec<u8>,
+    pub(crate) size: f64,
+    pub(crate) scale: f64,
+    pub(crate) char_spacing: f64,
+    pub(crate) word_spacing: f64,
+}
+
 /// What one page's content yielded.
 #[derive(Default)]
 pub(crate) struct PageText {
-    pub(crate) lines: Vec<(String, u8)>,
+    pub(crate) lines: Vec<TextLine>,
+    /// Every top-level text-showing operation, by index.
+    pub(crate) text_ops: HashMap<usize, TextOp>,
     pub(crate) images: usize,
     pub(crate) undecodable: BTreeSet<String>,
     pub(crate) unmapped: usize,
@@ -134,6 +179,8 @@ struct Run {
     /// Continues the previous string of the same `TJ` array; `true` when
     /// the adjustment between them was wide enough to be a word space.
     joined: Option<bool>,
+    /// The page-level operation that showed it; `None` inside a form.
+    op: Option<usize>,
 }
 
 struct Current {
@@ -145,10 +192,22 @@ struct Current {
     start: f64,
     end: f64,
     size: f64,
+    rect: [f64; 4],
+    ops: Vec<usize>,
+    editable: bool,
+}
+
+fn run_rect(run: &Run) -> [f64; 4] {
+    [
+        run.x.min(run.end),
+        run.y - run.size * 0.25,
+        run.x.max(run.end),
+        run.y + run.size * 0.85,
+    ]
 }
 
 struct Lines {
-    lines: Vec<(String, u8)>,
+    lines: Vec<TextLine>,
     current: Option<Current>,
     max_lines: usize,
     max_chars: usize,
@@ -197,6 +256,18 @@ impl Lines {
                     current.chars += run_chars;
                     current.end = run.end;
                     current.size = current.size.max(run.size);
+                    let [left, bottom, right, top] = run_rect(&run);
+                    current.rect = [
+                        current.rect[0].min(left),
+                        current.rect[1].min(bottom),
+                        current.rect[2].max(right),
+                        current.rect[3].max(top),
+                    ];
+                    match run.op {
+                        Some(op) if !current.ops.contains(&op) => current.ops.push(op),
+                        Some(_) => {}
+                        None => current.editable = false,
+                    }
                     return;
                 }
             }
@@ -204,6 +275,9 @@ impl Lines {
         self.flush();
         self.current = Some(Current {
             chars: run.text.chars().count(),
+            rect: run_rect(&run),
+            ops: run.op.into_iter().collect(),
+            editable: run.op.is_some(),
             text: run.text,
             labels: run.labels,
             y: run.y,
@@ -225,7 +299,14 @@ impl Lines {
             self.truncated = true;
             return;
         }
-        self.lines.push((text.to_string(), current.labels));
+        self.lines.push(TextLine {
+            text: text.to_string(),
+            labels: current.labels,
+            rect: current.rect,
+            size: current.size,
+            ops: current.ops,
+            editable: current.editable,
+        });
     }
 }
 
@@ -281,7 +362,9 @@ impl<'f, 'a, 'c> Interpreter<'f, 'a, 'c> {
         let mut uncounted_saves = 0usize;
         let mut text_matrix = Matrix::IDENTITY;
         let mut line_matrix = Matrix::IDENTITY;
-        for (operator, operands) in Operations::new(content) {
+        let top = depth == 0;
+        for (index, (operator, operands)) in Operations::new(content).enumerate() {
+            let op = top.then_some(index);
             self.operations += 1;
             if self.operations > MAX_OPERATIONS {
                 self.out.truncated = true;
@@ -313,6 +396,11 @@ impl<'f, 'a, 'c> Interpreter<'f, 'a, 'c> {
                     line_matrix = Matrix::IDENTITY;
                 }
                 b"Tf" => {
+                    state.font_name = operands
+                        .first()
+                        .and_then(Object::as_name)
+                        .map(<[u8]>::to_vec)
+                        .unwrap_or_default();
                     state.font = operands
                         .first()
                         .and_then(Object::as_name)
@@ -353,36 +441,51 @@ impl<'f, 'a, 'c> Interpreter<'f, 'a, 'c> {
                 }
                 b"Tj" => {
                     if let Some(bytes) = operands.first().and_then(Object::as_string) {
-                        self.show(&state, &mut text_matrix, bytes, None);
+                        let advance = self.show(&state, &mut text_matrix, bytes, None, op);
+                        self.record(op, TextOperator::Show, advance, &state);
                     }
                 }
                 b"'" | b"\"" => {
-                    if operator == b"\"" {
+                    let operator = if operator == b"\"" {
                         state.word_spacing = number(0).unwrap_or(state.word_spacing);
                         state.char_spacing = number(1).unwrap_or(state.char_spacing);
-                    }
+                        TextOperator::NextLineSpacedShow {
+                            word: state.word_spacing,
+                            character: state.char_spacing,
+                        }
+                    } else {
+                        TextOperator::NextLineShow
+                    };
                     line_matrix = Matrix::translate(0.0, -state.leading).then(line_matrix);
                     text_matrix = line_matrix;
-                    let string = if operator == b"'" { 0 } else { 2 };
+                    let string = if operator == TextOperator::NextLineShow {
+                        0
+                    } else {
+                        2
+                    };
                     if let Some(bytes) = operands.get(string).and_then(Object::as_string) {
-                        self.show(&state, &mut text_matrix, bytes, None);
+                        let advance = self.show(&state, &mut text_matrix, bytes, None, op);
+                        self.record(op, operator, advance, &state);
                     }
                 }
                 b"TJ" => {
                     if let Some(items) = operands.first().and_then(Object::as_array) {
                         let mut joined = None;
+                        let mut advance = 0.0;
                         for item in items {
                             if let Some(bytes) = item.as_string() {
-                                self.show(&state, &mut text_matrix, bytes, joined);
+                                advance += self.show(&state, &mut text_matrix, bytes, joined, op);
                                 joined = Some(false);
                             } else if let Some(adjustment) = item.as_f64() {
                                 let x = -adjustment / 1000.0 * state.size * state.scale;
+                                advance += x;
                                 text_matrix = Matrix::translate(x, 0.0).then(text_matrix);
                                 if joined.is_some() && adjustment <= -200.0 {
                                     joined = Some(true);
                                 }
                             }
                         }
+                        self.record(op, TextOperator::ShowArray, advance, &state);
                     }
                 }
                 b"g" => state.white = number(0).is_some_and(|gray| gray >= 0.99),
@@ -414,15 +517,34 @@ impl<'f, 'a, 'c> Interpreter<'f, 'a, 'c> {
         }
     }
 
+    fn record(&mut self, op: Option<usize>, operator: TextOperator, advance: f64, state: &State) {
+        if let Some(op) = op {
+            self.out.text_ops.insert(
+                op,
+                TextOp {
+                    operator,
+                    advance,
+                    font: state.font_name.clone(),
+                    size: state.size,
+                    scale: state.scale,
+                    char_spacing: state.char_spacing,
+                    word_spacing: state.word_spacing,
+                },
+            );
+        }
+    }
+
+    /// Shows one string and returns how far it advanced, in text space.
     fn show(
         &mut self,
         state: &State,
         text_matrix: &mut Matrix,
         bytes: &[u8],
         joined: Option<bool>,
-    ) {
+        op: Option<usize>,
+    ) -> f64 {
         let Some(font) = state.font.clone() else {
-            return;
+            return 0.0;
         };
         let shown = font.show(bytes);
         let advance = (shown.width * state.size
@@ -434,7 +556,7 @@ impl<'f, 'a, 'c> Interpreter<'f, 'a, 'c> {
         *text_matrix = Matrix::translate(advance, 0.0).then(*text_matrix);
         if !font.decodable {
             self.out.undecodable.insert(font.name.clone());
-            return;
+            return advance;
         }
         self.out.unmapped += shown.unmapped;
         let [_, _, c, d, _, _] = placed.0;
@@ -463,7 +585,9 @@ impl<'f, 'a, 'c> Interpreter<'f, 'a, 'c> {
             text: shown.text,
             labels,
             joined,
+            op,
         });
+        advance
     }
 
     fn font(&mut self, resources: Option<&'f Dict>, name: &[u8]) -> Option<Rc<Font>> {

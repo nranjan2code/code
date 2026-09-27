@@ -210,3 +210,90 @@ fn a_file_is_created_from_scratch_verified_and_read_from_the_command_line() {
     assert!(String::from_utf8_lossy(&digest_without_file.stderr).contains("give the file"));
     assert!(!dir.path().join("other.docx").exists());
 }
+
+#[test]
+fn read_create_edit_diff_and_verify_a_pdf_from_the_command_line() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("report.pdf"), vak_pdf::fixtures::report()).unwrap();
+
+    let facts = json(&vak(
+        dir.path(),
+        &["office", "read", "report.pdf", "--facts"],
+        None,
+    ));
+    assert_eq!(facts["vocabulary"], "pdf", "{facts}");
+    assert!(facts["units"].as_array().unwrap().is_empty());
+    assert!(
+        facts["flags"]
+            .to_string()
+            .contains("JavaScript action (never run)"),
+        "{facts}"
+    );
+    let digest = facts["sha256"].as_str().unwrap()[..16].to_string();
+
+    let at = json(&vak(
+        dir.path(),
+        &["office", "read", "report.pdf", "--at", "page:2/line:1"],
+        None,
+    ));
+    assert_eq!(at["focus"], "page:2/line:1");
+    assert!(at["units"].to_string().contains("Appendix"), "{at}");
+
+    let edited = json(&vak(
+        dir.path(),
+        &[
+            "office",
+            "apply",
+            "report.pdf",
+            "--ops",
+            "-",
+            "--base-digest",
+            &digest,
+            "--out",
+            "revised.pdf",
+        ],
+        Some(
+            r#"[{"op":"replace_paragraph_text","anchor":"page:1/line:2","text":"Revenue grew 15%"}]"#,
+        ),
+    ));
+    assert!(
+        edited["results"][0]
+            .as_str()
+            .unwrap()
+            .contains("Revenue grew 15%"),
+        "{edited}"
+    );
+    assert_eq!(
+        edited["changes"]["changes"][0]["kind"], "changed",
+        "{edited}"
+    );
+
+    let diff = json(&vak(
+        dir.path(),
+        &["office", "diff", "report.pdf", "revised.pdf"],
+        None,
+    ));
+    assert!(
+        diff["changes"].to_string().contains("Revenue grew 12%"),
+        "{diff}"
+    );
+
+    let created = json(&vak(
+        dir.path(),
+        &["office", "apply", "--ops", "-", "--out", "new.pdf"],
+        Some(r#"[{"op":"add_paragraph","text":"Hello","style":"Title"}]"#),
+    ));
+    assert_eq!(
+        created["changes"]["changes"][0]["kind"], "added",
+        "{created}"
+    );
+
+    for name in ["report.pdf", "revised.pdf", "new.pdf"] {
+        let verified = json(&vak(dir.path(), &["office", "verify", name], None));
+        assert_eq!(verified["passed"], true, "{name}: {verified}");
+    }
+    std::fs::write(dir.path().join("fake.pdf"), b"not a pdf").unwrap();
+    let refused = vak(dir.path(), &["office", "verify", "fake.pdf"], None);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&refused.stdout).contains("not a PDF"));
+}

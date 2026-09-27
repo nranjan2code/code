@@ -7,7 +7,7 @@ use std::ops::{Range, RangeInclusive};
 
 use serde::Serialize;
 
-use crate::content::{self, FontCache, Interpreter};
+use crate::content::{self, FontCache, Interpreter, TextLine, TextOp};
 use crate::file::File;
 use crate::object::{Dict, NULL, Object, Stream};
 use crate::text::text_string;
@@ -66,6 +66,8 @@ pub struct Page {
     pub number: usize,
     pub lines: Vec<Line>,
     pub images: usize,
+    /// Clockwise degrees a viewer turns the page: 0, 90, 180 or 270.
+    pub rotation: i64,
     /// Why this page's content could not be read, when it could not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_read: Option<String>,
@@ -226,14 +228,41 @@ pub fn read(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
 
 fn read_file(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
     let file = File::open(bytes, limits)?;
+    read_detailed(&file, limits, false).map(|(document, _)| document)
+}
+
+/// A read page as an editor needs it: the page object, its dictionary and
+/// inherited attributes, its decoded content, and each body line's
+/// geometry and operations. `lines[i]` of the document's page is `text[i]`
+/// for every body line; annotation lines follow them.
+pub(crate) struct PageDetail {
+    pub(crate) object: Option<u32>,
+    pub(crate) dict: Dict,
+    pub(crate) resources: Option<Dict>,
+    pub(crate) media: Option<[f64; 4]>,
+    pub(crate) crop: Option<[f64; 4]>,
+    pub(crate) rotate: i64,
+    pub(crate) content: Vec<u8>,
+    pub(crate) text: Vec<TextLine>,
+    pub(crate) text_ops: HashMap<usize, TextOp>,
+    pub(crate) failure: Option<String>,
+}
+
+/// The document, and when `detail` the per-page detail an editor needs.
+pub(crate) fn read_detailed(
+    file: &File<'_>,
+    limits: Limits,
+    detail: bool,
+) -> Result<(Document, Vec<PageDetail>), Error> {
     let catalog = file
         .catalog()
         .ok_or_else(|| Error::Malformed("it has no document catalog".into()))?;
-    let tree = PageTree::walk(&file, catalog, &limits);
+    let tree = PageTree::walk(file, catalog, &limits);
     if tree.count == 0 {
         return Err(Error::NoPages);
     }
-    let mut inspection = inspect(&file, catalog);
+    let mut inspection = inspect(file, catalog);
+    let mut details = Vec::new();
     let mut fonts = FontCache::new();
     let mut pages = Vec::with_capacity(tree.pages.len());
     let mut failed: Vec<usize> = Vec::new();
@@ -246,7 +275,7 @@ fn read_file(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
         let number = index + 1;
         let mut data = Vec::new();
         let mut page_failure = None;
-        for stream in contents(&file, node.dict) {
+        for stream in contents(file, node.dict) {
             match file.decode(stream) {
                 Ok(decoded) => {
                     data.extend_from_slice(&decoded);
@@ -258,7 +287,7 @@ fn read_file(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
                 }
             }
         }
-        let mut interpreter = Interpreter::new(&file, &limits, node.page_box, &mut fonts);
+        let mut interpreter = Interpreter::new(file, &limits, node.page_box, &mut fonts);
         interpreter.run_page(&data, node.resources);
         let text = interpreter.finish();
         let page_failure = page_failure.or_else(|| text.errors.first().cloned());
@@ -275,15 +304,16 @@ fn read_file(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
         unmapped += text.unmapped;
         let mut lines: Vec<(String, Vec<String>)> = text
             .lines
-            .into_iter()
-            .map(|(text, flags)| (text, content::label_names(flags)))
+            .iter()
+            .map(|line| (line.text.clone(), content::label_names(line.labels)))
             .collect();
         let body_lines = lines.len();
         annotations(
-            &file,
+            file,
             node.dict,
             number,
             &limits,
+            &text.lines,
             &mut inspection,
             &mut lines,
         );
@@ -302,8 +332,23 @@ fn read_file(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
                 })
                 .collect(),
             images: text.images,
-            not_read: page_failure,
+            rotation: node.rotate,
+            not_read: page_failure.clone(),
         });
+        if detail {
+            details.push(PageDetail {
+                object: node.object,
+                dict: node.dict.clone(),
+                resources: node.resources.cloned(),
+                media: node.media,
+                crop: node.crop,
+                rotate: node.rotate,
+                content: data,
+                text: text.lines,
+                text_ops: text.text_ops,
+                failure: page_failure,
+            });
+        }
     }
     let mut not_read = Vec::new();
     if tree.count > tree.pages.len() {
@@ -352,15 +397,18 @@ fn read_file(bytes: &[u8], limits: Limits) -> Result<Document, Error> {
         .map(|version| String::from_utf8_lossy(version).into_owned())
         .filter(|version| version.as_str() > file.version.as_str())
         .unwrap_or_else(|| file.version.clone());
-    Ok(Document {
-        version,
-        info: info(&file),
-        page_count: tree.count,
-        outline: outline(&file, catalog, &tree.numbers, &limits),
-        pages,
-        inspection,
-        not_read,
-    })
+    Ok((
+        Document {
+            version,
+            info: info(file),
+            page_count: tree.count,
+            outline: outline(file, catalog, &tree.numbers, &limits),
+            pages,
+            inspection,
+            not_read,
+        },
+        details,
+    ))
 }
 
 /// `page 3`, or `pages 1–3, 5`.
@@ -584,7 +632,11 @@ fn render_line(line: &Line) -> Vec<String> {
 
 struct PageNode<'f> {
     dict: &'f Dict,
+    object: Option<u32>,
     resources: Option<&'f Dict>,
+    media: Option<[f64; 4]>,
+    crop: Option<[f64; 4]>,
+    rotate: i64,
     page_box: [f64; 4],
 }
 
@@ -593,6 +645,7 @@ struct Inherited<'f> {
     resources: Option<&'f Dict>,
     media: Option<[f64; 4]>,
     crop: Option<[f64; 4]>,
+    rotate: Option<i64>,
 }
 
 /// The page tree in order, with inherited resources and page boxes; a
@@ -645,6 +698,7 @@ impl<'f> PageTree<'f> {
                 .or(inherited.resources),
             media: rectangle(file, dict, b"MediaBox").or(inherited.media),
             crop: rectangle(file, dict, b"CropBox").or(inherited.crop),
+            rotate: file.lookup(dict, b"Rotate").as_i64().or(inherited.rotate),
         };
         let kids = file.lookup(dict, b"Kids").as_array();
         let leaf = match dict.name(b"Type") {
@@ -660,7 +714,11 @@ impl<'f> PageTree<'f> {
             if self.pages.len() < limits.max_pages {
                 self.pages.push(PageNode {
                     dict,
+                    object: number,
                     resources: inherited.resources,
+                    media: inherited.media,
+                    crop: inherited.crop,
+                    rotate: inherited.rotate.unwrap_or(0).rem_euclid(360) / 90 * 90,
                     page_box: inherited.crop.or(inherited.media).unwrap_or(LETTER),
                 });
             }
@@ -696,11 +754,25 @@ fn contents<'f>(file: &'f File<'_>, page: &'f Dict) -> Vec<&'f Stream> {
     }
 }
 
+/// The body text under an annotation's rectangle: every line it overlaps.
+fn text_under(rect: [f64; 4], page_lines: &[TextLine]) -> String {
+    page_lines
+        .iter()
+        .filter(|line| {
+            let [left, bottom, right, top] = line.rect;
+            left < rect[2] && rect[0] < right && bottom < rect[3] && rect[1] < top
+        })
+        .map(|line| line.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
 fn annotations(
     file: &File<'_>,
     page: &Dict,
     number: usize,
     limits: &Limits,
+    page_lines: &[TextLine],
     inspection: &mut Inspection,
     lines: &mut Vec<(String, Vec<String>)>,
 ) {
@@ -729,6 +801,39 @@ fn annotations(
                 continue;
             }
             Some(b"Popup") => continue,
+            Some(kind @ (b"Highlight" | b"Underline" | b"StrikeOut" | b"Squiggly")) => {
+                let author = file
+                    .lookup(annotation, b"T")
+                    .as_string()
+                    .map(text_string)
+                    .map(clean)
+                    .filter(|author| !author.is_empty());
+                let noun = match kind {
+                    b"Highlight" => "highlight",
+                    b"Underline" => "underline",
+                    b"StrikeOut" => "strike-out",
+                    _ => "squiggly underline",
+                };
+                labels.push(match author {
+                    Some(author) => format!("{noun} by {author}"),
+                    None => noun.to_string(),
+                });
+                let marked = rectangle(file, annotation, b"Rect")
+                    .map(|rect| text_under(rect, page_lines))
+                    .unwrap_or_default();
+                let note = file
+                    .lookup(annotation, b"Contents")
+                    .as_string()
+                    .map(text_string)
+                    .map(clean)
+                    .unwrap_or_default();
+                match (marked.is_empty(), note.is_empty()) {
+                    (true, true) => continue,
+                    (false, true) => format!("“{marked}”"),
+                    (true, false) => note,
+                    (false, false) => format!("“{marked}”: {note}"),
+                }
+            }
             Some(b"Widget") => {
                 let Some((name, value)) = field_value(file, annotation) else {
                     continue;

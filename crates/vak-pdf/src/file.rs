@@ -129,6 +129,16 @@ impl<'a> File<'a> {
         self.objects.values()
     }
 
+    /// Every object by number, for a writer that copies them.
+    pub(crate) fn numbered(&self) -> &HashMap<u32, Object> {
+        &self.objects
+    }
+
+    /// The file's header version as it declares it (`1.7`).
+    pub(crate) fn header_version(&self) -> &str {
+        &self.version
+    }
+
     /// A stream's decoded bytes, within the per-stream limit and what is
     /// left of the whole document's decoding budget.
     pub(crate) fn decode(&self, stream: &Stream) -> Result<Vec<u8>, String> {

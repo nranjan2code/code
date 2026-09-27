@@ -2002,6 +2002,7 @@ fn office_mime(name: &str) -> &'static str {
         Some("docx") => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         Some("xlsx") => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        Some("pdf") => "application/pdf",
         _ => "application/octet-stream",
     }
 }

@@ -23,7 +23,7 @@ import Icon from "./Icon";
 import Sheet from "./Sheet";
 import OfficeChangeList from "./OfficeChangeList";
 import OfficeView from "./OfficeView";
-import { isOfficePath } from "../officeFiles";
+import { isDocumentPath, isOfficePath } from "../officeFiles";
 import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candidateVersions";
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
@@ -609,7 +609,7 @@ export default function WorkbenchPanel() {
     setOfficeExcluded(new Set<string>());
     setOfficeNarrowError(null);
     const reviewedFile = prepared.candidate.files.find((file) => file.path === path);
-    if (isOfficePath(path) && reviewedFile?.operation !== "Delete") {
+    if (isDocumentPath(path) && reviewedFile?.operation !== "Delete") {
       void api.readSandboxCandidateOfficeReview(prepared.session_id, prepared.candidate.candidate_id, path)
         .then((review) => {
           if (disposed) return;
@@ -617,7 +617,7 @@ export default function WorkbenchPanel() {
           setInspectedFiles((paths) => paths.includes(path) ? paths : [...paths, path]);
         })
         .catch(() => {
-          if (!disposed) setReviewFileError("Could not compare this Office draft. Review is unavailable until it can be read.");
+          if (!disposed) setReviewFileError("Could not compare this draft. Review is unavailable until it can be read.");
         });
       onCleanup(() => { disposed = true; });
       return;
@@ -802,10 +802,10 @@ export default function WorkbenchPanel() {
                 <Show when={draftPage() && !reviewFileError()}>
                   <iframe class="candidate-review-page" title={`Preview of ${reviewedPath()?.split("/").pop() ?? "the draft"}`} sandbox="allow-scripts" srcdoc={draftPage() ?? ""} />
                 </Show>
-                <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
+                <Show when={!draftPage() && reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "")}>
                   <pre class="candidate-review-draft">{prepared().candidate.files.find((file) => file.path === reviewedPath())?.operation === "Delete" ? "This file will be deleted." : afterContent() ?? "Loading or preview unavailable"}</pre>
                 </Show>
-                <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
+                <Show when={reviewedPath() && !reviewFileError() && isDocumentPath(reviewedPath() ?? "")}>
                   <p class="office-change-empty">Open the saved version to see the whole document. The changes are listed below.</p>
                 </Show>
               </section>
@@ -835,7 +835,7 @@ export default function WorkbenchPanel() {
                     <span>{fileState(file)}{inspectedFiles().includes(file.path) ? " · Viewed" : ""}</span>
                   </div>}</For>
                 </div>
-                <Show when={reviewedPath() && !reviewFileError() && !isOfficePath(reviewedPath() ?? "")}>
+                <Show when={reviewedPath() && !reviewFileError() && !isDocumentPath(reviewedPath() ?? "")}>
                   <details class="candidate-review-compare">
                     <summary>Compare with the current file</summary>
                     <div class="candidate-review-columns">
@@ -844,7 +844,7 @@ export default function WorkbenchPanel() {
                     </div>
                   </details>
                 </Show>
-                <Show when={reviewedPath() && !reviewFileError() && isOfficePath(reviewedPath() ?? "")}>
+                <Show when={reviewedPath() && !reviewFileError() && isDocumentPath(reviewedPath() ?? "")}>
                   <Show when={officeReview()} fallback={<p class="office-change-empty">Comparing…</p>}>{(review) => <OfficeChangeList
                     review={review()}
                     excluded={officeExcluded()}

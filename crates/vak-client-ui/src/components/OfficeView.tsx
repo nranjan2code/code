@@ -18,6 +18,7 @@ const MAIN_TAB: Record<api.OfficeProjection["vocabulary"], string> = {
   excel: "Workbook",
   power_point: "Deck",
   visio: "Drawing",
+  pdf: "Document",
 };
 
 function unitId(anchor: string): string {
@@ -174,6 +175,9 @@ export default function OfficeView(props: {
       const value = unit.text.replace(/\[(?:inserted by|deleted by) [^:]+: ([^\]]*)\]/g, "$1").replace(/\[(?:hidden|white text): ([^\]]*)\]/g, "$1");
       return { value, operation: (text: string): api.OfficeEditOp => ({ op: "replace_paragraph_text", anchor, text }) };
     }
+    if (info.vocabulary === "pdf" && unit.kind === "paragraph" && unit.labels.length === 0) {
+      return { value: unit.text, operation: (text: string): api.OfficeEditOp => ({ op: "replace_paragraph_text", anchor, text }) };
+    }
     if (info.vocabulary === "power_point" && unit.kind === "shape" && unit.labels.length === 0) {
       return { value: unit.text.replace(/ ¶ /g, "\n"), operation: (text: string): api.OfficeEditOp => ({ op: "set_placeholder_text", anchor, text }) };
     }
@@ -208,12 +212,12 @@ export default function OfficeView(props: {
           <Show when={info().flags.length > 0}>
             <div class="office-view-flags" role="note">
               <span>{info().flags.join(" · ")}</span>
-              <button type="button" class="btn sm" onClick={() => setTab("structure")}>Show structure</button>
+              <Show when={info().vocabulary !== "pdf"}><button type="button" class="btn sm" onClick={() => setTab("structure")}>Show structure</button></Show>
             </div>
           </Show>
           <div class="office-view-tabs" role="tablist" aria-label="Views of this file">
             <button type="button" role="tab" aria-selected={tab() === "content"} classList={{ active: tab() === "content" }} onClick={() => setTab("content")}>{MAIN_TAB[info().vocabulary]}</button>
-            <button type="button" role="tab" aria-selected={tab() === "structure"} classList={{ active: tab() === "structure" }} onClick={() => setTab("structure")}>Structure</button>
+            <Show when={info().vocabulary !== "pdf"}><button type="button" role="tab" aria-selected={tab() === "structure"} classList={{ active: tab() === "structure" }} onClick={() => setTab("structure")}>Structure</button></Show>
           </div>
         </>
       )}</Show>

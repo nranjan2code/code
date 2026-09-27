@@ -53,6 +53,8 @@ export default function ArtifactCanvas() {
   const [previewWarning, setPreviewWarning] = createSignal<string | null>(null);
   const [preparationRequired, setPreparationRequired] = createSignal(false);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
+  /** A PDF shows its pages; its text view is the shared document pane. */
+  const [pdfText, setPdfText] = createSignal(false);
   const [rawText, setRawText] = createSignal("");
   const [tablePreview, setTablePreview] = createSignal<DelimitedPreview | null>(null);
   const [copied, setCopied] = createSignal(false);
@@ -628,6 +630,13 @@ export default function ArtifactCanvas() {
           </div>
 
           <div class="artifact-canvas-controls">
+            <Show when={displayType() === "pdf" && canvasArtifact()?.artifactPath}>
+              <div class="artifact-canvas-segmented">
+                <button type="button" class="artifact-canvas-seg-btn" classList={{ active: !pdfText() }} onClick={() => setPdfText(false)} title="View the pages">Pages</button>
+                <button type="button" class="artifact-canvas-seg-btn" classList={{ active: pdfText() }} onClick={() => setPdfText(true)} title="Read, comment on and edit the text">Text</button>
+              </div>
+            </Show>
+
             {/* View Mode Segmented Controls (for HTML and code artifacts) */}
             <Show when={displayType() === "html" || displayType() === "code" || displayType() === "table"}>
               <div class="artifact-canvas-segmented">
@@ -782,7 +791,7 @@ export default function ArtifactCanvas() {
                   </div>
                 </div>
               }</Show>
-              <Show when={displayType() === "office" && canvasArtifact()}>{(artifact) =>
+              <Show when={(displayType() === "office" || (displayType() === "pdf" && pdfText())) && canvasArtifact()}>{(artifact) =>
                 <OfficeWorkspacePane
                   source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId, executionId: artifact().executionId }}
                   fileName={title()}
@@ -805,7 +814,7 @@ export default function ArtifactCanvas() {
               </Show>
 
               {/* PDF Preview */}
-              <Show when={displayType() === "pdf" && mediaUrl()}>
+              <Show when={displayType() === "pdf" && mediaUrl() && !pdfText()}>
                 <iframe
                   class="artifact-canvas-pdf-frame"
                   src={pdfAnchorPage(canvasArtifact()?.anchor) ? `${mediaUrl()}#page=${pdfAnchorPage(canvasArtifact()?.anchor)}` : mediaUrl()!}

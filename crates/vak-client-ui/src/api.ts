@@ -1084,7 +1084,7 @@ export type OfficeChoice = {
 
 /** What accepting does beyond the visible changes: to digital signatures
  *  and sensitivity labels. `warning` when it removes or weakens one. */
-export type OfficeImpact = { kind: "signature" | "label" | "recalculation"; message: string; warning: boolean };
+export type OfficeImpact = { kind: "signature" | "label" | "recalculation" | "revisions"; message: string; warning: boolean };
 
 export type OfficeReview = {
   path: string;
@@ -1136,7 +1136,7 @@ export type OfficeOutlineEntry = { anchor: string; title: string; level: number;
 export type OfficeProjection = {
   path: string;
   sha256: string;
-  vocabulary: "word" | "excel" | "power_point" | "visio";
+  vocabulary: "word" | "excel" | "power_point" | "visio" | "pdf";
   kind: string;
   extension: string;
   macro_enabled: boolean;

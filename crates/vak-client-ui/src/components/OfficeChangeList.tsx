@@ -7,6 +7,7 @@ const IMPACT_NAMES: Record<OfficeImpact["kind"], string> = {
   signature: "Signature",
   label: "Sensitivity label",
   recalculation: "Formulas",
+  revisions: "Saved history",
 };
 
 // The semantic change list for an Office draft (docs/design/72, P3): what

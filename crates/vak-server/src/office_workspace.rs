@@ -1,4 +1,5 @@
-//! Shared, versioned editing rooms for one Office file in a saved candidate.
+//! Shared, versioned editing rooms for one Office file or PDF in a saved
+//! candidate.
 //!
 //! Room metadata is a replaceable snapshot for fast reads; its revisions are
 //! append-only entries, each pointing at an immutable saved candidate. Office
@@ -53,6 +54,29 @@ struct OfficeRevision {
     author_name: String,
     created_at: String,
     ops: Vec<vak_ooxml::edit::OfficeOp>,
+    /// A PDF room's ops, one step per call: every anchor in a step names the
+    /// file that step started from (docs/design/77).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pdf_steps: Vec<Vec<vak_pdf::edit::PdfOp>>,
+}
+
+/// One edit's ops, typed by the kind of file the room holds.
+enum Edits {
+    Office(Vec<vak_ooxml::edit::OfficeOp>),
+    Pdf(Vec<Vec<vak_pdf::edit::PdfOp>>),
+}
+
+impl Edits {
+    fn parse(path: &str, ops: Vec<serde_json::Value>) -> Option<Edits> {
+        let ops = serde_json::Value::Array(ops);
+        if vak_pdf::is_pdf_path(path) {
+            serde_json::from_value(ops)
+                .ok()
+                .map(|ops| Edits::Pdf(vec![ops]))
+        } else {
+            serde_json::from_value(ops).ok().map(Edits::Office)
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -71,7 +95,8 @@ pub(super) enum Action {
     Edit {
         branch_id: String,
         expected_head: String,
-        ops: Vec<vak_ooxml::edit::OfficeOp>,
+        /// Typed by the room's file: Office ops, or PDF ops.
+        ops: Vec<serde_json::Value>,
     },
     Merge {
         branch_id: String,
@@ -184,10 +209,10 @@ pub(super) async fn create(
     if !matches!(principal, AuthenticatedPrincipal::Operator) {
         return StatusCode::FORBIDDEN.into_response();
     }
-    if !vak_ooxml::is_openxml_path(&body.path) {
+    if !super::is_document_path(&body.path) {
         return (
             StatusCode::BAD_REQUEST,
-            "Choose a Word, Excel, PowerPoint or Visio file.",
+            "Choose a Word, Excel, PowerPoint, Visio or PDF file.",
         )
             .into_response();
     }
@@ -234,6 +259,7 @@ pub(super) async fn create(
             author_name: "You".into(),
             created_at: now,
             ops: Vec::new(),
+            pdf_steps: Vec::new(),
         }],
     };
     let Some(path) = room_path(&state, &session_id, &room_id) else {
@@ -299,7 +325,7 @@ pub(super) async fn focus(
     if body
         .anchor
         .as_deref()
-        .is_some_and(|anchor| anchor.len() > 256 || !vak_ooxml::is_anchor(anchor))
+        .is_some_and(|anchor| anchor.len() > 256 || !super::is_document_anchor(&room.path, anchor))
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
@@ -419,8 +445,11 @@ pub(super) async fn mutate(
             {
                 return StatusCode::BAD_REQUEST.into_response();
             }
+            let Some(edits) = Edits::parse(&room.path, ops) else {
+                return StatusCode::BAD_REQUEST.into_response();
+            };
             return create_revision(
-                &state, &path, room, branch_pos, branch_id, actor_id, actor_name, ops, None,
+                &state, &path, room, branch_pos, branch_id, actor_id, actor_name, edits, None,
             )
             .await;
         }
@@ -508,6 +537,7 @@ pub(super) async fn mutate(
                 author_name: actor_name,
                 created_at: chrono::Utc::now().to_rfc3339(),
                 ops: lineage.ops,
+                pdf_steps: lineage.pdf,
             });
             if save(&path, &room).is_err() {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -528,6 +558,28 @@ pub(super) async fn mutate(
                 return Json(room).into_response();
             }
             let base = room.branches[other_pos].base_candidate_id.clone();
+            if vak_pdf::is_pdf_path(&room.path) {
+                let shared_steps = pdf_steps_since(&room, &shared_head, &base);
+                let branch_steps = pdf_steps_since(&room, &source_head, &base);
+                let (Some(shared_steps), Some(branch_steps)) = (shared_steps, branch_steps) else {
+                    return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"These versions no longer share a mergeable base."}))).into_response();
+                };
+                if pdf_conflict(&shared_steps, &branch_steps) {
+                    return (StatusCode::CONFLICT, Json(serde_json::json!({"error":"Both versions changed the same pages, or one moved pages the other edited. Review them separately; this merge needs a manual edit."}))).into_response();
+                }
+                return create_revision(
+                    &state,
+                    &path,
+                    room,
+                    branch_pos,
+                    "shared".into(),
+                    actor_id,
+                    actor_name,
+                    Edits::Pdf(branch_steps),
+                    Some(source_head),
+                )
+                .await;
+            }
             let shared_ops = operations_since(&room, &shared_head, &base);
             let branch_ops = operations_since(&room, &source_head, &base);
             let (Some(shared_ops), Some(branch_ops)) = (shared_ops, branch_ops) else {
@@ -544,7 +596,7 @@ pub(super) async fn mutate(
                 "shared".into(),
                 actor_id,
                 actor_name,
-                branch_ops,
+                Edits::Office(branch_ops),
                 Some(source_head),
             )
             .await;
@@ -561,7 +613,7 @@ async fn create_revision(
     branch_id: String,
     actor_id: String,
     actor_name: String,
-    ops: Vec<vak_ooxml::edit::OfficeOp>,
+    edits: Edits,
     merge_parent: Option<String>,
 ) -> axum::response::Response {
     let parent_id = room.branches[branch_pos].head_candidate_id.clone();
@@ -606,9 +658,16 @@ async fn create_revision(
             path: parent_source,
             base_digest: parent_file.candidate_hash.clone(),
         },
-        ops: ops.clone(),
+        ops: match &edits {
+            Edits::Office(ops) => ops.clone(),
+            Edits::Pdf(_) => Vec::new(),
+        },
         author: actor_name.clone(),
         new_file: false,
+        pdf: match &edits {
+            Edits::Pdf(steps) => steps.clone(),
+            Edits::Office(_) => Vec::new(),
+        },
     };
     let applied = match vak_tools::broker::office_apply_to(
         &state.core.tool_worker_exe(),
@@ -699,7 +758,14 @@ async fn create_revision(
         author_id: actor_id,
         author_name: actor_name,
         created_at: chrono::Utc::now().to_rfc3339(),
-        ops,
+        ops: match &edits {
+            Edits::Office(ops) => ops.clone(),
+            Edits::Pdf(_) => Vec::new(),
+        },
+        pdf_steps: match edits {
+            Edits::Pdf(steps) => steps,
+            Edits::Office(_) => Vec::new(),
+        },
     });
     if save(path, &room).is_err() {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -732,6 +798,90 @@ fn operations_since(
         cursor = &revision.parent_candidate_id;
     }
     None
+}
+
+/// A PDF branch's steps since `base`, oldest first.
+fn pdf_steps_since(
+    room: &OfficeRoom,
+    head: &str,
+    base: &str,
+) -> Option<Vec<Vec<vak_pdf::edit::PdfOp>>> {
+    let mut cursor = head;
+    let mut result: Vec<Vec<Vec<vak_pdf::edit::PdfOp>>> = Vec::new();
+    for _ in 0..room.revisions.len() {
+        if cursor == base {
+            result.reverse();
+            return Some(result.into_iter().flatten().collect());
+        }
+        let revision = room
+            .revisions
+            .iter()
+            .rev()
+            .find(|r| r.candidate_id == cursor)?;
+        result.push(revision.pdf_steps.clone());
+        cursor = &revision.parent_candidate_id;
+    }
+    None
+}
+
+/// Whether two PDF branches overlap. PDF anchors are positions, so the
+/// rule is conservative, as Word's positional merge is: a change to the
+/// page order conflicts with any edit, deleting a line conflicts with any
+/// line edit on that page, and two edits of one place conflict.
+fn pdf_conflict(
+    shared: &[Vec<vak_pdf::edit::PdfOp>],
+    branch: &[Vec<vak_pdf::edit::PdfOp>],
+) -> bool {
+    use vak_pdf::edit::PdfOp as P;
+    let ops = |steps: &[Vec<P>]| steps.iter().flatten().cloned().collect::<Vec<P>>();
+    let (left, right) = (ops(shared), ops(branch));
+    let reorders = |ops: &[P]| {
+        ops.iter().any(|op| {
+            matches!(
+                op,
+                P::DeletePage { .. }
+                    | P::MovePage { .. }
+                    | P::AddParagraph { .. }
+                    | P::AddTable { .. }
+                    | P::AddPageBreak { .. }
+            )
+        })
+    };
+    if (reorders(&left) && !right.is_empty()) || (reorders(&right) && !left.is_empty()) {
+        return true;
+    }
+    let page = |anchor: &str| anchor.split('/').next().unwrap_or(anchor).to_string();
+    let deleted_on = |ops: &[P]| {
+        ops.iter()
+            .filter_map(|op| match op {
+                P::DeleteParagraph { anchor } => Some(page(anchor)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let lines_on = |ops: &[P]| {
+        ops.iter()
+            .filter_map(|op| match op {
+                P::ReplaceParagraphText { anchor, .. }
+                | P::DeleteParagraph { anchor }
+                | P::AddComment { anchor, .. }
+                | P::Highlight { anchor, .. } => Some(page(anchor)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    if deleted_on(&left)
+        .iter()
+        .any(|page| lines_on(&right).contains(page))
+        || deleted_on(&right)
+            .iter()
+            .any(|page| lines_on(&left).contains(page))
+    {
+        return true;
+    }
+    let keys = |ops: &[P]| ops.iter().flat_map(P::keys).collect::<Vec<_>>();
+    let right_keys = keys(&right);
+    keys(&left).iter().any(|key| right_keys.contains(key))
 }
 
 fn op_keys(ops: &[vak_ooxml::edit::OfficeOp]) -> Vec<String> {
@@ -830,6 +980,7 @@ fn has_conflict(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use vak_ooxml::edit::OfficeOp as O;
@@ -867,5 +1018,30 @@ mod tests {
             text: "changed".into(),
         }];
         assert!(has_conflict(&insert, &edit));
+    }
+
+    #[test]
+    fn pdf_merges_refuse_overlapping_or_shifting_edits() {
+        let steps =
+            |json: &str| vec![serde_json::from_str::<Vec<vak_pdf::edit::PdfOp>>(json).unwrap()];
+        let comment = steps(r#"[{"op": "add_comment", "anchor": "page:1/line:2", "text": "a"}]"#);
+        let other_line =
+            steps(r#"[{"op": "replace_paragraph_text", "anchor": "page:1/line:5", "text": "b"}]"#);
+        let same_line =
+            steps(r#"[{"op": "replace_paragraph_text", "anchor": "page:1/line:2", "text": "c"}]"#);
+        let delete = steps(r#"[{"op": "delete_paragraph", "anchor": "page:1/line:9"}]"#);
+        let move_page = steps(r#"[{"op": "move_page", "anchor": "page:3"}]"#);
+        let title = steps(r#"[{"op": "set_title", "title": "x"}]"#);
+        assert!(!pdf_conflict(&comment, &other_line));
+        assert!(pdf_conflict(&comment, &same_line));
+        assert!(
+            pdf_conflict(&delete, &other_line),
+            "a deleted line shifts the page's anchors"
+        );
+        assert!(
+            pdf_conflict(&move_page, &title),
+            "reordering pages conflicts with any edit"
+        );
+        assert!(!pdf_conflict(&title, &comment));
     }
 }

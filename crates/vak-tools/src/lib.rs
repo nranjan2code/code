@@ -16,6 +16,7 @@ pub mod grep;
 #[cfg(target_os = "linux")]
 pub mod landlock;
 pub mod office_apply;
+mod office_pdf;
 pub mod read;
 pub mod recall;
 pub mod retired;
