@@ -47,6 +47,14 @@ function ConnectForm() {
     setProvider(name); setKey(""); setSavedKey(false); setModels([]);
     setModel(""); setSearch(""); setChecked(false); setError(null);
   };
+  // A provider that is already usable (has a key on file, or needs none) can
+  // show its model list immediately: the extra "Check service" click only
+  // earns its keep when a key still needs to be entered or verified.
+  const selectProvider = (name: string) => {
+    resetChoice(name);
+    const p = providers().find((entry) => entry.name === name);
+    if (p && (!p.requires_key || p.configured)) void check();
+  };
   const load = async () => {
     setLoading(true); setError(null);
     try {
@@ -54,7 +62,7 @@ function ConnectForm() {
       if (!alive) return;
       setList(list.providers);
       current = { provider: config.provider || "", model: config.model || "" };
-      resetChoice(list.providers.some((p) => p.name === current.provider) ? current.provider : "");
+      selectProvider(list.providers.some((p) => p.name === current.provider) ? current.provider : "");
     } catch (e) { if (alive) setError(message(e)); }
     finally { if (alive) setLoading(false); }
   };
@@ -124,7 +132,7 @@ function ConnectForm() {
         <div class="connect-form">
           <Show when={current.provider && current.model}><p class="connect-note">Current choice: {api.providerLabel(providers(), current.provider)} · {current.model}</p></Show>
           <label class="connect-field"><span>AI service</span>
-            <select value={provider()} disabled={busy()} onChange={(e) => resetChoice(e.currentTarget.value)}>
+            <select value={provider()} disabled={busy()} onChange={(e) => selectProvider(e.currentTarget.value)}>
               <option value="">Choose a service…</option>
               <For each={accounts()}>{(p) => <option value={p.name}>{p.label}{p.configured && p.requires_key ? " (key available)" : ""}</option>}</For>
             </select>

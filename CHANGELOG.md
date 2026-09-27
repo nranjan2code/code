@@ -4,6 +4,8 @@
   keyboard controls and optional speaker notes. The view uses extracted slide
   content; original layout, images, animations and transitions are not yet
   rendered.
+- Automatically check and populate models when selecting an already configured
+  or keyless AI provider in the connection sheet.
 
 ## 5.2.1 — 2026-09-28
 
