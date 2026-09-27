@@ -1,3 +1,10 @@
+## 5.2.2 — 2026-09-28
+
+- Add a full-screen reading view for PowerPoint decks, with slide navigation,
+  keyboard controls and optional speaker notes. The view uses extracted slide
+  content; original layout, images, animations and transitions are not yet
+  rendered.
+
 ## 5.2.1 — 2026-09-28
 
 - Refine presentation cards across research, tables, charts, timelines and other modes with clearer branded surfaces, better narrow-screen fit, readable controls, and keyboard-accessible citations.
