@@ -1482,6 +1482,122 @@ details[open] > summary:after {
 .wallpaper-downloads a:hover { background: var(--soft); }
 @media (max-width: 620px) { .wallpaper-grid { grid-template-columns: 1fr; gap: 48px; } }
 
+/* Ways to use it: a character-led welcome for people who do not need the jargon. */
+.surface-hero {
+  padding-bottom: 54px;
+}
+.surface-story {
+  display: grid;
+  grid-template-columns: 1.08fr 0.92fr;
+  gap: clamp(44px, 7vw, 112px);
+  align-items: center;
+  padding-bottom: 104px;
+}
+.surface-scene {
+  margin: 0;
+  border-radius: 28px;
+  overflow: hidden;
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+.surface-scene img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.35;
+  object-fit: cover;
+}
+.surface-scene figcaption {
+  padding: 14px 18px 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.surface-copy h2 {
+  max-width: 460px;
+  margin-bottom: 18px;
+}
+.surface-copy > p:not(.eyebrow) {
+  max-width: 470px;
+  font-size: 17px;
+}
+.surface-list {
+  margin-top: 34px;
+  border-top: 1px solid var(--line);
+}
+.surface-option {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 15px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.surface-option h3 {
+  font-size: 20px;
+  letter-spacing: -0.025em;
+  margin-bottom: 5px;
+}
+.surface-option p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.surface-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--live);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+}
+.surface-option:nth-child(2) .surface-mark {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.surface-option:nth-child(3) .surface-mark {
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+.surface-invite {
+  padding: 80px 0 100px;
+  background: var(--soft);
+  border-top: 1px solid var(--line);
+}
+.surface-invite h2 {
+  max-width: 520px;
+  margin-bottom: 18px;
+}
+.surface-invite p:not(.eyebrow) {
+  max-width: 540px;
+  font-size: 17px;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .surface-hero {
+    padding-bottom: 38px;
+  }
+  .surface-story {
+    grid-template-columns: 1fr;
+    gap: 42px;
+    padding-bottom: 64px;
+  }
+  .surface-scene {
+    border-radius: 20px;
+  }
+  .surface-scene img {
+    aspect-ratio: 1.2;
+  }
+  .surface-copy h2 {
+    font-size: 40px;
+  }
+  .surface-invite {
+    padding: 56px 0 68px;
+  }
+  .surface-invite h2 {
+    font-size: 40px;
+  }
+}
+
     </style>
   </head>
   <body class="">
