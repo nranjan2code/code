@@ -1,67 +1,41 @@
 <div align="center">
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/brand/exports/vakyartha-lockup-reverse.svg">
+  <img src="docs/brand/exports/vakyartha-lockup-colour.svg" alt="Vakyartha Songbird and wordmark" width="420">
+</picture>
+
 # Vakyartha
 
-### An agent you can inspect, constrain, and extend.
+**An agent you can inspect, constrain, and extend.**
 
-[Website](https://vakyartha.com) · Public name: **Vakyartha**. CLI and packages: **`vak`**.
+A local-first agent for work that crosses code, documents, research, and everyday operations. You choose the workspace, model, tools, and permission level; Vakyartha keeps a record of what it did and gives you a place to review the result.
 
-**A local-first Rust harness for running serious general-purpose agents without giving up the receipts.**
+[Website](https://vakyartha.com) · [Get started](#get-started) · [Use Vakyartha](#use-vakyartha) · [Settings](#settings) · [Administration](#administration) · [Docs](#documentation)
 
 [![Version](https://img.shields.io/badge/version-5.1.3-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](Cargo.toml)
-[![Safety](https://img.shields.io/badge/safety-fail--closed-384A6B?style=flat-square)](docs/design/24-agent-security.md)
-
-[Quick start](#quick-start) · [Why Vakyartha](#why-vakyartha) · [Features](#what-you-get) · [Architecture](#one-core-many-surfaces) · [Documentation](#documentation)
 
 </div>
 
-![A person and attentive songbird following intention through approval, bounded work and returned evidence](docs/assets/vakyartha-hero.webp)
+![The Vakyartha Songbird and character family together in a sunlit room](docs/brand/library/wallpapers/ensemble-day-1920x1080.jpg)
 
-Vakyartha is an open-source agent runtime for people who want powerful automation **and** a system they can reason about. It combines a native desktop app, a headless CLI, flows, an HTTP/SSE server, and chat gateways on top of one auditable core. Engineering, research, writing, data, and operations all run through that core, the same permission gate, and the same ledger.
+The public product is **Vakyartha**. The command, Rust crates, and data paths use the shorter name **`vak`**. The desktop app, browser workspace, terminal, CLI, and chat channels all use the same agent core. A request can become a quick answer, a reviewed file, a bounded task, or work that continues across sessions.
 
-Its thesis is simple: **Codex-grade safety, pi-grade transparency, Claude Code-grade extensibility, and opencode-grade simplicity.**
+Vakyartha is built around three promises:
 
-The result is not another thin model wrapper. Sessions are append-only ledgers, permissions are evaluated before every effect, restricted tools run across a broker boundary, partial work survives cancellation, and every provider dispatch produces a receipt.
+- **You can see what happened.** Sessions are append-only records. Model requests, tool results, provider attempts, and decisions have receipts.
+- **You decide what it may do.** Workspace permissions, approval rules, isolated tool workers, and review steps govern actions before they run.
+- **You can shape it.** Choose a provider and model, add skills, hooks, MCP tools, plugins, flows, agents, and scheduled tasks without growing the core for every use case.
 
-> **Supported baseline: 2.0.0.** Earlier versions are unsupported and cannot be upgraded in place. See the [roadmap](docs/design/00-roadmap.md) and [changelog](CHANGELOG.md).
+## Get started
 
-## Why Vakyartha
+### 1. Build and install
 
-Most agents make you choose between capability and legibility. Vakyartha is built around the idea that the agent can be ambitious while the runtime remains explicit.
+Vakyartha supports **macOS and Linux**. Windows is not supported yet. For the current source tree, the reliable path is to build from this repository. Published [releases](https://github.com/nranjan2code/code/releases) may lag `main`; check the tag before using a prebuilt binary.
 
-| Principle | What it means in practice |
-|---|---|
-| **Model-visible means logged** | Anything sent to a model can be reconstructed from the session JSONL. |
-| **Permission before dispatch** | Agent turns, tools, workers, flows, plans, evals, server runs, and desktop runs all pass through the same policy engine. |
-| **Append-only by default** | Branching and compaction create entries; they do not rewrite history. |
-| **Failure is part of the contract** | Typed errors, bounded retries, watchdogs, circuit breakers, frozen route ladders, and preserved partial output. |
-| **Extensions stay extensions** | Skills, hooks, MCP servers, custom commands, and flows add capability without bloating the kernel. |
-| **Your models, your machine** | Use Anthropic, OpenAI, OpenRouter, OpenCode Zen, Gemini, or Ollama; model catalogues are discovered from the provider. |
-| **First-class voice** | Use governed voice sessions, bounded transcription/synthesis, discovered provider capabilities, local transcription, and Telegram/Discord/Slack voice I/O; configuration and credentials stay administratable and scoped. |
-
-## Quick start
-
-### 1. Install
-
-Download the release for your platform and open it. No toolchain, no clone,
-no compile.
-
-vak supports **macOS and Linux**. Windows is not supported: paths, service
-management, and sandboxing are all two-platform today, and shipping an
-installer over a binary with no containment backend would be a less safe
-product than this one claims to be.
-
-| Platform | Artifact |
-|---|---|
-| macOS | `Vakyartha-<version>-<arch>.dmg` — drag `Vakyartha.app` to Applications |
-| Linux | `vak-<version>-<arch>.tar.gz`, or the bootstrap script below |
-
-The macOS build is not yet signed, so the first launch needs a right-click
-→ Open rather than a double-click. Every launch after that is normal.
-
-To build and install locally, have Rust, Node.js, npm, and Python 3 available:
+You need Git, a stable Rust toolchain, Node.js/npm, and Python 3. From a terminal:
 
 ```bash
 git clone https://github.com/nranjan2code/code.git
@@ -69,452 +43,157 @@ cd code
 scripts/build.sh
 ```
 
-Re-running `scripts/build.sh` updates the managed local install.
+The script builds the client and server bundles, builds Rust, installs through Vakyartha's managed installer, and verifies the installed files. A first install starts no background service. If `vak` is not on your `PATH` afterward, follow the installer's printed instruction or use `target/release/vak` from this checkout. Use `scripts/build.sh --no-desktop` to skip the desktop app, or `scripts/build.sh --no-install` to leave the build in `target/release/`. See the [install and release guide](docs/release-and-install.md) for platform details.
 
-### 2. Run setup
-
-Launch the app, or run `vak setup` from a terminal. Setup opens a guided
-first run that selects a workspace, connects a provider, verifies a model,
-chooses a safety posture, and — only if you ask for it — brings up
-always-on channels and services.
+### 2. Set up a workspace
 
 ```bash
-vak setup                  # opens the guided first run
-vak setup --terminal       # the same flow as terminal prompts
-vak setup status           # what is configured, and what is not
+vak setup
+# Or, on a headless machine:
+vak setup --terminal
 ```
 
-Setup runs once. Afterwards it shows a review, not a wizard.
+Setup walks through a workspace, its trust decision, a provider and discovered model, a permission level, and optional integrations. Bring a provider key or use a local Ollama route; Vakyartha does not include a hosted model. Setup activates always-on services only when you choose that step. `vak setup status` shows what is ready and what still needs attention. Provider keys go to a secret store, not to project TOML or this repository.
 
-### 3. Start working
+### 3. Do a first task
+
+Run these from the workspace you selected:
 
 ```bash
-vak exec "fix the failing test"
-vak plan "add rate limiting to the API"
-vak config dump             # inspect the effective configuration
-vak doctor                  # readiness, layer by layer
+vak term
+vak exec "Explain this project and suggest a safe first improvement"
+vak plan "Investigate the failing tests and propose a fix"
 ```
 
-Provider and model are one route, chosen during setup and changeable at any
-time. To override for a single run:
+`vak term` opens the interactive terminal workspace. `vak exec` runs one request and prints its result. `vak plan` breaks an open-ended task into a bounded plan. Use `vak -C /path/to/project ...` to target another workspace from any directory. Run `vak --help` or `vak <command> --help` for exact options.
 
-```bash
-vak exec "explain this workspace" \
-  --provider openai-responses \
-  --model YOUR_DISCOVERED_MODEL
-```
-
-### Where your configuration and secrets live
-
-vak resolves configuration from broadest to narrowest — shared defaults,
-then per-project overrides, then per-session pins. Secrets stay out of TOML
-entirely.
-
-| What | Where |
-|---|---|
-| Shared platform defaults | `~/vak-home/.vak/config.toml` |
-| Shared platform secrets | `~/vak-home/.env` |
-| Agent private config & memory | `~/vak-home/agents/<agent_id>/` |
-| Agent private secrets | `~/vak-home/agents/<agent_id>/.env` |
-| Agent session ledgers | `~/vak-home/agents/<agent_id>/sessions/<cwd-hash>/` |
-| Execution temp files and caches | `<workspace>/.vak/scratch/<agent_id>/` |
-| Execution workspace overrides | `<workspace>/.vak/config.toml` |
-| Execution workspace secrets | `<workspace>/.env` |
-| Shared infrastructure (gateway, FinOps, Ops) | `~/vak-home/` |
-
-Real environment variables take precedence over any `.env`. Secrets are
-never forwarded as ambient Bash or MCP subprocess state, and project `.env`
-files and privileged project configuration load only after you trust that
-workspace.
-
-### Full install, release, and platform documentation
-
-[`docs/release-and-install.md`](docs/release-and-install.md) covers the
-lifecycle end to end: what each platform gets, how to cut a release, the
-supply-chain evidence a release carries, how updates are proven not to lose
-data, and how to exercise the Linux path from a Mac.
-
-### Building from source
-
-Building from source needs a [stable Rust toolchain](https://www.rust-lang.org/tools/install),
-Git, and Node.
-
-```bash
-git clone https://github.com/nranjan2code/code.git
-cd code
-scripts/vak.sh build
-```
-
-### Contributions
-
-The source is public to read and use. Code changes to this repository are
-maintained solely by [@nranjan2code](https://github.com/nranjan2code); external
-pull requests are not accepted.
-
-## What you get
-
-### A real agent loop
-
-- Streaming model output with both deltas and snapshots
-- Parallel tool calls scheduled in conflict-free resource waves
-- Steering while a run is active, cancellable work, and preserved partial output
-- Goal mode with acceptance criteria, brokered verification, and regression obligations
-- Static flow DAGs plus a bounded, fail-closed dynamic planner
-
-### An agent that knows what it was asked
-
-Every turn is read on seven behavioural axes — what kind of work, how long it
-lives, what it can break, what standard of proof it owes, how clear it is,
-what modalities it needs, and whether anyone is watching. That reading then
-*narrows* the run: fewer tools when fewer will do, a shorter route ladder for
-trivial work, and a higher approval floor for anything irreversible.
-
-- It only ever narrows. A misreading can make vak more cautious or less
-  capable; it can never grant a tool, widen a budget, or skip a gate.
-- It explains itself. `vak intent explain "<prompt>"` prints every signal with
-  the weight it carried and exactly what the run would narrow — for free,
-  without dispatching anything.
-- Uncertainty falls back to doing nothing special, so being unsure never
-  silently takes a capability away.
-
-```bash
-vak intent explain "deploy the billing service to production"
-```
-
-### Work that outlives a conversation
-
-Work spanning sessions, restarts, or months becomes a durable **commitment**
-with its own append-only ledger, rather than a note in a transcript.
-
-- **Reality decides when it is done.** A commitment closes `fulfilled` only
-  when the runtime has checked its criteria against the world at the strength
-  the work demands. The model may propose criteria; it may never mark one
-  passed.
-- **Waiting is not failing.** Unattended work that needs a human suspends and
-  queues the question instead of failing closed.
-- **Nothing evaporates.** Every commitment closes with an explicit verdict and
-  its evidence — including an honest `unknown` when the runtime lost track.
-
-```bash
-vak commit list        # the portfolio, in the order it would be worked
-```
-
-### Safety that is architectural
-
-- Three permission modes: `read-only`, `workspace-write`, and explicit `full-access`
-- Composable `allow`, `ask`, and `deny` rules with deny taking precedence
-- Canonical workspace confinement and symlink-escape protection in restricted modes
-- Disposable built-in tool workers and separately sandboxed MCP workers
-- Seatbelt on macOS, Landlock on Linux, and an opt-in no-network Docker Bash backend
-- Permission changes cancel in-flight work and reject stale approvals
-
-### Sessions with receipts
-
-- Append-only JSONL trees with branch lineage and compact-as-entry history
-- A frozen execution contract recorded at admission
-- Provider dispatch receipts with purpose, model, failure domain, settlement, and usage
-- State-based workspace checkpoints and restore
-- Cross-session search, durable memory, and human-reviewed skill proposals
-
-### An interface for every context
-
-- Tauri 2 desktop app with isolated worktrees, streaming chat, diff review, editor, PTY terminal, previews, side chats, and best-of-N comparison
-- **Web admin console** at `/admin` on the secured server — live activity feed, session transcripts with search, approval gates, config editing, prompt/steering/best-of-N from any browser (cookie login; see `docs/design/33-admin-console.md`)
-- Headless `exec` and `plan` commands for scripts and CI
-- HTTP + SSE server for custom clients
-- Always-on gateway with Telegram, Discord, and Slack bridges plus outbound webhooks, including fail-closed approval forwarding. Every unknown chat lands as a reviewable pending request — approve, deny, or edit access from the admin console or desktop settings, never a config-file hand-edit (`docs/design/34-channel-onboarding.md`)
-
-### Multi-provider without a static catalogue
-
-| Provider flag | API family |
-|---|---|
-| `anthropic` | Anthropic Messages |
-| `openai-responses` | Native OpenAI Responses (use for hosted GPT reasoning/tool routes) |
-| `openai` | OpenAI-compatible Chat Completions (only where that endpoint supports the chosen model/features) |
-| `openrouter` | OpenRouter |
-| `openrouter-responses` | OpenRouter Responses (for OpenRouter models/features that require the Responses dialect) |
-| `opencode-zen` | OpenCode Zen |
-| `google` | Gemini |
-| `ollama` | Local OpenAI-compatible Ollama endpoint |
-
-vak asks the provider for the models available to your key and caches the result briefly. It does not bake yesterday's model list into the binary.
-
-## Choose your surface
-
-### Headless and goal mode
-
-```bash
-vak exec "refactor the parser" --worktree
-
-vak exec "ship the parser fix" \
-  --goal "the parser handles empty input without regressions" \
-  --criteria "verify:cargo test -p vak-parser,errors remain typed"
-```
-
-Goal mode does not accept the agent's declaration of success on faith: deterministic criteria run through the tool broker, qualitative criteria go through a skeptical judge, and failures are returned to the loop as evidence.
-
-### Desktop app
-
-The desktop client requires Node.js/npm in addition to Rust. `npm run build`
-produces both bundles — `dist/` for this shell and `dist-web/` for the copy
-the server serves at `/app`.
-
-```bash
-cd crates/vak-client-ui
-npm ci
-npm run build
-cd ../../..
-cargo run -p vak-desktop
-```
-
-### Install
-
-`scripts/build.sh` builds the shipped components and then hands placement to
-the managed installer, which owns the install root and its manifest:
-
-```bash
-scripts/build.sh
-```
-
-`--no-install` builds without placing anything, `--no-desktop` excludes the
-desktop frontend and Rust package, and `--prefix DIR` installs somewhere other
-than the platform default. The build cache is cleaned automatically after a
-workspace-version bump, preventing old identities for all workspace crates
-from accumulating. The version-bump script also refreshes `Cargo.lock` without
-compiling the entire workspace. Every `self` subcommand accepts the same
-`--prefix`, so a custom install stays inspectable and removable:
-
-```bash
-vak self status         # build vs manifest vs service units
-vak self verify         # every component against its recorded digest
-vak self services-sync  # regenerate + reload the launchd/systemd units
-vak self reinstall      # clear the prefix and place a fresh build
-vak self update --url <feed>  # opt-in pull-and-replace from a release feed
-vak self uninstall      # remove it; --purge also deletes the data home
-vak doctor              # read-only health report across config, services, routes
-```
-
-`vak doctor` diagnoses; `vak doctor --repair` acts on the checks that have a
-known mechanical fix (today: reinstalling on self version parity drift) and
-re-checks, leaving anything else — provider auth, config warnings — for you.
-Checks without a mechanical fix are never guessed at.
-
-`scripts/vak.sh <verb>` is a thin dispatcher over all of the above, if
-you'd rather remember one entry point than which of `scripts/*.sh` or
-`vak self <verb>` owns a given step:
-
-```bash
-scripts/vak.sh build          # -> scripts/build.sh
-scripts/vak.sh release        # -> scripts/release.sh
-scripts/vak.sh install        # -> vak self install
-scripts/vak.sh reinstall      # -> vak self reinstall
-scripts/vak.sh verify         # -> vak self verify
-scripts/vak.sh status         # -> vak self status
-scripts/vak.sh update         # -> vak self update
-scripts/vak.sh uninstall      # -> vak self uninstall
-scripts/vak.sh services-sync  # -> vak self services-sync
-scripts/vak.sh doctor         # -> vak doctor
-```
-
-It resolves `vak` from PATH first, falling back to the freshly built
-`target/release` or `target/debug` binary — it never reimplements a verb,
-only routes to the thing that already owns it.
-
-### Release
-
-```bash
-scripts/bump-version.sh 0.8.1   # THE version, plus a lockfile refresh
-scripts/check-version.sh        # proves no second version stamp exists
-scripts/release.sh --base-url https://downloads.example.com
-```
-
-There is exactly one authoritative version — `[workspace.package] version`.
-Crates inherit it, `tauri.conf.json` omits the key so Tauri derives it, and
-the private frontend packages stay pinned at `0.0.0`. `check-version.sh`
-fails if a second stamp reappears anywhere.
-
-`release.sh` builds, checksums each artifact, and writes
-`dist/<version>/release.json` — the feed `vak self update` reads. Every
-artifact carries a SHA-256 that `self update` verifies before installing;
-an artifact without one is refused. Release checks and compilation use an
-isolated temporary Cargo target directory that is removed on exit, so frequent
-version bumps do not enlarge the developer `target/`. The release preflight
-requires 15 GiB free by default; set `VAK_RELEASE_MIN_FREE_GB` to adjust that
-threshold for the build host.
-
-### Server and gateway
+Want the browser workspace? Start the server in one terminal, then open its signed-in client from another:
 
 ```bash
 vak serve --port 8901
-vak serve --gateway --trust
+vak open app
 ```
 
-The server exposes the same session, run, approval, transcript, diff, and steering contracts used by the desktop app — and serves the **workspace client itself at `/app`**, so a headless box is a place to *use* vak, not only to host it:
+The workspace is at `/app`; the management console is at `/admin` (`vak open admin`). The server listens on loopback by default. See [hosting](docs/hosting.md) before exposing it beyond your machine.
 
-```bash
-vak serve --port 8901          # then open http://127.0.0.1:8901/app
-```
+## Use Vakyartha
 
-It binds loopback and answers only to loopback hostnames unless you say
-otherwise. For a remote box, an SSH tunnel needs no configuration at all
-(`ssh -N -L 8901:127.0.0.1:8901 you@box`); serving a real hostname needs
-`[server] trusted_hosts` and is refused without it. For a durable macOS
-LaunchAgent or Linux systemd user service, and the full remote-access
-posture, follow the [hosting guide](docs/hosting.md).
+| What you want to do | Where to start |
+|---|---|
+| Talk through a task and review its work | Desktop app, `vak term`, or `vak open app` |
+| Run a one-off request from a script or terminal | `vak exec "your request"` |
+| Plan a multi-step task | `vak plan "your goal"` |
+| Keep an outcome open until it is verified | Goal mode (`vak exec --goal ...`), then `vak commit list` |
+| Inspect past work or recover a workspace | `vak sessions`, `vak checkpoints list` |
+| Work with Word, Excel, or PowerPoint files | The workspace review flow or `vak office --help` |
+| Schedule a routine | `vak tasks --help`; review attention in `vak inbox list` |
+| Create a specialist agent | `vak agents templates`, then `vak agents init --help` |
 
-## One core, many surfaces
+A typical file change starts as a draft. You can inspect the diff or document review, ask for a revision, then accept the result. Cancellation keeps partial work rather than pretending the run never happened. For repeatable workflows, use [flows](docs/design/10-flows.md); for specialized capabilities, use [skills and plugins](docs/design/09-extensibility.md).
 
-![A flat editorial diagram showing a shared auditable vak core connected to terminal, desktop, server, and chat interfaces](docs/assets/vak-surfaces.webp)
+### Choose a surface
 
-```text
-vak CLI       Tauri desktop ─┬─ browser        HTTP + SSE / gateway
-         \                   |                          /
-          \        one workspace client, two hosts     /
-           \        (crates/vak-client-ui)            /
-            └──────────────── vak-core ──────────────┘
-                               |
-            ┌──────────────────┼──────────────────┐
-            |                  |                  |
-        vak-agent          vak-flow         vak-permission
-            |                                     |
-     ┌──────┼──────┐                              |
-     |      |      |                              |
- vak-tools hooks  vak-mcp  ───── broker + sandbox boundary
-     |
- vak-session ── append-only ledger, contracts, receipts, recall
-     |
-  vak-llm ─── providers, streaming, routing, usage accounting
-```
+- **Desktop:** the native workspace with chat, files, diff review, previews, approvals, and a terminal.
+- **Browser:** the same workspace client served at `/app`, plus `/admin` for operation and configuration.
+- **Terminal and CLI:** `vak term` for conversation; `vak exec` and `vak plan` for headless runs and scripts.
+- **Channels:** optional Telegram, Discord, and Slack bridges for an always-on agent. An unknown chat requires admission, and unattended approvals fail closed.
 
-The interfaces do not implement their own privileged shortcuts. They compose the same core, permission engine, brokered registry, and session ledger. Read the [architecture roadmap](docs/design/00-roadmap.md) for the full crate map and phase history.
+![The CLI, desktop, browser, and channels meet at one governed core](docs/assets/vak-surfaces.webp)
 
-The desktop app and the browser client are not two clients: they are one
-source tree (`crates/vak-client-ui`) behind a small host port, built twice.
-What differs between them — native dialogs, a PTY, where a saved file goes —
-is answered by the host, and a capability it cannot provide is *absent*
-rather than broken. See [the web client](docs/design/48-web-client.md).
+## Settings
 
-## Permission model
-
-| Mode | Filesystem | Commands | Intended use |
-|---|---|---|---|
-| `read-only` | Workspace reads only | Restricted | Audits, exploration, review |
-| `workspace-write` | Reads and writes inside the canonical workspace | Sandboxed and policy-gated | Everyday coding; the default |
-| `full-access` | Unrestricted host access | Unsandboxed, still rule-gated | Explicitly trusted, supervised work |
-
-`full-access` is never selected automatically after a denial, failure, retry, prompt request, or model recommendation. Missing containment fails closed. Unattended gateway turns deny escalations unless an explicitly configured approver surface answers in time.
-
-See the [threat model](docs/design/24-agent-security.md), [permission design](docs/design/08-permissions.md), and [Docker sandbox design](docs/design/25-docker-sandbox.md) before changing security-sensitive behavior.
-
-## Everyday commands
-
-```bash
-# Sessions and checkpoints
-vak sessions
-vak checkpoints list
-vak checkpoints restore SESSION_ID SEQUENCE
-
-# Static flows
-vak flow list
-vak flow check FLOW_NAME
-vak flow run FLOW_NAME
-
-# Memory and reviewed learning
-vak memory
-vak skills-review list
-
-# Deterministic and live evaluation
-vak eval
-vak eval --live --provider PROVIDER --model MODEL
-```
-
-Run `vak --help` or `vak <command> --help` for the complete flags.
-
-## Configuration
-
-Configuration is layered predictably:
-
-```text
-defaults < ~/.config/vak/config.toml < .vak/config.toml < environment < CLI
-```
-
-Unknown keys warn instead of preventing startup. Privileged project keys—permissions, hooks, MCP servers, gateway, sandbox, and provider endpoint overrides—require workspace trust. Start with:
+Setup handles the first choices. Afterward, the desktop Settings screen and the browser management console provide the everyday controls. The CLI exposes the effective configuration and the permission posture:
 
 ```bash
 vak config dump
+vak config permissions
+vak config set-mode workspace-write --scope project
 ```
 
-Then use the [configuration reference](docs/design/05-config.md) for provider, retry, context, UI, permission, hooks, MCP, FinOps, gateway, memory, and sandbox settings.
+| Area | What you control | Where to learn more |
+|---|---|---|
+| **Model route** | Provider and discovered model, plus scoped overrides for a run or task | [LLM design](docs/design/01-llm.md) |
+| **Permissions** | Read-only, workspace-write, or explicit full-access; allow, ask, and deny rules | [Permission model](docs/design/08-permissions.md) |
+| **Tools and extensions** | Built-in tools, MCP servers, skills, plugins, and hooks | [Extensibility](docs/design/09-extensibility.md) |
+| **Appearance** | Theme, presentation, and technical-detail display | [Visual system](DESIGN.md) |
+| **Budgets and reliability** | Spend limits, retries, deadlines, and fallback routing | [Failure handling](docs/design/15-reliability.md) |
+| **Always-on work** | Agents, schedules, channels, delivery, and approvals | [Agent model](docs/design/64-agent-owned-platform.md) |
 
-## Reliability and cost control
+Settings are layered: built-in defaults → Shared settings → this project's `.vak/config.toml` → scoped choices such as a task or CLI flag. The Shared file is `~/vak-home/.vak/config.toml` by default; `VAK_HOME` can relocate the data home. Project settings that grant capability require a trusted workspace. `vak config dump` shows the effective result, and the [configuration reference](docs/design/05-config.md) explains the layers and precedence.
 
-- Transient failures retry within a route ladder frozen when the run is admitted
-- `Retry-After`, watchdog deadlines, circuit breaking, and cancel-aware endurance are built into the loop
-- A shared dispatch ceiling prevents retry multiplication across nested mechanisms
-- FinOps admission can enforce per-run, daily, and monthly spend caps
-- Every attempt is receipted, including route fallback, cancellation, and typed failure domain
-- Deterministic evals cover the loop, context integrity, broker boundary, routing, spend gates, and goal completion
+**Secrets are separate from settings.** Provider keys and bot tokens live in a project or Shared secret scope backed by the OS secret service, or an encrypted fallback where no service is available. They are not stored as plaintext `.env` files, returned by the admin API, or committed to Git.
 
-The expected behavior for overloads, network loss, malformed streams, cancellation, open circuits, and other failures is documented in the [failure-handling matrix](docs/design/15-reliability.md).
+### Permissions at a glance
 
-## Extending vak
+| Mode | What the agent can reach | Best for |
+|---|---|---|
+| `read-only` | Reads inside the selected workspace; effectful operations remain restricted | Exploration and review |
+| `workspace-write` | Reads and writes inside the canonical workspace through the broker and sandbox | Everyday work |
+| `full-access` | Unsandboxed host access, still subject to explicit rules | Supervised work that needs it |
 
-Keep the core small; add specialized behavior at the edges:
+Full access is a human choice. A denial or failed tool call never switches to it automatically. A permission change revokes work that was running under the old mode. The [security model](docs/design/24-agent-security.md) covers the boundaries in detail.
 
-- **Skills** load instructions progressively when relevant
-- **Hooks** observe and gate lifecycle events
-- **MCP** exposes external tool servers through a lazy meta-tool
-- **Commands** add project, plugin, or user Markdown templates
-- **Workers** run lineage-linked child sessions with attach, steer, and stop controls
-- **Flows** define validated, resumable DAGs with typed failure policy
+## Administration
 
-Start with the [extensibility design](docs/design/09-extensibility.md) and [flow design](docs/design/10-flows.md).
+Vakyartha keeps normal work and operations in separate views. Start the server and run `vak open admin` to inspect sessions, active runs, approval requests, provider status, channels, scheduled work, delivery, services, and incidents. The console requires authentication; the embedded workspace at `/app` shares that sign-in.
 
-## Development
+| Task | Command |
+|---|---|
+| Check setup and diagnose a problem | `vak setup status` · `vak doctor` |
+| See install and service drift | `vak self status` |
+| Verify installed files | `vak self verify` |
+| Reconcile enabled background services | `vak self services-sync` |
+| Review scheduled work and attention | `vak tasks list` · `vak inbox list` |
+| Inspect durable commitments | `vak commit list` |
+| Back up or restore data | `vak backup --help` |
 
-The workspace uses stable Rust, edition 2024. Before submitting a change, run the same checks required by the repository contract:
+`vak doctor` is read-only. `vak doctor --repair` acts only on checks with a known mechanical fix, then checks again. Installation and setup are separate: placing binaries does not start a gateway or chat bridge. If you run Vakyartha on a server, begin with the [hosting guide](docs/hosting.md); a real hostname requires explicit trusted-host configuration and an appropriate secure front door.
+
+## How it works
+
+![A person and the Vakyartha Songbird following an idea through planning, action, and review](docs/assets/vakyartha-hero.webp)
+
+The agent loop streams responses and tool output, accepts steering and cancellation, and records an append-only session. Every model-visible input must be reconstructable from that record. Tool calls cross a broker boundary into disposable workers; permissions are checked before dispatch. The client shows a reviewable result while the underlying ledger retains the evidence.
+
+Providers are selected from what your credentials can actually reach. Vakyartha supports Anthropic, OpenAI, OpenRouter, Gemini, OpenCode Zen, Ollama, AWS Bedrock, and compatible endpoints; model lists are discovered from providers rather than baked into the source. A turn plans its route from current evidence and can retry transient failures within bounded deadlines. See the [agent loop](docs/design/03-agent-loop.md), [sessions](docs/design/02-sessions.md), and [reliability contract](docs/design/15-reliability.md).
+
+## Develop and extend
+
+The public repository is useful for reading, building, and adapting the software. The smallest extension that solves a problem is usually the right one:
+
+- **Skills** add instructions and resources when relevant.
+- **Hooks** observe or gate lifecycle events.
+- **MCP servers and plugins** connect capabilities without making them core features.
+- **Flows** encode repeatable steps with typed outcomes.
+- **Specialist agents** own their conversations, workspaces, schedules, and channel targets.
+
+The repository uses Rust 2024. Before committing a change, follow [AGENTS.md](AGENTS.md) and run its required checks:
 
 ```bash
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+scripts/check-version.sh
+python3 scripts/check_doc_paths.py
 ```
 
-The deterministic eval suite runs offline in roughly 100 ms:
+Code changes to this repository are maintained solely by [@nranjan2code](https://github.com/nranjan2code). External pull requests are not accepted. The software source is available under the [MIT License](https://opensource.org/license/mit); the Vakyartha name, Songbird mark, character artwork, and wallpapers are outside that software license. Third-party components retain their own notices.
 
-```bash
-cargo run --bin vak -- eval
-```
+## Brand and assets
 
-Live checks need a configured provider key:
-
-```bash
-cargo run --bin vak -- eval --live --provider PROVIDER --model MODEL
-```
-
-Read [AGENTS.md](AGENTS.md) before changing the agent loop, tool boundary, sessions, permissions, providers, gateway, or sandbox. Its invariants are part of the product contract.
+The [Vakyartha Songbird](docs/brand/README.md) is the public mark. Its [SVG master](docs/brand/mark/vakyartha-songbird.svg) and [ready-to-use exports](docs/brand/exports/) include light, dark, one-ink, wordmark, and app-icon variants. The [asset gallery](docs/brand/library/index.html) collects the canonical artwork, characters, and wallpapers. Use the full **Vakyartha** name in public writing; `vak` remains the CLI and internal identifier.
 
 ## Documentation
 
-| Start here | Covers |
+| Start here | For |
 |---|---|
-| [Roadmap](docs/design/00-roadmap.md) | Phase history, shipped capabilities, and remaining work |
-| [Agent loop](docs/design/03-agent-loop.md) | Turns, tools, steering, scheduling, and outcomes |
-| [Sessions](docs/design/02-sessions.md) | Append-only trees, projection, compaction, and contracts |
-| [Security](docs/design/24-agent-security.md) | Threat model, trust boundaries, and priority order |
-| [Reliability](docs/design/15-reliability.md) | Retries, watchdogs, circuit breaking, and recovery |
-| [Desktop](docs/design/20-tauri-desktop.md) | Native client architecture and workflows |
-| [Gateway](docs/design/22-gateway.md) | Chat routing, approvals, transports, and unattended safety |
-| [Memory](docs/design/23-memory.md) | Cross-session recall and model-visible search |
-| [Learning loop](docs/design/26-learning.md) | Durable notes and human-reviewed skill proposals |
-| [Commitment kernel](docs/design/47-commitment-kernel.md) | How a request is read, how that narrows the run, and how "done" is proven |
-| [Web client](docs/design/48-web-client.md) | One workspace client for the desktop shell, a browser, and a headless host |
-| [Hosting](docs/hosting.md) | Durable local or VPS deployment |
+| [Install and release](docs/release-and-install.md) | Platform support, build, install, update, verification, and uninstall |
+| [Configuration](docs/design/05-config.md) | Settings layers, trust, secrets, and capability inheritance |
+| [Admin console](docs/design/33-admin-console.md) | Browser management surface and operations |
+| [Hosting](docs/hosting.md) | Local services, SSH access, gateway, and remote exposure |
+| [Security](docs/design/24-agent-security.md) | Threat model and permission boundaries |
+| [Agent-owned platform](docs/design/64-agent-owned-platform.md) | Agents, channels, workspaces, and durable state |
+| [Architecture roadmap](docs/design/00-roadmap.md) | Crate map, shipped stages, and project history |
+| [Brand guide](docs/brand/README.md) | Logo, artwork, exports, colour, and usage |
 
----
-
-<div align="center">
-
-**Powerful enough to do the work. Explicit enough to trust the process.**
-
-</div>
+The `docs/design/` files each declare a **Status**. Read that line before treating a design as shipped behavior.
