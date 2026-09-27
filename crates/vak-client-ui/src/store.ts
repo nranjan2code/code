@@ -70,6 +70,10 @@ export function setCoworkingPresence(sessionId: string, participants: CoworkingP
   setCoworkingPresenceBySession(sessionId, participants);
 }
 export const [activeId, setActiveId] = createSignal<string | null>(null);
+/** A local send is an explicit request to follow the new turn, even when the
+ * reader was previously browsing older messages. */
+export const [lastSubmittedPrompt, setLastSubmittedPrompt] = createSignal<{ sessionId: string; sequence: number } | null>(null);
+let submittedPromptSequence = 0;
 export type AgentSummary = { id: string; name: string; revision?: number; character?: string; animation?: "subtle" | "expressive" | "off"; voice?: string };
 export const [activeAgent, setActiveAgent] = createSignal<AgentSummary | null>(null);
 export function agentForSession(id: string | null): AgentSummary {
@@ -1491,6 +1495,7 @@ export function applyEvent(
 
 export function appendUser(id: string, text: string, files?: api.InboxFile[], bucket: Bucket = "main") {
   pushItem(bucket, id, { kind: "user", text, files: files?.length ? files : undefined });
+  if (bucket === "main") setLastSubmittedPrompt({ sessionId: id, sequence: ++submittedPromptSequence });
 }
 
 export function appendSystem(id: string, text: string, bucket: Bucket = "main") {

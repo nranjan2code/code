@@ -1557,6 +1557,8 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
 }
 
 export default function PresentationTimelineView(props: { timeline: OutputTimeline; sessionId: string; allowContinuation?: boolean; hideUser?: boolean }) {
+  const sameItems = (previous: OutputItem[], next: OutputItem[]) =>
+    previous.length === next.length && previous.every((item, index) => item === next[index]);
   const turns = createMemo(() => {
     const order: string[] = [];
     const grouped = new Map<string, OutputItem[]>();
@@ -1576,6 +1578,12 @@ export default function PresentationTimelineView(props: { timeline: OutputTimeli
       <Show when={goal().additions.length}><ul><For each={goal().additions}>{(addition) => <li>{addition}</li>}</For></ul></Show>
       <Show when={goal().superseded_revisions.length}><small>Superseded revisions: {goal().superseded_revisions.join(", ")}</small></Show>
     </details>}</Show>
-    <For each={turns()}>{(id) => <Turn id={id} items={props.timeline.items.filter((item) => item.turn_id === id && !(props.hideUser && item.role === "user"))} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />}</For>
+    <For each={turns()}>{(id) => {
+      // Live frames replace the timeline even when this settled turn has not
+      // changed. Reuse its item list so Turn does not rebuild every result.
+      const items = createMemo(() => props.timeline.items.filter((item) =>
+        item.turn_id === id && !(props.hideUser && item.role === "user")), undefined, { equals: sameItems });
+      return <Turn id={id} items={items()} sessionId={props.sessionId} allowContinuation={props.allowContinuation ?? false} />;
+    }}</For>
   </div>;
 }

@@ -55,3 +55,17 @@ agent-browser --session vak-undo-check eval 'window.runChecks()'
 It checks that each execution offers Undo for its own acceptance with the
 same message shown after Accept, that Undo reverses that one, and that the
 offer goes once undone. The derivation itself is `tests/candidate-versions.mjs`.
+
+# Chat reading position and input tray
+
+With the web dev server running, open `/app/tests/chat-stability.html`.
+The fixture runs automatically; reload to repeat. Add `?theme=dark` for dark
+appearance. It uses the real ChatPane, Composer and presentation renderer with
+mocked control endpoints, without provider calls or saved conversation data.
+
+The 16 checks cover retaining settled DOM during live frames, scroll position
+across run boundaries and conversation switches, following a locally submitted
+prompt, disengaging follow after a small upward scroll, one existing Stop
+button, and Pause/Resume in the input tray with server readback. It also checks
+horizontal overflow. Verified at 1440×900 and 390×844, in light and dark.
+These component checks do not update or certify the installed desktop binary.

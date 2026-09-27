@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, setAgentCreateOpen, setConnectOpen, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, presentationOf, uiPreferences, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, activeAgentId, backend, setAgentCreateOpen, setConnectOpen, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -244,98 +244,6 @@ function visibleItems(list: Item[], liveTurn = false): Item[] {
   return cleanList;
 }
 
-function RunControls(props: { sessionId: string }) {
-  const [paused, setPaused] = createSignal(false);
-  const [revision, setRevision] = createSignal(0);
-  const [busy, setBusy] = createSignal(false);
-  const [controlError, setControlError] = createSignal("");
-  const [changing, setChanging] = createSignal(false);
-  const [changeText, setChangeText] = createSignal("");
-  const [changeKind, setChangeKind] = createSignal("replan");
-  const [changeResult, setChangeResult] = createSignal("");
-  const refresh = () => void api.controlState(props.sessionId).then((state) => {
-    setPaused(state.paused);
-    setRevision(state.revision);
-    setControlError("");
-  }).catch((error) => {
-    setControlError(`Control state unavailable: ${error instanceof Error ? error.message : String(error)}`);
-  });
-  onMount(() => {
-    refresh();
-    const timer = window.setInterval(refresh, 2000);
-    onCleanup(() => window.clearInterval(timer));
-  });
-  const toggle = async () => {
-    if (busy()) return;
-    setBusy(true);
-    try {
-      if (paused()) await api.resumeRun(props.sessionId);
-      else await api.pauseRun(props.sessionId);
-      // Read back the control state so the label reflects the server's
-      // revision rather than a local optimistic guess.
-      await api.controlState(props.sessionId).then((state) => {
-        setPaused(state.paused);
-        setRevision(state.revision);
-      });
-    } catch (error) {
-      setNotice({ kind: "error", text: `Could not ${paused() ? "resume" : "pause"} this task: ${error instanceof Error ? error.message : String(error)}` });
-    } finally {
-      setBusy(false);
-    }
-  };
-  const submitChange = async () => {
-    const text = changeText().trim();
-    if (!text || busy()) return;
-    setBusy(true);
-    try {
-      const result = await api.planChange(props.sessionId, `${changeKind()}: ${text}`, "human", revision());
-      if (result.decision === "requires_human") {
-        setChangeResult(`Human review required · plan v${result.revision}`);
-      } else {
-        setRevision(result.revision);
-        setChangeResult(`${result.decision} · plan v${result.revision}`);
-      }
-      setChangeText("");
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Plan change failed";
-      if (message.includes("409")) {
-        refresh();
-        setChangeResult("Plan changed elsewhere; review the new revision");
-      } else {
-        setChangeResult(message);
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-  return <Show when={isRunning(props.sessionId)}>
-    <div class="run-controls" aria-label="Live task controls">
-      <button type="button" class="run-control" disabled={busy()} onClick={() => void toggle()}>{paused() ? "Resume" : "Pause"}</button>
-      <button type="button" class="run-control danger" disabled={busy()} onClick={() => void api.cancelRun(props.sessionId).catch((error) => setNotice({ kind: "error", text: `Could not cancel this task: ${error instanceof Error ? error.message : String(error)}` }))}>Cancel</button>
-      <Show when={revision() > 0}>
-        <button type="button" class="run-control" disabled={busy()} onClick={() => setChanging(!changing())}>Change plan</button>
-        <span class="run-revision" title="Active outcome plan revision">Plan v{revision()}</span>
-      </Show>
-      <Show when={paused()}><span class="run-paused" role="status">Paused at safe boundary</span></Show>
-    </div>
-    <Show when={controlError()}>
-      <div class="inline-error" role="alert">{controlError()} Refreshing will retry; the server remains authoritative.</div>
-    </Show>
-    <Show when={changing() && revision() > 0}>
-      <form class="plan-change" onSubmit={(event) => { event.preventDefault(); void submitChange(); }}>
-        <select aria-label="Plan change type" value={changeKind()} onChange={(event) => setChangeKind(event.currentTarget.value)}>
-          <option value="replan">Replan</option>
-          <option value="add requirement">Add requirement</option>
-          <option value="remove requirement">Remove requirement</option>
-          <option value="reprioritize">Reprioritize</option>
-        </select>
-        <input aria-label="Plan change" value={changeText()} placeholder="Add, remove, or reprioritize work…" onInput={(event) => setChangeText(event.currentTarget.value)} />
-        <button class="run-control" type="submit" disabled={busy() || !changeText().trim()}>Submit</button>
-        <Show when={changeResult()}><span role="status">{changeResult()}</span></Show>
-      </form>
-    </Show>
-  </Show>;
-}
 
 export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
   const open = () => itemExpanded(props.item.id);
@@ -819,6 +727,10 @@ function AssistantItem(props: { item: Extract<Item, { kind: "assistant" }>; sess
     );
 }
 
+// View state only: changing agents or opening a canvas must not discard the
+// reader's position. Kept in memory, never written into conversation data.
+const readingPositions = new Map<string, { top: number; pinned: boolean; start: number; end: number }>();
+
 export default function ChatPane(props: { sessionId?: string | null }) {
   // In split view each pane renders ITS OWN session; without the prop the
   // pane follows the global focus (previous behavior, unchanged).
@@ -827,8 +739,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   let content!: HTMLDivElement;
   let pinned = true;
   let scrollFrame: number | null = null;
-  let smoothScrolling = false;
-  let smoothTimer: number | null = null;
+  let userScrollIntentUntil = 0;
+  let renderedSid: string | null = null;
+  let restoring = false;
+  let handledSubmission = untrack(() => lastSubmittedPrompt()?.sequence ?? 0);
   const [atBottom, setAtBottom] = createSignal(true);
   const [turnWindow, setTurnWindow] = createSignal({ start: 0, end: 40 });
   const [activeTurn, setActiveTurn] = createSignal(1);
@@ -926,10 +840,15 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const showsGreeting = createMemo(() => !sid() || !(visibleItems(itemsOf(sid())).length || working()));
 
   const onScroll = () => {
-    if (smoothScrolling) return;
-    pinned = turnWindow().end >= turns().length && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 80;
+    if (restoring) return;
+    const nearBottom = turnWindow().end >= turns().length && scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 2;
+    // Layout growth and browser scroll anchoring can dispatch scroll events.
+    // Only an actual reader action may disengage following the live turn.
+    if (nearBottom) pinned = true;
+    else if (performance.now() < userScrollIntentUntil) pinned = false;
     setAtBottom(pinned);
     updateActiveTurn();
+    if (renderedSid) readingPositions.set(renderedSid, { top: scroller.scrollTop, pinned, ...turnWindow() });
     if (scroller.scrollTop < 160 && turnWindow().start > 0 && !loadingWindow) {
       loadingWindow = true;
       const anchor = [...content.querySelectorAll<HTMLElement>("[data-turn-index]")]
@@ -962,6 +881,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
       });
     }
   };
+  const markUserScrollIntent = () => { userScrollIntentUntil = performance.now() + 1000; };
   const scrollToBottom = (force = false) => {
     if (force) {
       const count = turns().length;
@@ -970,16 +890,13 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         requestAnimationFrame(() => scrollToBottom(true));
         return;
       }
-      smoothScrolling = true;
-      if (smoothTimer !== null) clearTimeout(smoothTimer);
-      smoothTimer = window.setTimeout(() => { smoothScrolling = false; }, 400);
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: uiPreferences.reduceMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
       pinned = true;
       setAtBottom(true);
       setActiveTurn(Math.max(1, count - 1));
       return;
     }
-    if (pinned && !smoothScrolling && !showsGreeting()) {
+    if (pinned && !showsGreeting()) {
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
       pinned = true;
       setAtBottom(true);
@@ -988,8 +905,10 @@ export default function ChatPane(props: { sessionId?: string | null }) {
   const scheduleScroll = (force = false) => {
     if (force) {
       if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
-      scrollFrame = null;
-      scrollToBottom(true);
+      scrollFrame = requestAnimationFrame(() => {
+        scrollFrame = null;
+        scrollToBottom(true);
+      });
       return;
     }
     if (scrollFrame !== null) return;
@@ -1001,15 +920,35 @@ export default function ChatPane(props: { sessionId?: string | null }) {
 
   createEffect(() => {
     const id = sid();
-    void id;
-    pinned = true;
-    setAtBottom(true);
+    renderedSid = id;
+    const saved = id ? readingPositions.get(id) : undefined;
+    pinned = saved?.pinned ?? true;
+    userScrollIntentUntil = 0;
+    setAtBottom(pinned);
     const count = untrack(() => turns().length);
-    setTurnWindow({ start: Math.max(0, count - 40), end: count });
+    setTurnWindow(saved && !saved.pinned ? { start: saved.start, end: saved.end } : { start: Math.max(0, count - 40), end: count });
     setActiveTurn(Math.max(1, count - 1));
     setHoveredTurn(null);
-    observedTurnCount = 0;
-    queueMicrotask(() => scheduleScroll());
+    observedTurnCount = saved ? count : 0;
+    restoring = true;
+    const frame = requestAnimationFrame(() => {
+      if (saved && !saved.pinned) scroller.scrollTop = saved.top;
+      else scrollToBottom();
+      restoring = false;
+      updateActiveTurn();
+    });
+    onCleanup(() => cancelAnimationFrame(frame));
+  });
+
+  createEffect(() => {
+    const submitted = lastSubmittedPrompt();
+    if (!submitted || submitted.sequence === handledSubmission) return;
+    handledSubmission = submitted.sequence;
+    if (submitted.sessionId !== untrack(sid)) return;
+    pinned = true;
+    userScrollIntentUntil = 0;
+    setAtBottom(true);
+    scheduleScroll(true);
   });
 
   createEffect(() => {
@@ -1046,7 +985,6 @@ export default function ChatPane(props: { sessionId?: string | null }) {
 
   onCleanup(() => {
     if (scrollFrame !== null) cancelAnimationFrame(scrollFrame);
-    if (smoothTimer !== null) clearTimeout(smoothTimer);
   });
   createEffect(() => {
     const count = turns().length;
@@ -1092,7 +1030,6 @@ export default function ChatPane(props: { sessionId?: string | null }) {
         attachFiles(Array.from(event.dataTransfer.files));
       }}
     >
-      <Show when={sid()}>{(id) => <RunControls sessionId={id()} />}</Show>
       <Show when={navigableTurnCount() > 1}>
         <nav class="turn-rail" aria-label="Conversation turns">
           <div
@@ -1128,7 +1065,7 @@ export default function ChatPane(props: { sessionId?: string | null }) {
           </div>
         </nav>
       </Show>
-      <div class="chat" ref={scroller} onScroll={onScroll}>
+      <div class="chat" ref={scroller} onScroll={onScroll} onWheel={markUserScrollIntent} onTouchStart={markUserScrollIntent} onPointerDown={markUserScrollIntent} onKeyDown={(event) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) markUserScrollIntent(); }}>
         <div ref={content}>
         <Show when={sid()} fallback={<EmptyChat hasSession={false} />}>
           <Show when={hydratingId() !== sid() || itemsOf(sid()).length > 0} fallback={<TranscriptSkeleton />}>

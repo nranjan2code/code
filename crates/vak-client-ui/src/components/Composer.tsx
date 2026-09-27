@@ -28,6 +28,7 @@ import { ATTACH_FILES_EVENT } from "../attachFiles";
 import type { SkillInfo } from "../types";
 import Icon from "./Icon";
 import VoiceControl from "./VoiceControl";
+import RunControls from "./RunControls";
 
 interface Mention {
   start: number; // index of '@'
@@ -746,6 +747,7 @@ export default function Composer(props: { cwd: string }) {
                 </button>
               }
             >
+              <Show when={activeId()} keyed>{(id) => <RunControls sessionId={id} />}</Show>
               <button
                 class="send-button stop"
                 title="Stop running task (Esc)"

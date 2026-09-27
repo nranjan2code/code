@@ -74,12 +74,15 @@ fn text(t: &str) -> AssistantMessage {
 }
 
 fn make_executor(provider: Arc<TaggedScripted>, state_path: std::path::PathBuf) -> Executor {
+    // Bash records workspace file changes. Sharing the system temp directory
+    // lets concurrent tests' files leak into the output used by prompt substitution.
+    let workspace = tempfile::tempdir().unwrap().keep();
     make_executor_with_policy(
         provider,
         state_path,
         Mode::FullAccess,
         Some(Arc::new(AutoApprove)),
-        std::env::temp_dir(),
+        workspace,
     )
 }
 
