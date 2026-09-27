@@ -1,17 +1,19 @@
 # Vakyartha public site
 
 Twelve static pages, built here and embedded by `crates/vak-server/src/site.rs`.
-The public route names remain stable; the navigation uses plain labels.
+The navigation uses plain labels. `/doctor` is reserved for the authenticated
+runtime API; the public introduction lives at `/meet-doctor`. Only the standalone
+Vercel export redirects the old website URL to that introduction.
 
 | Route | Purpose |
 | --- | --- |
 | `/` | Character scenes and expandable everyday, work and learning examples |
 | `/outcomes` | All eight companions with example requests and possible results |
 | `/tour` | Interactive request/result illustrations and a short walkthrough |
-| `/security` | Access, review, privacy and an explicitly illustrative decision |
+| `/security` | Illustrated guide to access, approvals, data, connected chats, interruption and evidence |
 | `/install` | Public source build instructions and access to an existing installation |
 | `/architecture` | Illustrated architecture, ledger, context, voice, FinOps, admin and deployment |
-| `/doctor` | Everyday diagnostics and supported repairs, told in three illustrated scenes |
+| `/meet-doctor` | Everyday diagnostics and supported repairs, told in three illustrated scenes |
 | `/surfaces` | Desktop, browser, connected chats and terminal |
 | `/wallpapers` | All 16 desktop and mobile wallpaper downloads, without sign-in |
 | `/vak` | The name and Songbird identity |
@@ -54,6 +56,14 @@ wait for it, and reduced motion disables the transition.
 To add a page, update `PAGES` in `build.py` and `ROUTES` in `src/site.rs`.
 `NAV_ROUTES` selects the primary navigation. A file appearing in `dist/` never
 implicitly becomes a public page.
+
+## Your control page
+
+`/security` explains the runtime’s actual boundaries in everyday language, with
+three Vakyartha-only illustrations and a clearly labelled example review.
+Important limitations remain visible: full access, connected-service data flow,
+partial results, spending estimates and Trash versus erasure. Deeper mechanics
+link to the source. Evidence: `docs/assets/public-site-security-2026/`.
 
 ## Architecture page
 
@@ -113,6 +123,7 @@ light and dark. Screenshots and the review record are under
 node --check crates/vak-server/site/src/site.js
 python3 crates/vak-server/site/build.py --check
 cargo test -p vak-server --lib site::tests
+cargo test -p vak-server --test server_ext public_doctor_page_preserves_authenticated_doctor_api
 ```
 
 The focused Rust tests cover every public page, trailing slashes, referenced

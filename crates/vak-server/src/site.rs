@@ -42,7 +42,7 @@ pub(crate) const ROUTES: &[(&str, &str)] = &[
     ("/surfaces", "surfaces/index.html"),
     ("/tour", "tour/index.html"),
     ("/architecture", "architecture/index.html"),
-    ("/doctor", "doctor/index.html"),
+    ("/meet-doctor", "meet-doctor/index.html"),
     ("/security", "security/index.html"),
     ("/install", "install/index.html"),
     ("/wallpapers", "wallpapers/index.html"),

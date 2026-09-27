@@ -134,6 +134,49 @@ async fn wait_transcript(client: &reqwest::Client, base: &str, id: &str) -> serd
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn public_doctor_page_preserves_authenticated_doctor_api() {
+    // Construct the complete router: testing site::routes alone misses API collisions.
+    let (base, token, _cwd, server) = spawn_secured(Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::new()),
+    }))
+    .await;
+    for path in ["/meet-doctor", "/meet-doctor/"] {
+        let page = reqwest::get(format!("{base}{path}")).await.unwrap();
+        assert_eq!(page.status(), 200);
+        assert!(
+            page.headers()[reqwest::header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html")
+        );
+        assert!(page.text().await.unwrap().contains("A little check-up"));
+    }
+    let anonymous = reqwest::get(format!("{base}/doctor")).await.unwrap();
+    assert_eq!(anonymous.status(), 401);
+    let report = reqwest::Client::new()
+        .get(format!("{base}/doctor"))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(report.status(), 200);
+    assert!(
+        report.headers()[reqwest::header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .starts_with("application/json")
+    );
+    assert!(
+        report
+            .json::<serde_json::Value>()
+            .await
+            .unwrap()
+            .is_object()
+    );
+    server.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn secured_router_enforces_token_and_cors() {
     let (base, token, _cwd, _server) = spawn_secured(Arc::new(Scripted {
         responses: Mutex::new(VecDeque::new()),

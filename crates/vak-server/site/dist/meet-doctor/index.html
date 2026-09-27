@@ -645,12 +645,13 @@ details[open] > summary:after {
   background: var(--live);
   border-radius: 50%;
 }
-.approval h2 {
+.approval h3 {
   font-size: 30px;
   margin-bottom: 18px;
 }
 .approval p {
-  font-size: 14px;
+  font-size: 16px;
+  line-height: 1.65;
 }
 .approval-actions {
   display: flex;
@@ -660,21 +661,6 @@ details[open] > summary:after {
 .approval-message {
   margin-top: 18px;
   min-height: 44px;
-}
-.control-list {
-  display: grid;
-  gap: 24px;
-}
-.control-list article {
-  padding-bottom: 20px;
-  border-bottom: 1px solid var(--line);
-}
-.control-list h3 {
-  font-size: 22px;
-  margin-bottom: 8px;
-}
-.control-list p {
-  font-size: 14px;
 }
 .about {
   display: grid;
@@ -1788,6 +1774,52 @@ details[open] > summary:after {
 .ledger-scene { margin: 36px 0; }
 .ledger-scene figcaption { font-size: 14px; line-height: 1.7; color: var(--muted); text-align: center; }
 
+/* Your control: visible answers, illustrated boundaries, inspectable detail. */
+.security-opening { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
+.security-hero .lead { margin-bottom: 28px; }
+.security-scene { margin: 0; align-self: center; }
+.security-scene img { display: block; width: 100%; height: auto; }
+.security-scene figcaption { font-size: 13px; line-height: 1.6; color: var(--muted); text-align: center; margin-top: 16px; }
+.security-promise { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: 52px; padding-top: 28px; border-top: 1px solid var(--line); }
+.security-promise strong, .security-promise span { display: block; font-size: 16px; line-height: 1.6; }
+.security-promise span { margin-top: 5px; color: var(--muted); }
+.security-band { background: var(--soft); }
+.security-split { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; align-items: start; }
+.security-modes { list-style: none; padding: 0; margin: 36px 0 28px; }
+.security-modes li { display: grid; grid-template-columns: 50px 1fr; gap: 24px; padding: 28px 0; border-top: 1px solid var(--line); }
+.security-mode-number { display: inline-grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; border: 1px solid var(--primary); color: var(--primary); font-size: 13px; }
+.security-modes h3, .security-facts h3, .security-work-grid h3, .security-connection-path h3 { font-size: 24px; margin-bottom: 12px; letter-spacing: -0.02em; }
+.security-modes p, .security-facts p, .security-work-grid p, .security-connection-path p { font-size: 16px; line-height: 1.7; max-width: 800px; }
+.security-technical { display: block; font-size: 13px; color: var(--muted); margin-top: 12px; }
+.security-note { font-size: 15px; line-height: 1.7; color: var(--muted); margin: 24px 0; max-width: 900px; }
+.security-review-art { max-width: 500px; }
+.security-review-column { padding-top: 20px; }
+.security-document { margin-top: 24px; }
+.security-document .security-technical { margin: 0 0 18px; font-size: 13px; }
+.security-callout { border-left: 3px solid var(--live); padding-left: 24px; margin-top: 32px; }
+.security-callout h3 { font-size: 22px; margin-bottom: 10px; }
+.security-callout p { font-size: 16px; line-height: 1.7; }
+.security-facts article { padding: 24px 0; border-top: 1px solid var(--line); }
+.security-follow-on { margin-top: 42px; }
+.security-connection-path { display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; margin: 42px 0; }
+.security-connection-path h3 { margin-top: 24px; }
+.security-work-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 40px 64px; margin-top: 36px; }
+.security-work-grid article { border-top: 1px solid var(--line); padding-top: 24px; }
+.security-work-grid a { display: inline-block; margin-top: 16px; }
+.security-source-links { padding-left: 20px; font-size: 16px; line-height: 1.8; }
+.security-source-links a { color: var(--primary); text-decoration: underline; text-underline-offset: 4px; }
+@media (max-width: 1000px) { .security-split { gap: 36px; } }
+@media (max-width: 760px) {
+ .security-opening, .security-split, .security-promise, .security-connection-path, .security-work-grid { grid-template-columns: 1fr; gap: 28px; }
+ .security-promise { margin-top: 32px; gap: 20px; }
+ .security-modes li { grid-template-columns: 42px 1fr; gap: 16px; }
+ .security-modes h3, .security-facts h3, .security-work-grid h3, .security-connection-path h3 { font-size: 22px; }
+ .security-review-column { padding-top: 0; }
+ .approval { padding: 24px; }
+ .approval-actions { flex-wrap: wrap; }
+ .security-connection-path article { border-top: 1px solid var(--line); padding-top: 24px; }
+}
+
     </style>
   </head>
   <body class="">
@@ -1889,11 +1921,12 @@ details[open] > summary:after {
         <nav aria-label="More about Vakyartha">
           <a href="/vak">Our name</a><a href="/surfaces">Ways to use it</a
           ><a href="/security">Your control</a
-          ><a href="/architecture">Architecture</a><a href="/doctor">Doctor</a><a href="/wallpapers">Wallpapers</a><a href="/install">Get started</a>
+          ><a href="/architecture">Architecture</a><a href="/meet-doctor">Doctor</a><a href="/wallpapers">Wallpapers</a><a href="/install">Get started</a>
         </nav>
         <nav class="footer-project" aria-label="Project and policies">
           <a href="https://github.com/nranjan2code/code" target="_blank" rel="noopener noreferrer">Source code</a>
           <a href="https://github.com/nranjan2code/code/issues" target="_blank" rel="noopener noreferrer">Support</a>
+          <a href="https://www.linkedin.com/in/nisheethranjan/" target="_blank" rel="noopener noreferrer" aria-label="Connect with Nisheeth on LinkedIn (opens in a new tab)">Connect with Nisheeth</a>
           <a href="/privacy">Privacy</a>
           <a href="/terms">Terms of use</a>
         </nav>

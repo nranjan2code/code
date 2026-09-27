@@ -85,6 +85,8 @@ def main() -> None:
                 "buildCommand": None,
                 "installCommand": None,
                 "outputDirectory": ".",
+                # Static hosting only: the embedded server reserves /doctor for its API.
+                "redirects": [{"source": "/doctor", "destination": "/meet-doctor", "permanent": True}],
                 "headers": [
                     {
                         "source": "/version",
