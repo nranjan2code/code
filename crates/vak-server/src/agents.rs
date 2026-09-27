@@ -192,6 +192,72 @@ pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
     serde_json::from_str(&raw).map_err(|e| format!("invalid agents: {e}"))
 }
 
+/// The companion set the clients ship (`vak-client-ui/src/agentGlyph.ts`).
+const CHARACTERS: [&str; 8] = ["vak", "mira", "moss", "nori", "pip", "lumi", "tavi", "beni"];
+const ANIMATIONS: [&str; 3] = ["subtle", "expressive", "off"];
+const VOICES: [&str; 4] = ["default", "calm", "bright", "quiet"];
+
+/// Refuse what a save would write that this version does not accept, naming
+/// the agent.
+///
+/// Only the values a save changes are judged; a value carried over as stored
+/// is written back as it was. An agent saved by an earlier version with a
+/// value since retired (the character presets were renamed in 4.0.0) must
+/// never block creating or editing a different agent, and the clients always
+/// send the whole layer; changing that value itself must pick one this
+/// version offers.
+fn check(profiles: &[AgentDefinition], stored: &[AgentDefinition]) -> Result<(), String> {
+    type Field = fn(&AgentDefinition) -> &str;
+    if profiles.len() > 100 {
+        return Err("at most 100 agents are allowed".into());
+    }
+    let mut ids = HashSet::with_capacity(profiles.len());
+    for profile in profiles {
+        if profile.id == "vak" {
+            return Err("Vakyartha is the built-in agent; choose another id".into());
+        }
+        if profile.id.trim().is_empty() || profile.name.trim().is_empty() {
+            return Err("agent id and name are required".into());
+        }
+        if !ids.insert(profile.id.as_str()) {
+            return Err(format!("agent id '{}' is duplicated", profile.id));
+        }
+        let old = stored.iter().find(|old| old.id == profile.id);
+        let changed = |field: Field| old.is_none_or(|old| field(old) != field(profile));
+        let name = profile.name.trim();
+        let limits: [(Field, usize, &str); 6] = [
+            (|p| p.name.as_str(), 120, "name"),
+            (|p| p.personality.as_str(), 4000, "personality"),
+            (|p| p.behaviour.as_str(), 4000, "behaviour"),
+            (|p| p.responsibilities.as_str(), 2000, "responsibilities"),
+            (|p| p.instructions.as_str(), 8000, "instructions"),
+            (|p| p.voice.as_str(), 80, "voice setting"),
+        ];
+        for (field, limit, label) in limits {
+            if changed(field) && field(profile).len() > limit {
+                return Err(format!("agent '{name}': the {label} is too long"));
+            }
+        }
+        if changed(|p| p.animation.as_str()) && !ANIMATIONS.contains(&profile.animation.as_str()) {
+            return Err(format!(
+                "agent '{name}': animation must be subtle, expressive, or off"
+            ));
+        }
+        if changed(|p| p.character.as_str()) && !CHARACTERS.contains(&profile.character.as_str()) {
+            return Err(format!(
+                "agent '{name}': unknown character '{}'",
+                profile.character
+            ));
+        }
+        if changed(|p| p.voice.as_str()) && !VOICES.contains(&profile.voice.as_str()) {
+            return Err(format!(
+                "agent '{name}': voice must be default, calm, bright, or quiet"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// `trusted` is the *creating* context's own trust decision (the workspace
 /// this admin/client session is already running against), carried forward
 /// onto each profile's isolated workspace so its own privileged config
@@ -204,47 +270,6 @@ pub fn save(
     profiles: &[AgentDefinition],
     trusted: bool,
 ) -> Result<Vec<AgentDefinition>, String> {
-    if profiles.len() > 100 {
-        return Err("at most 100 agents are allowed".into());
-    }
-    let mut ids = HashSet::with_capacity(profiles.len());
-    for profile in profiles {
-        if profile.id == "vak" {
-            return Err("Vakyartha is the built-in agent; choose another id".into());
-        }
-        if profile.id.trim().is_empty() || profile.name.trim().is_empty() {
-            return Err("agent id and name are required".into());
-        }
-        if !ids.insert(profile.id.clone()) {
-            return Err(format!("agent id '{}' is duplicated", profile.id));
-        }
-        if profile.name.len() > 120
-            || profile.personality.len() > 4000
-            || profile.behaviour.len() > 4000
-            || profile.responsibilities.len() > 2000
-            || profile.instructions.len() > 8000
-        {
-            return Err(format!("agent '{}' is too large", profile.id));
-        }
-        if !matches!(profile.animation.as_str(), "subtle" | "expressive" | "off") {
-            return Err("animation must be subtle, expressive, or off".into());
-        }
-        if profile.voice.len() > 80 {
-            return Err(format!("agent '{}' voice setting is too large", profile.id));
-        }
-        if !matches!(
-            profile.character.as_str(),
-            "vak" | "mira" | "moss" | "nori" | "pip" | "lumi" | "tavi" | "beni"
-        ) {
-            return Err("unknown character preset".into());
-        }
-        if !matches!(
-            profile.voice.as_str(),
-            "default" | "calm" | "bright" | "quiet"
-        ) {
-            return Err("voice must be default, calm, bright, or quiet".into());
-        }
-    }
     let dir = cwd.join(".vak");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
@@ -259,6 +284,7 @@ pub fn save(
     let target = path(cwd);
     let temp = target.with_extension(format!("{}.tmp", uuid::Uuid::now_v7()));
     let previous = load(cwd)?;
+    check(profiles, &previous)?;
     let mut next = profiles.to_vec();
     for profile in &mut next {
         if let Some(old) = previous.iter().find(|candidate| candidate.id == profile.id) {
@@ -321,6 +347,7 @@ mod tests {
 
     #[test]
     fn profiles_round_trip_atomically() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().expect("profile workspace");
         let profiles = vec![AgentDefinition {
             id: "pip".into(),
@@ -391,6 +418,7 @@ mod tests {
 
     #[test]
     fn lifecycle_round_trips_and_admission_is_active_only() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().expect("agent workspace");
         let mut agent = AgentDefinition {
             id: "paused".into(),
@@ -413,6 +441,7 @@ mod tests {
 
     #[test]
     fn edits_increment_saved_revision() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().expect("profile workspace");
         let profile = AgentDefinition {
             id: "pip".into(),
@@ -463,6 +492,7 @@ mod tests {
 
     #[test]
     fn builtin_templates_are_all_valid() {
+        vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().expect("template workspace");
         let templates = builtin_templates();
         assert_eq!(templates.len(), 4);
@@ -478,5 +508,85 @@ mod tests {
         assert!(loaded.iter().any(|a| a.id == "writer"));
         assert!(loaded.iter().any(|a| a.id == "operator"));
         assert!(loaded.iter().any(|a| a.id == "analyst"));
+    }
+
+    fn agent(id: &str, name: &str, character: &str) -> AgentDefinition {
+        AgentDefinition {
+            id: id.into(),
+            revision: 1,
+            lifecycle: AgentLifecycle::Active,
+            name: name.into(),
+            character: character.into(),
+            personality: String::new(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+            instructions: String::new(),
+            animation: "subtle".into(),
+            voice: "default".into(),
+        }
+    }
+
+    /// A layer as a 3.x install wrote it, with a character preset 4.0.0
+    /// retired. `save` would refuse to write it, so it is written directly.
+    fn layer_with_retired_character(dir: &Path) -> AgentDefinition {
+        let retired = agent("researcher", "Research Analyst", "leaf");
+        std::fs::create_dir_all(dir.join(".vak")).expect("agent config dir");
+        std::fs::write(
+            path(dir),
+            serde_json::to_vec(&[&retired]).expect("stored layer"),
+        )
+        .expect("write stored layer");
+        retired
+    }
+
+    #[test]
+    fn an_agent_with_a_retired_value_does_not_block_creating_another() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().expect("agent workspace");
+        let retired = layer_with_retired_character(dir.path());
+        let created = agent("analyst", "Data Analyst", "tavi");
+        let saved = save(dir.path(), &[retired, created], true)
+            .expect("an untouched agent never blocks another");
+        assert_eq!(saved.len(), 2);
+        let loaded = load(dir.path()).expect("load agents");
+        assert_eq!(loaded[0].character, "leaf", "carried through as stored");
+        assert_eq!(loaded[1].id, "analyst");
+    }
+
+    #[test]
+    fn editing_an_agent_judges_only_what_the_edit_changes() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().expect("agent workspace");
+        let retired = layer_with_retired_character(dir.path());
+
+        let mut paused = retired.clone();
+        paused.lifecycle = AgentLifecycle::Paused;
+        paused.personality = "Careful".into();
+        save(dir.path(), &[paused.clone()], true)
+            .expect("an edit that keeps the stored character is accepted");
+
+        let mut renamed = paused.clone();
+        renamed.character = "wave".into();
+        let error = save(dir.path(), &[renamed], true)
+            .expect_err("a changed character must be one this version offers");
+        assert!(
+            error.contains("Research Analyst") && error.contains("wave"),
+            "the refusal names the agent and the value: {error}"
+        );
+
+        let mut fixed = paused;
+        fixed.character = "moss".into();
+        save(dir.path(), &[fixed], true).expect("a current character is accepted");
+        assert_eq!(load(dir.path()).expect("load agents")[0].character, "moss");
+    }
+
+    #[test]
+    fn a_new_agent_is_judged_in_full() {
+        let dir = tempfile::tempdir().expect("agent workspace");
+        let mut created = agent("analyst", "Data Analyst", "tavi");
+        created.instructions = "x".repeat(8001);
+        let error = save(dir.path(), &[created], true).expect_err("oversized instructions");
+        assert!(error.contains("Data Analyst"), "{error}");
+        assert!(load(dir.path()).expect("load agents").is_empty());
     }
 }
