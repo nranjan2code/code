@@ -1,6 +1,42 @@
 # 26 — Learning loop: memory write-path + skill proposals
 Status: implemented in 2.0.0
 
+## Current write and review path
+
+```mermaid
+flowchart LR
+    A[Agent run] --> B{Tool or post-run reflection}
+    B --> C[remember]
+    B --> D[propose_skill]
+    B --> E[Bounded reflection proposals]
+    C --> F[Workspace MEMORY.md]
+    E --> F
+    D --> G[Skill review queue]
+    E --> G
+    F --> H[session_search curated hit]
+    G --> I{Human review}
+    I -- Promote --> J[Discoverable SKILL.md]
+    I -- Reject --> K[Remove proposal]
+```
+
+`RememberTool` accepts a note, optional kind and tag. Its exposed kind
+vocabulary is `fact`, `decision`, `preference`, `reference`, `invariant`,
+defaulting to `fact`; the lower-level store also accepts `note` and
+`procedural`. It writes a block with timestamp and originating session id
+through `memory::append_note`. `ProposeSkillTool` writes a draft to the review
+queue; it does not install a skill. Permission and channel capability checks
+apply before either effect. A clean gateway completion can also run bounded
+reflection, deduplicating near-identical notes and sending skill drafts
+through the same human queue. Reflection is best effort and does not alter
+the reply.
+
+`vak_core::consolidation::consolidate_memory` is a separate, explicitly
+invoked workspace pass. It promotes repeated or modal procedural notes to
+`invariant` notes, reports conflicts among notes sharing a tag, and distills
+structured entity records from certain fact patterns. It uses deterministic
+text rules, so its conflict report is a lead for human review, not proof of a
+contradiction. It is not an overnight job and does not promote skills.
+
 Closes pillars M2 (memory write-path) and G5 (self-improving skills behind
 review). Hermes differentiates itself with a closed loop — experience becomes
 durable knowledge. We implement the loop with two model-invoked tools and one
@@ -32,16 +68,18 @@ run completes ── model decides something is worth keeping
    and confirmations land on the ledger as tool_use/tool_result entries.
    Promoted skills enter discovery, whose names+descriptions are captured in
    every later FrozenContract.
-4. **No ambient cost.** Nothing is injected into prompts by this feature;
-   recall flows exclusively through `session_search`, which now also ranks
-   memory blocks (with an outranking bonus) against transcripts.
+4. **No standing prompt injection.** Nothing is injected into prompts by the
+   note store; recall flows through `session_search`, which ranks memory
+   blocks against transcripts. When enabled, post-run reflection makes an
+   additional model call after a clean gateway completion.
 
 ## Storage
 
 ```
-<home>/memory/<hash_cwd>/MEMORY.md        # notes, per workspace, plain md
-<home>/skill-proposals/<hash_cwd>/<id>.md # pending proposals, SKILL.md shape
-<home>/skills/<name>/SKILL.md             # promoted (user-level discovery)
+<agent home>/memory/<hash_cwd>/MEMORY.md        # workspace notes, plain md
+<agent home>/memory/user/USER.md               # profile tier
+<agent home>/skill-proposals/<hash_cwd>/<id>.md # pending drafts
+<agent home>/skills/<name>/SKILL.md             # promoted discovery
 ```
 
 MEMORY.md block grammar (tolerant to manual edits):
@@ -59,7 +97,7 @@ text of the preceding block — hand-edits never lose data.
 
 | Tool | Args | Effect | Permission |
 |---|---|---|---|
-| `remember` | `note` (req), `kind` (fact\|decision\|preference\|reference), `tag` | append block | Allowed in WorkspaceWrite+ (journaling into vak's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
+| `remember` | `note` (required), `kind` (fact\|decision\|preference\|reference\|invariant), `tag` | append block | Allowed in WorkspaceWrite+ (journaling into vak's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
 | `propose_skill` | `name`, `description`, `instructions` | queue file | Same |
 
 The permission engine classifies both explicitly so they do not fall into

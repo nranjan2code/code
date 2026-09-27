@@ -1,8 +1,46 @@
 # 07 — System prompt
 Status: implemented in 2.0.0
 
-Current seed: `crates/vak-core/src/system-prompt.md` (~770 tokens, block-marked),
-plus a runtime `Surface:` line of ~40 and any appended surface notes. Layer composition, editing surfaces, and
+## Current contract
+
+The shipped seed is `crates/vak-core/src/system-prompt.md`. Its block markers
+split identity, operating rules, guardrails, capability, presentation and
+sandbox guidance. `vak_core::prompts::seed` parses that file; `resolve`
+combines editable layers with code-owned runtime sections (doc 45). The
+result has a stable `text` prefix and a per-turn `tail`, rather than one
+ever-growing system string.
+
+```mermaid
+flowchart LR
+    A[Block-marked seed] --> D[Prompt layer resolver]
+    B[Shared, project, surface, bot, chat, agent layers] --> D
+    C[Admitted tools, skills, MCP and surface facts] --> D
+    D --> E[Stable prefix in frozen session contract]
+    D --> F[Temporal and epistemic tail]
+    F --> G[Per-turn request assembly]
+    E --> G
+    H[Intent, work and conversation context] --> G
+    G --> I[Provider request]
+```
+
+The prefix says what this agent can actually call, where the result will be
+read, and the human-editable guidance that survived trust resolution. The
+tail carries temporal and epistemic stance; request assembly places it with
+logged per-turn intent, work and conversation sections before the user's
+last directive. Prompt drift compares the stable prefix. Code-owned tool
+descriptions and schemas remain the callable source of truth; skills are
+documents reached through `skill`, and deferred tools are loaded through
+`find_tools`.
+
+The seed is guidance, not an enforcement boundary. The permission engine,
+tool broker and sandbox decide whether an effect may execute. Its guardrails
+instruct the model to treat tool output as data, protect credentials, and
+confirm effects outside the workspace or with irreversible impact. The
+literal seed and the tests in `vak-core` are the authority for its current
+wording; the historical diff notes below explain why it evolved.
+
+Current seed: `crates/vak-core/src/system-prompt.md` (block-marked),
+plus a runtime `Surface:` line and any appended surface notes. Layer composition, editing surfaces, and
 trust are specified in doc 45.
 Editable per layer; see doc 45. `.vak/SYSTEM.md` remains as a legacy
 project-layer `identity` override.

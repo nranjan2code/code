@@ -1,6 +1,23 @@
 # 10 — Flows (static DAGs)
 Status: implemented in 2.0.0
 
+Static flows are validated DAGs, executed by `vak-flow::Executor`. Their
+definition, execution state and node outputs are distinct from the parent
+session's append-only work events. A flow node never bypasses ordinary tool
+authorization (invariant 16).
+
+```mermaid
+flowchart LR
+    A[TOML definition] --> B[Parse and validate]
+    B --> C[Kahn topological layers]
+    C --> D[Run each layer concurrently]
+    D --> E[Authorize node effect]
+    E --> F[Persist node result]
+    F --> G{More layers?}
+    G -- Yes --> D
+    G -- No --> H[Return completed, failed or aborted]
+```
+
 ## Format
 
 `.vak/flows/<name>.toml` (project) or `data_home()/flows/` (user):
@@ -33,11 +50,18 @@ timeout_ms), `approval` (message → human gate via Approver), `merge`
 (concatenates upstream outputs; always runs, emitting a partial-outcome
 report when upstream failed).
 
+Each `NodeDef` also has `deps`, `required` (default `true`) and optional
+`accept` shell checks. An `accept` command runs after its node succeeds;
+every check must exit successfully for the node to count as complete. The
+executor authorizes these checks as brokered Bash calls.
+
 ## Semantics
 
 - **Validate before run**: unique ids, known types, required fields per type,
-  unknown/self deps, cycles (Kahn). `{{dep}}` template references imply
-  dependencies automatically; unknown references are validation errors.
+  unknown deps, cycles (Kahn). `{{dep}}` template references in prompts and
+  commands imply dependencies automatically; unknown references are errors.
+  A self-reference currently does not add an implicit self-dependency, while
+  an explicit self-dependency is rejected. `NodeDef` rejects unknown fields.
 - **Layered execution**: topological layers run sequentially; nodes within a
   layer run concurrently (JoinSet). Agent nodes spawn child sessions with
   `parent_session_id` lineage — same narrowing rules as workers.
@@ -45,10 +69,18 @@ report when upstream failed).
   flow and marks every transitive dependent `skipped` in the ledger;
   `required = false` — node fails, dependents are skipped, but merge nodes
   still produce partial-outcome reports.
-- **Frozen definition + resume**: each run persists a state ledger JSON
-  (`data_home()/flow-runs/<flow>/<run>.json`) containing the raw TOML frozen
-  at first run plus per-node status/output. `flow run <name> --resume`
-  replays only non-completed nodes.
+- **Frozen definition + resume**: each run persists a JSON `FlowState` at
+  the caller's `state_path`, with run id, name, frozen TOML, start time,
+  optional outcome, and per-node status/output. The CLI's flow run chooses a
+  path under the session home's `flow-runs`; `--resume` skips completed nodes
+  and revisits pending/running ones. A prior failed/skipped node remains so.
+
+The executor starts a parent work item when one is supplied, records a
+`FlowNode` evidence reference after each completed node, and moves the work
+item to `ReadyForVerification` on success. Required failure marks transitive
+dependents skipped and returns immediately with settled outputs. Optional
+failure leaves its node failed; ordinary dependents skip it, while `merge`
+can still report partial upstream results. Cancellation returns `Aborted`.
 
 ## CLI
 

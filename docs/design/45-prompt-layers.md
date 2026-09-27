@@ -1,12 +1,44 @@
 # 45 — Editable prompt layers
 Status: implemented in 2.0.0
 
+## Current composition algorithm
+
+`vak_core::prompts::resolve` receives layers ordered broadest to narrowest
+and returns `Resolution { text, tail, descriptors, blocks }`.
+
+```mermaid
+flowchart TD
+    A[Seed] --> B[Shared]
+    B --> C[Project]
+    C --> D[Surface]
+    D --> E[Bot]
+    E --> F[Chat]
+    F --> G[Agent role]
+    G --> H[Resolve each editable block]
+    H --> I[Add code-owned contracts and inventories]
+    I --> J[Stable text and provenance descriptors]
+    I --> K[Per-turn temporal and epistemic tail]
+```
+
+For `identity` and `operating_rules`, the resolver walks the chain backward
+and chooses the first present block. It concatenates non-empty Agent
+instructions and the `guardrails` and `surface_note` lists in chain order;
+list items are trimmed and de-duplicated by normalized text. Each contributing
+layer gets a digest descriptor. Shadowed replacement blocks get none. A
+present empty replacement file is intentional and wins over a broader file.
+The assembled stable text orders identity, code-owned capability,
+presentation and sandbox contracts, operating rules, Agent instructions,
+guardrails, then the generated surface and live inventories. Temporal and
+epistemic text goes to `tail`, outside the stable prefix and its drift
+fingerprint. Descriptors sort by block and layer breadth, preserving the
+composition order within a block.
+
 ## Problem
 
-The system prompt is the one piece of agent configuration a user cannot
-touch. Everything else — providers, permissions, MCP servers, hooks, skills,
-plugins, voice — resolves through the shared/project/scoped chain in doc 44
-and is editable per layer with provenance and reset. The prompt is a single
+Before this design shipped, the prompt was the one piece of agent
+configuration a user could not edit safely. Everything else — providers,
+permissions, MCP servers, hooks, skills, plugins, voice — resolved through
+the shared/project/scoped chain in doc 44. The prompt was a single
 `include_str!` constant plus an all-or-nothing `.vak/SYSTEM.md` replacement.
 
 That gap costs three separate things:
@@ -33,7 +65,7 @@ That gap costs three separate things:
 
 ## Design
 
-### One prompt, six blocks
+### Editable and code-owned blocks
 
 The monolith is split into named blocks, because "can the user edit this?" has
 three different answers inside one document today.

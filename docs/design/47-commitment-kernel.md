@@ -1,10 +1,11 @@
 # 47 — The commitment kernel
 
-Status: **all phases shipped and wired; strands and the control plane shipped
-with resolver version 2; the tier-1 reader was rewritten and the runtime
-wiring corrected in resolver version 4** (the reviews that led to them are
-summarised under *What the review changed* and *What the second review
-changed*).
+Status: **shipped**. The current deterministic reader is
+`vak_intent::RESOLVER_VERSION = 5`. The historical reviews below explain why
+it changed; this document describes the current implementation. One known
+boundary remains: `full-access` bypasses the permission engine's approval
+gate, so the kernel's irreversible-work approval floor cannot force a prompt
+there.
 
 | Phase | Delivers | Governs the turn through |
 |---|---|---|
@@ -22,8 +23,34 @@ changed*).
 
 Every part is switchable off with `[intent] enabled = false` and
 `[commitment] enabled = false`, which together reproduce the runtime's
-pre-kernel behaviour exactly: `DomainSet::All` means *everything*, and only a
-disabled kernel produces it.
+pre-kernel behaviour exactly. `DomainSet::All` means *everything*; disabling
+capability slicing also produces it.
+
+## Runtime map
+
+```mermaid
+flowchart LR
+    A[Human request and trusted channel facts] --> B[Core gathers workspace and session facts]
+    B --> C[vak-intent: segment and resolve strands]
+    C --> D{Reading weak?}
+    D -- Yes, configured --> E[Core: budgeted classifier dispatch]
+    D -- No or unavailable --> F[Resolved intent]
+    E --> F
+    F --> G[Plan commitment episodes and apply live envelopes]
+    G --> H[Record IntentRecord in session ledger]
+    H --> I[Compose capability surface, route, context and approval posture]
+    I --> J[Permission engine and tool broker]
+    J --> K[Episode evidence and commitment ledger]
+    K --> L[Portfolio maintenance and delivery]
+```
+
+The crates split policy from effects. `vak-intent` resolves a reading and
+derives a narrowing engagement without dispatching a provider or tool.
+`vak-commit` owns the durable event ledger, projection, satisfaction rules and
+priority calculation. `vak-core` supplies runtime facts, performs optional
+classification, admits work, enforces gates, and runs upkeep. Session entries
+record model-visible intent text; commitment events record obligations and
+their outcomes. Neither ledger stands in for the other.
 
 ## Problem
 
@@ -205,6 +232,17 @@ other strand opens one only when it is itself durable and confidently read.
 The model-visible note lists the parts in order so the model knows there are
 *k* things and which are still open.
 
+The commitment decision is per strand, before anything is written. In
+`commitments::plan_episodes`, an existing open commitment on the strand's
+thread wins even when this turn's horizon is short. An explicit replacement
+of a thread with an open commitment opens a successor and links the old one
+as superseded. Otherwise a new commitment opens only if the strand's posture
+requests one and its reading is confident enough to support a durable
+obligation. `begin_episodes` then appends an `EpisodeStarted` for each planned
+strand in order; if it finds an orphan episode from a prior crashed run, it
+closes that episode as blocked before starting the next one. A ledger failure
+skips that strand's episode and is logged; it does not cancel the turn.
+
 ### Resolution cascade
 
 Cheapest first, stopping once confidence clears the bar.
@@ -280,12 +318,51 @@ ever read from words the request contains, so a weak part keeps them: a
 reading too weak to narrow capability is never too weak to raise caution,
 and "force push to the production branch" asks first whether or not its
 verb was understood. `DomainSet::All` keeps its one meaning,
-everything, and only a disabled kernel produces it (design 68 Principle 6:
+everything (design 68 Principle 6:
 when a decision cannot be made confidently, send less and give the model a
 way to ask for more). No reading, confident or not, removes a capability:
 admission is policy only (docs/design/41-capability-registry.md), and the
 reading decides which admitted tools are loaded versus deferred behind
 `find_tools`.
+
+#### Resolver algorithm as implemented
+
+```mermaid
+flowchart TD
+    A[Prepare instruction; set pasted material aside] --> B[Segment clauses and group work clauses into parts]
+    B --> C[Extract signals for each part]
+    C --> D[Combine declared axes with signals; build reading]
+    D --> E{Below provisional threshold?}
+    E -- Yes --> F[Orienting engagement; preserve observed modality, attendance and stated risk]
+    E -- No --> G{Act slice reaches acceptance threshold?}
+    G -- Yes --> H[Load confident capability slice]
+    G -- No --> I[Keep orientation floor and defer discovery]
+    F --> J[Assign strand relation and cross-turn lineage]
+    H --> J
+    I --> J
+    J --> K[Compose strands and record provenance]
+    K --> L{Any weak or provisional part; escalation enabled?}
+    L -- Yes --> M[Core attempts classified dispatch and folds its result cautiously]
+    L -- No --> N[Use deterministic result]
+    M --> O[Engagement for the turn]
+    N --> O
+```
+
+`resolve` is a pure function of the request, declared axes, authority and
+resolver config. For each part it calls `assemble`, derives an engagement,
+and gives the strand an id from the host's turn id. A weak part falls back to
+`Reading::general` while retaining its observed attendance and modalities and
+any stated higher stakes or evidence requirement. A provisional part may
+raise caution but does not qualify for a confident capability slice. The
+composite keeps a turn-level reading for consumers needing one answer and
+uses `Engagement::compose` for its operating limits.
+
+The returned `Resolution` is either `Settled` or `Escalate { partial, reason }`.
+Core can decline or fail the classifier dispatch and still use `partial`.
+`apply_classification` cannot lower caution established by deterministic
+signals; a classifier answer without confidence does not earn capability
+slicing. The lexicon digest test pins the signal tables and segmentation
+vocabulary to resolver version 5.
 
 ### Authority: the autonomy spectrum
 
@@ -328,8 +405,11 @@ must not grant itself the right to act without asking, spend the user's
 credentials classifying, or remove the approval floor the kernel raises for
 irreversible work.
 
-Irreversible work reaches a human whatever was delegated. A grant to act
-without asking is not a grant to act without anyone ever knowing.
+Under a gated permission mode, irreversible work reaches a human whatever
+was delegated. `full-access` is an exception: the permission engine allows
+calls without an approval gate, so this floor alone cannot prompt there. A
+grant to act without asking is not a grant to act without anyone ever
+knowing.
 
 ### Human-in-the-loop: four modes
 
@@ -377,10 +457,30 @@ check runs in the server process, outside any sandbox, so a criterion that
 names an absolute path, a `..` step or a symlink out of the tree is not
 checked at all.
 
+```mermaid
+stateDiagram-v2
+    [*] --> Proposed
+    Proposed --> Active
+    Active --> Suspended
+    Suspended --> Active
+    Active --> Blocked
+    Blocked --> Active
+    Active --> Satisfying
+    Satisfying --> Active
+    Satisfying --> Closed
+    Active --> Superseded
+    Active --> Abandoned
+    Active --> Expired
+    Closed --> [*]
+    Superseded --> [*]
+    Abandoned --> [*]
+    Expired --> [*]
 ```
-Proposed → Active ⇄ Suspended ⇄ Blocked → Satisfying → Closed{verdict}
-                        ↘ Superseded / Abandoned / Expired ↗
-```
+
+This shows the conceptual lifecycle. The event ledger in
+`vak-commit/src/ledger.rs` defines the exact accepted event transitions and
+validates them at append time; consumers should use its projected `Phase`
+rather than infer state from this diagram.
 
 `Verdict::Unknown` is mandatory, not a nicety. Without it the only way to tidy
 an untracked commitment is to assert an outcome nobody verified.
@@ -457,6 +557,23 @@ is rewiring rather than new infrastructure:
   that dominates every computed factor. Every priority decomposes into named
   components. An opaque scheduler in a system whose thesis is auditability
   would be the one place you could not ask "why did it do that".
+
+`vak_commit::portfolio::prioritize` exposes the actual additive score:
+
+| Component | Current contribution |
+|---|---:|
+| User pin | `1000` |
+| Stakes | inert `1`, reversible `2`, costly `3`, irreversible `4` |
+| Deadline | `min(24 / hours_left, 50)` while the expiry is in the future |
+| Staleness | `ln(1 + idle_hours)` when idle time is positive |
+| Progress | `2 × passed_criteria / all_criteria` when criteria exist |
+| Review due | `3` after `review_every_hours` |
+
+Terminal, suspended, blocked, over-budget, expired and stalled commitments
+receive a `withheld` reason. `rank` puts runnable commitments first, then
+sorts by descending score and commitment id for a stable tie-break. A pin
+changes priority, but never makes withheld work runnable. `next` returns the
+highest ranked runnable commitment.
 
 ### Delivery posture
 

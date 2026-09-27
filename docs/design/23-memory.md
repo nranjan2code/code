@@ -1,6 +1,14 @@
 # 23 — Memory & cross-session recall
 Status: implemented in 2.0.0
 
+The memory home passed to `vak-core::memory` is the owning Agent's private
+home (doc 64). Workspace notes live at
+`<agent home>/memory/<hash_cwd>/MEMORY.md`; profile notes live at
+`<agent home>/memory/user/USER.md`. Session search also reads JSONL ledgers
+and returns their hits through the same search interface. This document
+describes the shipped recall and note store; doc 26 describes learning and
+skill review.
+
 Pillar 2 of the platform plan (see `22-gateway.md` intro): Hermes' crown
 differentiator is not the loop — it is that **nothing learned is ever
 stranded**. Past sessions become retrievable context via a model-visible
@@ -13,33 +21,52 @@ new dependencies because our session store is already structured JSONL.
 model calls session_search {query, limit?}
         │
 vak_session::search::search(home, cwd, query, limit, exclude)
-        │  scans <home>/sessions/<hash_cwd(cwd)>/*.jsonl
-        │  scores user+assistant texts (term frequency w/ saturation,
-        │  whole-phrase bonus), newest-first tiebreak
+        │  scans workspace JSONL ledgers through an mtime-keyed cache
+        │  ranks message text alongside curated memory/profile blocks
         ▼
 top-N hits: {session, ts, role, score, snippet}
         │
 returned as an ordinary tool result → appended to the ledger
 ```
 
-Invariant 1 holds by construction: the answer reaches the model only as a
-logged `tool_result`; nothing is injected outside the chain.
+`search_extended` and `search_all_extended` accept parsed memory blocks as
+`ExternalDoc`s. A workspace search excludes the current session and the
+trash; cross-project search traverses session directories and annotates
+hits with the project hash. The model sees a search answer only through a
+logged `tool_result`, preserving invariant 1. The cache accelerates reads;
+the JSONL ledgers remain authoritative.
+
+```mermaid
+flowchart LR
+    A[Query] --> B[Tokenize and normalize]
+    B --> C[Workspace or all-project ledger scan]
+    B --> D[Curated memory and profile blocks]
+    C --> E[Score and rank]
+    D --> E
+    E --> F[Exclude current and trashed sessions]
+    F --> G[Bounded snippets and top hits]
+    G --> H[Tool result in session ledger]
+```
 
 ### Scoring
 
 Deterministic, dependency-free:
 
 - Query tokens lowercased, alphanumeric, length ≥ 2.
-- Per-hit score: `Σ over unique terms: 1 + ln(count)` (saturating), plus
-  `+3` when the full phrase occurs verbatim (case-insensitive), plus a
-  small recency nudge (`ts` descending rank × 0.01).
-- Bounded work: at most the trailing `MAX_SCAN_LINES = 4000` message lines
-  per ledger, `DEFAULT_LIMIT = 8` hits, snippets ≤ 240 chars centered on
-  the first matched term.
+- `score_normalized` uses BM25-style saturated term frequency with
+  `k1 = 1.2`, `b = 0.75`, and an approximate average length of 100 chars.
+  The current term weight is the constant `ln(2)`; it does not calculate a
+  corpus-specific IDF. A full phrase adds `3`; indexed entity matches can
+  multiply a term contribution by `4`.
+- Curated `ExternalDoc` memory hits add `2.5` to their base text score.
+  `finalize` adds a small recency tie-break (`0.01`) and returns the requested
+  top hits. `DEFAULT_LIMIT = 8`, caller limits clamp to 1–50, and snippets
+  are bounded to 240 characters.
 
-An incremental index (per-ledger mtime-keyed cache) can slot in behind the
-same function signature later; scan-first keeps v1 honest about relevance
-and simple.
+The per-ledger mtime-keyed cache is shipped in `vak-session::index`; a changed
+ledger is visible on the next query. `vak-session::search` defines the
+ranking and exclusion behavior, so the CLI, server and agent tool do not
+maintain competing scorers.
 
 ## Surfaces
 
@@ -47,13 +74,16 @@ and simple.
 |---|---|
 | Agent loop | `session_search` tool, injected in `Core::run_turn_with` next to task/MCP |
 | TUI/desktop/server/admin | `GET /search?q=…&limit=…` over the same function; Admin exposes scoped CRUD and cleanup controls |
-| Future | compaction integration: auto-cite prior sessions in summaries |
+| Context | the working-set planner may retrieve relevant history under its context profile (doc 68) |
 
 ## Configuration
 
 ```toml
 [memory]
 search_enabled = true   # default; false removes the tool from the loop
+write_enabled = true    # expose remember when permissions also allow it
+reflection = false     # post-run best-effort proposals when enabled
+skill_proposals = true # expose propose_skill when permitted
 ```
 
 Privileged rules do not apply (read-only, workspace-scoped), but unknown
@@ -67,6 +97,10 @@ keys still warn per convention.
   and are legitimate knowledge.
 - Search reads only; it never mutates ledgers, and respects the frozen
   contract (no rewriting, branching untouched).
+- `forget` and `amend` rewrite only the curated Markdown note store under a
+  per-store lock and atomic replacement. They do not rewrite session JSONL.
+  A note id is the FNV-1a hash of its header line, so changing a header
+  intentionally changes its id.
 
 ## Operational invariants (2026-08)
 

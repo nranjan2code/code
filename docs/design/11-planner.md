@@ -4,6 +4,10 @@ Status: implemented in 2.0.0
 For open-ended tasks where a hand-authored flow does not exist,
 `vak plan "<task>" [--yes]` invokes the dynamic planner.
 
+`vak-flow::planner::plan_and_run` produces a candidate static flow and hands
+it to the same validator and executor as doc 10. The planner has no separate
+tool-dispatch escape hatch.
+
 ## Loop
 
 ```
@@ -37,10 +41,41 @@ task + tool catalog ──► planner model ──► candidate TOML DAG
 - **Bounded replan**: max 1 retry; seeded with settled
   outputs ("do not redo this work") and the failure reason. Budget exhausted
   ⇒ `Failed` with the last failing node.
-- Per-attempt state ledgers under `data_home()/flow-runs/plan-*.json` freeze
-  the planner's TOML for audit.
+- Per-attempt state ledgers under
+  `<sessions_home>/flow-runs/plan-<id>-<attempt>.json` freeze the planner's
+  sanitized TOML for audit.
 - Planner system prompt is compact (~350 tokens) and covered by the prompt
   diff discipline (docs/design/07-prompt.md policy).
+
+### Exact attempt algorithm
+
+```mermaid
+flowchart TD
+    A[Task and admitted tool catalog] --> B[Planner model call]
+    B --> C{TOML extracted?}
+    C -- No --> X[PlanningFailed]
+    C -- Yes --> D[Sanitize basic strings]
+    D --> E{parse_flow validates DAG?}
+    E -- No --> X
+    E -- Yes --> F[Freeze FlowState and execute]
+    F --> G{Outcome}
+    G -- Completed --> H[Completed]
+    G -- Aborted --> I[Aborted]
+    G -- Failed on attempt one --> J[Seed task with settled outputs and failure]
+    J --> B
+    G -- Failed on attempt two --> K[Failed]
+```
+
+There are at most two **plan executions** (`MAX_ATTEMPTS = 2`). Each planner
+model call may make up to three attempts on retryable provider errors, with
+cancel-aware backoff starting at 500 ms and honoring `Retry-After`. It sends
+no tools, requests up to 4096 output tokens, and disables provider thinking
+for the TOML response. A missing, invalid or unparsable plan returns
+`PlanningFailed` immediately; the second plan is reserved for a valid plan
+whose execution failed. Replanning includes completed node outputs and marks
+other prior nodes so the model can avoid repeating them. Each accepted plan
+gets its own frozen `FlowState`, including the sanitized TOML and per-node
+results.
 
 ## v1 limits
 
