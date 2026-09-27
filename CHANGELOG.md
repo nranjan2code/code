@@ -1,3 +1,8 @@
+## 5.2.1 — 2026-09-28
+
+- Refine presentation cards across research, tables, charts, timelines and other modes with clearer branded surfaces, better narrow-screen fit, readable controls, and keyboard-accessible citations.
+- Correct research citation indexing and improve source labels, dates, and citation details.
+
 ## 5.2.0 — 2026-09-27
 
 - Read and write PDF files with `vak-pdf`, a new engine written from the

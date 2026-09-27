@@ -13,7 +13,7 @@ A local-first agent for work that crosses code, documents, research, and everyda
 
 [Website](https://vakyartha.com) · [Get started](#get-started) · [Use Vakyartha](#use-vakyartha) · [Settings](#settings) · [Administration](#administration) · [Docs](#documentation)
 
-[![Version](https://img.shields.io/badge/version-5.2.0-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.2.1-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](LICENSE)
 
