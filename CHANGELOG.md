@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.1.3 — 2026-09-27
+
+- Add daylight and dusk mobile wallpapers, composed for phone lock screens
+  with all eight characters and space for the clock.
+- Publish all desktop and mobile wallpaper sizes on the public website at
+  `/wallpapers`, with downloads available without sign-in.
+
 ## 5.1.2 - 2026-09-27
 
 - Rebuild the public website around everyday examples with short copy,
