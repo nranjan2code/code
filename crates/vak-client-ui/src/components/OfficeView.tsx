@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, Show } from "solid-js";
 import * as api from "../api";
 import Redline from "./OfficeRedline";
 import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../officeCells";
@@ -59,6 +59,14 @@ export default function OfficeView(props: {
   const [editText, setEditText] = createSignal("");
   const [savingEdit, setSavingEdit] = createSignal(false);
   const [editError, setEditError] = createSignal<string | null>(null);
+  const [showPresentation, setShowPresentation] = createSignal(false);
+  const [presentationIndex, setPresentationIndex] = createSignal(0);
+  const [presentationUnits, setPresentationUnits] = createSignal<api.OfficeUnit[]>([]);
+  const [presentationLoading, setPresentationLoading] = createSignal(false);
+  const [presentationError, setPresentationError] = createSignal<string | null>(null);
+  const [showNotes, setShowNotes] = createSignal(false);
+  let presentationRoot: HTMLDivElement | undefined;
+  let presentationRequest = 0;
   let request = 0;
 
   const select = (anchor: string | null) => {
@@ -93,6 +101,8 @@ export default function OfficeView(props: {
   };
 
   createEffect(on(() => [props.source.path, props.source.sessionId, props.source.candidateId, props.focus], () => {
+    presentationRequest += 1;
+    setShowPresentation(false);
     setMeta(null);
     setUnits([]);
     setStructure(null);
@@ -200,8 +210,94 @@ export default function OfficeView(props: {
     finally { setSavingEdit(false); }
   };
 
+  const deckSlides = createMemo(() => {
+    const groups: { anchor: string; title: string; units: api.OfficeUnit[] }[] = [];
+    for (const unit of presentationUnits()) {
+      const anchor = unit.anchor.split("/")[0];
+      let slide = groups[groups.length - 1];
+      if (!slide || slide.anchor !== anchor) {
+        slide = { anchor, title: "", units: [] };
+        groups.push(slide);
+      }
+      slide.units.push(unit);
+      if (unit.kind === "slide") slide.title = unit.text.replace(/^Slide \d+: /, "");
+    }
+    return groups;
+  });
+  const showSlide = (index: number) => {
+    const slides = deckSlides();
+    const target = Math.max(0, Math.min(index, slides.length - 1));
+    setPresentationIndex(target);
+  };
+  const startPresentation = async () => {
+    setShowPresentation(true);
+    setPresentationIndex(0);
+    setShowNotes(false);
+    setPresentationError(null);
+    setPresentationUnits([]);
+    setPresentationLoading(true);
+    const generation = ++presentationRequest;
+    // Fullscreen must be requested while the click still has user activation.
+    void presentationRoot?.requestFullscreen?.().catch(() => undefined);
+    try {
+      const collected: api.OfficeUnit[] = [];
+      let from: number | null = 0;
+      while (from !== null) {
+        const page: api.OfficeProjection = await api.readOfficeProjection(props.source, from);
+        if (generation !== presentationRequest) return;
+        collected.push(...page.units);
+        from = page.next;
+      }
+      setPresentationUnits(collected);
+    } catch (cause) {
+      if (generation === presentationRequest) setPresentationError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (generation === presentationRequest) setPresentationLoading(false);
+    }
+  };
+  const stopPresentation = () => {
+    presentationRequest += 1;
+    setShowPresentation(false);
+    if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+  };
+  createEffect(() => {
+    if (!showPresentation()) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (["ArrowRight", "PageDown", " "].includes(event.key)) { event.preventDefault(); showSlide(presentationIndex() + 1); }
+      else if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); showSlide(presentationIndex() - 1); }
+      else if (event.key === "Home") { event.preventDefault(); showSlide(0); }
+      else if (event.key === "End") { event.preventDefault(); showSlide(deckSlides().length - 1); }
+      else if (event.key === "Escape") stopPresentation();
+    };
+    window.addEventListener("keydown", onKey);
+    const onFullscreenChange = () => { if (!document.fullscreenElement && showPresentation()) stopPresentation(); };
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    onCleanup(() => { window.removeEventListener("keydown", onKey); document.removeEventListener("fullscreenchange", onFullscreenChange); });
+  });
+
   return (
-    <div class="office-view">
+    <div classList={{ "office-view": true, "office-presentation-active": showPresentation() }} ref={presentationRoot}>
+      <Show when={showPresentation()}>
+        {(() => {
+          const slides = () => deckSlides();
+          const slide = () => slides()[presentationIndex()];
+          return <section class="office-presentation" aria-label="Presentation slide">
+            <header><span>{props.fileName}</span><span>{slides().length ? `Slide ${presentationIndex() + 1} of ${slides().length}` : "Presentation"}</span><button type="button" onClick={stopPresentation}>Exit presentation</button></header>
+            <main onClick={() => showSlide(presentationIndex() + 1)}>
+              <Show when={presentationLoading()}><p role="status">Preparing slides…</p></Show>
+              <Show when={presentationError()}>{(message) => <p role="alert">Could not prepare the presentation: {message()}</p>}</Show>
+              <Show when={slide()}>{(current) => <>
+                <Show when={current().title}><h1>{current().title}</h1></Show>
+                <For each={current().units.filter((unit) => unit.kind !== "slide" && unit.kind !== "notes" && !(unit.kind === "shape" && unit.text === current().title))}>
+                  {(unit) => <div class="office-presentation-shape"><For each={unit.text.split(PARAGRAPH_BREAK)}>{(paragraph) => <p><Redline text={paragraph} /></p>}</For></div>}
+                </For>
+              </>}</Show>
+            </main>
+            <Show when={showNotes() && slide()?.units.some((unit) => unit.kind === "notes")}><aside class="office-presentation-notes"><For each={slide()?.units.filter((unit) => unit.kind === "notes")}>{(unit) => <p>{unit.text}</p>}</For></aside></Show>
+            <footer><button type="button" disabled={presentationIndex() === 0} onClick={() => showSlide(presentationIndex() - 1)}>Previous</button><button type="button" disabled={presentationIndex() >= slides().length - 1} onClick={() => showSlide(presentationIndex() + 1)}>Next</button><button type="button" onClick={() => setShowNotes(!showNotes())}>{showNotes() ? "Hide notes" : "Show notes"}</button><span>Use ← and → to navigate · Esc to exit</span></footer>
+          </section>;
+        })()}
+      </Show>
       <Show when={meta()}>{(info) => (
         <>
           <div class="office-view-facts">
@@ -215,6 +311,7 @@ export default function OfficeView(props: {
               <Show when={info().vocabulary !== "pdf"}><button type="button" class="btn sm" onClick={() => setTab("structure")}>Show structure</button></Show>
             </div>
           </Show>
+          <Show when={info().vocabulary === "power_point"}><button type="button" class="btn sm" onClick={() => void startPresentation()}>Run presentation</button></Show>
           <div class="office-view-tabs" role="tablist" aria-label="Views of this file">
             <button type="button" role="tab" aria-selected={tab() === "content"} classList={{ active: tab() === "content" }} onClick={() => setTab("content")}>{MAIN_TAB[info().vocabulary]}</button>
             <Show when={info().vocabulary !== "pdf"}><button type="button" role="tab" aria-selected={tab() === "structure"} classList={{ active: tab() === "structure" }} onClick={() => setTab("structure")}>Structure</button></Show>
