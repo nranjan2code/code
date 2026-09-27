@@ -990,6 +990,16 @@ export function readFile(path: string): Promise<FileResponse> {
   return req(`/fs/file?path=${encodeURIComponent(path)}`);
 }
 
+export function readExecutionArtifact(sessionId: string, executionId: string, path: string): Promise<FileResponse> {
+  return req(`/sessions/${encodeURIComponent(sessionId)}/sandbox/executions/${encodeURIComponent(executionId)}/artifact?path=${encodeURIComponent(path)}`);
+}
+
+export async function readExecutionArtifactRaw(sessionId: string, executionId: string, path: string): Promise<string> {
+  const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/executions/${encodeURIComponent(executionId)}/artifact/raw?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return URL.createObjectURL(await response.blob());
+}
+
 /** Authenticated raw bytes for browser-native artifact viewers/downloads. */
 export async function readFileRaw(path: string): Promise<string> {
   const response = await authFetch(`/fs/file/raw?path=${encodeURIComponent(path)}`);
@@ -1005,6 +1015,18 @@ export async function readFileBytes(path: string): Promise<{ bytes: Uint8Array<A
     bytes: new Uint8Array(await response.arrayBuffer()),
     mime: response.headers.get("Content-Type") ?? "application/octet-stream",
   };
+}
+
+export async function readExecutionArtifactBytes(sessionId: string, executionId: string, path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
+  const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/executions/${encodeURIComponent(executionId)}/artifact/raw?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
+}
+
+export async function readSandboxCandidateFileBytes(sessionId: string, candidateId: string, path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
+  const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/candidates/${encodeURIComponent(candidateId)}/files/raw?path=${encodeURIComponent(path)}`);
+  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
 export function writeFile(path: string, content: string): Promise<unknown> {
@@ -1132,7 +1154,7 @@ export type OfficeStructure = {
 };
 
 /** Where an Office file lives: the workspace, or a saved candidate. */
-export type OfficeSource = { path: string; sessionId?: string; candidateId?: string; token?: string };
+export type OfficeSource = { path: string; sessionId?: string; candidateId?: string; executionId?: string; token?: string };
 
 export type OfficeEditOp =
   | { op: "replace_paragraph_text"; anchor: string; text: string }
@@ -1156,9 +1178,11 @@ async function officeReq<T>(source: OfficeSource, url: string, init?: RequestIni
 
 function officeUrl(source: OfficeSource, query: string): string {
   const path = `path=${encodeURIComponent(source.path)}&${query}`;
-  return source.candidateId && source.sessionId
-    ? `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/candidates/${encodeURIComponent(source.candidateId)}/office?${path}`
-    : `/fs/office?${path}`;
+  if (source.candidateId && source.sessionId)
+    return `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/candidates/${encodeURIComponent(source.candidateId)}/office?${path}`;
+  if (source.executionId && source.sessionId)
+    return `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/executions/${encodeURIComponent(source.executionId)}/artifact/office?${path}`;
+  return `/fs/office?${path}`;
 }
 
 /** A page of an Office file: from unit `from`, or, given `at`, from the unit
@@ -1177,7 +1201,7 @@ export function readOfficeStructure(source: OfficeSource): Promise<OfficeStructu
  *  while instead of one worker read per render. `null` when it cannot be
  *  read. */
 export function readOfficeFacts(source: OfficeSource): Promise<OfficeProjection | null> {
-  const key = `${source.sessionId ?? ""}:${source.candidateId ?? ""}:${source.path}`;
+  const key = `${source.sessionId ?? ""}:${source.candidateId ?? ""}:${source.executionId ?? ""}:${source.path}`;
   const cached = officeFactsCache.get(key);
   if (cached && Date.now() - cached.at < OFFICE_FACTS_TTL_MS) return cached.facts;
   const facts = req<OfficeProjection>(officeUrl(source, "view=facts")).catch(() => null);

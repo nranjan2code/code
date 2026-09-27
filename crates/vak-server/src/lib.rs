@@ -828,6 +828,18 @@ fn router_with_state(state: AppState) -> Router {
             get(session_sandbox_executions),
         )
         .route(
+            "/sessions/{id}/sandbox/executions/{execution_id}/artifact",
+            get(read_execution_artifact),
+        )
+        .route(
+            "/sessions/{id}/sandbox/executions/{execution_id}/artifact/raw",
+            get(read_execution_artifact_raw),
+        )
+        .route(
+            "/sessions/{id}/sandbox/executions/{execution_id}/artifact/office",
+            get(read_execution_artifact_office),
+        )
+        .route(
             "/sessions/{id}/sandbox/records",
             get(list_session_sandbox_records),
         )
@@ -10789,6 +10801,132 @@ fn sandbox_session_workspace(state: &AppState, session_id: &str) -> Option<std::
         .and_then(|session| session.header().map(|header| header.contract_cwd()))
 }
 
+/// Resolve only a file that this session's execution reported as an artifact.
+/// The recorded scratch root and the session workspace must both contain it;
+/// a current UI workspace is not evidence of ownership.
+fn execution_artifact_path(
+    state: &AppState,
+    session_id: &str,
+    execution_id: &str,
+    artifact_path: &str,
+) -> Result<std::path::PathBuf, StatusCode> {
+    let workspace = sandbox_session_workspace(state, session_id).ok_or(StatusCode::NOT_FOUND)?;
+    let log = find_session_on_disk(&state.core, session_id).ok_or(StatusCode::NOT_FOUND)?;
+    let session_home = log
+        .path()
+        .parent()
+        .and_then(std::path::Path::parent)
+        .and_then(std::path::Path::parent)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let events_path = session_home
+        .join("sandbox")
+        .join("executions")
+        .join(format!("{session_id}.jsonl"));
+    let text = std::fs::read_to_string(events_path).map_err(|_| StatusCode::NOT_FOUND)?;
+    let mut scratch = None;
+    let mut reported = false;
+    for event in text
+        .lines()
+        .filter_map(|line| serde_json::from_str::<vak_tools::SandboxEvent>(line).ok())
+    {
+        match event {
+            vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: id,
+                scratch_dir,
+                ..
+            } if id == execution_id => scratch = Some(scratch_dir),
+            vak_tools::SandboxEvent::ArtifactGenerated {
+                execution_id: id,
+                path,
+                ..
+            } if id == execution_id && path == artifact_path => reported = true,
+            _ => {}
+        }
+    }
+    if !reported {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    let scratch = scratch.ok_or(StatusCode::NOT_FOUND)?;
+    let scratch = confined_path(&workspace, &scratch).ok_or(StatusCode::FORBIDDEN)?;
+    let path = confined_path(&workspace, artifact_path).ok_or(StatusCode::FORBIDDEN)?;
+    if !path.starts_with(&scratch) || !path.is_file() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(path)
+}
+
+async fn read_execution_artifact(
+    State(state): State<AppState>,
+    Path((session_id, execution_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = match execution_artifact_path(&state, &session_id, &execution_id, &q.path) {
+        Ok(path) => path,
+        Err(status) => return status.into_response(),
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let size = bytes.len();
+    let content = String::from_utf8(bytes).ok();
+    Json(serde_json::json!({ "path": q.path, "kind": if content.is_some() { "text" } else { "binary" }, "bytes": size, "content": content, "editable": false })).into_response()
+}
+
+async fn read_execution_artifact_raw(
+    State(state): State<AppState>,
+    Path((session_id, execution_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<FileQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = match execution_artifact_path(&state, &session_id, &execution_id, &q.path) {
+        Ok(path) => path,
+        Err(status) => return status.into_response(),
+    };
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(_) => return StatusCode::NOT_FOUND.into_response(),
+    };
+    let headers = [
+        (axum::http::header::CONTENT_TYPE, raw_mime_for(&path)),
+        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (axum::http::header::CACHE_CONTROL, "no-store"),
+        (axum::http::header::CONTENT_DISPOSITION, "attachment"),
+        (
+            axum::http::header::CONTENT_SECURITY_POLICY,
+            "sandbox; default-src 'none'",
+        ),
+    ];
+    (headers, bytes).into_response()
+}
+
+async fn read_execution_artifact_office(
+    State(state): State<AppState>,
+    Path((session_id, execution_id)): Path<(String, String)>,
+    axum::extract::Query(q): axum::extract::Query<OfficeProjectionQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    if !vak_ooxml::is_openxml_path(&q.path) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let path = match execution_artifact_path(&state, &session_id, &execution_id, &q.path) {
+        Ok(path) => path,
+        Err(status) => return status.into_response(),
+    };
+    match vak_tools::broker::office_project(&state.core.tool_worker_exe(), &path, q.view()).await {
+        Ok(mut body) => {
+            body["path"] = serde_json::Value::String(q.path);
+            Json(body).into_response()
+        }
+        Err(error) => (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
 async fn session_sandbox_executions(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -19896,6 +20034,64 @@ mod sandbox_promotion_tests {
         })
         .unwrap();
         log
+    }
+
+    #[test]
+    fn execution_artifact_preview_uses_the_owning_session_and_reported_file() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let log = seed_bound_result(&core, "session-1", "exec-1");
+        let scratch = dir.path().join(".vak/scratch/vak/exec-1");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(scratch.join("draft.xlsx"), b"draft").unwrap();
+        std::fs::write(scratch.join("unreported.xlsx"), b"other").unwrap();
+        let home = log
+            .path()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let events = home.join("sandbox/executions/session-1.jsonl");
+        std::fs::create_dir_all(events.parent().unwrap()).unwrap();
+        let started = serde_json::json!({"kind":"ExecutionStarted","execution_id":"exec-1","owner_session_id":"session-1","tool":"office_apply","code_preview":"","language":"json","scratch_dir":scratch});
+        let artifact = serde_json::json!({"kind":"ArtifactGenerated","execution_id":"exec-1","path":".vak/scratch/vak/exec-1/draft.xlsx","mime_type":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","size_bytes":5});
+        std::fs::write(events, format!("{started}\n{artifact}\n")).unwrap();
+        drop(log);
+        let state = AppState::new(core);
+        assert_eq!(
+            execution_artifact_path(
+                &state,
+                "session-1",
+                "exec-1",
+                ".vak/scratch/vak/exec-1/draft.xlsx"
+            )
+            .unwrap(),
+            scratch.join("draft.xlsx").canonicalize().unwrap()
+        );
+        assert_eq!(
+            execution_artifact_path(
+                &state,
+                "session-1",
+                "exec-1",
+                ".vak/scratch/vak/exec-1/unreported.xlsx"
+            )
+            .unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+        assert_eq!(
+            execution_artifact_path(
+                &state,
+                "another-session",
+                "exec-1",
+                ".vak/scratch/vak/exec-1/draft.xlsx"
+            )
+            .unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
     }
 
     /// Target verification runs in the broker worker, so a test that

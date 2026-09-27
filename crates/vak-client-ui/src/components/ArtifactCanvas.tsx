@@ -242,9 +242,13 @@ export default function ArtifactCanvas() {
       if (artifact.candidateId && !artifact.sessionId) throw new Error("Saved draft has no owning conversation.");
       const readText = () => artifact.candidateId && artifact.sessionId
         ? api.readSandboxCandidateFile(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
+        : artifact.executionId && artifact.sessionId
+          ? api.readExecutionArtifact(artifact.sessionId, artifact.executionId, artifact.artifactPath)
         : api.readFile(artifact.artifactPath);
       const readRaw = () => artifact.candidateId && artifact.sessionId
         ? api.readSandboxCandidateFileRaw(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
+        : artifact.executionId && artifact.sessionId
+          ? api.readExecutionArtifactRaw(artifact.sessionId, artifact.executionId, artifact.artifactPath)
         : api.readFileRaw(artifact.artifactPath);
       // 1. Dev-server handling: if serverName is provided, ensure it is running
       if (artifact.serverName) {
@@ -780,7 +784,7 @@ export default function ArtifactCanvas() {
               }</Show>
               <Show when={displayType() === "office" && canvasArtifact()}>{(artifact) =>
                 <OfficeWorkspacePane
-                  source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId }}
+                  source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId, executionId: artifact().executionId }}
                   fileName={title()}
                   focus={artifact().anchor}
                   canEdit={true}

@@ -620,17 +620,29 @@ function RenderAudit(props: { document: PresentationDocument }) {
 
 /** What the reader says about an Office file, and Download and Open with,
  * shared by the file row and the result card. */
-function useFileActions(artifact: ArtifactRef) {
+function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: string) {
   const path = () => artifact.path ?? null;
+  const saved = artifact.status?.state !== "in_folder" ? artifact.status?.saved_as : null;
+  const executionId = item?.provenance?.tool_call_id;
+  const source = (value: string): api.OfficeSource => ({
+    path: saved?.path ?? value,
+    sessionId,
+    candidateId: saved?.version_id,
+    executionId: saved ? undefined : executionId ?? undefined,
+  });
   const [facts] = createResource(
     () => { const value = path(); return value && isOfficePath(value) ? value : null; },
-    (value) => api.readOfficeFacts({ path: value }),
+    (value) => api.readOfficeFacts(source(value)),
   );
   const [problem, setProblem] = createSignal<string | null>(null);
   const download = async (value: string) => {
     setProblem(null);
     try {
-      const { bytes, mime } = await api.readFileBytes(value);
+      const { bytes, mime } = saved && sessionId
+        ? await api.readSandboxCandidateFileBytes(sessionId, saved.version_id, saved.path)
+        : executionId && sessionId
+          ? await api.readExecutionArtifactBytes(sessionId, executionId, value)
+          : await api.readFileBytes(value);
       await host.saveFile(artifact.name || value.split("/").pop() || "file", bytes, mime);
     } catch (error) {
       setProblem(`Could not download: ${error instanceof Error ? error.message : String(error)}`);
@@ -679,7 +691,7 @@ function openFile(item: OutputItem, sessionId?: string) {
 export function Artifact(props: { item: OutputItem }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
-  const file = useFileActions(artifact);
+  const file = useFileActions(artifact, props.item, props.item.provenance?.session_id ?? undefined);
   return (
     <article class="artifact-item">
       <span class="artifact-icon"><Icon name={artifact.media_type?.startsWith("image/") ? "preview" : "file"} size={15} /></span>
@@ -723,6 +735,8 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
     const saved = status && status.state !== "in_folder" ? status.saved_as : null;
     const reader: ArtifactPreviewReader = saved
       ? { readFile: (file) => api.readSandboxCandidateFile(props.sessionId, saved.version_id, file), readFileRaw: (file) => api.readSandboxCandidateFileRaw(props.sessionId, saved.version_id, file) }
+      : props.item.provenance?.tool_call_id
+        ? { readFile: (file) => api.readExecutionArtifact(props.sessionId, props.item.provenance!.tool_call_id!, file), readFileRaw: (file) => api.readExecutionArtifactRaw(props.sessionId, props.item.provenance!.tool_call_id!, file) }
       : api;
     const kind = fileKind(value.name, value.media_type);
     return { path: saved?.path ?? value.path, kind, reader, key: `${saved?.version_id ?? ""}:${saved?.path ?? value.path}` };
@@ -782,7 +796,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
 export function ResultCard(props: { item: OutputItem; sessionId: string; resultId?: string; showReview?: boolean; askForChanges?: boolean }) {
   if (props.item.content.type !== "artifact") return null;
   const artifact = props.item.content.artifact;
-  const file = useFileActions(artifact);
+  const file = useFileActions(artifact, props.item, props.sessionId);
   const words = () => statusWords(artifact.status);
   const review = () => (props.showReview === false ? undefined : props.item.actions.find((action) => action.verb === "review_draft"));
   const primary = () => {

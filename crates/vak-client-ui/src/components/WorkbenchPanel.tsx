@@ -321,6 +321,7 @@ export default function WorkbenchPanel() {
     }
     return [...new Map(list.map((artifact) => [artifact.path, artifact])).values()];
   };
+  const artifactSource = (path: string) => allArtifacts().find((artifact) => artifact.path === path);
 
   const isAnyRunning = () => executions().some((e) => e.status === "running");
   const runningExec = () => executions().find((e) => e.status === "running");
@@ -381,11 +382,18 @@ export default function WorkbenchPanel() {
     const previousUrl = artifactDataUrl();
     if (previousUrl?.startsWith("blob:")) URL.revokeObjectURL(previousUrl);
     setArtifactDataUrl(null);
+    const source = artifactSource(path);
+    const readFile = (file: string) => source?.sessionId
+      ? api.readExecutionArtifact(source.sessionId, source.executionId, file)
+      : api.readFile(file);
+    const readRaw = (file: string) => source?.sessionId
+      ? api.readExecutionArtifactRaw(source.sessionId, source.executionId, file)
+      : api.readFileRaw(file);
     try {
       if (isOfficePath(path)) {
         // The Office view reads the file through the server's worker; the
         // bytes are fetched only so the file can be downloaded.
-        const rawUrl = await api.readFileRaw(path);
+        const rawUrl = await readRaw(path);
         if (request !== artifactRequest) {
           URL.revokeObjectURL(rawUrl);
           return;
@@ -393,19 +401,19 @@ export default function WorkbenchPanel() {
         setArtifactDataUrl(rawUrl);
         return;
       }
-      const res = await api.readFile(path);
+      const res = await readFile(path);
       if (request !== artifactRequest) return;
       if (res.data_url) {
         setArtifactDataUrl(res.data_url);
       } else if (res.content !== undefined) {
-        const preview = /\.html?$/i.test(path) ? await artifactPreviewHtml(path, res.content) : "";
+        const preview = /\.html?$/i.test(path) ? await artifactPreviewHtml(path, res.content, undefined, { readFile, readFileRaw: readRaw }) : "";
         if (request !== artifactRequest) return;
         setArtifactContent(res.content);
         setArtifactPreview(preview);
       } else {
         // Large/opaque formats use the authenticated raw endpoint instead of
         // forcing every renderer through a base64 JSON response.
-        const rawUrl = await api.readFileRaw(path);
+        const rawUrl = await readRaw(path);
         if (request !== artifactRequest) {
           URL.revokeObjectURL(rawUrl);
           return;
@@ -1438,7 +1446,7 @@ export default function WorkbenchPanel() {
 
                   <Show when={isOfficePath(selectedArtifact()!)}>
                     <div class="artifact-office">
-                      <OfficeView source={{ path: selectedArtifact()! }} fileName={selectedArtifact()!.split("/").pop() ?? selectedArtifact()!} />
+                      <OfficeView source={{ path: selectedArtifact()!, sessionId: artifactSource(selectedArtifact()!)?.sessionId, executionId: artifactSource(selectedArtifact()!)?.executionId }} fileName={selectedArtifact()!.split("/").pop() ?? selectedArtifact()!} />
                       <Show when={artifactDataUrl()}>{(url) => (
                         <a class="btn sm" href={url()} download={selectedArtifact()!.split("/").pop()}>Download file</a>
                       )}</Show>
