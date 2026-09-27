@@ -1,4 +1,4 @@
-## Unreleased
+## 5.2.0 — 2026-09-27
 
 - Read and write PDF files with `vak-pdf`, a new engine written from the
   PDF specification with no PDF library beneath it. `doc_read` gives a PDF's
