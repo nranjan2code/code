@@ -731,3 +731,36 @@ async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_co
     assert_eq!(body["activity"][0]["plugin"], "demo");
     assert_eq!(body["activity"][0]["duration_ms"], 19);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn finops_platform_scope_uses_shared_home_and_agent_scope_adds_private_home() {
+    let srv = spawn_server("").await;
+    let now = chrono::Utc::now();
+    let row = |session_id: &str, usd: f64| vak_core::finops::CostRow {
+        ts: now,
+        model: "counting-model".into(),
+        provider: "counting".into(),
+        input_tokens: 1,
+        output_tokens: 1,
+        cache_read_input_tokens: None,
+        usd: Some(usd),
+        source: "estimated".into(),
+        session_id: session_id.into(),
+    };
+    vak_core::finops::FinOpsLedger::new(&srv.home)
+        .append(&row("shared", 1.25))
+        .unwrap();
+
+    let platform: serde_json::Value = srv
+        .client
+        .get(format!("{}/finops", srv.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(platform["day_usd"], 1.25);
+    assert_eq!(platform["total_rows"], 1);
+
+}

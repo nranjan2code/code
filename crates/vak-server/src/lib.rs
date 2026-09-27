@@ -1727,9 +1727,18 @@ async fn finops_status(
     axum::extract::Query(q): axum::extract::Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let core = scoped_core!(&state, None, q.agent.as_deref());
-    let mut homes = vec![core.shared_data_home()];
-    if core.sessions_home() != core.shared_data_home() {
+    // The platform defaults scope is installation-wide FinOps. Resolve it
+    // from the active Core, whose shared_data_home is where cross-agent
+    // receipts are persisted. An explicitly selected Agent additionally
+    // includes its private ledger for older/per-agent receipts.
+    let core = if q.agent.is_some() {
+        scoped_core!(&state, None, q.agent.as_deref())
+    } else {
+        state.active_core()
+    };
+    let shared_home = core.shared_data_home();
+    let mut homes = vec![shared_home.clone()];
+    if core.sessions_home() != shared_home {
         homes.push(core.sessions_home());
     }
     let mut rows: Vec<vak_core::finops::CostRow> = Vec::new();
@@ -1738,7 +1747,7 @@ async fn finops_status(
         rows.extend(vak_core::finops::FinOpsLedger::new(home).all_rows());
         activity.extend(vak_core::finops::ActivityLedger::new(home).all_rows());
     }
-    let ledger = vak_core::finops::FinOpsLedger::new(&core.shared_data_home());
+    let ledger = vak_core::finops::FinOpsLedger::new(&shared_home);
     let now = chrono::Utc::now();
     let day_start = now
         .date_naive()
@@ -1790,8 +1799,8 @@ async fn finops_status(
         .into_iter()
         .map(|(date, usd)| serde_json::json!({ "date": date.to_string(), "usd": usd }))
         .collect();
-    let mut alerts = recent_budget_alerts(&core.shared_data_home(), 10);
-    if alerts.is_empty() && core.sessions_home() != core.shared_data_home() {
+    let mut alerts = recent_budget_alerts(&shared_home, 10);
+    if alerts.is_empty() && q.agent.is_some() && core.sessions_home() != shared_home {
         alerts = recent_budget_alerts(&core.sessions_home(), 10);
     }
     Json(serde_json::json!({
