@@ -61,8 +61,7 @@ product than this one claims to be.
 The macOS build is not yet signed, so the first launch needs a right-click
 → Open rather than a double-click. Every launch after that is normal.
 
-For maintainers with access to this private repository, build and install locally
-with Rust, Node.js, npm, and Python 3 available:
+To build and install locally, have Rust, Node.js, npm, and Python 3 available:
 
 ```bash
 git clone https://github.com/nranjan2code/code.git
@@ -137,14 +136,20 @@ data, and how to exercise the Linux path from a Mac.
 
 ### Building from source
 
-Contributors need a [stable Rust toolchain](https://www.rust-lang.org/tools/install),
+Building from source needs a [stable Rust toolchain](https://www.rust-lang.org/tools/install),
 Git, and Node.
 
 ```bash
-git clone https://github.com/vak/vak.git
-cd vak
+git clone https://github.com/nranjan2code/code.git
+cd code
 scripts/vak.sh build
 ```
+
+### Contributions
+
+The source is public to read and use. Code changes to this repository are
+maintained solely by [@nranjan2code](https://github.com/nranjan2code); external
+pull requests are not accepted.
 
 ## What you get
 
