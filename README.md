@@ -198,6 +198,6 @@ The `docs/design/` files each declare a **Status**. Read that line before treati
 
 ## License and contributions
 
-The original software and documentation are available under the [MIT License](LICENSE). The Vakyartha name, Songbird mark, character artwork, and wallpapers are excluded from that license; see the scope note in `LICENSE` and the [brand guide](docs/brand/README.md). Third-party components retain their own license notices.
+The original software and documentation are available under the [MIT License](LICENSE). The Vakyartha name, Songbird mark, character artwork, and wallpapers are excluded from that software license; see the [brand guide](docs/brand/README.md). Third-party components retain their own license notices.
 
 [@nranjan2code](https://github.com/nranjan2code) alone maintains changes to this repository. External pull requests are not accepted.

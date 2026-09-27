@@ -44,6 +44,8 @@ pub(crate) const ROUTES: &[(&str, &str)] = &[
     ("/security", "security/index.html"),
     ("/install", "install/index.html"),
     ("/wallpapers", "wallpapers/index.html"),
+    ("/terms", "terms/index.html"),
+    ("/privacy", "privacy/index.html"),
 ];
 
 fn page(file: &'static str) -> axum::response::Response {

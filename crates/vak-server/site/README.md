@@ -1,6 +1,6 @@
 # Vakyartha public site
 
-Eight static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+Ten static pages, built here and embedded by `crates/vak-server/src/site.rs`.
 The public route names remain stable; the navigation uses plain labels.
 
 | Route | Purpose |
@@ -9,10 +9,12 @@ The public route names remain stable; the navigation uses plain labels.
 | `/outcomes` | All eight companions with example requests and possible results |
 | `/tour` | Interactive request/result illustrations and a short walkthrough |
 | `/security` | Access, review, privacy and an explicitly illustrative decision |
-| `/install` | Honest private-preview setup and access to an existing installation |
+| `/install` | Public source build instructions and access to an existing installation |
 | `/surfaces` | Desktop, browser, connected chats and terminal |
 | `/wallpapers` | All 16 desktop and mobile wallpaper downloads, without sign-in |
 | `/vak` | The name and Songbird identity |
+| `/terms` | Terms of use, software license, warranty and liability limits |
+| `/privacy` | Public website and self-hosted software data handling |
 
 ## Edit and build
 
@@ -24,6 +26,23 @@ python3 crates/vak-server/site/build.py --check
 Edit `src/pages/*.html`, `src/layout.html`, `src/styles.css` or `src/site.js`,
 then regenerate `dist/`. The generated bundle is committed. The Rust build
 checks its source manifest; it must not embed a stale bundle.
+
+## Publish the static site on Vercel
+
+The public domain uses Vercel's `www` project. Build a separate export from
+the same site and deploy that directory with the desktop CLI:
+
+```sh
+python3 crates/vak-server/site/build.py --check
+python3 crates/vak-server/site/build_vercel.py /tmp/vakyartha-site-export
+vercel deploy /tmp/vakyartha-site-export --project www
+```
+
+Inspect the preview, then promote its deployment ID with `vercel promote ID`.
+Use a fresh output directory for each export. The export selects Vercel's
+static framework, copies the brand assets, provides `/version`, and changes
+the links that only work on a running Vak server. The embedded site is not
+changed by this export.
 
 The builder copies WebP and JPEG files recursively from `src/assets/` to `/site/`. CSS and the shared script
 are inlined. The optional, pinned Motion library is emitted under its content
@@ -57,7 +76,7 @@ only the hero loads eagerly. No remote fonts or image services are required.
 - Examples and review interactions are illustrations, not live AI runs or
   real file mutations. Characters are choices of companion, not fixed roles.
 - No invented testimonials, pricing, customer counts, benchmarks or downloads.
-  Setup states the current repository-access and local-build requirements.
+  Setup states the current public-source and local-build requirements.
 - Native request disclosures and navigation work without JavaScript. The
   walkthrough keeps its first complete example and links to the examples page.
   Script-only controls start hidden. Theme storage failure is harmless.

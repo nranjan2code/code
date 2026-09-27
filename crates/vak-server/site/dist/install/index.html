@@ -4,9 +4,9 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Get started | Vakyartha</title>
-    <meta name="description" content="Set up the Vakyartha private preview on macOS or Linux, or open an existing installation." />
+    <meta name="description" content="Build the open-source Vakyartha software on macOS or Linux, or open an existing installation." />
     <meta property="og:title" content="Get started | Vakyartha" />
-    <meta property="og:description" content="Set up the Vakyartha private preview on macOS or Linux, or open an existing installation." />
+    <meta property="og:description" content="Build the open-source Vakyartha software on macOS or Linux, or open an existing installation." />
     <meta property="og:type" content="website" />
     <meta name="color-scheme" content="light dark" />
     <meta
@@ -513,6 +513,12 @@ img {
   flex-wrap: wrap;
   font-size: 12px;
 }
+.footer .footer-project {
+  width: 100%;
+  margin-left: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
 .build-details {
   width: 100%;
   font-size: 12px;
@@ -551,6 +557,37 @@ details[open] > summary:after {
   max-width: 550px;
   margin-top: 22px;
   font-size: 18px;
+}
+.legal-copy {
+  max-width: 900px;
+  padding-bottom: 88px;
+}
+.legal-copy .legal-date {
+  font-size: 14px;
+}
+.legal-copy section {
+  padding: 28px 0;
+  border-bottom: 1px solid var(--line);
+}
+.legal-copy section:last-child {
+  border-bottom: 0;
+}
+.legal-copy h2 {
+  margin-bottom: 12px;
+}
+.legal-copy p + p {
+  margin-top: 16px;
+}
+.legal-copy a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.license-text {
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .gallery {
   display: grid;
@@ -858,6 +895,14 @@ details[open] > summary:after {
   margin: 28px 0 24px;
   font-size: 16px;
   line-height: 1.6;
+}
+.hero-source {
+  margin-top: 16px;
+  font-size: 14px;
+}
+.hero-source a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .hero-art {
   position: absolute;
@@ -1483,49 +1528,52 @@ details[open] > summary:after {
     <p class="eyebrow">Get started</p>
     <h1>A place for your<br />next “can you help?”</h1>
     <p class="lead">
-      Vakyartha is currently a private preview for macOS and Linux.
+      Open source for macOS and Linux. Build it from the public repository.
     </p>
   </div>
 </section>
 <div class="wrap columns wide-section">
   <div>
     <div class="setup-card">
-      <span class="setup-tag">Already set up on this server?</span>
-      <h2>Pick up where you left off.</h2>
-      <p>Open your Vakyartha app. Your server may ask you to sign in.</p>
-      <a class="button primary" href="/app">Open Vakyartha ↗</a>
-    </div>
-    <div class="setup-card">
       <span class="setup-tag">New here?</span>
-      <h2>A little setup first.</h2>
+      <h2>Start with the source.</h2>
       <p>
-        The preview currently requires repository access and a local build. A
-        public one-click download is not available yet.
+        The code is public under MIT. Build and install it locally today;
+        a one-click download is not available yet.
       </p>
       <p>
         You’ll also need to connect an AI service or configure a local model.
         External AI services may charge for use.
       </p>
+      <a class="button primary" href="https://github.com/nranjan2code/code"
+        >View the source ↗</a
+      >
+    </div>
+    <div class="setup-card">
+      <span class="setup-tag">Already set up?</span>
+      <h2>Pick up where you left off.</h2>
+      <p>Open your Vakyartha app. Your server may ask you to sign in.</p>
+      <a class="button" href="/app">Open Vakyartha ↗</a>
     </div>
   </div>
   <div class="faq">
     <details open>
-      <summary>Build the preview</summary>
+      <summary>Build from source</summary>
       <p>
-        For people with repository access. Install Rust, Node.js and Python 3
-        first.
+        Install Git, a stable Rust toolchain, Node.js/npm, and Python 3 first.
       </p>
       <div class="code-block">
-        <code id="install-command"
-          >git clone https://github.com/nranjan2code/code.git cd code
-          scripts/build.sh</code
+        <code id="install-command">git clone https://github.com/nranjan2code/code.git
+cd code
+scripts/build.sh</code
         ><button class="copy" type="button" data-copy="install-command" hidden>
           Copy
         </button>
       </div>
       <p>Then choose your working folder and connect an AI service:</p>
       <div class="code-block">
-        <code id="setup-command">vak setup vak doctor</code
+        <code id="setup-command">vak setup
+vak doctor</code
         ><button class="copy" type="button" data-copy="setup-command" hidden>
           Copy
         </button>
@@ -1562,7 +1610,9 @@ details[open] > summary:after {
         remove it:
       </p>
       <div class="code-block">
-        <code>vak self status vak self update vak self uninstall</code>
+        <code>vak self status
+vak self update
+vak self uninstall</code>
       </div>
       <p>Check the command’s help before removing any saved data.</p>
     </details>
@@ -1587,6 +1637,12 @@ details[open] > summary:after {
           <a href="/vak">Our name</a><a href="/surfaces">Ways to use it</a
           ><a href="/security">Your control</a
           ><a href="/wallpapers">Wallpapers</a><a href="/install">Get started</a>
+        </nav>
+        <nav class="footer-project" aria-label="Project and policies">
+          <a href="https://github.com/nranjan2code/code">Source code</a>
+          <a href="https://github.com/nranjan2code/code/issues">Support</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms of use</a>
         </nav>
         <details class="build-details">
           <summary>Build details</summary>

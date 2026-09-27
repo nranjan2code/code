@@ -3,49 +3,52 @@
     <p class="eyebrow">Get started</p>
     <h1>A place for your<br />next “can you help?”</h1>
     <p class="lead">
-      Vakyartha is currently a private preview for macOS and Linux.
+      Open source for macOS and Linux. Build it from the public repository.
     </p>
   </div>
 </section>
 <div class="wrap columns wide-section">
   <div>
     <div class="setup-card">
-      <span class="setup-tag">Already set up on this server?</span>
-      <h2>Pick up where you left off.</h2>
-      <p>Open your Vakyartha app. Your server may ask you to sign in.</p>
-      <a class="button primary" href="/app">Open Vakyartha ↗</a>
-    </div>
-    <div class="setup-card">
       <span class="setup-tag">New here?</span>
-      <h2>A little setup first.</h2>
+      <h2>Start with the source.</h2>
       <p>
-        The preview currently requires repository access and a local build. A
-        public one-click download is not available yet.
+        The code is public under MIT. Build and install it locally today;
+        a one-click download is not available yet.
       </p>
       <p>
         You’ll also need to connect an AI service or configure a local model.
         External AI services may charge for use.
       </p>
+      <a class="button primary" href="https://github.com/nranjan2code/code"
+        >View the source ↗</a
+      >
+    </div>
+    <div class="setup-card">
+      <span class="setup-tag">Already set up?</span>
+      <h2>Pick up where you left off.</h2>
+      <p>Open your Vakyartha app. Your server may ask you to sign in.</p>
+      <a class="button" href="/app">Open Vakyartha ↗</a>
     </div>
   </div>
   <div class="faq">
     <details open>
-      <summary>Build the preview</summary>
+      <summary>Build from source</summary>
       <p>
-        For people with repository access. Install Rust, Node.js and Python 3
-        first.
+        Install Git, a stable Rust toolchain, Node.js/npm, and Python 3 first.
       </p>
       <div class="code-block">
-        <code id="install-command"
-          >git clone https://github.com/nranjan2code/code.git cd code
-          scripts/build.sh</code
+        <code id="install-command">git clone https://github.com/nranjan2code/code.git
+cd code
+scripts/build.sh</code
         ><button class="copy" type="button" data-copy="install-command" hidden>
           Copy
         </button>
       </div>
       <p>Then choose your working folder and connect an AI service:</p>
       <div class="code-block">
-        <code id="setup-command">vak setup vak doctor</code
+        <code id="setup-command">vak setup
+vak doctor</code
         ><button class="copy" type="button" data-copy="setup-command" hidden>
           Copy
         </button>
@@ -82,7 +85,9 @@
         remove it:
       </p>
       <div class="code-block">
-        <code>vak self status vak self update vak self uninstall</code>
+        <code>vak self status
+vak self update
+vak self uninstall</code>
       </div>
       <p>Check the command’s help before removing any saved data.</p>
     </details>

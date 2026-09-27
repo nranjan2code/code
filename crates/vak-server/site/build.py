@@ -44,9 +44,13 @@ PAGES = [
     ("surfaces.html", "/surfaces", "Ways to use it", "Ways to use it | Vakyartha",
      "Use Vakyartha on your desktop, in a browser, in a connected chat or from a terminal."),
     ("install.html", "/install", "Get started", "Get started | Vakyartha",
-     "Set up the Vakyartha private preview on macOS or Linux, or open an existing installation."),
+     "Build the open-source Vakyartha software on macOS or Linux, or open an existing installation."),
     ("wallpapers.html", "/wallpapers", "Wallpapers", "Wallpapers | Vakyartha",
      "Take the whole crew with you. Download daylight and dusk wallpapers for your phone, laptop or desktop. No sign-in needed."),
+    ("terms.html", "/terms", "Terms of use", "Terms of use | Vakyartha",
+     "Terms for using the Vakyartha website and software, including the MIT License, warranty disclaimer and liability limits."),
+    ("privacy.html", "/privacy", "Privacy", "Privacy and data | Vakyartha",
+     "How the Vakyartha public website and self-hosted software handle information."),
 ]
 
 NAV_ROUTES = {"/outcomes", "/tour", "/security"}

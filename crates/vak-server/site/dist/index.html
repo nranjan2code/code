@@ -513,6 +513,12 @@ img {
   flex-wrap: wrap;
   font-size: 12px;
 }
+.footer .footer-project {
+  width: 100%;
+  margin-left: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
 .build-details {
   width: 100%;
   font-size: 12px;
@@ -551,6 +557,37 @@ details[open] > summary:after {
   max-width: 550px;
   margin-top: 22px;
   font-size: 18px;
+}
+.legal-copy {
+  max-width: 900px;
+  padding-bottom: 88px;
+}
+.legal-copy .legal-date {
+  font-size: 14px;
+}
+.legal-copy section {
+  padding: 28px 0;
+  border-bottom: 1px solid var(--line);
+}
+.legal-copy section:last-child {
+  border-bottom: 0;
+}
+.legal-copy h2 {
+  margin-bottom: 12px;
+}
+.legal-copy p + p {
+  margin-top: 16px;
+}
+.legal-copy a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.license-text {
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .gallery {
   display: grid;
@@ -858,6 +895,14 @@ details[open] > summary:after {
   margin: 28px 0 24px;
   font-size: 16px;
   line-height: 1.6;
+}
+.hero-source {
+  margin-top: 16px;
+  font-size: 14px;
+}
+.hero-source a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 .hero-art {
   position: absolute;
@@ -1490,6 +1535,9 @@ details[open] > summary:after {
       <a class="button primary" href="#your-day"
         >Find your thing <span aria-hidden="true">↓</span></a
       >
+      <p class="hero-source">
+        Open source under MIT. <a href="https://github.com/nranjan2code/code">Explore the code ↗</a>
+      </p>
     </div>
     <figure class="hero-art">
       <img
@@ -1692,6 +1740,12 @@ details[open] > summary:after {
           <a href="/vak">Our name</a><a href="/surfaces">Ways to use it</a
           ><a href="/security">Your control</a
           ><a href="/wallpapers">Wallpapers</a><a href="/install">Get started</a>
+        </nav>
+        <nav class="footer-project" aria-label="Project and policies">
+          <a href="https://github.com/nranjan2code/code">Source code</a>
+          <a href="https://github.com/nranjan2code/code/issues">Support</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms of use</a>
         </nav>
         <details class="build-details">
           <summary>Build details</summary>
