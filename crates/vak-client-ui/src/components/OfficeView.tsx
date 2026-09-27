@@ -2,6 +2,7 @@ import { createEffect, createMemo, createSignal, For, on, Show } from "solid-js"
 import * as api from "../api";
 import Redline from "./OfficeRedline";
 import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../officeCells";
+import { countOf } from "../officeFacts";
 
 // The Canvas views of an Office file (docs/design/72, P4, U1–U4): a
 // Document, Workbook or Deck view of the reader's own projection, and the
@@ -146,7 +147,7 @@ export default function OfficeView(props: {
 
   const statsLine = () => (meta()?.stats ?? [])
     .filter(([, count]) => count > 0)
-    .map(([name, count]) => `${count.toLocaleString()} ${name}`)
+    .map(([name, count]) => countOf(name, count))
     .join(" · ");
 
   const editable = () => {

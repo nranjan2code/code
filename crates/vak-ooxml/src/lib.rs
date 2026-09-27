@@ -13,7 +13,11 @@
 //! - [`xml`]: L1 reading, a bounded event walk that refuses `DOCTYPE`.
 //! - [`read`]: L2 read projections with anchors and O6 labels for Word,
 //!   Excel, PowerPoint and Visio.
+//! - [`edit`]: L3, the typed op set and its one apply engine.
+//! - [`blank`]: the built-in blank packages a file created from scratch
+//!   starts from.
 
+pub mod blank;
 pub mod diff;
 pub mod edit;
 #[cfg(feature = "fixtures")]

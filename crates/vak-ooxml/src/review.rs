@@ -71,7 +71,13 @@ pub fn choices(
                 )
             })?;
         changes.push(diff(Some(&previous), &applied.document).changes);
-        created.push(applied.results.first().and_then(|r| r.created.clone()));
+        created.push(
+            applied
+                .results
+                .first()
+                .map(|result| result.created.clone())
+                .unwrap_or_default(),
+        );
         state = applied.bytes;
         previous = applied.document;
     }
@@ -196,7 +202,7 @@ pub fn narrow(
             "the draft is not what its recorded edits produce, so it can only be accepted or rejected whole",
         );
     }
-    let created: Vec<Option<String>> = original
+    let created: Vec<Vec<String>> = original
         .results
         .iter()
         .map(|result| result.created.clone())
@@ -229,11 +235,10 @@ pub fn narrow(
                 op: Some((index, op.name())),
                 message: error.message,
             })?;
-        if let (Some(before), Some(now)) = (
-            created[index].clone(),
-            applied.results.first().and_then(|r| r.created.clone()),
-        ) {
-            minted.insert(before, now);
+        if let Some(result) = applied.results.first() {
+            for (before, now) in created[index].iter().zip(&result.created) {
+                minted.insert(before.clone(), now.clone());
+            }
         }
         results.extend(applied.results.iter().cloned());
         for notice in &applied.notices {
@@ -291,23 +296,31 @@ fn split_cells(op: &OfficeOp, changes: &[Change]) -> Option<Vec<(String, Vec<Cha
 /// The earlier ops `index` builds on.
 fn requirements(
     ops: &[OfficeOp],
-    created: &[Option<String>],
+    created: &[Vec<String>],
     index: usize,
     context: &EditContext,
 ) -> Vec<usize> {
     let references = references(&ops[index]);
     let sheet = match &ops[index] {
-        OfficeOp::SetCells { sheet, .. } | OfficeOp::AppendRows { sheet, .. } => Some(sheet),
+        OfficeOp::SetCells { sheet, .. }
+        | OfficeOp::AppendRows { sheet, .. }
+        | OfficeOp::FormatCells { sheet, .. }
+        | OfficeOp::SetColumnWidths { sheet, .. }
+        | OfficeOp::RenameSheet { sheet, .. } => Some(sheet),
         _ => None,
     };
     (0..index)
         .filter(|earlier| {
-            let minted = created
-                .get(*earlier)
-                .and_then(Option::as_deref)
-                .is_some_and(|minted| references.iter().any(|reference| names(reference, minted)));
+            let minted = created.get(*earlier).is_some_and(|minted| {
+                minted
+                    .iter()
+                    .any(|minted| references.iter().any(|reference| names(reference, minted)))
+            });
+            // A sheet exists under this name because an earlier op added
+            // it or gave it the name.
             let added = matches!((&ops[*earlier], sheet),
-                (OfficeOp::AddSheet { name }, Some(sheet)) if name.eq_ignore_ascii_case(sheet));
+                (OfficeOp::AddSheet { name } | OfficeOp::RenameSheet { name, .. }, Some(sheet))
+                    if name.eq_ignore_ascii_case(sheet));
             // A later op named a paragraph by the numbering an earlier
             // removal left; without that removal it would land elsewhere.
             let renumbered = edit::renumbered_by(&ops[*earlier], &ops[index], context);
@@ -326,7 +339,6 @@ fn names(reference: &str, anchor: &str) -> bool {
 fn references(op: &OfficeOp) -> Vec<&str> {
     match op {
         OfficeOp::ReplaceParagraphText { anchor, .. }
-        | OfficeOp::InsertParagraphAfter { anchor, .. }
         | OfficeOp::DeleteParagraph { anchor }
         | OfficeOp::SetPlaceholderText { anchor, .. }
         | OfficeOp::SetNotes { anchor, .. }
@@ -336,10 +348,15 @@ fn references(op: &OfficeOp) -> Vec<&str> {
             all.extend(after.as_deref());
             all
         }
-        OfficeOp::AddSlideFromLayout { after, .. } => after.as_deref().into_iter().collect(),
+        OfficeOp::AddParagraph { after, .. }
+        | OfficeOp::AddTable { after, .. }
+        | OfficeOp::AddSlideFromLayout { after, .. } => after.as_deref().into_iter().collect(),
         OfficeOp::SetCells { .. }
         | OfficeOp::AppendRows { .. }
         | OfficeOp::AddSheet { .. }
+        | OfficeOp::RenameSheet { .. }
+        | OfficeOp::FormatCells { .. }
+        | OfficeOp::SetColumnWidths { .. }
         | OfficeOp::SetTitle { .. } => Vec::new(),
     }
 }
@@ -354,7 +371,6 @@ fn remap(mut op: OfficeOp, minted: &HashMap<String, String>) -> OfficeOp {
     };
     match &mut op {
         OfficeOp::ReplaceParagraphText { anchor, .. }
-        | OfficeOp::InsertParagraphAfter { anchor, .. }
         | OfficeOp::DeleteParagraph { anchor }
         | OfficeOp::SetPlaceholderText { anchor, .. }
         | OfficeOp::SetNotes { anchor, .. }
@@ -367,6 +383,12 @@ fn remap(mut op: OfficeOp, minted: &HashMap<String, String>) -> OfficeOp {
         }
         OfficeOp::AddSlideFromLayout {
             after: Some(after), ..
+        }
+        | OfficeOp::AddParagraph {
+            after: Some(after), ..
+        }
+        | OfficeOp::AddTable {
+            after: Some(after), ..
         } => swap(after),
         _ => {}
     }
@@ -376,8 +398,18 @@ fn remap(mut op: OfficeOp, minted: &HashMap<String, String>) -> OfficeOp {
 fn label(op: &OfficeOp, cell: Option<&str>) -> String {
     match op {
         OfficeOp::ReplaceParagraphText { anchor, .. } => format!("Edit paragraph {anchor}"),
-        OfficeOp::InsertParagraphAfter { anchor, .. } => {
-            format!("New paragraph after {anchor}")
+        OfficeOp::AddParagraph { after, text, .. } => match after {
+            Some(after) => format!("New paragraph after {after}: {}", preview(text)),
+            None => format!("New paragraph: {}", preview(text)),
+        },
+        OfficeOp::AddTable { rows, .. } => {
+            let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+            format!(
+                "New table, {} {} by {columns} {}",
+                rows.len(),
+                if rows.len() == 1 { "row" } else { "rows" },
+                if columns == 1 { "column" } else { "columns" }
+            )
         }
         OfficeOp::DeleteParagraph { anchor } => format!("Delete paragraph {anchor}"),
         OfficeOp::SetCells { sheet, cells } => match cell {
@@ -393,6 +425,12 @@ fn label(op: &OfficeOp, cell: Option<&str>) -> String {
             format!("Add {} row(s) to {sheet}", rows.len())
         }
         OfficeOp::AddSheet { name } => format!("Add sheet {name:?}"),
+        OfficeOp::RenameSheet { sheet, name } => format!("Rename sheet {sheet:?} to {name:?}"),
+        OfficeOp::FormatCells { sheet, range, .. } => format!("Format {sheet}!{range}"),
+        OfficeOp::SetColumnWidths { sheet, widths } => format!(
+            "Set the width of column(s) {} on {sheet}",
+            widths.keys().cloned().collect::<Vec<_>>().join(", ")
+        ),
         OfficeOp::AddSlideFromLayout { layout, .. } => {
             format!("New slide from layout {layout:?}")
         }
@@ -401,5 +439,15 @@ fn label(op: &OfficeOp, cell: Option<&str>) -> String {
         OfficeOp::DeleteSlide { anchor } => format!("Delete {anchor}"),
         OfficeOp::MoveSlide { anchor, .. } => format!("Move {anchor}"),
         OfficeOp::SetTitle { title } => format!("Set the title to {title:?}"),
+    }
+}
+
+/// The start of a new paragraph's text, for a change's label.
+fn preview(text: &str) -> String {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= 60 {
+        text
+    } else {
+        format!("{}…", text.chars().take(59).collect::<String>())
     }
 }

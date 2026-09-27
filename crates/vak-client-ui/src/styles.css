@@ -304,7 +304,15 @@ code, pre, kbd { font-family: var(--mono); }
 .brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
 html[data-theme="dark"] .brand-mark img,
 html[data-theme="contrast"] .brand-mark img { content: url("/assets/brand/songbird-reverse.svg"); }
+html[data-visual-pack="dimensional"] .brand-mark img,
+html[data-visual-pack="dimensional"][data-theme="dark"] .brand-mark img,
+html[data-visual-pack="dimensional"][data-theme="contrast"] .brand-mark img { content: url("/assets/brand/dimensional/app-icon-64.png"); }
 .brand-wordmark { display: block; width: 132px; height: 32px; flex: none; background: currentColor; mask: url("/assets/brand/wordmark-mask.svg") center / contain no-repeat; }
+html[data-visual-pack="dimensional"] .brand { width: 172px; height: 35px; background: url("/assets/brand/dimensional/logo-light.png") center / contain no-repeat; }
+html[data-visual-pack="dimensional"][data-theme="dark"] .brand,
+html[data-visual-pack="dimensional"][data-theme="contrast"] .brand { background-image: url("/assets/brand/dimensional/logo-dark.png"); }
+html[data-visual-pack="dimensional"] .brand-mark,
+html[data-visual-pack="dimensional"] .brand-wordmark { visibility: hidden; }
 
 
 .sb-nav-item > .icon { color: var(--muted); }
@@ -518,8 +526,8 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 .office-workspace-toolbar label, .office-workspace-toolbar form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .office-workspace-toolbar label { color: var(--text-soft); font-size: var(--fs-meta); }
 .office-workspace-toolbar input, .office-workspace-toolbar select, .shared-office-comments textarea { min-height: 34px; padding: 6px 10px; border: 1px solid var(--border-soft); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-meta); }
-.office-workspace-start { width: min(620px, calc(100vw - 36px)); margin: auto; padding: 28px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--surface); }
-.office-workspace-start p { color: var(--text-soft); font-size: var(--fs-ui); line-height: 1.55; }
+.office-workspace-start { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 8px clamp(16px, 3vw, 36px); border-bottom: 1px solid var(--border-soft); background: var(--surface); }
+.office-workspace-start p { margin: 0; color: var(--text-soft); font-size: var(--fs-meta); line-height: 1.5; }
 .office-workspace-error { margin: 0; padding: 8px clamp(16px, 3vw, 36px); color: var(--red); background: var(--surface); font-size: var(--fs-control); }
 .office-workspace-pane > .office-view { flex: 1 1 auto; min-height: 0; }
 .office-workspace-history { flex: 0 0 auto; display: flex; justify-content: space-between; gap: var(--space-3); padding: 8px clamp(16px, 3vw, 36px); border-top: 1px solid var(--border-soft); background: var(--surface); }
@@ -2213,6 +2221,7 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-nav-foot { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 11px 9px 2px; border-top: 1px solid var(--border-soft); }
 .settings-app-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: none; }
 .settings-app-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
+html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/assets/brand/dimensional/app-icon-64.png"); }
 .settings-nav-foot > div:last-child { display: flex; flex-direction: column; }
 .settings-nav-foot strong { font-size: var(--fs-meta); }
 .settings-nav-foot span { color: var(--faint); font-size: var(--fs-caption); }
@@ -4102,6 +4111,11 @@ body.is-resizing .split-divider {
 .agent-glyph { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: color-mix(in srgb, var(--agent-hue, var(--accent)) 22%, var(--surface)); color: var(--agent-hue, var(--accent-bright)); font-size: var(--fs-section); }
 .agent-mark { position: relative; display: inline-grid; flex: 0 0 auto; place-items: center; overflow: hidden; border: 1px solid color-mix(in oklch, hsl(var(--companion-hue) 45% 48%) 28%, var(--border)); border-radius: 38%; background: radial-gradient(circle at 50% 32%, color-mix(in srgb, hsl(var(--companion-hue) 55% 68%) 20%, var(--surface)), var(--surface)); }
 .agent-mark-fallback, .agent-mark-atlas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; user-select: none; }
+.agent-mark-dimensional { position: absolute; inset: 0; display: none; width: 100%; height: 100%; object-fit: contain; pointer-events: none; user-select: none; }
+.agent-mark.state-idle .agent-mark-dimensional { display: block; }
+html[data-visual-pack="dimensional"] .agent-mark.state-idle .agent-mark-atlas { display: none; }
+html[data-visual-pack="dimensional"] .agent-mark.dimensional-failed.state-idle .agent-mark-atlas { display: block; }
+html[data-visual-pack="dimensional"] .agent-mark.dimensional-failed.state-idle .agent-mark-dimensional { display: none; }
 .agent-mark-fallback { object-fit: contain; }
 .agent-mark-atlas { background-repeat: no-repeat; background-size: 400% 200%; background-position: 0 0; }
 .agent-mark-atlas-source { display: none; }

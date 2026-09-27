@@ -383,7 +383,7 @@ pub(super) fn replace_paragraph_text<R: Read + Seek>(
             rejected: replaced.rejected,
             fixed: replaced.fixed,
         }],
-        created: None,
+        created: Vec::new(),
     })
 }
 
@@ -417,12 +417,216 @@ pub(super) fn paragraph_views(
     redline::views(&part, paragraph, author, tracked).map_err(|error| error.message)
 }
 
-pub(super) fn insert_paragraph_after<R: Read + Seek>(
+/// Where new block content goes: after the paragraph `after` names, or at
+/// the end of the body, before its final section properties. Returns the
+/// byte offset and the paragraph directly above it, if the block there is
+/// one.
+fn insertion_point(doc: &Doc, after: Option<&str>) -> Result<(usize, Option<usize>), EditError> {
+    if let Some(anchor) = after {
+        let paragraph = find(doc, anchor)?;
+        return Ok((doc.tree.nodes[paragraph].span.end, Some(paragraph)));
+    }
+    let Some(body) = doc.tree.descendants(0, "body").next() else {
+        return fail("the document has no body");
+    };
+    let node = &doc.tree.nodes[body];
+    if node.is_empty_element() {
+        return fail("the document's body is empty markup this op cannot extend");
+    }
+    let at = doc
+        .tree
+        .children(body, "sectPr")
+        .next()
+        .map(|section| doc.tree.nodes[section].span.start)
+        .unwrap_or(node.inner.end);
+    let above = node
+        .children
+        .iter()
+        .copied()
+        .rfind(|child| {
+            let child = &doc.tree.nodes[*child];
+            !child.skipped
+                && matches!(child.local(), "p" | "tbl" | "sdt" | "customXml")
+                && child.span.end <= at
+        })
+        .filter(|block| doc.tree.nodes[*block].local() == "p");
+    Ok((at, above))
+}
+
+fn inside(doc: &Doc, index: usize, local: &str) -> bool {
+    let mut current = doc.tree.nodes[index].parent;
+    while let Some(parent) = current {
+        if doc.tree.nodes[parent].local() == local {
+            return true;
+        }
+        current = doc.tree.nodes[parent].parent;
+    }
+    false
+}
+
+/// A paragraph property element (`pStyle`, `numPr`) of `paragraph`.
+fn paragraph_property(tree: &Tree, paragraph: usize, local: &str) -> Option<usize> {
+    let properties = tree.children(paragraph, "pPr").next()?;
+    tree.children(properties, local).next()
+}
+
+/// The numbering a new paragraph in style `style_id` writes on itself:
+/// `Some(numId)` for a numbered list that must restart or continue an
+/// explicit list, `None` to leave numbering to the style. A numbered
+/// paragraph continues the list of the paragraph directly above it when
+/// that has the same style, and otherwise starts a new list at 1: a new
+/// instance of the same list definition. Bullets never need this.
+fn list_numbering<R: Read + Seek>(
+    work: &mut Work<'_, R>,
+    doc: &Doc,
+    style_id: &str,
+    above: Option<usize>,
+) -> Result<Option<String>, EditError> {
+    let Some(styles_part) = work.related(&doc.part, "styles")? else {
+        return Ok(None);
+    };
+    let styles = work.get(&styles_part)?;
+    let styles_tree = Tree::parse(&styles, &styles_part, work.limits())?;
+    let style_numbering = styles_tree
+        .descendants(0, "style")
+        .find(|style| styles_tree.nodes[*style].element.attr("styleId") == Some(style_id))
+        .and_then(|style| styles_tree.descendants(style, "numId").next())
+        .and_then(|number| styles_tree.nodes[number].element.attr("val"))
+        .map(str::to_string);
+    let Some(style_numbering) = style_numbering else {
+        return Ok(None);
+    };
+    let Some(numbering_part) = work.related(&doc.part, "numbering")? else {
+        return Ok(None);
+    };
+    let bytes = work.get(&numbering_part)?;
+    let tree = Tree::parse(&bytes, &numbering_part, work.limits())?;
+    let abstract_id = tree
+        .children(0, "num")
+        .find(|num| tree.nodes[*num].element.attr("numId") == Some(style_numbering.as_str()))
+        .and_then(|num| tree.children(num, "abstractNumId").next())
+        .and_then(|reference| tree.nodes[reference].element.attr("val"))
+        .map(str::to_string);
+    let Some(abstract_id) = abstract_id else {
+        return Ok(None);
+    };
+    let format = tree
+        .children(0, "abstractNum")
+        .find(|definition| {
+            tree.nodes[*definition].element.attr("abstractNumId") == Some(abstract_id.as_str())
+        })
+        .and_then(|definition| {
+            tree.children(definition, "lvl")
+                .find(|level| tree.nodes[*level].element.attr("ilvl") == Some("0"))
+        })
+        .and_then(|level| tree.children(level, "numFmt").next())
+        .and_then(|format| tree.nodes[format].element.attr("val"))
+        .map(str::to_string);
+    if !format.is_some_and(|format| format != "bullet" && format != "none") {
+        return Ok(None);
+    }
+    if let Some(above) = above {
+        let same_style = paragraph_property(&doc.tree, above, "pStyle")
+            .and_then(|style| doc.tree.nodes[style].element.attr("val"))
+            == Some(style_id);
+        if same_style {
+            return Ok(paragraph_property(&doc.tree, above, "numPr")
+                .and_then(|numbering| doc.tree.children(numbering, "numId").next())
+                .and_then(|number| doc.tree.nodes[number].element.attr("val"))
+                .map(str::to_string));
+        }
+    }
+    let Some(w) = tree.prefix_for(W).or_else(|| tree.prefix_for(W_STRICT)) else {
+        return fail("the numbering part does not declare the WordprocessingML namespace");
+    };
+    let root = tree.root();
+    if root.is_empty_element() {
+        return fail("the numbering part is empty markup this op cannot extend");
+    }
+    let definitions: Vec<usize> = tree.children(0, "abstractNum").collect();
+    let nums: Vec<usize> = tree.children(0, "num").collect();
+    let next = nums
+        .iter()
+        .filter_map(|num| tree.nodes[*num].element.attr("numId")?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        + 1;
+    let Some(definition) = definitions.iter().copied().find(|definition| {
+        tree.nodes[*definition].element.attr("abstractNumId") == Some(abstract_id.as_str())
+    }) else {
+        return Ok(None);
+    };
+    if tree.nodes[definition].is_empty_element() {
+        return Ok(None);
+    }
+    // A new list is its own copy of the list definition, which every
+    // renderer numbers from its start; a second instance of one definition
+    // with a start override restarts in Word but continues in some others.
+    // The copy drops what must stay unique to the original: its list id
+    // (`nsid`), the numbering style it defines, and the paragraph styles its
+    // levels are linked to.
+    let mut splice = Splice::default();
+    let restart = if tree.children(definition, "numStyleLink").next().is_some() {
+        format!(
+            r#"<{w}num {w}numId="{next}"><{w}abstractNumId {w}val="{}"/><{w}lvlOverride {w}ilvl="0"><{w}startOverride {w}val="1"/></{w}lvlOverride></{w}num>"#,
+            escape_attr(&abstract_id)
+        )
+    } else {
+        let copy_id = definitions
+            .iter()
+            .filter_map(|definition| {
+                tree.nodes[*definition]
+                    .element
+                    .attr("abstractNumId")?
+                    .parse::<u32>()
+                    .ok()
+            })
+            .max()
+            .unwrap_or(0)
+            + 1;
+        let node = &tree.nodes[definition];
+        let base = node.span.start;
+        let mut copy = Splice::default();
+        let mut attributes = node.element.attributes.clone();
+        for (key, value) in &mut attributes {
+            if crate::xml::local_name(key) == "abstractNumId" {
+                *value = copy_id.to_string();
+            }
+        }
+        copy.replace(
+            0..node.inner.start - base,
+            start_tag(&node.element.name, &attributes, false),
+        );
+        for local in ["nsid", "styleLink", "pStyle"] {
+            for dropped in tree.descendants(definition, local) {
+                let span = &tree.nodes[dropped].span;
+                copy.replace(span.start - base..span.end - base, "");
+            }
+        }
+        let copied = copy.apply(&bytes[node.span.clone()], &numbering_part)?;
+        let at = definitions
+            .last()
+            .map(|last| tree.nodes[*last].span.end)
+            .unwrap_or(root.inner.start);
+        splice.insert(at, copied);
+        format!(r#"<{w}num {w}numId="{next}"><{w}abstractNumId {w}val="{copy_id}"/></{w}num>"#)
+    };
+    let at = nums
+        .last()
+        .or(definitions.last())
+        .map(|last| tree.nodes[*last].span.end)
+        .unwrap_or(root.inner.end);
+    splice.insert(at, restart);
+    work.put(&numbering_part, splice.apply(&bytes, &numbering_part)?);
+    Ok(Some(next.to_string()))
+}
+
+pub(super) fn add_paragraph<R: Read + Seek>(
     work: &mut Work<'_, R>,
     context: &EditContext,
-    anchor: &str,
     text: &str,
     style: Option<&str>,
+    after: Option<&str>,
 ) -> Result<Outcome, EditError> {
     if text.trim().is_empty() {
         return fail("text must not be empty");
@@ -432,45 +636,57 @@ pub(super) fn insert_paragraph_after<R: Read + Seek>(
         None => None,
     };
     let doc = load(work)?;
-    let paragraph = find(&doc, anchor)?;
+    let (at, above) = insertion_point(&doc, after)?;
+    let numbering = match &style_id {
+        Some(style_id) => list_numbering(work, &doc, style_id, above)?,
+        None => None,
+    };
     let w = doc.w.clone();
     let mut splice = Splice::default();
-
     let (w14, root_tag) = ensure_w14(&doc)?;
     if let Some((range, tag)) = root_tag {
         splice.replace(range, tag);
     }
-    let para_id = new_para_id(&doc);
-    let style_xml = style_id
+    let para_id = new_para_ids(&doc, 1).remove(0);
+    let mut properties = style_id
         .map(|id| format!(r#"<{w}pStyle {w}val="{}"/>"#, escape_attr(&id)))
         .unwrap_or_default();
+    if let Some(number) = &numbering {
+        properties.push_str(&format!(
+            r#"<{w}numPr><{w}ilvl {w}val="0"/><{w}numId {w}val="{}"/></{w}numPr>"#,
+            escape_attr(number)
+        ));
+    }
     let paragraph_xml = if context.tracked {
         let first = next_revision_id(&doc);
         format!(
-            r#"<{w}p {w14}paraId="{para_id}"><{w}pPr>{style_xml}<{w}rPr><{w}ins{}/></{w}rPr></{w}pPr><{w}ins{}><{w}r>{}</{w}r></{w}ins></{w}p>"#,
+            r#"<{w}p {w14}paraId="{para_id}"><{w}pPr>{properties}<{w}rPr><{w}ins{}/></{w}rPr></{w}pPr><{w}ins{}><{w}r>{}</{w}r></{w}ins></{w}p>"#,
             revision(&doc, first, context),
             revision(&doc, first + 1, context),
             run_content(&w, text)
         )
     } else {
-        let properties = if style_xml.is_empty() {
+        let properties = if properties.is_empty() {
             String::new()
         } else {
-            format!("<{w}pPr>{style_xml}</{w}pPr>")
+            format!("<{w}pPr>{properties}</{w}pPr>")
         };
         format!(
             r#"<{w}p {w14}paraId="{para_id}">{properties}<{w}r>{}</{w}r></{w}p>"#,
             run_content(&w, text)
         )
     };
-    splice.insert(doc.tree.nodes[paragraph].span.end, paragraph_xml);
+    splice.insert(at, paragraph_xml);
     work.put(&doc.part, splice.apply(&doc.bytes, &doc.part)?);
     let new_anchor = format!("p:{para_id}");
+    let place = after
+        .map(|anchor| format!("after {anchor}"))
+        .unwrap_or_else(|| "at the end".into());
     Ok(Outcome {
         summary: if context.tracked {
-            format!("{new_anchor} inserted after {anchor} as a tracked insertion")
+            format!("{new_anchor} added {place} as a tracked insertion")
         } else {
-            format!("{new_anchor} inserted after {anchor}")
+            format!("{new_anchor} added {place}")
         },
         expect: vec![
             Expect::UnitContains {
@@ -479,7 +695,201 @@ pub(super) fn insert_paragraph_after<R: Read + Seek>(
             },
             Expect::ParagraphDelta(1),
         ],
-        created: Some(new_anchor),
+        created: vec![new_anchor],
+    })
+}
+
+/// The width text runs across in the document's last section, in twips.
+fn text_width(doc: &Doc) -> u32 {
+    let tree = &doc.tree;
+    let Some(section) = tree
+        .descendants(0, "body")
+        .next()
+        .and_then(|body| tree.children(body, "sectPr").next())
+    else {
+        return 9026;
+    };
+    let number = |element: &str, attribute: &str| {
+        tree.children(section, element)
+            .next()
+            .and_then(|node| tree.nodes[node].element.attr(attribute))
+            .and_then(|value| value.parse::<i64>().ok())
+    };
+    match number("pgSz", "w") {
+        Some(width) => {
+            let text = width
+                - number("pgMar", "left").unwrap_or(1440)
+                - number("pgMar", "right").unwrap_or(1440);
+            u32::try_from(text.clamp(1440, 31_680)).unwrap_or(9026)
+        }
+        None => 9026,
+    }
+}
+
+/// Largest table `add_table` writes: Word allows 63 columns.
+const MAX_TABLE_ROWS: usize = 1_000;
+const MAX_TABLE_COLUMNS: usize = 63;
+
+pub(super) fn add_table<R: Read + Seek>(
+    work: &mut Work<'_, R>,
+    context: &EditContext,
+    rows: &[Vec<super::CellValue>],
+    after: Option<&str>,
+    header: bool,
+) -> Result<Outcome, EditError> {
+    let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
+    if columns == 0 {
+        return fail(
+            "rows is empty; give at least one row of cells, e.g. [[\"Region\", \"Sales\"], [\"North\", \"120\"]]",
+        );
+    }
+    if rows.len() > MAX_TABLE_ROWS || columns > MAX_TABLE_COLUMNS {
+        return fail(format!(
+            "a table can have at most {MAX_TABLE_ROWS} rows and {MAX_TABLE_COLUMNS} columns"
+        ));
+    }
+    if work.strict() {
+        return fail("adding a table to a Strict document is not supported yet");
+    }
+    let doc = load(work)?;
+    let (at, _) = insertion_point(&doc, after)?;
+    if let Some(anchor) = after
+        && inside(&doc, find(&doc, anchor)?, "tbl")
+    {
+        return fail(format!(
+            "{anchor} is inside a table; name a paragraph outside any table, or leave out after to add the table at the end"
+        ));
+    }
+    let w = doc.w.clone();
+    let mut splice = Splice::default();
+    let (w14, root_tag) = ensure_w14(&doc)?;
+    if let Some((range, tag)) = root_tag {
+        splice.replace(range, tag);
+    }
+    let ordinal = 1 + doc
+        .tree
+        .nodes
+        .iter()
+        .enumerate()
+        .filter(|(index, node)| {
+            !node.skipped
+                && node.local() == "tbl"
+                && node.span.start < at
+                && !inside(&doc, *index, "tbl")
+        })
+        .count();
+    let width = text_width(&doc);
+    let cell_width = width / u32::try_from(columns).unwrap_or(1);
+    let ids = new_para_ids(&doc, rows.len() * columns);
+    let mut revision_id = next_revision_id(&doc);
+    let mut mark = |doc: &Doc| {
+        let attributes = revision(doc, revision_id, context);
+        revision_id += 1;
+        attributes
+    };
+    let border = |side: &str| {
+        format!(r#"<{w}{side} {w}val="single" {w}sz="4" {w}space="0" {w}color="auto"/>"#)
+    };
+    let borders: String = ["top", "left", "bottom", "right", "insideH", "insideV"]
+        .iter()
+        .map(|side| border(side))
+        .collect();
+    let mut xml = format!(
+        r#"<{w}tbl><{w}tblPr><{w}tblW {w}w="5000" {w}type="pct"/><{w}tblBorders>{borders}</{w}tblBorders><{w}tblLayout {w}type="fixed"/><{w}tblLook {w}val="04A0" {w}firstRow="1" {w}lastRow="0" {w}firstColumn="1" {w}lastColumn="0" {w}noHBand="0" {w}noVBand="1"/></{w}tblPr><{w}tblGrid>"#
+    );
+    for _ in 0..columns {
+        xml.push_str(&format!(r#"<{w}gridCol {w}w="{cell_width}"/>"#));
+    }
+    xml.push_str(&format!("</{w}tblGrid>"));
+    let mut expect = Vec::with_capacity(rows.len() + 1);
+    let mut next_id = ids.iter();
+    for (row_index, row) in rows.iter().enumerate() {
+        let is_header = header && row_index == 0;
+        let mut row_properties = String::new();
+        if is_header {
+            row_properties.push_str(&format!("<{w}tblHeader/>"));
+        }
+        if context.tracked {
+            row_properties.push_str(&format!("<{w}ins{}/>", mark(&doc)));
+        }
+        xml.push_str(&format!("<{w}tr>"));
+        if !row_properties.is_empty() {
+            xml.push_str(&format!("<{w}trPr>{row_properties}</{w}trPr>"));
+        }
+        let mut needles = Vec::new();
+        for column in 0..columns {
+            let text = row
+                .get(column)
+                .map(super::CellValue::as_text)
+                .unwrap_or_default();
+            needles.extend(lines(&text));
+            let shading = if is_header {
+                format!(r#"<{w}shd {w}val="clear" {w}color="auto" {w}fill="F2F2F2"/>"#)
+            } else {
+                String::new()
+            };
+            let bold = if is_header {
+                format!("<{w}b/>")
+            } else {
+                String::new()
+            };
+            let inserted_mark = if context.tracked {
+                format!("<{w}ins{}/>", mark(&doc))
+            } else {
+                String::new()
+            };
+            let mark_properties = if inserted_mark.is_empty() && bold.is_empty() {
+                String::new()
+            } else {
+                format!("<{w}rPr>{inserted_mark}{bold}</{w}rPr>")
+            };
+            let run = if text.is_empty() {
+                String::new()
+            } else {
+                let run_properties = if bold.is_empty() {
+                    String::new()
+                } else {
+                    format!("<{w}rPr>{bold}</{w}rPr>")
+                };
+                let run = format!("<{w}r>{run_properties}{}</{w}r>", run_content(&w, &text));
+                if context.tracked {
+                    format!("<{w}ins{}>{run}</{w}ins>", mark(&doc))
+                } else {
+                    run
+                }
+            };
+            let para_id = next_id.next().cloned().unwrap_or_default();
+            xml.push_str(&format!(
+                r#"<{w}tc><{w}tcPr><{w}tcW {w}w="{cell_width}" {w}type="dxa"/>{shading}</{w}tcPr><{w}p {w14}paraId="{para_id}"><{w}pPr><{w}spacing {w}before="40" {w}after="40" {w}line="240" {w}lineRule="auto"/>{mark_properties}</{w}pPr>{run}</{w}p></{w}tc>"#
+            ));
+        }
+        xml.push_str(&format!("</{w}tr>"));
+        expect.push(Expect::UnitContains {
+            anchor: format!("tbl@{ordinal}/r{}", row_index + 1),
+            needles,
+        });
+    }
+    xml.push_str(&format!("</{w}tbl>"));
+    splice.insert(at, xml);
+    work.put(&doc.part, splice.apply(&doc.bytes, &doc.part)?);
+    expect.push(Expect::ParagraphDelta(
+        i64::try_from(rows.len() * columns).unwrap_or(i64::MAX),
+    ));
+    let place = after
+        .map(|anchor| format!("after {anchor}"))
+        .unwrap_or_else(|| "at the end".into());
+    Ok(Outcome {
+        summary: format!(
+            "table tbl@{ordinal} ({} rows, {columns} columns) added {place}{}",
+            rows.len(),
+            if context.tracked {
+                " as a tracked insertion"
+            } else {
+                ""
+            }
+        ),
+        expect,
+        created: ids.into_iter().map(|id| format!("p:{id}")).collect(),
     })
 }
 
@@ -533,7 +943,7 @@ pub(super) fn delete_paragraph<R: Read + Seek>(
         return Ok(Outcome {
             summary: format!("{anchor} removed"),
             expect,
-            created: None,
+            created: Vec::new(),
         });
     }
     let w = doc.w.clone();
@@ -597,7 +1007,7 @@ pub(super) fn delete_paragraph<R: Read + Seek>(
         expect: vec![Expect::UnitDeleted {
             anchor: anchor.to_string(),
         }],
-        created: None,
+        created: Vec::new(),
     })
 }
 
@@ -642,7 +1052,9 @@ fn ensure_w14(doc: &Doc) -> Result<(String, Option<(std::ops::Range<usize>, Stri
     Ok(("w14:".into(), Some((root.span.start..end, tag))))
 }
 
-fn new_para_id(doc: &Doc) -> String {
+/// `count` paragraph ids no paragraph of the document uses, lowest first,
+/// so replaying the same ops on the same document mints the same ids.
+fn new_para_ids(doc: &Doc, count: usize) -> Vec<String> {
     let existing: std::collections::HashSet<String> = doc
         .tree
         .nodes
@@ -650,10 +1062,15 @@ fn new_para_id(doc: &Doc) -> String {
         .filter_map(|node| node.element.attr("paraId"))
         .map(str::to_ascii_uppercase)
         .collect();
-    (0x1A00_0001u32..0x7FFF_FFFF)
+    let mut ids: Vec<String> = (0x1A00_0001u32..0x7FFF_FFFF)
         .map(|value| format!("{value:08X}"))
-        .find(|candidate| !existing.contains(candidate))
-        .unwrap_or_else(|| "7FFFFFFE".into())
+        .filter(|candidate| !existing.contains(candidate))
+        .take(count)
+        .collect();
+    while ids.len() < count {
+        ids.push("7FFFFFFE".into());
+    }
+    ids
 }
 
 /// A paragraph style by id or by display name (`Heading 1`).

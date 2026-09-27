@@ -4,7 +4,11 @@
   "type": "module",
   "scripts": {
     "generate": "node generate.mjs",
-    "check": "node generate.mjs --check"
+    "check": "node generate.mjs --check",
+    "wallpapers": "node export-wallpapers.mjs",
+    "wallpapers:check": "node export-wallpapers.mjs --check",
+    "dimensional": "node export-dimensional-pack.mjs",
+    "dimensional:check": "node export-dimensional-pack.mjs --check"
   },
   "devDependencies": {
     "fontkit": "2.0.4",

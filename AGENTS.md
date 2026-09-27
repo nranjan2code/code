@@ -852,8 +852,14 @@ in progress, and the rest of V4 follows it.
     is kept byte for byte, and a change to a field's result is refused,
     never written; another author's tracked insertion is struck by a
     deletion nested inside it and split around new text, never rewritten.
-    A new document (a file not yet in the workspace, as one made from a
-    template) is written clean. A changed Excel input or formula sets `fullCalcOnLoad`,
+    A new document (a file not yet in the workspace, made from a template or
+    from scratch) is written clean. A file created from scratch starts from
+    Vakyartha's own blank for its format (`vak_ooxml::blank`), never from bytes
+    a model or a client supplies; `office_apply` takes that start only for a
+    path that does not exist and a call with neither `source` nor
+    `base_digest`, so a digest naming a missing file is refused as a
+    mistake, and Review replays the draft from the same blank. Viewing a
+    file never waits on a shared workspace. A changed Excel input or formula sets `fullCalcOnLoad`,
     and cached values read as stale until Excel recalculates. An op never
     adds, enables or strips macros: the output keeps the source's macro
     state. Shared Office workspaces are a built-in client surface over this
@@ -1124,7 +1130,9 @@ crates/vak-ooxml     the Open XML package engine, with NO vak dependencies so
                      span-aware splice editor; L2 anchored read projections
                      for Word, Excel, PowerPoint and Visio with hidden-content
                      labels; L3 the typed op engine (`edit`) behind
-                     `office_apply`. Every vak call
+                     `office_apply`; and the built-in blank packages a
+                     file created from scratch starts from (`blank`, parts
+                     as plain XML in `blank/`). Every vak call
                      site runs it in the broker worker (invariants 14, 39;
                      docs/design/72-openxml-documents.md)
 crates/vak-sandbox   the isolated-execution contract, deliberately ignorant

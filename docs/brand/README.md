@@ -64,6 +64,13 @@ favicons, notification art, Dock artwork, browser install icons, touch icons,
 Android and iOS icons, and platform-specific tray icons. Their source vector
 art is in `crates/vak-client-ui/public/assets/brand/`.
 
+An optional [Dimensional visual pack](library/dimensional/README.md) supplies
+transparent 3D character portraits and glyphs, an illustrated app icon, and
+light/dark app and site lockups. The [asset gallery](library/index.html)
+collects those with the canonical sources and wallpapers. The pack is a
+runtime Appearance choice in the client; the default generated platform
+icons continue to come from the SVG master.
+
 ## Colour and type
 
 | Token | Value | Role |

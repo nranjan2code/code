@@ -688,6 +688,7 @@ export interface UiPreferences {
    *  a surface that can be a browser tab on a phone in daylight
    *  (docs/design/48-web-client.md §7.1). */
   theme: "system" | "light" | "dark" | "contrast";
+  visualPack: "classic" | "dimensional";
   interfaceFont: InterfaceFont;
   contentFont: ContentFont;
   codeFont: CodeFont;
@@ -714,6 +715,7 @@ export interface UiPreferences {
 
 const defaultUiPreferences: UiPreferences = {
   theme: "system",
+  visualPack: "classic",
   interfaceFont: "system",
   contentFont: "inherit",
   codeFont: "system",
@@ -740,6 +742,7 @@ function loadUiPreferences(): UiPreferences {
     const stored: UiPreferences = { ...defaultUiPreferences, ...JSON.parse(localStorage.getItem("vak.uiPreferences") ?? "{}") };
     // A theme that no longer exists resolves to Match system (DESIGN.md).
     if (!["system", "light", "dark", "contrast"].includes(stored.theme)) stored.theme = "system";
+    if (!["classic", "dimensional"].includes(stored.visualPack)) stored.visualPack = "classic";
     if (!Object.prototype.hasOwnProperty.call(interfaceFonts, stored.interfaceFont)) stored.interfaceFont = "system";
     if (!Object.prototype.hasOwnProperty.call(contentFonts, stored.contentFont)) stored.contentFont = "inherit";
     if (!Object.prototype.hasOwnProperty.call(codeFonts, stored.codeFont)) stored.codeFont = "system";

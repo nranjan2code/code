@@ -86,18 +86,39 @@ pub enum OfficeView {
     Facts,
 }
 
-/// How an Office draft was made: the file it started from, the digest that
-/// file had, every op applied to it in order (across chained
-/// `office_apply` calls), and the tracked-change author. Recorded in the
-/// session ledger; the server assembles it, the worker replays it.
+/// Where a draft's chain of ops starts (docs/design/72, "Creating from
+/// scratch").
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum OfficeOrigin {
+    /// A file, with the digest its first ops were written against.
+    File { path: PathBuf, base_digest: String },
+    /// Vakyartha's built-in blank for the format the draft is named as.
+    Blank,
+}
+
+impl OfficeOrigin {
+    /// The directory a worker must be able to read to start from it.
+    fn directory(&self) -> Option<&Path> {
+        match self {
+            OfficeOrigin::File { path, .. } => path.parent(),
+            OfficeOrigin::Blank => None,
+        }
+    }
+}
+
+/// How an Office draft was made: where it started, every op applied to it
+/// in order (across chained `office_apply` calls), and the tracked-change
+/// author. Recorded in the session ledger; the server assembles it, the
+/// worker replays it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OfficeLineage {
-    pub source: PathBuf,
-    pub base_digest: String,
+    pub origin: OfficeOrigin,
     pub ops: Vec<vak_ooxml::edit::OfficeOp>,
     pub author: String,
     /// The draft is a new document (its file did not exist when the chain
-    /// was made), so Word edits were written clean rather than tracked.
+    /// was made, or it started from the blank), so Word edits were written
+    /// clean rather than tracked.
     #[serde(default)]
     pub new_file: bool,
 }
@@ -707,7 +728,7 @@ pub async fn office_review(
     };
     let mut roots = vec![after_dir];
     roots.extend(before.and_then(Path::parent));
-    roots.extend(lineage.and_then(|lineage| lineage.source.parent()));
+    roots.extend(lineage.and_then(|lineage| lineage.origin.directory()));
     let task = WorkerTask::OfficeReview {
         before: before.map(Path::to_path_buf),
         after: after.to_path_buf(),
@@ -733,7 +754,7 @@ pub async fn office_narrow(
         return Err("the output has no directory".into());
     };
     let mut roots = vec![out_dir];
-    roots.extend(lineage.source.parent());
+    roots.extend(lineage.origin.directory());
     roots.extend(draft.parent());
     let task = WorkerTask::OfficeNarrow {
         lineage: lineage.clone(),
@@ -761,7 +782,7 @@ pub async fn office_apply_to(
         return Err("the output has no directory".into());
     };
     let mut roots = vec![out_dir];
-    roots.extend(lineage.source.parent());
+    roots.extend(lineage.origin.directory());
     let task = WorkerTask::OfficeApply {
         lineage: lineage.clone(),
         out: out.to_path_buf(),
@@ -789,23 +810,23 @@ fn office_apply_in_worker(lineage: &OfficeLineage, out: &Path) -> Result<String,
             )
         })?;
     let context = lineage_context(lineage);
-    let (source, applied) = crate::office_apply::apply_checked(
-        &lineage.source,
-        &lineage.base_digest,
-        &lineage.ops,
-        &context,
-        target,
-    )?;
-    let before = vak_ooxml::read::read(std::io::Cursor::new(source), vak_ooxml::Limits::default())
-        .map_err(|error| format!("{} could not be read: {error}", lineage.source.display()))?;
+    let (source, applied) =
+        crate::office_apply::apply_checked(&lineage.origin, &lineage.ops, &context, target)?;
+    let before = match &lineage.origin {
+        OfficeOrigin::File { path, .. } => Some(
+            vak_ooxml::read::read(std::io::Cursor::new(source), vak_ooxml::Limits::default())
+                .map_err(|error| format!("{} could not be read: {error}", path.display()))?,
+        ),
+        OfficeOrigin::Blank => None,
+    };
     crate::office_apply::write_atomically(out, &applied.bytes)?;
     serde_json::to_string(&serde_json::json!({
         "path": out,
         "sha256": crate::office_apply::sha256_hex(&applied.bytes),
         "results": applied.results,
         "notices": applied.notices,
-        "changes": vak_ooxml::diff::diff(Some(&before), &applied.document),
-        "impact": vak_ooxml::diff::impact(Some(&before), &applied.document),
+        "changes": vak_ooxml::diff::diff(before.as_ref(), &applied.document),
+        "impact": vak_ooxml::diff::impact(before.as_ref(), &applied.document),
     }))
     .map_err(|error| error.to_string())
 }
@@ -885,21 +906,33 @@ fn read_document(path: &Path) -> Result<vak_ooxml::read::Document, String> {
         .map_err(|error| format!("{} could not be read: {error}", path.display()))
 }
 
-/// The lineage's source, refused unless it still has the digest the draft
-/// was made against.
-fn lineage_source(lineage: &OfficeLineage) -> Result<Vec<u8>, String> {
+/// The bytes the lineage starts from: its file, refused unless it still has
+/// the digest the draft was made against, or the built-in blank for
+/// `target`, the format the draft is named as.
+fn lineage_source(
+    lineage: &OfficeLineage,
+    target: Option<vak_ooxml::Format>,
+) -> Result<Vec<u8>, String> {
+    let (path, base_digest) = match &lineage.origin {
+        OfficeOrigin::File { path, base_digest } => (path, base_digest),
+        OfficeOrigin::Blank => {
+            let Some(target) = target else {
+                return Err("the draft is not named as a Word, Excel or PowerPoint file".into());
+            };
+            return vak_ooxml::blank::blank(target);
+        }
+    };
     let limits = vak_ooxml::Limits::default();
-    let bytes = crate::office_apply::read_bounded(&lineage.source, &limits)?;
+    let bytes = crate::office_apply::read_bounded(path, &limits)?;
     let digest = crate::office_apply::sha256_hex(&bytes);
-    let expected = lineage
-        .base_digest
+    let expected = base_digest
         .trim()
         .trim_end_matches('…')
         .to_ascii_lowercase();
     if expected.len() < 16 || !digest.starts_with(&expected) {
         return Err(format!(
             "{} changed after the draft was made from it",
-            lineage.source.display()
+            path.display()
         ));
     }
     Ok(bytes)
@@ -909,7 +942,7 @@ fn lineage_context(lineage: &OfficeLineage) -> vak_ooxml::edit::EditContext {
     vak_ooxml::edit::EditContext {
         author: lineage.author.clone(),
         date: chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
-        tracked: !lineage.new_file,
+        tracked: !lineage.new_file && lineage.origin != OfficeOrigin::Blank,
     }
 }
 
@@ -935,7 +968,7 @@ fn office_review_in_worker(
     });
     let choices = match lineage {
         None => Err("the draft was not made by office_apply in this conversation".to_string()),
-        Some(lineage) => lineage_source(lineage).and_then(|source| {
+        Some(lineage) => lineage_source(lineage, target_of(after)).and_then(|source| {
             vak_ooxml::review::choices(
                 &source,
                 &lineage.ops,
@@ -959,7 +992,7 @@ fn office_narrow_in_worker(
     keep: &[String],
     out: &Path,
 ) -> Result<String, String> {
-    let source = lineage_source(lineage)?;
+    let source = lineage_source(lineage, target_of(out))?;
     let draft = read_document(draft)?;
     let applied = vak_ooxml::review::narrow(
         &source,

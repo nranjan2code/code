@@ -18,6 +18,8 @@ const R_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships"
 const SLIDE_TYPE: &str = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 const LAYOUT_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml";
+const NOTES_TYPE: &str =
+    "application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml";
 
 struct Deck {
     part: String,
@@ -306,8 +308,38 @@ pub(super) fn set_placeholder_text<R2: Read + Seek>(
             lines.len()
         ),
         expect: vec![expect_text(format!("slide:{id}/shape:{shape_id}"), &lines)],
-        created: None,
+        created: Vec::new(),
     })
+}
+
+/// Creates `slide`'s notes page, holding `lines`, from the deck's notes
+/// master, and returns its part.
+fn create_notes<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    deck_part: &str,
+    slide: &str,
+    lines: &[String],
+) -> Result<String, EditError> {
+    let Some(master) = work.related(deck_part, "notesMaster")? else {
+        return fail(
+            "this deck has no notes master, so speaker notes cannot be added to a slide that has none; open it in PowerPoint and add notes there once",
+        );
+    };
+    let part = free_part_name(work, "ppt/notesSlides/notesSlide", ".xml");
+    work.put(
+        &part,
+        format!(
+            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<p:notes xmlns:a="{A}" xmlns:r="{R}" xmlns:p="{P}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr><p:sp><p:nvSpPr><p:cNvPr id="2" name="Slide Image Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1" noRot="1" noChangeAspect="1"/></p:cNvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr><p:spPr/></p:sp><p:sp><p:nvSpPr><p:cNvPr id="3" name="Notes Placeholder 2"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>{}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>"#,
+            paragraphs("a:", lines, "", "")
+        )
+        .into_bytes(),
+    );
+    work.set_override(&part, NOTES_TYPE)?;
+    work.add_relationship(&part, &format!("{R}/notesMaster"), &master)?;
+    work.add_relationship(&part, &format!("{R}/slide"), slide)?;
+    work.add_relationship(slide, &format!("{R}/notesSlide"), &part)?;
+    Ok(part)
 }
 
 pub(super) fn set_notes<R2: Read + Seek>(
@@ -319,9 +351,16 @@ pub(super) fn set_notes<R2: Read + Seek>(
     let id = slide_id(anchor)?.to_string();
     let part = slide_part(work, &deck, &id)?;
     let Some(notes) = work.related(&part, "notesSlide")? else {
-        return fail(format!(
-            "slide:{id} has no notes page yet, and creating one is not supported yet"
-        ));
+        if work.strict() {
+            return fail("adding a notes page to a Strict presentation is not supported yet");
+        }
+        let lines: Vec<String> = text.split('\n').map(str::to_string).collect();
+        create_notes(work, &deck.part, &part, &lines)?;
+        return Ok(Outcome {
+            summary: format!("slide:{id} speaker notes added"),
+            expect: vec![expect_text(format!("slide:{id}/notes"), &lines)],
+            created: Vec::new(),
+        });
     };
     let bytes = work.get(&notes)?;
     let tree = Tree::parse(&bytes, &notes, work.limits())?;
@@ -339,7 +378,7 @@ pub(super) fn set_notes<R2: Read + Seek>(
     Ok(Outcome {
         summary: format!("slide:{id} speaker notes set"),
         expect: vec![expect_text(format!("slide:{id}/notes"), &lines)],
-        created: None,
+        created: Vec::new(),
     })
 }
 
@@ -348,6 +387,7 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
     layout: &str,
     after: Option<&str>,
     placeholders: &BTreeMap<String, TextValue>,
+    notes: Option<&str>,
 ) -> Result<Outcome, EditError> {
     if work.strict() {
         return fail("adding a slide to a Strict presentation is not supported yet");
@@ -398,12 +438,19 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
                 _ => other.to_string(),
             },
         });
-        shapes.push((name, kind, index));
+        // The slide's placeholder names the layout's exactly: a content
+        // placeholder has no type (it means `obj`), a text one says `body`.
+        let written_type = layout_tree
+            .descendants(shape, "ph")
+            .next()
+            .and_then(|ph| layout_tree.nodes[ph].element.attr("type"))
+            .map(str::to_string);
+        shapes.push((name, kind, index, written_type));
     }
     for key in placeholders.keys() {
         if !shapes
             .iter()
-            .any(|(_, kind, index)| placeholder_matches(key, Some(kind), index.as_deref()))
+            .any(|(_, kind, index, _)| placeholder_matches(key, Some(kind), index.as_deref()))
         {
             return fail(format!(
                 "layout {layout:?} has no placeholder {key:?}; it has: {}",
@@ -416,7 +463,7 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
     let a = "a:";
     let mut used = std::collections::HashSet::new();
     let mut body = String::new();
-    for (position, (name, kind, index)) in shapes.iter().enumerate() {
+    for (position, (name, kind, index, written_type)) in shapes.iter().enumerate() {
         let text = placeholders
             .iter()
             .find(|(key, _)| {
@@ -425,11 +472,10 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
             })
             .map(|(_, text)| text.lines())
             .unwrap_or_default();
-        let type_attr = if kind == "body" && index.is_some() {
-            String::new()
-        } else {
-            format!(r#" type="{}""#, escape_attr(kind))
-        };
+        let type_attr = written_type
+            .as_ref()
+            .map(|kind| format!(r#" type="{}""#, escape_attr(kind)))
+            .unwrap_or_default();
         let index_attr = index
             .as_ref()
             .map(|index| format!(r#" idx="{}""#, escape_attr(index)))
@@ -513,6 +559,11 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
     work.put(&deck.part, splice.apply(&deck.bytes, &deck.part)?);
 
     let mut expect = vec![Expect::SlideOrder(order)];
+    if let Some(notes) = notes.filter(|notes| !notes.trim().is_empty()) {
+        let lines: Vec<String> = notes.split('\n').map(str::to_string).collect();
+        create_notes(work, &deck.part, &slide, &lines)?;
+        expect.push(expect_text(format!("slide:{new_id}/notes"), &lines));
+    }
     for (key, text) in placeholders {
         if let Some(first) = text
             .lines()
@@ -536,7 +587,7 @@ pub(super) fn add_slide_from_layout<R2: Read + Seek>(
     Ok(Outcome {
         summary: format!("slide:{new_id} added from layout {layout:?}"),
         expect,
-        created: Some(format!("slide:{new_id}")),
+        created: vec![format!("slide:{new_id}")],
     })
 }
 
@@ -612,7 +663,7 @@ pub(super) fn delete_slide<R2: Read + Seek>(
                     .collect(),
             ),
         ],
-        created: None,
+        created: Vec::new(),
     })
 }
 
@@ -673,6 +724,6 @@ pub(super) fn move_slide<R2: Read + Seek>(
                 .unwrap_or_else(|| "to the start".into())
         ),
         expect: vec![Expect::SlideOrder(order)],
-        created: None,
+        created: Vec::new(),
     })
 }

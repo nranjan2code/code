@@ -1283,6 +1283,17 @@ export default function App() {
           : "light"
         : uiPreferences.theme;
     document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.visualPack = uiPreferences.visualPack;
+    void host.setWindowIcon?.(uiPreferences.visualPack).catch((error) => {
+      console.warn("Could not update the window icon:", error);
+    });
+    const favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (favicon) {
+      favicon.href = uiPreferences.visualPack === "dimensional"
+        ? `${import.meta.env.BASE_URL}assets/brand/dimensional/app-icon-64.png`
+        : `${import.meta.env.BASE_URL}favicon.svg`;
+      favicon.type = uiPreferences.visualPack === "dimensional" ? "image/png" : "image/svg+xml";
+    }
     // Tells the browser which way to paint its own chrome: form controls,
     // scrollbars, and the space behind the page during load.
     document.documentElement.style.colorScheme = theme === "light" ? "light" : "dark";

@@ -23,7 +23,7 @@ impl Tool for BashTool {
     }
 
     fn description(&self) -> &str {
-        "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout. Never change a Word, Excel or PowerPoint file with a command or script: office_apply is the only way, because its change reaches the person as a draft they review."
+        "Execute any command, program, or script in the execution sandbox: run applications, execute code in any language, run shell pipelines, process data or media, install packages and tools, run tests, and debug processes. Commands run in the workspace, the same place `read` and `write` work; temporary files and tool caches go to `.vak/scratch/`. A command that never exits is killed at its timeout. Never create or change a Word, Excel, PowerPoint or Visio file with a command or script: office_apply is the only way to make or edit a Word, Excel or PowerPoint file, because its result reaches the person as a draft they review, and a Visio drawing cannot be made yet, so say that instead of building one."
     }
 
     fn schema(&self) -> Value {

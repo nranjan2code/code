@@ -1379,16 +1379,19 @@ pub(crate) enum OfficeAction {
         facts: bool,
     },
     /// Apply typed ops (the `office_apply` schema) and write the result to a
-    /// new file. The source is never changed.
+    /// new file. The source is never changed. With no source file and no
+    /// digest, `--out` is created from scratch from the built-in blank.
     Apply {
-        file: PathBuf,
+        /// The file to start from; leave out, with --base-digest, to create
+        /// from scratch.
+        file: Option<PathBuf>,
         /// A JSON file holding the array of ops, or `-` for stdin.
         #[arg(long)]
         ops: String,
         /// The sha256 (or its first 16 hex digits) of the file the ops were
-        /// written against, as `read` printed it.
+        /// written against, as `read` printed it. Required with a file.
         #[arg(long)]
-        base_digest: String,
+        base_digest: Option<String>,
         /// Where to write the result; must not exist.
         #[arg(long)]
         out: PathBuf,

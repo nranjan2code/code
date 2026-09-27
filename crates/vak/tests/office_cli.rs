@@ -141,3 +141,72 @@ fn read_apply_diff_and_verify_a_workbook_from_the_command_line() {
         "a workbook named .docx fails"
     );
 }
+
+#[test]
+fn a_file_is_created_from_scratch_verified_and_read_from_the_command_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let cases = [
+        (
+            "memo.docx",
+            r#"[{"op":"add_paragraph","text":"Q3 review","style":"Title"},
+                {"op":"add_paragraph","text":"Steps","style":"Heading 1"},
+                {"op":"add_paragraph","text":"Draft the budget","style":"List Number"},
+                {"op":"add_table","rows":[["Region","Revenue"],["North",120]]}]"#,
+            "Word document",
+        ),
+        (
+            "budget.xlsx",
+            r##"[{"op":"rename_sheet","sheet":"Sheet1","name":"Budget"},
+                 {"op":"set_cells","sheet":"Budget","cells":{"A1":"Item","B1":"Cost","A2":"Rent","B2":1200,"B3":"=SUM(B2:B2)"}},
+                 {"op":"format_cells","sheet":"Budget","range":"A1:B1","bold":true,"fill":"#D9E2F3"},
+                 {"op":"set_column_widths","sheet":"Budget","widths":{"A":24}}]"##,
+            "Excel workbook",
+        ),
+        (
+            "launch.pptx",
+            r#"[{"op":"add_slide_from_layout","layout":"Title Slide","placeholders":{"title":"Launch plan","subtitle":"October"}},
+                {"op":"add_slide_from_layout","layout":"Title and Content","placeholders":{"title":"Goals","body":["Ship v1","Sign ten partners"]},"notes":"Keep it short."}]"#,
+            "PowerPoint presentation",
+        ),
+    ];
+    for (name, ops, kind) in cases {
+        let created = json(&vak(
+            dir.path(),
+            &["office", "apply", "--ops", "-", "--out", name],
+            Some(ops),
+        ));
+        assert!(
+            created["changes"]["changes"][0]["after"]
+                .as_str()
+                .unwrap()
+                .starts_with("new file: "),
+            "{created}"
+        );
+        let verified = json(&vak(dir.path(), &["office", "verify", name], None));
+        assert_eq!(verified["passed"], true, "{name}: {verified}");
+        let facts = json(&vak(dir.path(), &["office", "read", name, "--facts"], None));
+        assert_eq!(facts["kind"], kind, "{facts}");
+        assert!(
+            facts["flags"].as_array().is_none_or(Vec::is_empty),
+            "{name}: {facts}"
+        );
+    }
+
+    let digest_without_file = vak(
+        dir.path(),
+        &[
+            "office",
+            "apply",
+            "--ops",
+            "-",
+            "--base-digest",
+            "0123456789abcdef",
+            "--out",
+            "other.docx",
+        ],
+        Some(r#"[{"op":"add_paragraph","text":"x"}]"#),
+    );
+    assert_eq!(digest_without_file.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&digest_without_file.stderr).contains("give the file"));
+    assert!(!dir.path().join("other.docx").exists());
+}

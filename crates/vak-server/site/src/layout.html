@@ -11,7 +11,7 @@
 <meta name="color-scheme" content="dark light" />
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f1ea" />
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#171714" />
-<link rel="icon" type="image/png" href="/app/assets/brand/icon-192.png" />
+<link id="site-icon" rel="icon" type="image/png" href="/app/assets/brand/icon-192.png" />
 <script>
   // Before first paint: adopt the stored theme so the page never flashes the
   // wrong ground, and mark that script is available so the reveal styles may
@@ -20,6 +20,11 @@
   try {
     var t = localStorage.getItem("vak-theme");
     if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    var prefs = JSON.parse(localStorage.getItem("vak.uiPreferences") || "{}");
+    if (prefs.visualPack === "dimensional") {
+      document.documentElement.dataset.visualPack = "dimensional";
+      document.getElementById("site-icon").href = "/app/assets/brand/dimensional/app-icon-64.png";
+    }
   } catch (e) {}
   document.documentElement.className += " js";
 </script>

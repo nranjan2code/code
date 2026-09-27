@@ -397,7 +397,7 @@ pub(super) fn set_cells<R2: Read + Seek>(
             cells.len()
         ),
         expect,
-        created: None,
+        created: Vec::new(),
     })
 }
 
@@ -500,11 +500,7 @@ pub(super) fn append_rows<R2: Read + Seek>(
     Ok(outcome)
 }
 
-pub(super) fn add_sheet<R2: Read + Seek>(
-    work: &mut Work<'_, R2>,
-    name: &str,
-) -> Result<Outcome, EditError> {
-    let name = name.trim();
+fn check_sheet_name(name: &str) -> Result<(), EditError> {
     if name.is_empty()
         || name.chars().count() > 31
         || name.contains(['[', ']', ':', '*', '?', '/', '\\'])
@@ -515,10 +511,10 @@ pub(super) fn add_sheet<R2: Read + Seek>(
             "{name:?} is not a valid sheet name (1–31 characters, none of [ ] : * ? / \\, not starting or ending with ')"
         ));
     }
-    if work.strict() {
-        return fail("adding a sheet to a Strict workbook is not supported yet");
-    }
-    let book = book(work)?;
+    Ok(())
+}
+
+fn refuse_locked_structure(book: &Book) -> Result<(), EditError> {
     if let Some(protection) = book.tree.children(0, "workbookProtection").next()
         && book.tree.nodes[protection]
             .element
@@ -529,6 +525,20 @@ pub(super) fn add_sheet<R2: Read + Seek>(
             "the workbook structure is protected; the owner must remove the protection first",
         );
     }
+    Ok(())
+}
+
+pub(super) fn add_sheet<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    name: &str,
+) -> Result<Outcome, EditError> {
+    let name = name.trim();
+    check_sheet_name(name)?;
+    if work.strict() {
+        return fail("adding a sheet to a Strict workbook is not supported yet");
+    }
+    let book = book(work)?;
+    refuse_locked_structure(&book)?;
     let mut ids = BTreeSet::new();
     for sheet in book.tree.descendants(0, "sheet") {
         let element = &book.tree.nodes[sheet].element;
@@ -582,6 +592,1186 @@ pub(super) fn add_sheet<R2: Read + Seek>(
     Ok(Outcome {
         summary: format!("sheet {name:?} added"),
         expect: vec![Expect::Section(format!("{}!", quote_sheet(name)))],
-        created: None,
+        created: Vec::new(),
     })
+}
+
+// ---- names, formats and widths (docs/design/72, "Creating from scratch") ---
+
+fn refuse_protected_sheet(tree: &Tree, name: &str) -> Result<(), EditError> {
+    if let Some(protection) = tree.descendants(0, "sheetProtection").next()
+        && tree.nodes[protection]
+            .element
+            .attr("sheet")
+            .is_some_and(|value| value == "1" || value == "true")
+    {
+        return fail(format!(
+            "sheet {name:?} is protected; the owner must remove the protection before it can be edited"
+        ));
+    }
+    Ok(())
+}
+
+/// Whether XML text names `sheet` the way a formula, a defined name, a chart
+/// series or a pivot source does (`Sheet1!A1`, `'My sheet'!A1`,
+/// `Sheet1:Sheet3!A1`, `sheet="Sheet1"`), ignoring case as Excel does.
+fn names_sheet(text: &str, sheet: &str) -> bool {
+    let text = text
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&amp;", "&")
+        .to_lowercase();
+    let sheet = sheet.to_lowercase();
+    let quoted = sheet.replace('\'', "''");
+    if text.contains(&format!("'{quoted}'!"))
+        || text.contains(&format!("'{quoted}:"))
+        || text.contains(&format!(":{quoted}'!"))
+        || text.contains(&format!("sheet=\"{sheet}\""))
+    {
+        return true;
+    }
+    let name_char = |c: char| c.is_alphanumeric() || c == '_' || c == '.';
+    let starts_a_name = |at: usize| text[..at].chars().next_back().is_none_or(|c| !name_char(c));
+    let bare = format!("{sheet}!");
+    if text
+        .match_indices(bare.as_str())
+        .any(|(at, _)| starts_a_name(at))
+    {
+        return true;
+    }
+    // The first sheet of a 3-D reference, `Sheet1:Sheet3!A1`; a namespace
+    // prefix such as `r:id` is not followed by a name and `!`.
+    let range = format!("{sheet}:");
+    text.match_indices(range.as_str()).any(|(at, _)| {
+        let rest = &text[at + range.len()..];
+        let name = rest.chars().take_while(|c| name_char(*c)).count();
+        starts_a_name(at) && name > 0 && rest.chars().nth(name) == Some('!')
+    })
+}
+
+pub(super) fn rename_sheet<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet: &str,
+    name: &str,
+) -> Result<Outcome, EditError> {
+    let name = name.trim();
+    check_sheet_name(name)?;
+    let book = book(work)?;
+    refuse_locked_structure(&book)?;
+    let wanted = sheet.trim().trim_matches('\'');
+    let mut found = None;
+    let mut names = Vec::new();
+    for node in book.tree.descendants(0, "sheet") {
+        let Some(existing) = book.tree.nodes[node].element.attr("name") else {
+            continue;
+        };
+        if existing.eq_ignore_ascii_case(wanted) {
+            found = Some((node, existing.to_string()));
+        } else if existing.eq_ignore_ascii_case(name) {
+            return fail(format!("a sheet named {existing:?} already exists"));
+        }
+        names.push(existing.to_string());
+    }
+    let Some((node, old)) = found else {
+        return fail(format!("no sheet {sheet:?}; sheets: {}", names.join(", ")));
+    };
+    if old == name {
+        return fail(format!("sheet {old:?} already has that name"));
+    }
+    let mut referring = Vec::new();
+    for part in work.part_names() {
+        let lower = part.to_ascii_lowercase();
+        let text_only = lower.contains("sharedstrings")
+            || lower.contains("comments")
+            || lower.starts_with("docprops/");
+        if text_only || !(lower.ends_with(".xml") || lower.ends_with(".vml")) {
+            continue;
+        }
+        let bytes = work.get(&part)?;
+        if names_sheet(&String::from_utf8_lossy(&bytes), &old) {
+            referring.push(part);
+        }
+    }
+    if !referring.is_empty() {
+        referring.sort();
+        return fail(format!(
+            "sheet {old:?} is named in {} (a formula, defined name, chart or other reference), which renaming would break; rename the sheet before writing anything that names it, or keep its name",
+            referring.join(", ")
+        ));
+    }
+    let element = &book.tree.nodes[node];
+    let mut attributes = element.element.attributes.clone();
+    set_attribute(&mut attributes, "name", name.to_string());
+    let end = if element.is_empty_element() {
+        element.span.end
+    } else {
+        element.inner.start
+    };
+    let mut splice = Splice::default();
+    splice.replace(
+        element.span.start..end,
+        start_tag(
+            &element.element.name,
+            &attributes,
+            element.is_empty_element(),
+        ),
+    );
+    work.put(&book.part, splice.apply(&book.bytes, &book.part)?);
+    Ok(Outcome {
+        summary: format!("sheet {old:?} renamed {name:?}"),
+        expect: vec![
+            Expect::Section(format!("{}!", quote_sheet(name))),
+            Expect::NoSection(format!("{}!", quote_sheet(&old))),
+        ],
+        created: Vec::new(),
+    })
+}
+
+fn set_attribute(attributes: &mut Vec<(String, String)>, key: &str, value: String) {
+    match attributes.iter_mut().find(|(existing, _)| existing == key) {
+        Some((_, existing)) => *existing = value,
+        None => attributes.push((key.to_string(), value)),
+    }
+}
+
+/// Formatting `format_cells` applies to each cell; `None` leaves that part
+/// of a cell's format as it is. `fill` is six hex digits, `number_format`
+/// an Excel format code.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct Format {
+    pub bold: Option<bool>,
+    pub italic: Option<bool>,
+    pub number_format: Option<String>,
+    pub fill: Option<String>,
+    pub wrap: Option<bool>,
+}
+
+impl Format {
+    fn is_empty(&self) -> bool {
+        self.bold.is_none()
+            && self.italic.is_none()
+            && self.number_format.is_none()
+            && self.fill.is_none()
+            && self.wrap.is_none()
+    }
+
+    fn describe(&self) -> String {
+        let mut parts = Vec::new();
+        let flag = |on: bool, what: &str| {
+            if on {
+                what.to_string()
+            } else {
+                format!("not {what}")
+            }
+        };
+        parts.extend(self.bold.map(|on| flag(on, "bold")));
+        parts.extend(self.italic.map(|on| flag(on, "italic")));
+        parts.extend(
+            self.number_format
+                .as_ref()
+                .map(|code| format!("number format {code}")),
+        );
+        parts.extend(self.fill.as_ref().map(|fill| format!("fill #{fill}")));
+        parts.extend(self.wrap.map(|on| flag(on, "wrapped")));
+        parts.join(", ")
+    }
+}
+
+/// Number formats every Excel version knows by id without declaring them.
+const BUILTIN_FORMATS: &[(u32, &str)] = &[
+    (0, "General"),
+    (1, "0"),
+    (2, "0.00"),
+    (3, "#,##0"),
+    (4, "#,##0.00"),
+    (9, "0%"),
+    (10, "0.00%"),
+    (11, "0.00E+00"),
+    (12, "# ?/?"),
+    (13, "# ??/??"),
+    (49, "@"),
+];
+
+/// Most cells one `format_cells` call formats.
+const MAX_FORMAT_CELLS: u64 = 20_000;
+
+/// `A1:D4` or `B4`, optionally after `Sheet!` → (first column, first row,
+/// last column, last row).
+fn cell_range(text: &str) -> Result<(u32, u32, u32, u32), EditError> {
+    let text = text.trim();
+    let text = text.rsplit_once('!').map_or(text, |(_, cells)| cells);
+    let (from, to) = text.split_once(':').unwrap_or((text, text));
+    let (first_column, first_row) = address(from)?;
+    let (last_column, last_row) = address(to)?;
+    Ok((
+        first_column.min(last_column),
+        first_row.min(last_row),
+        first_column.max(last_column),
+        first_row.max(last_row),
+    ))
+}
+
+/// `#1f4e79`, `1F4E79` or `FF1F4E79` → `1F4E79`.
+fn fill_colour(text: &str) -> Result<String, EditError> {
+    let hex = text.trim().trim_start_matches('#').to_ascii_uppercase();
+    let hex = if hex.len() == 8 && hex.starts_with("FF") {
+        hex[2..].to_string()
+    } else {
+        hex
+    };
+    if hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(hex)
+    } else {
+        fail(format!(
+            "fill {text:?} is not a colour; give six hex digits such as \"D9E2F3\""
+        ))
+    }
+}
+
+/// The workbook's styles part and the entries `format_cells` adds to it.
+struct Styles {
+    part: String,
+    bytes: Vec<u8>,
+    tree: Tree,
+    s: String,
+    fonts: Vec<usize>,
+    fills: Vec<usize>,
+    xfs: Vec<usize>,
+    custom: BTreeMap<u32, String>,
+    new_fonts: Vec<String>,
+    new_fills: Vec<String>,
+    new_formats: Vec<(u32, String)>,
+    new_xfs: Vec<String>,
+}
+
+impl Styles {
+    fn load<R2: Read + Seek>(work: &mut Work<'_, R2>) -> Result<Self, EditError> {
+        let main = work.main_part();
+        let Some(part) = work.related(&main, "styles")? else {
+            return fail("the workbook has no styles part, so no format can be applied");
+        };
+        let bytes = work.get(&part)?;
+        let tree = Tree::parse(&bytes, &part, work.limits())?;
+        let s = prefix(&tree)?;
+        let list = |local: &str, item: &str| -> Vec<usize> {
+            tree.children(0, local)
+                .next()
+                .map(|list| tree.children(list, item).collect())
+                .unwrap_or_default()
+        };
+        let fonts = list("fonts", "font");
+        let fills = list("fills", "fill");
+        let xfs = list("cellXfs", "xf");
+        if xfs.is_empty() {
+            return fail("the styles part has no cell formats to build on");
+        }
+        let custom = list("numFmts", "numFmt")
+            .into_iter()
+            .filter_map(|format| {
+                let element = &tree.nodes[format].element;
+                Some((
+                    element.attr("numFmtId")?.parse::<u32>().ok()?,
+                    element.attr("formatCode")?.to_string(),
+                ))
+            })
+            .collect();
+        Ok(Self {
+            part,
+            bytes,
+            tree,
+            s,
+            fonts,
+            fills,
+            xfs,
+            custom,
+            new_fonts: Vec::new(),
+            new_fills: Vec::new(),
+            new_formats: Vec::new(),
+            new_xfs: Vec::new(),
+        })
+    }
+
+    fn slice(&self, node: usize) -> String {
+        String::from_utf8_lossy(&self.bytes[self.tree.nodes[node].span.clone()]).into_owned()
+    }
+
+    fn is_on(&self, node: usize, local: &str) -> bool {
+        self.tree.children(node, local).next().is_some_and(|child| {
+            !matches!(
+                self.tree.nodes[child].element.attr("val"),
+                Some("0" | "false")
+            )
+        })
+    }
+
+    fn number(&self, node: usize, attribute: &str) -> usize {
+        self.tree.nodes[node]
+            .element
+            .attr(attribute)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0)
+    }
+
+    /// The index of a cell format like `old` with `format` applied, adding
+    /// the font, fill, number format and cell format that needs.
+    fn derive(&mut self, old: usize, format: &Format) -> Result<usize, EditError> {
+        let Some(&xf) = self.xfs.get(old) else {
+            return fail(format!(
+                "a cell uses cell format {old}, which the styles part does not have"
+            ));
+        };
+        let s = self.s.clone();
+        let mut attributes = self.tree.nodes[xf].element.attributes.clone();
+        if format.bold.is_some() || format.italic.is_some() {
+            let font_index = self.number(xf, "fontId");
+            let Some(&font) = self.fonts.get(font_index) else {
+                return fail(format!(
+                    "cell format {old} names a font the styles part does not have"
+                ));
+            };
+            let bold = format.bold.unwrap_or_else(|| self.is_on(font, "b"));
+            let italic = format.italic.unwrap_or_else(|| self.is_on(font, "i"));
+            let mut inner = String::new();
+            if bold {
+                inner.push_str(&format!("<{s}b/>"));
+            }
+            if italic {
+                inner.push_str(&format!("<{s}i/>"));
+            }
+            for child in self.tree.nodes[font].children.clone() {
+                if !matches!(self.tree.nodes[child].local(), "b" | "i") {
+                    inner.push_str(&self.slice(child));
+                }
+            }
+            let xml = format!("<{s}font>{inner}</{s}font>");
+            let index = find_or_add(
+                self.fonts.iter().map(|font| self.slice(*font)).collect(),
+                &mut self.new_fonts,
+                xml,
+            );
+            set_attribute(&mut attributes, "fontId", index.to_string());
+            set_attribute(&mut attributes, "applyFont", "1".into());
+        }
+        if let Some(fill) = &format.fill {
+            let xml = format!(
+                r#"<{s}fill><{s}patternFill patternType="solid"><{s}fgColor rgb="FF{fill}"/><{s}bgColor indexed="64"/></{s}patternFill></{s}fill>"#
+            );
+            let index = find_or_add(
+                self.fills.iter().map(|fill| self.slice(*fill)).collect(),
+                &mut self.new_fills,
+                xml,
+            );
+            set_attribute(&mut attributes, "fillId", index.to_string());
+            set_attribute(&mut attributes, "applyFill", "1".into());
+        }
+        if let Some(code) = &format.number_format {
+            let id = match BUILTIN_FORMATS.iter().find(|(_, known)| known == code) {
+                Some((id, _)) => *id,
+                None => match self
+                    .custom
+                    .iter()
+                    .map(|(id, known)| (*id, known.clone()))
+                    .chain(self.new_formats.iter().cloned())
+                    .find(|(_, known)| known == code)
+                {
+                    Some((id, _)) => id,
+                    None => {
+                        let id = self
+                            .custom
+                            .keys()
+                            .copied()
+                            .chain(self.new_formats.iter().map(|(id, _)| *id))
+                            .max()
+                            .unwrap_or(163)
+                            .max(163)
+                            + 1;
+                        self.new_formats.push((id, code.clone()));
+                        id
+                    }
+                },
+            };
+            set_attribute(&mut attributes, "numFmtId", id.to_string());
+            set_attribute(&mut attributes, "applyNumberFormat", "1".into());
+        }
+        let mut children = String::new();
+        let alignment = self.tree.children(xf, "alignment").next();
+        match (format.wrap, alignment) {
+            (Some(wrap), Some(alignment)) => {
+                let element = &self.tree.nodes[alignment].element;
+                let mut alignment_attributes = element.attributes.clone();
+                alignment_attributes.retain(|(key, _)| key != "wrapText");
+                if wrap {
+                    alignment_attributes.push(("wrapText".into(), "1".into()));
+                }
+                children.push_str(&start_tag(&element.name, &alignment_attributes, true));
+                set_attribute(&mut attributes, "applyAlignment", "1".into());
+            }
+            (Some(true), None) => {
+                children.push_str(&format!(r#"<{s}alignment wrapText="1"/>"#));
+                set_attribute(&mut attributes, "applyAlignment", "1".into());
+            }
+            (Some(false), None) => {}
+            (None, Some(alignment)) => children.push_str(&self.slice(alignment)),
+            (None, None) => {}
+        }
+        for child in self.tree.nodes[xf].children.clone() {
+            if self.tree.nodes[child].local() != "alignment" {
+                children.push_str(&self.slice(child));
+            }
+        }
+        let name = self.tree.nodes[xf].element.name.clone();
+        let xml = if children.is_empty() {
+            start_tag(&name, &attributes, true)
+        } else {
+            format!(
+                "{}{children}</{name}>",
+                start_tag(&name, &attributes, false)
+            )
+        };
+        Ok(find_or_add(
+            self.xfs.iter().map(|xf| self.slice(*xf)).collect(),
+            &mut self.new_xfs,
+            xml,
+        ))
+    }
+
+    fn write<R2: Read + Seek>(self, work: &mut Work<'_, R2>) -> Result<(), EditError> {
+        if self.new_fonts.is_empty()
+            && self.new_fills.is_empty()
+            && self.new_formats.is_empty()
+            && self.new_xfs.is_empty()
+        {
+            return Ok(());
+        }
+        let s = &self.s;
+        let mut splice = Splice::default();
+        let list = |local: &str| self.tree.children(0, local).next();
+        extend_list(
+            &mut splice,
+            &self.tree,
+            list("fonts"),
+            &self.new_fonts,
+            self.fonts.len(),
+        )?;
+        extend_list(
+            &mut splice,
+            &self.tree,
+            list("fills"),
+            &self.new_fills,
+            self.fills.len(),
+        )?;
+        extend_list(
+            &mut splice,
+            &self.tree,
+            list("cellXfs"),
+            &self.new_xfs,
+            self.xfs.len(),
+        )?;
+        if !self.new_formats.is_empty() {
+            let items: Vec<String> = self
+                .new_formats
+                .iter()
+                .map(|(id, code)| {
+                    format!(
+                        r#"<{s}numFmt numFmtId="{id}" formatCode="{}"/>"#,
+                        escape_attr(code)
+                    )
+                })
+                .collect();
+            match list("numFmts") {
+                Some(formats) => extend_list(
+                    &mut splice,
+                    &self.tree,
+                    Some(formats),
+                    &items,
+                    self.custom.len(),
+                )?,
+                None => {
+                    let Some(fonts) = list("fonts") else {
+                        return fail("the styles part has no fonts list");
+                    };
+                    splice.insert(
+                        self.tree.nodes[fonts].span.start,
+                        format!(
+                            r#"<{s}numFmts count="{}">{}</{s}numFmts>"#,
+                            items.len(),
+                            items.concat()
+                        ),
+                    );
+                }
+            }
+        }
+        work.put(&self.part, splice.apply(&self.bytes, &self.part)?);
+        Ok(())
+    }
+}
+
+/// The index of `xml` among `existing` then `added`, adding it when new.
+fn find_or_add(existing: Vec<String>, added: &mut Vec<String>, xml: String) -> usize {
+    if let Some(index) = existing.iter().position(|known| *known == xml) {
+        return index;
+    }
+    match added.iter().position(|known| *known == xml) {
+        Some(index) => existing.len() + index,
+        None => {
+            added.push(xml);
+            existing.len() + added.len() - 1
+        }
+    }
+}
+
+/// Appends `items` to a styles list and sets its `count`.
+fn extend_list(
+    splice: &mut Splice,
+    tree: &Tree,
+    list: Option<usize>,
+    items: &[String],
+    existing: usize,
+) -> Result<(), EditError> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let Some(list) = list else {
+        return fail("the styles part lacks a list this op extends");
+    };
+    let node = &tree.nodes[list];
+    let mut attributes = node.element.attributes.clone();
+    set_attribute(
+        &mut attributes,
+        "count",
+        (existing + items.len()).to_string(),
+    );
+    if node.is_empty_element() {
+        splice.replace(
+            node.span.clone(),
+            format!(
+                "{}{}</{}>",
+                start_tag(&node.element.name, &attributes, false),
+                items.concat(),
+                node.element.name
+            ),
+        );
+    } else {
+        splice.replace(
+            node.span.start..node.inner.start,
+            start_tag(&node.element.name, &attributes, false),
+        );
+        splice.insert(node.inner.end, items.concat());
+    }
+    Ok(())
+}
+
+pub(super) fn format_cells<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet: &str,
+    range: &str,
+    format: &Format,
+) -> Result<Outcome, EditError> {
+    if format.is_empty() {
+        return fail("give at least one of bold, italic, number_format, fill or wrap");
+    }
+    let format = Format {
+        fill: format.fill.as_deref().map(fill_colour).transpose()?,
+        number_format: match format.number_format.as_deref().map(str::trim) {
+            Some(code)
+                if code.is_empty()
+                    || code.chars().count() > 255
+                    || code.chars().any(char::is_control) =>
+            {
+                return fail(format!(
+                    "number_format {code:?} is not an Excel format code such as \"#,##0.00\" or \"0%\""
+                ));
+            }
+            code => code.map(str::to_string),
+        },
+        ..format.clone()
+    };
+    let (first_column, first_row, last_column, last_row) = cell_range(range)?;
+    let count = u64::from(last_column - first_column + 1) * u64::from(last_row - first_row + 1);
+    if count > MAX_FORMAT_CELLS {
+        return fail(format!(
+            "{range} is {count} cells; format at most {MAX_FORMAT_CELLS} in one op"
+        ));
+    }
+    let (part, name) = sheet_part(work, sheet)?;
+    let bytes = work.get(&part)?;
+    let tree = Tree::parse(&bytes, &part, work.limits())?;
+    let s = prefix(&tree)?;
+    refuse_protected_sheet(&tree, &name)?;
+    let Some(data) = tree.descendants(0, "sheetData").next() else {
+        return fail(format!("sheet {name:?} has no sheetData"));
+    };
+    let mut rows: BTreeMap<u32, usize> = BTreeMap::new();
+    for row in tree.children(data, "row") {
+        let Some(number) = tree.nodes[row]
+            .element
+            .attr("r")
+            .and_then(|r| r.parse::<u32>().ok())
+        else {
+            return fail(format!(
+                "sheet {name:?} has a row without a number, which this op does not edit"
+            ));
+        };
+        rows.insert(number, row);
+    }
+    let mut row_cells: BTreeMap<u32, BTreeMap<u32, usize>> = BTreeMap::new();
+    for (number, row) in rows.range(first_row..=last_row) {
+        let mut cells = BTreeMap::new();
+        for cell in tree.children(*row, "c") {
+            let Some((column, _)) = tree.nodes[cell]
+                .element
+                .attr("r")
+                .and_then(|reference| address(reference).ok())
+            else {
+                return fail(format!("row {number} has a cell without an address"));
+            };
+            cells.insert(column, cell);
+        }
+        row_cells.insert(*number, cells);
+    }
+    let style_of = |row: u32, column: u32| -> usize {
+        row_cells
+            .get(&row)
+            .and_then(|cells| cells.get(&column))
+            .and_then(|cell| tree.nodes[*cell].element.attr("s"))
+            .and_then(|style| style.parse().ok())
+            .unwrap_or(0)
+    };
+    let mut styles = Styles::load(work)?;
+    let mut derived: BTreeMap<usize, usize> = BTreeMap::new();
+    for row in first_row..=last_row {
+        for column in first_column..=last_column {
+            let old = style_of(row, column);
+            if let std::collections::btree_map::Entry::Vacant(entry) = derived.entry(old) {
+                entry.insert(styles.derive(old, &format)?);
+            }
+        }
+    }
+    styles.write(work)?;
+    let new_style =
+        |row: u32, column: u32| derived.get(&style_of(row, column)).copied().unwrap_or(0);
+    let empty_cell = |row: u32, column: u32| {
+        format!(
+            r#"<{s}c r="{}{row}" s="{}"/>"#,
+            column_name(column),
+            new_style(row, column)
+        )
+    };
+    let mut splice = Splice::default();
+    let mut new_rows: Vec<(u32, String)> = Vec::new();
+    for row in first_row..=last_row {
+        let Some(row_index) = rows.get(&row) else {
+            let cells: String = (first_column..=last_column)
+                .map(|column| empty_cell(row, column))
+                .collect();
+            new_rows.push((row, format!(r#"<{s}row r="{row}">{cells}</{s}row>"#)));
+            continue;
+        };
+        let row_node = &tree.nodes[*row_index];
+        let mut attributes = row_node.element.attributes.clone();
+        attributes.retain(|(key, _)| key != "spans");
+        if row_node.is_empty_element() {
+            let cells: String = (first_column..=last_column)
+                .map(|column| empty_cell(row, column))
+                .collect();
+            splice.replace(
+                row_node.span.clone(),
+                format!(
+                    "{}{cells}</{}>",
+                    start_tag(&row_node.element.name, &attributes, false),
+                    row_node.element.name
+                ),
+            );
+            continue;
+        }
+        let cells = row_cells.get(&row).cloned().unwrap_or_default();
+        let mut inserted = false;
+        for column in first_column..=last_column {
+            match cells.get(&column) {
+                Some(cell) => {
+                    let node = &tree.nodes[*cell];
+                    let mut cell_attributes = node.element.attributes.clone();
+                    set_attribute(
+                        &mut cell_attributes,
+                        "s",
+                        new_style(row, column).to_string(),
+                    );
+                    let end = if node.is_empty_element() {
+                        node.span.end
+                    } else {
+                        node.inner.start
+                    };
+                    splice.replace(
+                        node.span.start..end,
+                        start_tag(
+                            &node.element.name,
+                            &cell_attributes,
+                            node.is_empty_element(),
+                        ),
+                    );
+                }
+                None => {
+                    let at = cells
+                        .range(column + 1..)
+                        .next()
+                        .map(|(_, cell)| tree.nodes[*cell].span.start)
+                        .unwrap_or(row_node.inner.end);
+                    splice.insert(at, empty_cell(row, column));
+                    inserted = true;
+                }
+            }
+        }
+        if inserted && attributes.len() != row_node.element.attributes.len() {
+            splice.replace(
+                row_node.span.start..row_node.inner.start,
+                start_tag(&row_node.element.name, &attributes, false),
+            );
+        }
+    }
+    let data_node = &tree.nodes[data];
+    if data_node.is_empty_element() {
+        let inner: String = new_rows.iter().map(|(_, xml)| xml.as_str()).collect();
+        splice.replace(
+            data_node.span.clone(),
+            format!("<{0}>{inner}</{0}>", data_node.element.name),
+        );
+    } else {
+        for (number, xml) in new_rows {
+            let at = rows
+                .range(number + 1..)
+                .next()
+                .map(|(_, row)| tree.nodes[*row].span.start)
+                .unwrap_or(data_node.inner.end);
+            splice.insert(at, xml);
+        }
+    }
+    if let Some((range, tag)) =
+        widened_dimension(&tree, &[(first_column, first_row), (last_column, last_row)])
+    {
+        splice.replace(range, tag);
+    }
+    work.put(&part, splice.apply(&bytes, &part)?);
+    let cells: Vec<String> = (first_row..=last_row)
+        .flat_map(|row| {
+            (first_column..=last_column).map(move |column| format!("{}{row}", column_name(column)))
+        })
+        .collect();
+    Ok(Outcome {
+        summary: format!(
+            "{} cell(s) on {name} formatted: {}",
+            cells.len(),
+            format.describe()
+        ),
+        expect: vec![Expect::CellFormat {
+            sheet: name,
+            cells,
+            format,
+        }],
+        created: Vec::new(),
+    })
+}
+
+/// The sheet's `dimension` start tag widened to cover `cells`, when the
+/// sheet has one.
+fn widened_dimension(
+    tree: &Tree,
+    cells: &[(u32, u32)],
+) -> Option<(std::ops::Range<usize>, String)> {
+    let dimension = tree.descendants(0, "dimension").next()?;
+    let node = &tree.nodes[dimension];
+    let mut bounds: Vec<(u32, u32)> = node
+        .element
+        .attr("ref")
+        .map(|reference| {
+            reference
+                .split(':')
+                .filter_map(|end| address(end).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    bounds.extend_from_slice(cells);
+    let (min_column, max_column) = (
+        bounds.iter().map(|b| b.0).min().unwrap_or(1),
+        bounds.iter().map(|b| b.0).max().unwrap_or(1),
+    );
+    let (min_row, max_row) = (
+        bounds.iter().map(|b| b.1).min().unwrap_or(1),
+        bounds.iter().map(|b| b.1).max().unwrap_or(1),
+    );
+    let mut attributes = node.element.attributes.clone();
+    attributes.retain(|(key, _)| key != "ref");
+    attributes.push((
+        "ref".into(),
+        format!(
+            "{}{min_row}:{}{max_row}",
+            column_name(min_column),
+            column_name(max_column)
+        ),
+    ));
+    let end = if node.is_empty_element() {
+        node.span.end
+    } else {
+        node.inner.start
+    };
+    Some((
+        node.span.start..end,
+        start_tag(&node.element.name, &attributes, node.is_empty_element()),
+    ))
+}
+
+/// A `col` entry: first and last column, and its attributes.
+type ColumnRange = (u32, u32, Vec<(String, String)>);
+
+pub(super) fn set_column_widths<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet: &str,
+    widths: &BTreeMap<String, f64>,
+) -> Result<Outcome, EditError> {
+    if widths.is_empty() {
+        return fail(
+            "widths is empty; give column letters and widths in characters, e.g. {\"A\": 30, \"B\": 12}",
+        );
+    }
+    let mut wanted: BTreeMap<u32, f64> = BTreeMap::new();
+    for (letters, width) in widths {
+        let (column, _) = address(&format!(
+            "{}1",
+            letters.trim().trim_end_matches(char::is_numeric)
+        ))
+        .map_err(|_| EditError {
+            op: None,
+            message: format!("{letters:?} is not a column letter like A or BC"),
+        })?;
+        if !width.is_finite() || *width <= 0.0 || *width > 255.0 {
+            return fail(format!(
+                "column {letters}: {width} is not a width between 0 and 255 characters"
+            ));
+        }
+        wanted.insert(column, *width);
+    }
+    let (part, name) = sheet_part(work, sheet)?;
+    let bytes = work.get(&part)?;
+    let tree = Tree::parse(&bytes, &part, work.limits())?;
+    let s = prefix(&tree)?;
+    refuse_protected_sheet(&tree, &name)?;
+    let Some(data) = tree.descendants(0, "sheetData").next() else {
+        return fail(format!("sheet {name:?} has no sheetData"));
+    };
+    let columns = tree.children(0, "cols").next();
+    let mut ranges: Vec<ColumnRange> = Vec::new();
+    if let Some(columns) = columns {
+        for column in tree.children(columns, "col") {
+            let element = &tree.nodes[column].element;
+            let (Some(min), Some(max)) = (
+                element
+                    .attr("min")
+                    .and_then(|value| value.parse::<u32>().ok()),
+                element
+                    .attr("max")
+                    .and_then(|value| value.parse::<u32>().ok()),
+            ) else {
+                return fail(format!(
+                    "sheet {name:?} has a column entry without a range, which this op does not edit"
+                ));
+            };
+            ranges.push((min, max, element.attributes.clone()));
+        }
+    }
+    for (column, width) in &wanted {
+        let mut next = Vec::with_capacity(ranges.len() + 2);
+        let mut covered = false;
+        for (min, max, attributes) in ranges {
+            if min <= *column && *column <= max {
+                covered = true;
+                if min < *column {
+                    next.push((min, column - 1, attributes.clone()));
+                }
+                let mut single = attributes.clone();
+                set_attribute(&mut single, "width", width.to_string());
+                set_attribute(&mut single, "customWidth", "1".into());
+                next.push((*column, *column, single));
+                if *column < max {
+                    next.push((column + 1, max, attributes));
+                }
+            } else {
+                next.push((min, max, attributes));
+            }
+        }
+        if !covered {
+            next.push((
+                *column,
+                *column,
+                vec![
+                    ("width".into(), width.to_string()),
+                    ("customWidth".into(), "1".into()),
+                ],
+            ));
+        }
+        ranges = next;
+    }
+    ranges.sort_by_key(|(min, _, _)| *min);
+    let content: String = ranges
+        .into_iter()
+        .map(|(min, max, mut attributes)| {
+            attributes.retain(|(key, _)| key != "min" && key != "max");
+            attributes.insert(0, ("max".into(), max.to_string()));
+            attributes.insert(0, ("min".into(), min.to_string()));
+            start_tag(&format!("{s}col"), &attributes, true)
+        })
+        .collect();
+    let element = format!("<{s}cols>{content}</{s}cols>");
+    let mut splice = Splice::default();
+    match columns {
+        Some(columns) => splice.replace(tree.nodes[columns].span.clone(), element),
+        None => splice.insert(tree.nodes[data].span.start, element),
+    }
+    work.put(&part, splice.apply(&bytes, &part)?);
+    let letters: BTreeMap<String, f64> = wanted
+        .iter()
+        .map(|(column, width)| (column_name(*column), *width))
+        .collect();
+    Ok(Outcome {
+        summary: format!(
+            "column widths set on {name}: {}",
+            letters
+                .iter()
+                .map(|(letter, width)| format!("{letter} {width}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        expect: vec![Expect::ColumnWidths {
+            sheet: name,
+            widths: letters,
+        }],
+        created: Vec::new(),
+    })
+}
+
+// ---- postconditions read from the written package -------------------------
+
+/// The part of the sheet named `sheet` in a written workbook.
+fn written_sheet(
+    package: &mut crate::Package<std::io::Cursor<Vec<u8>>>,
+    sheet: &str,
+) -> Result<String, String> {
+    let main = package.main_part().to_string();
+    let bytes = package
+        .read_part(&main)
+        .map_err(|error| error.to_string())?;
+    let tree = Tree::parse(&bytes, &main, package.limits()).map_err(|error| error.to_string())?;
+    let id = tree
+        .descendants(0, "sheet")
+        .find(|node| {
+            tree.nodes[*node]
+                .element
+                .attr("name")
+                .is_some_and(|name| name.eq_ignore_ascii_case(sheet))
+        })
+        .and_then(|node| {
+            tree.nodes[node]
+                .element
+                .attr_prefixed("id")
+                .map(str::to_string)
+        })
+        .ok_or_else(|| format!("no sheet {sheet:?}"))?;
+    package
+        .part_by_relationship_id(&main, &id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("sheet {sheet:?} points at no part"))
+}
+
+pub(super) fn check_format(
+    package: &mut crate::Package<std::io::Cursor<Vec<u8>>>,
+    sheet: &str,
+    cells: &[String],
+    format: &Format,
+) -> Result<(), String> {
+    let part = written_sheet(package, sheet)?;
+    let limits = *package.limits();
+    let bytes = package
+        .read_part(&part)
+        .map_err(|error| error.to_string())?;
+    let tree = Tree::parse(&bytes, &part, &limits).map_err(|error| error.to_string())?;
+    let main = package.main_part().to_string();
+    let styles_part = package
+        .related_part(&main, "styles")
+        .map_err(|error| error.to_string())?
+        .ok_or("the workbook has no styles part")?;
+    let styles_bytes = package
+        .read_part(&styles_part)
+        .map_err(|error| error.to_string())?;
+    let styles =
+        Tree::parse(&styles_bytes, &styles_part, &limits).map_err(|error| error.to_string())?;
+    let list = |local: &str, item: &str| -> Vec<usize> {
+        styles
+            .children(0, local)
+            .next()
+            .map(|list| styles.children(list, item).collect())
+            .unwrap_or_default()
+    };
+    let (fonts, fills, xfs) = (
+        list("fonts", "font"),
+        list("fills", "fill"),
+        list("cellXfs", "xf"),
+    );
+    let custom: BTreeMap<u32, String> = list("numFmts", "numFmt")
+        .into_iter()
+        .filter_map(|node| {
+            let element = &styles.nodes[node].element;
+            Some((
+                element.attr("numFmtId")?.parse().ok()?,
+                element.attr("formatCode")?.to_string(),
+            ))
+        })
+        .collect();
+    let style_of: std::collections::HashMap<String, usize> = tree
+        .descendants(0, "c")
+        .filter_map(|cell| {
+            let element = &tree.nodes[cell].element;
+            Some((
+                element.attr("r")?.to_ascii_uppercase(),
+                element.attr("s").and_then(|s| s.parse().ok()).unwrap_or(0),
+            ))
+        })
+        .collect();
+    let on = |node: usize, local: &str| {
+        styles.children(node, local).next().is_some_and(|child| {
+            !matches!(styles.nodes[child].element.attr("val"), Some("0" | "false"))
+        })
+    };
+    let number = |node: usize, attribute: &str| -> usize {
+        styles.nodes[node]
+            .element
+            .attr(attribute)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0)
+    };
+    for cell in cells {
+        let style = *style_of
+            .get(&cell.to_ascii_uppercase())
+            .ok_or_else(|| format!("{cell} is missing"))?;
+        let xf = *xfs
+            .get(style)
+            .ok_or_else(|| format!("{cell} names cell format {style}, which does not exist"))?;
+        if format.bold.is_some() || format.italic.is_some() {
+            let font = *fonts
+                .get(number(xf, "fontId"))
+                .ok_or_else(|| format!("{cell}'s font does not exist"))?;
+            if let Some(bold) = format.bold
+                && on(font, "b") != bold
+            {
+                return Err(format!(
+                    "{cell} is not {}bold",
+                    if bold { "" } else { "un" }
+                ));
+            }
+            if let Some(italic) = format.italic
+                && on(font, "i") != italic
+            {
+                return Err(format!(
+                    "{cell} is not {}italic",
+                    if italic { "" } else { "non-" }
+                ));
+            }
+        }
+        if let Some(code) = &format.number_format {
+            let id = u32::try_from(number(xf, "numFmtId")).unwrap_or(0);
+            let actual = BUILTIN_FORMATS
+                .iter()
+                .find(|(known, _)| *known == id)
+                .map(|(_, code)| code.to_string())
+                .or_else(|| custom.get(&id).cloned());
+            if actual.as_deref() != Some(code.as_str()) {
+                return Err(format!("{cell} has number format {actual:?}, not {code:?}"));
+            }
+        }
+        if let Some(fill) = &format.fill {
+            let colour = fills
+                .get(number(xf, "fillId"))
+                .and_then(|node| styles.descendants(*node, "fgColor").next())
+                .and_then(|node| styles.nodes[node].element.attr("rgb"))
+                .map(str::to_ascii_uppercase);
+            if colour.as_deref() != Some(format!("FF{fill}").as_str()) {
+                return Err(format!("{cell} is filled {colour:?}, not #{fill}"));
+            }
+        }
+        if let Some(wrap) = format.wrap {
+            let wrapped = styles
+                .children(xf, "alignment")
+                .next()
+                .and_then(|node| styles.nodes[node].element.attr("wrapText"))
+                .is_some_and(|value| value == "1" || value == "true");
+            if wrapped != wrap {
+                return Err(format!(
+                    "{cell} is {}wrapped",
+                    if wrapped { "" } else { "not " }
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn check_widths(
+    package: &mut crate::Package<std::io::Cursor<Vec<u8>>>,
+    sheet: &str,
+    widths: &BTreeMap<String, f64>,
+) -> Result<(), String> {
+    let part = written_sheet(package, sheet)?;
+    let limits = *package.limits();
+    let bytes = package
+        .read_part(&part)
+        .map_err(|error| error.to_string())?;
+    let tree = Tree::parse(&bytes, &part, &limits).map_err(|error| error.to_string())?;
+    let columns: Vec<(u32, u32, Option<f64>)> = tree
+        .descendants(0, "col")
+        .filter_map(|node| {
+            let element = &tree.nodes[node].element;
+            Some((
+                element.attr("min")?.parse().ok()?,
+                element.attr("max")?.parse().ok()?,
+                element.attr("width").and_then(|width| width.parse().ok()),
+            ))
+        })
+        .collect();
+    for (letter, want) in widths {
+        let (column, _) = address(&format!("{letter}1")).map_err(|error| error.message)?;
+        let width = columns
+            .iter()
+            .find(|(min, max, _)| *min <= column && column <= *max)
+            .and_then(|(_, _, width)| *width)
+            .ok_or_else(|| format!("column {letter} has no width"))?;
+        if (width - want).abs() > 0.001 {
+            return Err(format!("column {letter} is {width} wide, not {want}"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::names_sheet;
+
+    #[test]
+    fn a_sheet_is_named_by_references_never_by_namespace_prefixes() {
+        assert!(names_sheet("<f>Sheet1!A1*2</f>", "Sheet1"));
+        assert!(
+            names_sheet("<f>SUM(sheet1!A1:A3)</f>", "Sheet1"),
+            "case-insensitive"
+        );
+        assert!(names_sheet("<f>'My sheet'!B2</f>", "My sheet"));
+        assert!(names_sheet("<f>&apos;My sheet&apos;!B2</f>", "My sheet"));
+        assert!(names_sheet("<f>SUM(Sheet1:Sheet3!A1)</f>", "Sheet1"));
+        assert!(names_sheet("<f>SUM(Sheet1:Sheet3!A1)</f>", "Sheet3"));
+        assert!(names_sheet(
+            r#"<worksheetSource sheet="Data" ref="A1:B4"/>"#,
+            "Data"
+        ));
+        assert!(!names_sheet("<f>MySheet1!A1</f>", "Sheet1"));
+        assert!(
+            !names_sheet(r#"<sheet name="r" r:id="rId1"/>"#, "r"),
+            "a namespace prefix is not a reference"
+        );
+        assert!(!names_sheet("<t>Sheet1</t>", "Sheet1"));
+    }
 }

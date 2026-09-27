@@ -375,7 +375,9 @@ export default function SharedConversation() {
         fileName={file().path}
         canEdit={canEdit()}
         collaborators={presentParticipants()}
-        candidates={candidates().flatMap((record) => record.record.parent_candidate_id && record.record.candidate?.candidate_id !== file().candidateId && record.record.candidate?.files.some((entry) => entry.path === file().path) ? [{ candidateId: record.record.candidate!.candidate_id, label: `Saved version ${record.record.candidate!.candidate_id.slice(0, 8)}` }] : [])}
+        candidates={candidates()
+          .filter((record) => record.record.parent_candidate_id && record.record.candidate?.candidate_id !== file().candidateId && record.record.candidate?.files.some((entry) => entry.path === file().path))
+          .map((record, index) => ({ candidateId: record.record.candidate!.candidate_id, label: `Saved version ${index + 1}` }))}
         onSelect={(anchor) => setCommentAnchor(anchor)}
         onClose={() => setOpenFile(null)}
       /></section><section class="shared-office-comments"><h2>Comments on this draft</h2><Show when={canComment()}><form onSubmit={(event) => void postComment(event)}><label for="shared-office-comment">{commentAnchor() ? `Comment on ${commentAnchor()}` : "Comment on this file"}</label><textarea id="shared-office-comment" value={commentText()} onInput={(event) => setCommentText(event.currentTarget.value)} maxLength={4000} rows={2} required /><button class="btn sm" type="submit" disabled={commentBusy() || !commentText().trim()}>{commentBusy() ? "Saving…" : "Add comment"}</button></form></Show><For each={comments().filter((comment) => !comment.path || comment.path === file().path)} fallback={<p>No comments on this file yet.</p>}>{(comment) => <article><strong>{comment.actor_name ?? comment.actor_id}</strong><Show when={comment.anchor}><code>{comment.anchor}</code></Show><p>{comment.text}</p></article>}</For></section></Show>}</Show>

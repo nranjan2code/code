@@ -16,7 +16,7 @@ const HEADLINE: Record<Facts["vocabulary"], string[]> = {
 };
 
 /** "3 slides", "1 slide", "1 hidden slide", "1 slide with notes". */
-function count(name: string, value: number): string {
+export function countOf(name: string, value: number): string {
   const words = name.split(" ");
   const qualifier = words.indexOf("with");
   const noun = qualifier > 0 ? qualifier - 1 : words.length - 1;
@@ -30,7 +30,7 @@ export function officeFactsLine(facts: Facts): string {
   const counts = HEADLINE[facts.vocabulary]
     .filter((name) => (stats.get(name) ?? 0) > 0 || name === HEADLINE[facts.vocabulary][0])
     .slice(0, 3)
-    .map((name) => count(name, stats.get(name) ?? 0));
+    .map((name) => countOf(name, stats.get(name) ?? 0));
   return [facts.kind, ...counts].join(" · ");
 }
 

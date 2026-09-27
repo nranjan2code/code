@@ -54,10 +54,10 @@ fn narrow(source: &[u8], ops: &[OfficeOp], keep: &[&str]) -> Result<String, Stri
 }
 
 fn insert(anchor: &str, text: &str) -> OfficeOp {
-    OfficeOp::InsertParagraphAfter {
-        anchor: anchor.into(),
+    OfficeOp::AddParagraph {
         text: text.into(),
         style: None,
+        after: Some(anchor.into()),
     }
 }
 
@@ -78,7 +78,7 @@ fn a_kept_paragraph_still_follows_the_paragraph_it_was_written_after() {
     assert_eq!(ids, ["0", "1", "2", "3"]);
     assert_eq!(offered[3].requires, ["1"]);
     assert!(offered[..3].iter().all(|choice| choice.requires.is_empty()));
-    assert_eq!(offered[0].label, "New paragraph after p@1");
+    assert_eq!(offered[0].label, "New paragraph after p@1: Alpha.");
     assert_eq!(offered[0].changes.len(), 1);
     assert_eq!(offered[0].changes[0].kind, ChangeKind::Added);
 
@@ -94,7 +94,7 @@ fn a_kept_paragraph_still_follows_the_paragraph_it_was_written_after() {
 
     let error = narrow(&source, &ops, &["0", "3"]).unwrap_err();
     assert!(
-        error.contains("builds on edit 2 (New paragraph after p@11)"),
+        error.contains("builds on edit 2 (New paragraph after p@11: Bravo.)"),
         "{error}"
     );
     let error = narrow(&source, &ops, &[]).unwrap_err();
@@ -146,6 +146,7 @@ fn a_kept_edit_to_a_new_slide_still_lands_on_that_slide() {
         layout: "Title Slide".into(),
         after: None,
         placeholders: BTreeMap::from([("title".to_string(), TextValue::One(title.into()))]),
+        notes: None,
     };
     let ops = vec![
         slide("First"),

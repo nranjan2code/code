@@ -40,10 +40,10 @@ fn word_changes_are_grouped_under_their_heading() {
                 anchor: "p@11".into(),
                 text: "Growing.".into(),
             },
-            OfficeOp::InsertParagraphAfter {
-                anchor: "p@1".into(),
+            OfficeOp::AddParagraph {
                 text: "Details".into(),
                 style: None,
+                after: Some("p@1".into()),
             },
         ],
     );

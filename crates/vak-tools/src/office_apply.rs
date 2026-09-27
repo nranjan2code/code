@@ -1,10 +1,12 @@
 //! `office_apply`: propose edits to, or create, a Word, Excel or PowerPoint
 //! file through the typed op set (docs/design/72-openxml-documents.md, P2).
 //!
-//! It runs in the broker worker (invariant 14). The source must be the
-//! exact file the model read (`base_digest`, O4); every op is checked by a
-//! re-read before anything is written (O5); and Word edits are tracked
-//! changes under the runtime's Agent id, never a name the model chose.
+//! It runs in the broker worker (invariant 14). An edited source must be
+//! the exact file the model read (`base_digest`, O4); a new file with no
+//! source starts from Vakyartha's built-in blank ("Creating from scratch").
+//! Every op is checked by a re-read before anything is written (O5), and
+//! Word edits to an existing file are tracked changes under the runtime's
+//! Agent id, never a name the model chose.
 //!
 //! It never writes the workspace file. The result is a draft in this
 //! execution's `.vak/scratch/<agent>/<execution>/` directory, announced to
@@ -14,11 +16,33 @@
 //! direction").
 
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use async_trait::async_trait;
 use serde_json::Value;
 
+use crate::broker::OfficeOrigin;
 use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
+
+/// What a model is told: how to create a file from scratch, from a
+/// template, and how to edit one. The blank's styles, sheet and layouts
+/// come from the blank itself, since there is nothing to read first.
+static DESCRIPTION: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "Create, or propose edits to, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace does not change until then. \
+         To create a new file from scratch, give path (a new .docx, .xlsx or .pptx name) and ops, and leave out source and base_digest. A new Word document offers the styles {styles}; add content with add_paragraph and add_table. A new workbook has one empty sheet, {sheet}; use rename_sheet, set_cells, format_cells and set_column_widths. A new deck has the layouts {layouts}; add slides with add_slide_from_layout, with notes if wanted. \
+         To create a file from a template in the workspace, set source to the template, base_digest to its sha256, and path to the new file. \
+         To edit a file, read it with doc_read first and pass the sha256 it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, a table cell's paragraph as its row shows it, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits to an existing file become tracked changes; a new file is written clean. \
+         Text is plain: Markdown is not interpreted, so headings and lists come from styles. Excel calculates formulas when the file is opened. To keep editing a draft, pass the draft as source with its sha256. Macros are never added or run. A Visio drawing cannot be created or edited: say so, and never build one with a command or script.",
+        styles = vak_ooxml::blank::DOCUMENT_STYLES.join(", "),
+        sheet = vak_ooxml::blank::WORKBOOK_SHEET,
+        layouts = vak_ooxml::blank::DECK_LAYOUTS
+            .iter()
+            .map(|(layout, placeholders)| format!("{layout} ({placeholders})"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
+});
 
 pub struct OfficeApplyTool;
 
@@ -37,7 +61,7 @@ impl Tool for OfficeApplyTool {
     }
 
     fn description(&self) -> &str {
-        "Propose edits to, or create, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace file does not change until then. Read the source with doc_read first and pass the sha256 value it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, a table cell's paragraph as its row shows it, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits to an existing file become tracked changes; a new file (a path not yet in the workspace, as when creating from a template) is written clean. Excel formulas recalculate when the file is opened. New slides come from the deck's own layouts. To create a file from a template, set source to the template and path to the new file. To keep editing a draft, pass the draft as source. Macros are never added or run."
+        DESCRIPTION.as_str()
     }
 
     fn schema(&self) -> Value {
@@ -46,15 +70,15 @@ impl Tool for OfficeApplyTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "The workspace file the draft is for (relative to the workspace). May equal source."
+                    "description": "The workspace file the draft is for (relative to the workspace): an existing file to edit, or a new name to create. May equal source."
                 },
                 "source": {
                     "type": "string",
-                    "description": "File to start from: the file being edited, a template, or an earlier draft. Defaults to path."
+                    "description": "File to start from: the file being edited, a template, or an earlier draft. Defaults to path. Leave out, with base_digest, to create path from scratch."
                 },
                 "base_digest": {
                     "type": "string",
-                    "description": "The sha256 exactly as doc_read printed it for the source file (its first 16 characters, as shown, are enough; never fill in the rest), proving the ops were written against its current content."
+                    "description": "The sha256 exactly as doc_read printed it for the source file (its first 16 characters, as shown, are enough; never fill in the rest), proving the ops were written against its current content. Leave out only when creating a new file from scratch."
                 },
                 "ops": {
                     "type": "array",
@@ -63,7 +87,7 @@ impl Tool for OfficeApplyTool {
                     "items": { "oneOf": op_schemas() }
                 }
             },
-            "required": ["path", "base_digest", "ops"]
+            "required": ["path", "ops"]
         })
     }
 
@@ -83,17 +107,16 @@ impl Tool for OfficeApplyTool {
         let Some(path) = args.get("path").and_then(Value::as_str).map(str::trim) else {
             return ToolOutput::error("missing required parameter: path");
         };
-        let source = args
+        let named_source = args
             .get("source")
             .and_then(Value::as_str)
             .map(str::trim)
-            .filter(|source| !source.is_empty())
-            .unwrap_or(path);
-        let Some(base_digest) = args.get("base_digest").and_then(Value::as_str) else {
-            return ToolOutput::error(
-                "missing required parameter: base_digest (the sha256 value doc_read printed for the source)",
-            );
-        };
+            .filter(|source| !source.is_empty());
+        let base_digest = args
+            .get("base_digest")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|digest| !digest.is_empty());
         let ops: Vec<vak_ooxml::edit::OfficeOp> = match args.get("ops") {
             Some(ops) => match serde_json::from_value(ops.clone()) {
                 Ok(ops) => ops,
@@ -105,12 +128,41 @@ impl Tool for OfficeApplyTool {
             },
             None => return ToolOutput::error("missing required parameter: ops"),
         };
-        let (source_path, destination) = match (
-            confined_existing(&ctx.cwd, source),
-            confined_destination(&ctx.cwd, path),
-        ) {
-            (Ok(source), Ok(destination)) => (source, destination),
-            (Err(error), _) | (_, Err(error)) => return ToolOutput::error(error),
+        let destination = match confined_destination(&ctx.cwd, path) {
+            Ok(destination) => destination,
+            Err(error) => return ToolOutput::error(error),
+        };
+        // One way to create: a new path with no source and no digest starts
+        // from the built-in blank. A digest for a file that does not exist
+        // means the model thought it was editing one (a mistyped name), so
+        // it is never taken as a request to create.
+        let origin = match (named_source, base_digest) {
+            (None, None) if destination.exists() => {
+                return ToolOutput::error(format!(
+                    "{path} already exists. To change it, read it with doc_read and pass the sha256 it prints as base_digest; to create a new file from scratch, give a name that does not exist yet"
+                ));
+            }
+            (None, None) => OfficeOrigin::Blank,
+            (Some(source), None) => {
+                return ToolOutput::error(format!(
+                    "missing base_digest for source {source}: read it with doc_read and pass the sha256 it prints. To create a new file from scratch, leave out source as well"
+                ));
+            }
+            (source, Some(digest)) => {
+                let source = source.unwrap_or(path);
+                match confined_existing(&ctx.cwd, source) {
+                    Ok(source) => OfficeOrigin::File {
+                        path: source,
+                        base_digest: digest.to_string(),
+                    },
+                    Err(_) if source == path && !destination.exists() => {
+                        return ToolOutput::error(format!(
+                            "{path} does not exist, so there is no file for base_digest to name. To create it from scratch, leave out base_digest; to edit a file, check its name"
+                        ));
+                    }
+                    Err(error) => return ToolOutput::error(error),
+                }
+            }
         };
         let Some(target) = destination
             .extension()
@@ -153,7 +205,7 @@ impl Tool for OfficeApplyTool {
         if let Some(sink) = &ctx.sandbox_sink {
             let preview = serde_json::json!({
                 "path": path,
-                "source": source,
+                "source": named_source.unwrap_or(if origin == OfficeOrigin::Blank { "blank" } else { path }),
                 "ops": args.get("ops"),
             })
             .to_string();
@@ -164,16 +216,15 @@ impl Tool for OfficeApplyTool {
                 &draft_root.display().to_string(),
             );
         }
-        let base_digest = base_digest.to_string();
         // A file not in the workspace yet is a new document, written clean;
         // an existing one is edited with tracked changes (docs/design/72, R7).
         let relative_path = relative.to_string_lossy().replace('\\', "/");
-        let tracked = destination.is_file() && !ctx.new_documents.contains(&relative_path);
+        let exists = destination.is_file();
+        let tracked = exists && !ctx.new_documents.contains(&relative_path);
         let job = Job {
-            source: source_path,
+            origin,
             destination,
             draft: draft.clone(),
-            base_digest,
             ops,
             context: vak_ooxml::edit::EditContext {
                 author,
@@ -193,8 +244,13 @@ impl Tool for OfficeApplyTool {
             Ok(Ok(report)) => {
                 crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &draft, &root);
                 finish(0, vec![draft_relative.clone()]);
+                let state = if exists {
+                    format!("{path} in the workspace is unchanged")
+                } else {
+                    format!("{path} is a new file, not in the workspace")
+                };
                 ToolOutput::ok(format!(
-                    "Draft for {path} written to {draft_relative}. {path} in the workspace is unchanged until a person reviews and accepts the draft: the draft is already shown to them with Review draft and its change list, so do not present it again as a card, HTML or a diff, and never copy, move or rename the draft into the workspace yourself: that would skip the person's review. Answer with one sentence saying what you changed, and stop. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
+                    "Draft for {path} written to {draft_relative}. {state} until a person reviews and accepts the draft: the draft is already shown to them with Review draft and its change list, so do not present it again as a card, HTML or a diff, and never copy, move or rename the draft into the workspace yourself: that would skip the person's review. Answer with one sentence saying what you changed, and stop. To keep editing, call office_apply again with source \"{draft_relative}\" and the draft's sha256 as base_digest.\n{report}"
                 ))
             }
             Ok(Err(error)) => {
@@ -295,10 +351,16 @@ fn op_schemas() -> Value {
             "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are"
         ),
         op(
-            "insert_paragraph_after",
-            serde_json::json!({ "anchor": anchor("paragraph anchor"), "text": text, "style": { "type": "string", "description": "style id or name, e.g. Heading 2" } }),
-            &["anchor", "text"],
-            "Word: insert a new paragraph after one"
+            "add_paragraph",
+            serde_json::json!({ "text": text, "style": { "type": "string", "description": "style id or name, e.g. Heading 1, List Bullet, List Number" }, "after": anchor("paragraph anchor to add after; omit to add at the end of the document") }),
+            &["text"],
+            "Word: add a paragraph, at the end or after one. A List Number paragraph continues the list just above it, else starts at 1"
+        ),
+        op(
+            "add_table",
+            serde_json::json!({ "rows": { "type": "array", "items": { "type": "array" }, "description": "rows of cell text, the first row being the header, e.g. [[\"Region\", \"Sales\"], [\"North\", \"120\"]]" }, "after": anchor("paragraph anchor to add after; omit to add at the end"), "header": { "type": "boolean", "description": "false when the first row is not a header row; default true" } }),
+            &["rows"],
+            "Word: add a table spanning the page width"
         ),
         op(
             "delete_paragraph",
@@ -325,8 +387,26 @@ fn op_schemas() -> Value {
             "Excel: add an empty sheet"
         ),
         op(
+            "rename_sheet",
+            serde_json::json!({ "sheet": { "type": "string" }, "name": { "type": "string", "description": "the new name" } }),
+            &["sheet", "name"],
+            "Excel: rename a sheet, before anything refers to it by name"
+        ),
+        op(
+            "format_cells",
+            serde_json::json!({ "sheet": { "type": "string" }, "range": { "type": "string", "description": "cells, e.g. A1:D1 or B4" }, "bold": { "type": "boolean" }, "italic": { "type": "boolean" }, "number_format": { "type": "string", "description": "an Excel format code, e.g. #,##0.00 or 0% or yyyy-mm-dd" }, "fill": { "type": "string", "description": "background colour as six hex digits, e.g. D9E2F3" }, "wrap": { "type": "boolean", "description": "wrap long text" } }),
+            &["sheet", "range"],
+            "Excel: format cells; every other part of each cell's format is kept"
+        ),
+        op(
+            "set_column_widths",
+            serde_json::json!({ "sheet": { "type": "string" }, "widths": { "type": "object", "description": "column letter to width in characters, e.g. {\"A\": 30, \"B\": 12}" } }),
+            &["sheet", "widths"],
+            "Excel: set column widths"
+        ),
+        op(
             "add_slide_from_layout",
-            serde_json::json!({ "layout": { "type": "string", "description": "layout name from doc_read, e.g. Title and Content" }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}" } }),
+            serde_json::json!({ "layout": { "type": "string", "description": "layout name, e.g. Title and Content" }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}; a Title Slide has title and subtitle, Two Content has idx:1 and idx:2" }, "notes": { "type": "string", "description": "speaker notes for the slide" } }),
             &["layout"],
             "PowerPoint: add a slide from one of the deck's layouts"
         ),
@@ -364,27 +444,38 @@ fn op_schemas() -> Value {
 }
 
 struct Job {
-    source: PathBuf,
+    origin: OfficeOrigin,
     destination: PathBuf,
     draft: PathBuf,
-    base_digest: String,
     ops: Vec<vak_ooxml::edit::OfficeOp>,
     context: vak_ooxml::edit::EditContext,
     target: vak_ooxml::Format,
 }
 
-/// Applies `ops` to the file at `source`, refusing unless `base_digest`
-/// names its bytes: the one path every Office edit takes, from the
-/// `office_apply` tool and from `vak office apply`. Returns the source's
-/// bytes and what the engine wrote; nothing is written here.
+/// Applies `ops` to where `origin` starts: a file, refused unless its
+/// `base_digest` names its bytes, or the built-in blank for `target`. The
+/// one path every Office edit and creation takes, from the `office_apply`
+/// tool and from `vak office apply`. Returns the starting bytes and what
+/// the engine wrote; nothing is written here.
 pub(crate) fn apply_checked(
-    source: &Path,
-    base_digest: &str,
+    origin: &OfficeOrigin,
     ops: &[vak_ooxml::edit::OfficeOp],
     context: &vak_ooxml::edit::EditContext,
     target: vak_ooxml::Format,
 ) -> Result<(Vec<u8>, vak_ooxml::edit::Applied), String> {
     let limits = vak_ooxml::Limits::default();
+    let (source, base_digest) = match origin {
+        OfficeOrigin::File { path, base_digest } => (path, base_digest),
+        OfficeOrigin::Blank => {
+            let bytes = vak_ooxml::blank::blank(target)
+                .map_err(|error| format!("nothing was written: {error}"))?;
+            vak_ooxml::edit::check_renumbering(ops, context)
+                .map_err(|error| format!("nothing was written: {error}"))?;
+            let applied = vak_ooxml::edit::apply(&bytes, ops, context, limits, Some(target))
+                .map_err(|error| format!("nothing was written: {error}"))?;
+            return Ok((bytes, applied));
+        }
+    };
     let bytes = read_bounded(source, &limits)?;
     let digest = sha256_hex(&bytes);
     let base_digest = base_digest
@@ -408,13 +499,7 @@ pub(crate) fn apply_checked(
 impl Job {
     fn run(self) -> Result<String, String> {
         let limits = vak_ooxml::Limits::default();
-        let (_, applied) = apply_checked(
-            &self.source,
-            &self.base_digest,
-            &self.ops,
-            &self.context,
-            self.target,
-        )?;
+        let (_, applied) = apply_checked(&self.origin, &self.ops, &self.context, self.target)?;
         let current = if self.destination.is_file() {
             let bytes = read_bounded(&self.destination, &limits)?;
             Some(
@@ -441,20 +526,28 @@ impl Job {
         for notice in &applied.notices {
             report.push_str(&format!("Note: {notice}.\n"));
         }
-        report.push_str("Compared with the workspace file: ");
-        if changes.summary.is_empty() {
-            report.push_str("no visible change.\n");
-        } else {
-            report.push_str(&changes.summary.join("; "));
-            report.push('\n');
+        match (&current, changes.changes.first()) {
+            (None, Some(change)) => {
+                let facts = change.after.as_deref().unwrap_or("new file");
+                let facts = facts.strip_prefix("new file: ").unwrap_or(facts);
+                report.push_str(&format!("It is a new file: {facts}.\n"));
+            }
+            _ if changes.summary.is_empty() => {
+                report.push_str("Compared with the workspace file: no visible change.\n")
+            }
+            _ => {
+                report.push_str("Compared with the workspace file: ");
+                report.push_str(&changes.summary.join("; "));
+                report.push('\n');
+            }
         }
         match self.target.vocabulary {
-            vak_ooxml::Vocabulary::Word => report.push_str(&format!(
+            vak_ooxml::Vocabulary::Word if self.context.tracked => report.push_str(&format!(
                 "Word edits are tracked changes by {}; they can also be accepted or rejected in Word.\n",
                 self.context.author
             )),
             vak_ooxml::Vocabulary::Excel => report.push_str(
-                "Vakyartha does not calculate formulas: Excel recalculates when the file is opened, and until then cached values are stale.\n",
+                "Vakyartha does not calculate formulas: Excel calculates them when the file is opened, and until then a formula shows a stale value or none.\n",
             ),
             _ => {}
         }
@@ -602,12 +695,17 @@ mod tests {
         let call = |ops: Value| serde_json::json!({"path": "a.docx", "base_digest": "0123456789abcdef", "ops": ops});
         let valid = serde_json::json!([
             {"op": "replace_paragraph_text", "anchor": "p@1", "text": "x"},
-            {"op": "insert_paragraph_after", "anchor": "p@1", "text": "x", "style": "Heading 2"},
+            {"op": "add_paragraph", "text": "x", "style": "Heading 2", "after": "p@1"},
+            {"op": "add_paragraph", "text": "at the end"},
+            {"op": "add_table", "rows": [["Region", "Sales"], ["North", 120]], "header": true},
             {"op": "delete_paragraph", "anchor": "p@1"},
             {"op": "set_cells", "sheet": "Budget", "cells": {"B4": 1, "C4": "=A1", "D4": true}},
             {"op": "append_rows", "sheet": "Budget", "rows": [["a", 1]]},
             {"op": "add_sheet", "name": "Q4"},
-            {"op": "add_slide_from_layout", "layout": "Title and Content", "after": "slide:256", "placeholders": {"title": "T", "body": ["a", "b"]}},
+            {"op": "rename_sheet", "sheet": "Q4", "name": "Q4 plan"},
+            {"op": "format_cells", "sheet": "Budget", "range": "A1:D1", "bold": true, "number_format": "#,##0.00", "fill": "D9E2F3", "wrap": false, "italic": false},
+            {"op": "set_column_widths", "sheet": "Budget", "widths": {"A": 30, "B": 12.5}},
+            {"op": "add_slide_from_layout", "layout": "Title and Content", "after": "slide:256", "placeholders": {"title": "T", "body": ["a", "b"]}, "notes": "n"},
             {"op": "set_placeholder_text", "anchor": "slide:256/placeholder:title", "text": ["a", "b"]},
             {"op": "set_notes", "anchor": "slide:256", "text": "n"},
             {"op": "delete_slide", "anchor": "slide:256"},
@@ -616,7 +714,7 @@ mod tests {
         ]);
         crate::validate_input(&schema, &call(valid.clone())).unwrap();
         let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_value(valid).unwrap();
-        assert_eq!(ops.len(), 12, "every op the engine has, in the schema");
+        assert_eq!(ops.len(), 17, "every op the engine has, in the schema");
 
         // The call a model made live: no `op`, and `after` as a boolean.
         let error = crate::validate_input(
@@ -625,7 +723,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(
-            error.contains("needs `op`, one of: replace_paragraph_text, insert_paragraph_after"),
+            error.contains("needs `op`, one of: replace_paragraph_text, add_paragraph, add_table"),
             "{error}"
         );
         let error = crate::validate_input(
@@ -750,7 +848,7 @@ mod tests {
         assert!(
             output
                 .content
-                .contains("recalculates when the file is opened")
+                .contains("Excel calculates them when the file is opened")
         );
         let draft = dir.path().join(".vak/scratch/mira/exec-7/budget.xlsx");
         let document = vak_ooxml::read::read(
@@ -806,9 +904,7 @@ mod tests {
         .await;
         assert!(!first.is_error, "{}", first.content);
         assert!(
-            first
-                .content
-                .contains("Compared with the workspace file: Deck: 1 added"),
+            first.content.contains("It is a new file: 2 slides."),
             "{}",
             first.content
         );
@@ -827,9 +923,12 @@ mod tests {
             }),
         )
         .await;
-        assert!(second.is_error, "the template's slide has no notes page");
         assert!(
-            second.content.contains("no notes page"),
+            second.is_error,
+            "the template has no notes master to make a notes page from"
+        );
+        assert!(
+            second.content.contains("no notes master"),
             "{}",
             second.content
         );
@@ -871,7 +970,7 @@ mod tests {
         };
         let ops = serde_json::json!([
             {"op": "replace_paragraph_text", "anchor": "p@11", "text": "Growing."},
-            {"op": "insert_paragraph_after", "anchor": "p@1", "text": "Details"}
+            {"op": "add_paragraph", "text": "Details", "after": "p@1"}
         ]);
         let created = run(
             dir.path(),
@@ -946,6 +1045,144 @@ mod tests {
             leftovers.len(),
             1,
             "no draft and no temporary file are left behind"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_new_file_is_created_from_scratch_as_a_draft() {
+        let dir = tempfile::tempdir().unwrap();
+        let created = run(
+            dir.path(),
+            serde_json::json!({
+                "path": "memo.docx",
+                "ops": [
+                    {"op": "add_paragraph", "text": "Q3 review", "style": "Title"},
+                    {"op": "add_paragraph", "text": "Revenue grew 12%."},
+                    {"op": "add_table", "rows": [["Region", "Revenue"], ["North", 120]]}
+                ]
+            }),
+        )
+        .await;
+        assert!(!created.is_error, "{}", created.content);
+        assert!(
+            created.content.contains("memo.docx is a new file, not in the workspace until a person reviews and accepts the draft"),
+            "{}",
+            created.content
+        );
+        assert!(
+            created
+                .content
+                .contains("It is a new file: 2 paragraphs, 9 words, 1 heading, 1 table."),
+            "{}",
+            created.content
+        );
+        assert!(
+            !created.content.contains("tracked changes by"),
+            "{}",
+            created.content
+        );
+        assert!(
+            !dir.path().join("memo.docx").exists(),
+            "only a draft is written"
+        );
+        let draft = dir.path().join(draft_path(&created));
+        assert!(draft.starts_with(dir.path().join(".vak/scratch/mira")));
+        let document = vak_ooxml::read::read(
+            std::io::Cursor::new(std::fs::read(&draft).unwrap()),
+            vak_ooxml::Limits::default(),
+        )
+        .unwrap();
+        let lines = document.lines().join("\n");
+        assert!(lines.contains("# Q3 review"), "{lines}");
+        assert!(
+            lines.contains("[tbl@1/r2] [p:1A000005] North | [p:1A000006] 120"),
+            "{lines}"
+        );
+
+        for extension in ["xlsx", "pptx", "dotx"] {
+            let op = match extension {
+                "xlsx" => {
+                    serde_json::json!({"op": "set_cells", "sheet": "Sheet1", "cells": {"A1": "Item"}})
+                }
+                "pptx" => {
+                    serde_json::json!({"op": "add_slide_from_layout", "layout": "Title Slide", "placeholders": {"title": "Launch"}})
+                }
+                _ => serde_json::json!({"op": "add_paragraph", "text": "Letterhead"}),
+            };
+            let output = run(
+                dir.path(),
+                serde_json::json!({"path": format!("new.{extension}"), "ops": [op]}),
+            )
+            .await;
+            assert!(!output.is_error, "{extension}: {}", output.content);
+        }
+    }
+
+    #[tokio::test]
+    async fn creating_is_refused_where_it_would_hide_a_mistake() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("brand.docx"), vak_ooxml::fixtures::docx()).unwrap();
+        let add = serde_json::json!([{"op": "add_paragraph", "text": "x"}]);
+        let refusal = |output: &ToolOutput, needle: &str| {
+            assert!(output.is_error, "{}", output.content);
+            assert!(output.content.contains(needle), "{}", output.content);
+        };
+        refusal(
+            &run(
+                dir.path(),
+                serde_json::json!({"path": "brand.docx", "ops": add}),
+            )
+            .await,
+            "brand.docx already exists",
+        );
+        refusal(
+            &run(
+                dir.path(),
+                serde_json::json!({"path": "brnad.docx", "base_digest": "0123456789abcdef", "ops": add}),
+            )
+            .await,
+            "brnad.docx does not exist, so there is no file for base_digest to name",
+        );
+        refusal(
+            &run(
+                dir.path(),
+                serde_json::json!({"path": "memo.docx", "source": "brand.docx", "ops": add}),
+            )
+            .await,
+            "missing base_digest for source brand.docx",
+        );
+        refusal(
+            &run(
+                dir.path(),
+                serde_json::json!({"path": "memo.docm", "ops": add}),
+            )
+            .await,
+            "never makes a macro-enabled file",
+        );
+        refusal(
+            &run(
+                dir.path(),
+                serde_json::json!({"path": "flow.vsdx", "ops": add}),
+            )
+            .await,
+            "Visio drawing cannot be created from scratch yet",
+        );
+        refusal(
+            &run(
+                dir.path(),
+                serde_json::json!({"path": "memo.docx", "ops": [{"op": "set_cells", "sheet": "Sheet1", "cells": {"A1": 1}}]}),
+            )
+            .await,
+            "this op edits an Excel workbook",
+        );
+        let scratch = dir.path().join(".vak");
+        assert!(
+            !scratch.exists()
+                || std::fs::read_dir(scratch.join("scratch/mira"))
+                    .map(|entries| entries.count())
+                    .unwrap_or(0)
+                    == 0,
+            "a refused creation writes no draft"
         );
     }
 }

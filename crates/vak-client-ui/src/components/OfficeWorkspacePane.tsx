@@ -110,7 +110,13 @@ export default function OfficeWorkspacePane(props: {
       <Show when={!!props.onReview && !!room()}><button type="button" class="btn sm" onClick={() => { const head = branch()?.head_candidate_id; if (head) props.onReview?.(head); }}>Review draft</button></Show>
       <Show when={props.onClose}><button type="button" class="btn sm" onClick={close}>Close</button></Show>
     </header>
-    <Show when={room()} fallback={<div class="office-workspace-start"><p>This Office file is saved as a draft. Start a shared workspace so invited people can read, edit, and branch from this version.</p><Show when={props.canStart}><button type="button" class="btn primary" disabled={busy()} onClick={() => void start()}>{busy() ? "Opening…" : "Start shared workspace"}</button></Show><Show when={!props.canStart}><p>Ask the owner to start a shared workspace for this draft.</p></Show></div>}>
+    {/* Reading never waits on collaboration: without a shared workspace
+        the file is shown read-only, and a saved version can start one. */}
+    <Show when={room()} fallback={<>
+      <Show when={props.canStart}><div class="office-workspace-start"><p>Start a shared workspace so invited people can read, edit, and branch from this version.</p><button type="button" class="btn sm" disabled={busy()} onClick={() => void start()}>{busy() ? "Opening…" : "Start shared workspace"}</button></div></Show>
+      <Show when={error()}>{(message) => <p class="office-workspace-error" role="alert">{message()}</p>}</Show>
+      <OfficeView source={props.source} fileName={props.fileName} focus={props.focus} onSelect={props.onSelect} />
+    </>}>
       {(current) => <>
         <nav class="office-workspace-toolbar" aria-label="Shared draft controls">
           <label>Version <select value={branch()?.branch_id ?? "shared"} onChange={(event) => setBranchId(event.currentTarget.value)}><For each={current().branches.filter((item) => !item.archived)}>{(item) => <option value={item.branch_id}>{item.name}{item.shared ? " · shared" : ""}</option>}</For></select></label>

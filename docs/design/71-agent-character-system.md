@@ -1,6 +1,6 @@
 # Agent character system
 
-Status: In progress — eight built-in expression atlases and runtime states shipped, with sized WebP copies since V4.2 of the visual refresh; flat glyphs for 32 px and below and installed user packs are later slices.
+Status: In progress — eight built-in expression atlases and runtime states shipped, with sized WebP copies since V4.2 of the visual refresh; an optional Dimensional pack adds alternate idle portraits and 3D face glyphs. Flat two-colour glyphs for 32 px and below and installed user packs are later slices.
 
 ## Purpose
 

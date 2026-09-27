@@ -304,15 +304,14 @@ pub(super) async fn focus(
         return StatusCode::BAD_REQUEST.into_response();
     }
     super::touch_coworking_presence(&state, &session_id, &principal_id, &display_name);
-    if let Ok(mut all) = state.coworking_presence.lock() {
-        if let Some(presence) = all
+    if let Ok(mut all) = state.coworking_presence.lock()
+        && let Some(presence) = all
             .get_mut(&session_id)
             .and_then(|people| people.get_mut(&principal_id))
-        {
-            presence.office_room_id = body.active.then(|| room_id.clone());
-            presence.office_anchor = body.active.then_some(body.anchor).flatten();
-            presence.seen_at = std::time::Instant::now();
-        }
+    {
+        presence.office_room_id = body.active.then(|| room_id.clone());
+        presence.office_anchor = body.active.then_some(body.anchor).flatten();
+        presence.seen_at = std::time::Instant::now();
     }
     if let Some(handle) = state.get(&session_id) {
         let _ = handle.coworking_comments_tx.send(());
@@ -334,10 +333,10 @@ pub(super) async fn mutate(
         return StatusCode::BAD_REQUEST.into_response();
     };
     let lock_path = path.with_extension("lock");
-    if let Some(parent) = lock_path.parent() {
-        if fs::create_dir_all(parent).is_err() {
-            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-        }
+    if let Some(parent) = lock_path.parent()
+        && fs::create_dir_all(parent).is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
     let lock = match fs::OpenOptions::new()
         .read(true)
@@ -411,7 +410,7 @@ pub(super) async fn mutate(
             if save(&path, &room).is_err() {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
-            return Json(serde_json::json!({"workspace":room})).into_response();
+            Json(serde_json::json!({"workspace":room})).into_response()
         }
         Action::Edit { branch_id, ops, .. } => {
             if ops.is_empty()
@@ -513,7 +512,7 @@ pub(super) async fn mutate(
             if save(&path, &room).is_err() {
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
-            return Json(serde_json::json!({"workspace":room})).into_response();
+            Json(serde_json::json!({"workspace":room})).into_response()
         }
         Action::Merge { branch_id, .. } => {
             let shared_head = room.branches[branch_pos].head_candidate_id.clone();
@@ -553,6 +552,7 @@ pub(super) async fn mutate(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn create_revision(
     state: &AppState,
     path: &FsPath,
@@ -602,8 +602,10 @@ async fn create_revision(
     };
     let output_path = draft_path.with_file_name(format!("vak-{id}.{extension}"));
     let lineage = vak_tools::broker::OfficeLineage {
-        source: parent_source,
-        base_digest: parent_file.candidate_hash.clone(),
+        origin: vak_tools::broker::OfficeOrigin::File {
+            path: parent_source,
+            base_digest: parent_file.candidate_hash.clone(),
+        },
         ops: ops.clone(),
         author: actor_name.clone(),
         new_file: false,
@@ -738,17 +740,27 @@ fn op_keys(ops: &[vak_ooxml::edit::OfficeOp]) -> Vec<String> {
     for op in ops {
         match op {
             O::ReplaceParagraphText { anchor, .. }
-            | O::InsertParagraphAfter { anchor, .. }
             | O::DeleteParagraph { anchor }
             | O::SetPlaceholderText { anchor, .. }
             | O::SetNotes { anchor, .. }
             | O::DeleteSlide { anchor }
             | O::MoveSlide { anchor, .. } => keys.push(format!("a:{anchor}")),
+            O::AddParagraph { after, .. } | O::AddTable { after, .. } => keys.push(match after {
+                Some(anchor) => format!("a:{anchor}"),
+                None => "doc:end".into(),
+            }),
             O::SetCells { sheet, cells } => {
                 keys.extend(cells.keys().map(|cell| format!("c:{sheet}!{cell}")))
             }
             O::AppendRows { sheet, .. } => keys.push(format!("s:{sheet}:rows")),
             O::AddSheet { name: sheet } => keys.push(format!("s:{sheet}:create")),
+            // A rename touches everything on the sheet under either name.
+            O::RenameSheet { sheet, name } => {
+                keys.push(format!("s:{sheet}:create"));
+                keys.push(format!("s:{name}:create"));
+            }
+            O::FormatCells { sheet, .. } => keys.push(format!("s:{sheet}:format")),
+            O::SetColumnWidths { sheet, .. } => keys.push(format!("s:{sheet}:columns")),
             O::AddSlideFromLayout { .. } => keys.push("deck:slides".into()),
             O::SetTitle { .. } => keys.push("meta:title".into()),
         }
@@ -767,26 +779,22 @@ fn has_conflict(
         ops.iter().any(|op| {
             matches!(
                 op,
-                O::InsertParagraphAfter { .. } | O::DeleteParagraph { .. }
+                O::AddParagraph { .. } | O::AddTable { .. } | O::DeleteParagraph { .. }
             )
         })
     };
-    let shared_word = shared.iter().any(|op| {
-        matches!(
-            op,
-            O::ReplaceParagraphText { .. }
-                | O::InsertParagraphAfter { .. }
-                | O::DeleteParagraph { .. }
-        )
-    });
-    let branch_word = branch.iter().any(|op| {
-        matches!(
-            op,
-            O::ReplaceParagraphText { .. }
-                | O::InsertParagraphAfter { .. }
-                | O::DeleteParagraph { .. }
-        )
-    });
+    let word = |ops: &[O]| {
+        ops.iter().any(|op| {
+            matches!(
+                op,
+                O::ReplaceParagraphText { .. }
+                    | O::AddParagraph { .. }
+                    | O::AddTable { .. }
+                    | O::DeleteParagraph { .. }
+            )
+        })
+    };
+    let (shared_word, branch_word) = (word(shared), word(branch));
     (changes_paragraph_order(shared) && branch_word
         || changes_paragraph_order(branch) && shared_word)
         || a.iter().any(|left| {
@@ -849,10 +857,10 @@ mod tests {
 
     #[test]
     fn inserting_a_paragraph_conflicts_with_other_word_edits() {
-        let insert = vec![O::InsertParagraphAfter {
-            anchor: "p@1".into(),
+        let insert = vec![O::AddParagraph {
             text: "new".into(),
             style: None,
+            after: Some("p@1".into()),
         }];
         let edit = vec![O::ReplaceParagraphText {
             anchor: "p@8".into(),

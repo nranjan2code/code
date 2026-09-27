@@ -35,6 +35,19 @@ pub enum CellValue {
     Text(String),
 }
 
+impl CellValue {
+    /// The value as the text of a Word table cell, where nothing is a
+    /// formula.
+    pub fn as_text(&self) -> String {
+        match self {
+            CellValue::Bool(true) => "TRUE".into(),
+            CellValue::Bool(false) => "FALSE".into(),
+            CellValue::Number(number) => number.to_string(),
+            CellValue::Text(text) => text.clone(),
+        }
+    }
+}
+
 /// One paragraph or several, one per line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -52,7 +65,9 @@ impl TextValue {
     }
 }
 
-/// The v1 op set (docs/design/72-openxml-documents.md, "P2 op set").
+/// The op set (docs/design/72-openxml-documents.md, "P2 op set" and
+/// "Creating from scratch"). Every op a new file needs works without an
+/// anchor, because a model cannot know the anchors an op mints.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum OfficeOp {
@@ -60,11 +75,22 @@ pub enum OfficeOp {
         anchor: String,
         text: String,
     },
-    InsertParagraphAfter {
-        anchor: String,
+    /// After the paragraph `after` names, or at the end of the document.
+    AddParagraph {
         text: String,
         #[serde(default)]
         style: Option<String>,
+        #[serde(default)]
+        after: Option<String>,
+    },
+    /// After the paragraph `after` names, or at the end of the document;
+    /// the first row is a header row unless `header` is false.
+    AddTable {
+        rows: Vec<Vec<CellValue>>,
+        #[serde(default)]
+        after: Option<String>,
+        #[serde(default)]
+        header: Option<bool>,
     },
     DeleteParagraph {
         anchor: String,
@@ -80,12 +106,36 @@ pub enum OfficeOp {
     AddSheet {
         name: String,
     },
+    RenameSheet {
+        sheet: String,
+        name: String,
+    },
+    FormatCells {
+        sheet: String,
+        range: String,
+        #[serde(default)]
+        bold: Option<bool>,
+        #[serde(default)]
+        italic: Option<bool>,
+        #[serde(default)]
+        number_format: Option<String>,
+        #[serde(default)]
+        fill: Option<String>,
+        #[serde(default)]
+        wrap: Option<bool>,
+    },
+    SetColumnWidths {
+        sheet: String,
+        widths: BTreeMap<String, f64>,
+    },
     AddSlideFromLayout {
         layout: String,
         #[serde(default)]
         after: Option<String>,
         #[serde(default)]
         placeholders: BTreeMap<String, TextValue>,
+        #[serde(default)]
+        notes: Option<String>,
     },
     SetPlaceholderText {
         anchor: String,
@@ -112,11 +162,15 @@ impl OfficeOp {
     pub fn name(&self) -> &'static str {
         match self {
             OfficeOp::ReplaceParagraphText { .. } => "replace_paragraph_text",
-            OfficeOp::InsertParagraphAfter { .. } => "insert_paragraph_after",
+            OfficeOp::AddParagraph { .. } => "add_paragraph",
+            OfficeOp::AddTable { .. } => "add_table",
             OfficeOp::DeleteParagraph { .. } => "delete_paragraph",
             OfficeOp::SetCells { .. } => "set_cells",
             OfficeOp::AppendRows { .. } => "append_rows",
             OfficeOp::AddSheet { .. } => "add_sheet",
+            OfficeOp::RenameSheet { .. } => "rename_sheet",
+            OfficeOp::FormatCells { .. } => "format_cells",
+            OfficeOp::SetColumnWidths { .. } => "set_column_widths",
             OfficeOp::AddSlideFromLayout { .. } => "add_slide_from_layout",
             OfficeOp::SetPlaceholderText { .. } => "set_placeholder_text",
             OfficeOp::SetNotes { .. } => "set_notes",
@@ -129,11 +183,15 @@ impl OfficeOp {
     fn vocabulary(&self) -> Option<Vocabulary> {
         match self {
             OfficeOp::ReplaceParagraphText { .. }
-            | OfficeOp::InsertParagraphAfter { .. }
+            | OfficeOp::AddParagraph { .. }
+            | OfficeOp::AddTable { .. }
             | OfficeOp::DeleteParagraph { .. } => Some(Vocabulary::Word),
-            OfficeOp::SetCells { .. } | OfficeOp::AppendRows { .. } | OfficeOp::AddSheet { .. } => {
-                Some(Vocabulary::Excel)
-            }
+            OfficeOp::SetCells { .. }
+            | OfficeOp::AppendRows { .. }
+            | OfficeOp::AddSheet { .. }
+            | OfficeOp::RenameSheet { .. }
+            | OfficeOp::FormatCells { .. }
+            | OfficeOp::SetColumnWidths { .. } => Some(Vocabulary::Excel),
             OfficeOp::AddSlideFromLayout { .. }
             | OfficeOp::SetPlaceholderText { .. }
             | OfficeOp::SetNotes { .. }
@@ -163,9 +221,10 @@ pub struct OpResult {
     pub summary: String,
     /// The postcondition, checked against a re-read of the written package.
     pub check: String,
-    /// The anchor this op minted (`p:<paraId>`, `slide:<id>`), which later
-    /// ops may name. Replaying a subset remaps it (`review`).
-    pub created: Option<String>,
+    /// The anchors this op minted, in order (`p:<paraId>`, `slide:<id>`;
+    /// a table mints one per cell paragraph), which later ops may name.
+    /// Replaying a subset remaps them (`review`).
+    pub created: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -238,7 +297,20 @@ pub(crate) enum Expect {
     SlideOrder(Vec<String>),
     /// A section (sheet, slide, heading) with this anchor exists.
     Section(String),
+    /// No section has this anchor.
+    NoSection(String),
     Title(String),
+    /// Each named cell of the sheet reads back with this formatting.
+    CellFormat {
+        sheet: String,
+        cells: Vec<String>,
+        format: sheet::Format,
+    },
+    /// The sheet's columns read back with these widths, by letter.
+    ColumnWidths {
+        sheet: String,
+        widths: BTreeMap<String, f64>,
+    },
     /// The op adds (1) or removes (-1) one Word paragraph; the written
     /// document's paragraph count is checked against every op's together.
     ParagraphDelta(i64),
@@ -273,7 +345,7 @@ impl Expect {
 pub(crate) struct Outcome {
     pub summary: String,
     pub expect: Vec<Expect>,
-    pub created: Option<String>,
+    pub created: Vec<String>,
 }
 
 impl Outcome {
@@ -361,22 +433,62 @@ pub fn apply(
             OfficeOp::ReplaceParagraphText { anchor, text } => {
                 word::replace_paragraph_text(&mut work, context, anchor, text)
             }
-            OfficeOp::InsertParagraphAfter {
-                anchor,
-                text,
-                style,
-            } => word::insert_paragraph_after(&mut work, context, anchor, text, style.as_deref()),
+            OfficeOp::AddParagraph { text, style, after } => {
+                word::add_paragraph(&mut work, context, text, style.as_deref(), after.as_deref())
+            }
+            OfficeOp::AddTable {
+                rows,
+                after,
+                header,
+            } => word::add_table(
+                &mut work,
+                context,
+                rows,
+                after.as_deref(),
+                header.unwrap_or(true),
+            ),
             OfficeOp::DeleteParagraph { anchor } => {
                 word::delete_paragraph(&mut work, context, anchor)
             }
             OfficeOp::SetCells { sheet, cells } => sheet::set_cells(&mut work, sheet, cells),
             OfficeOp::AppendRows { sheet, rows } => sheet::append_rows(&mut work, sheet, rows),
             OfficeOp::AddSheet { name } => sheet::add_sheet(&mut work, name),
+            OfficeOp::RenameSheet { sheet, name } => sheet::rename_sheet(&mut work, sheet, name),
+            OfficeOp::FormatCells {
+                sheet,
+                range,
+                bold,
+                italic,
+                number_format,
+                fill,
+                wrap,
+            } => sheet::format_cells(
+                &mut work,
+                sheet,
+                range,
+                &sheet::Format {
+                    bold: *bold,
+                    italic: *italic,
+                    number_format: number_format.clone(),
+                    fill: fill.clone(),
+                    wrap: *wrap,
+                },
+            ),
+            OfficeOp::SetColumnWidths { sheet, widths } => {
+                sheet::set_column_widths(&mut work, sheet, widths)
+            }
             OfficeOp::AddSlideFromLayout {
                 layout,
                 after,
                 placeholders,
-            } => deck::add_slide_from_layout(&mut work, layout, after.as_deref(), placeholders),
+                notes,
+            } => deck::add_slide_from_layout(
+                &mut work,
+                layout,
+                after.as_deref(),
+                placeholders,
+                notes.as_deref(),
+            ),
             OfficeOp::SetPlaceholderText { anchor, text } => {
                 deck::set_placeholder_text(&mut work, anchor, text)
             }
@@ -433,6 +545,7 @@ pub fn apply(
     let mut written = Written {
         bytes: &bytes,
         limits,
+        package: None,
         main: None,
     };
     if let Some(before) = paragraphs_before {
@@ -553,18 +666,30 @@ fn drop_signatures<R: std::io::Read + std::io::Seek>(
     Ok(signatures.len().max(usize::from(!origins.is_empty())))
 }
 
-/// The written package, with its main part read when a check needs it.
+/// The written package, opened and its main part read when a check needs
+/// them.
 struct Written<'a> {
     bytes: &'a [u8],
     limits: Limits,
+    package: Option<Package<Cursor<Vec<u8>>>>,
     main: Option<(String, Vec<u8>)>,
 }
 
 impl Written<'_> {
+    fn package(&mut self) -> Result<&mut Package<Cursor<Vec<u8>>>, String> {
+        if self.package.is_none() {
+            let package = Package::open(Cursor::new(self.bytes.to_vec()), self.limits)
+                .map_err(|error| error.to_string())?;
+            self.package = Some(package);
+        }
+        self.package
+            .as_mut()
+            .ok_or_else(|| "the written package could not be opened".to_string())
+    }
+
     fn main(&mut self) -> Result<(&str, &[u8]), String> {
         if self.main.is_none() {
-            let mut package = Package::open(Cursor::new(self.bytes.to_vec()), self.limits)
-                .map_err(|error| error.to_string())?;
+            let package = self.package()?;
             let name = package.main_part().to_string();
             let bytes = package
                 .read_part(&name)
@@ -593,9 +718,12 @@ fn ordinal(anchor: &str) -> Option<usize> {
 /// The Word paragraphs an op names.
 fn paragraph_references(op: &OfficeOp) -> Vec<&str> {
     match op {
-        OfficeOp::ReplaceParagraphText { anchor, .. }
-        | OfficeOp::InsertParagraphAfter { anchor, .. }
-        | OfficeOp::DeleteParagraph { anchor } => vec![anchor.as_str()],
+        OfficeOp::ReplaceParagraphText { anchor, .. } | OfficeOp::DeleteParagraph { anchor } => {
+            vec![anchor.as_str()]
+        }
+        OfficeOp::AddParagraph { after, .. } | OfficeOp::AddTable { after, .. } => {
+            after.as_deref().into_iter().collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -645,13 +773,29 @@ pub fn check_renumbering(ops: &[OfficeOp], context: &EditContext) -> Result<(), 
 }
 
 fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Result<(), String> {
-    let unit = |anchor: &str| document.units.iter().find(|unit| unit.anchor == anchor);
+    // A paragraph in a Word table cell is not a unit of its own: it is read
+    // as part of its row, under its own anchor.
+    let unit = |anchor: &str| -> Option<&str> {
+        document
+            .units
+            .iter()
+            .find(|unit| unit.anchor == anchor)
+            .map(|unit| unit.text.as_str())
+            .or_else(|| {
+                document
+                    .units
+                    .iter()
+                    .flat_map(|unit| unit.row_cells.iter().flatten())
+                    .find(|(paragraph, _)| paragraph == anchor)
+                    .map(|(_, text)| text.as_str())
+            })
+    };
     match expect {
         Expect::UnitContains { anchor, needles } => {
-            let unit = unit(anchor).ok_or_else(|| format!("{anchor} is missing"))?;
+            let text = unit(anchor).ok_or_else(|| format!("{anchor} is missing"))?;
             match needles
                 .iter()
-                .find(|needle| !unit.text.contains(needle.as_str()))
+                .find(|needle| !text.contains(needle.as_str()))
             {
                 Some(missing) => Err(format!("{anchor} does not contain {missing:?}")),
                 None => Ok(()),
@@ -659,8 +803,8 @@ fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Res
         }
         Expect::UnitDeleted { anchor } => match unit(anchor) {
             None => Ok(()),
-            Some(unit) => {
-                let mut rest = unit.text.as_str();
+            Some(text) => {
+                let mut rest = text;
                 while let Some(start) = rest.find("[deleted by ") {
                     if !rest[..start].trim().is_empty() {
                         return Err(format!("{anchor} still has undeleted text"));
@@ -713,12 +857,31 @@ fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Res
                 Err(format!("no section {anchor}"))
             }
         }
+        Expect::NoSection(anchor) => {
+            if document
+                .sections
+                .iter()
+                .any(|section| section.anchor == *anchor)
+            {
+                Err(format!("section {anchor} is still present"))
+            } else {
+                Ok(())
+            }
+        }
         Expect::Title(title) => {
             if document.title.as_deref() == Some(title.as_str()) {
                 Ok(())
             } else {
                 Err(format!("title is {:?}", document.title))
             }
+        }
+        Expect::CellFormat {
+            sheet,
+            cells,
+            format,
+        } => sheet::check_format(written.package()?, sheet, cells, format),
+        Expect::ColumnWidths { sheet, widths } => {
+            sheet::check_widths(written.package()?, sheet, widths)
         }
         Expect::ParagraphDelta(_) => Ok(()),
         Expect::Paragraph {
@@ -797,7 +960,7 @@ fn set_title<R: std::io::Read + std::io::Seek>(
     Ok(Outcome {
         summary: format!("title set to {title:?}"),
         expect: vec![Expect::Title(title.to_string())],
-        created: None,
+        created: Vec::new(),
     })
 }
 

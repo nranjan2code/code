@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Word documents, workbooks and decks from scratch.** Ask for "a memo on
+  the Q3 results", "a budget workbook" or "a launch deck" in an empty
+  folder and the assistant drafts the file from Vakyartha's own blank: a
+  document with title, heading, list and quote styles and tables; a workbook
+  whose sheets it can name, fill, format (bold, fills, number formats, column
+  widths) and total with formulas; a deck from six standard layouts with
+  speaker notes. It arrives as a draft marked new, you review it change by
+  change, and nothing reaches your folder until you accept it. Visio
+  drawings cannot be created from scratch yet; the request is refused with
+  that reason.
+- **Office drafts open in their preview again.** Opening a Word, Excel or
+  PowerPoint draft or file in the Canvas showed only a prompt to start a
+  shared workspace; it now shows the file, and a saved version still offers
+  to start one.
 - **A Word edit changes only the words that change.** When the assistant
   edits a paragraph, only the words that differ become tracked changes:
   "twelve months" to "twenty-four months" is one small redline in Review and

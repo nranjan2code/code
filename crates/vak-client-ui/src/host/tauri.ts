@@ -68,6 +68,15 @@ export const activeHost: Host = {
     };
   },
 
+  async setWindowIcon(visualPack: "classic" | "dimensional"): Promise<void> {
+    const asset = visualPack === "dimensional"
+      ? "assets/brand/dimensional/app-icon-512.png"
+      : "assets/brand/icon-512.png";
+    const response = await fetch(`${import.meta.env.BASE_URL}${asset}`);
+    if (!response.ok) throw new Error(`Window icon unavailable: ${response.status}`);
+    await getCurrentWindow().setIcon(new Uint8Array(await response.arrayBuffer()));
+  },
+
   openWorkspace(cwd: string, trust?: boolean): Promise<BackendInfo> {
     return invoke<BackendInfo>("start_backend", { cwd, trust: trust ?? null });
   },

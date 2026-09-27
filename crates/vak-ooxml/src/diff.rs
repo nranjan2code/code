@@ -75,7 +75,7 @@ pub fn diff(before: Option<&Document>, after: &Document) -> Diff {
                     .stats
                     .iter()
                     .filter(|(_, count)| *count > 0)
-                    .map(|(name, count)| format!("{count} {name}"))
+                    .map(|(name, count)| counted(*count, name))
                     .collect::<Vec<_>>()
                     .join(", ")
             )),
@@ -94,6 +94,19 @@ pub fn diff(before: Option<&Document>, after: &Document) -> Diff {
         _ => units(before, after, &mut changes, |_| true),
     }
     finish(changes)
+}
+
+/// `1 heading`, `2 headings`: a reader's stat with its count. Stat names
+/// are plural; one of a thing drops the plural from its noun.
+fn counted(count: usize, name: &str) -> String {
+    if count != 1 {
+        return format!("{count} {name}");
+    }
+    let singular = match name.split_once(" with ") {
+        Some((noun, rest)) => format!("{} with {rest}", noun.trim_end_matches('s')),
+        None => name.strip_suffix('s').unwrap_or(name).to_string(),
+    };
+    format!("1 {singular}")
 }
 
 fn finish(changes: Vec<Change>) -> Diff {

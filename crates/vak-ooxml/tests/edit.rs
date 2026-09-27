@@ -93,10 +93,10 @@ fn inserting_a_paragraph_uses_a_style_by_name_and_a_stable_new_anchor() {
     let applied = apply(
         &fixtures::docx(),
         vec![
-            OfficeOp::InsertParagraphAfter {
-                anchor: "p@1".into(),
+            OfficeOp::AddParagraph {
                 text: "Details".into(),
                 style: Some("heading 2".into()),
+                after: Some("p@1".into()),
             },
             OfficeOp::ReplaceParagraphText {
                 anchor: "p@11".into(),
@@ -137,10 +137,10 @@ fn inserting_into_a_document_without_w14_declares_it_on_the_root() {
     );
     let applied = apply(
         &source,
-        vec![OfficeOp::InsertParagraphAfter {
-            anchor: "p@1".into(),
+        vec![OfficeOp::AddParagraph {
             text: "Second".into(),
             style: None,
+            after: Some("p@1".into()),
         }],
     )
     .unwrap();
@@ -209,10 +209,10 @@ fn word_refusals_name_the_op_and_the_repair() {
             "no paragraph p@99",
         ),
         (
-            OfficeOp::InsertParagraphAfter {
-                anchor: "p@1".into(),
+            OfficeOp::AddParagraph {
                 text: "x".into(),
                 style: Some("Nonexistent".into()),
+                after: Some("p@1".into()),
             },
             "no paragraph style",
         ),
@@ -407,6 +407,7 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
             layout: "title and content".into(),
             after: Some("slide:256".into()),
             placeholders,
+            notes: None,
         }],
     )
     .unwrap();
@@ -445,6 +446,7 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
             layout: "Blank".into(),
             after: None,
             placeholders: BTreeMap::new(),
+            notes: None,
         }],
     )
     .unwrap_err();
@@ -458,6 +460,7 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
             layout: "Title Slide".into(),
             after: None,
             placeholders: BTreeMap::from([("body".to_string(), TextValue::One("x".into()))]),
+            notes: None,
         }],
     )
     .unwrap_err();
@@ -703,10 +706,10 @@ fn markup_vak_does_not_model_survives_inside_edited_elements() {
         OfficeOp::DeleteParagraph {
             anchor: "p@1".into(),
         },
-        OfficeOp::InsertParagraphAfter {
-            anchor: "p@1".into(),
+        OfficeOp::AddParagraph {
             text: "After".into(),
             style: None,
+            after: Some("p@1".into()),
         },
     ] {
         let name = op.name();
@@ -774,6 +777,7 @@ fn several_slide_list_ops_in_one_call_are_checked_against_the_order_they_leave()
         layout: "Title Slide".into(),
         after: None,
         placeholders: BTreeMap::from([("title".to_string(), TextValue::One(title.into()))]),
+        notes: None,
     };
     let applied = apply(
         &source,
@@ -803,7 +807,7 @@ fn several_slide_list_ops_in_one_call_are_checked_against_the_order_they_leave()
             .iter()
             .all(|r| r.check.starts_with("passed"))
     );
-    assert_eq!(applied.results[0].created.as_deref(), Some("slide:257"));
+    assert_eq!(applied.results[0].created, vec!["slide:257".to_string()]);
 }
 
 #[test]
@@ -1238,10 +1242,10 @@ fn a_paragraph_added_in_a_draft_is_edited_as_one_insertion() {
     let applied = apply(
         &fixtures::docx(),
         vec![
-            OfficeOp::InsertParagraphAfter {
-                anchor: "p@1".into(),
+            OfficeOp::AddParagraph {
                 text: "Details".into(),
                 style: None,
+                after: Some("p@1".into()),
             },
             OfficeOp::ReplaceParagraphText {
                 anchor: "p:1A000001".into(),
@@ -1377,10 +1381,10 @@ fn a_new_document_is_written_clean() {
                 anchor: "p@1".into(),
                 text: "Memo to Acme Ltd".into(),
             },
-            OfficeOp::InsertParagraphAfter {
-                anchor: "p@3".into(),
+            OfficeOp::AddParagraph {
                 text: "Next steps follow.".into(),
                 style: None,
+                after: Some("p@3".into()),
             },
             OfficeOp::DeleteParagraph {
                 anchor: "p@2".into(),

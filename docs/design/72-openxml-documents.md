@@ -1,10 +1,16 @@
 # 72 — Office documents (Open XML): design and implementation ledger
 
-Status: **the loop is shipped; closed 2026-09-25 by owner direction.** P0 to P5 are on `main`. Journeys 1, 3 and 4 of the completion bar were recorded live (see "Closing — 2026-09-25"); journeys 2, 5 and 6, and every unchecked box in the ledger, are deferred until asked, each with its reason under "Deferred until asked". Opened 2026-09-23; narrowed 2026-09-24 by owner direction to one loop (see "Owner direction"). Nothing under the phases is built until its box is checked with evidence. Vak has zero users, so nothing here carries a compatibility path (invariant 29): when a phase replaces an existing mechanism, the older one is removed in the same change (invariant 30).
+Status: **the loop is shipped; closed 2026-09-25 by owner direction.** P0 to P5 are on `main`. Journeys 1, 3 and 4 of the completion bar were recorded live (see "Closing — 2026-09-25"); journeys 2, 5 and 6, and every unchecked box in the ledger, are deferred until asked, each with its reason under "Deferred until asked". Opened 2026-09-23; narrowed 2026-09-24 by owner direction to one loop (see "Owner direction"). Nothing under the phases is built until its box is checked with evidence. Vak has zero users, so nothing here carries a compatibility path (invariant 29): when a phase replaces an existing mechanism, the older one is removed in the same change (invariant 30). **Reopened 2026-09-27 by owner direction for creating a file from scratch** (see "Owner direction" and "Creating from scratch — 2026-09-27"): Word, Excel and PowerPoint first, Visio after them.
 
 History: the 2026-09-23 plan aimed at a self-sufficient Office suite (own layout engine and PDF export, formula engine, a VBA interpreter, live multi-person co-editing, Visio editing, encryption and signatures). A review on 2026-09-24 corrected it against the tree, a second review fixed twelve defects in the first implementation, and the owner then narrowed the scope to the loop below. Work outside the loop is listed under "Deferred until asked" with the reason, not deleted.
 
 ## Owner direction
+
+**2026-09-27 — create from scratch.** A person can ask for a new Word document, workbook or deck without bringing a file or a template. The Agent drafts it with the same `office_apply`, starting from Vak's own blank, and the new file reaches the workspace only through Review, like any other change. The loop is therefore:
+
+> **a file or a request → the Agent reads and cites, or starts from a blank → the Agent proposes changes → a person reviews → accepts → file out.**
+
+The organisation's template stays the better start when the workspace has one; the blank is for when it does not. Visio drawings from scratch come after Word, Excel and PowerPoint, because Visio has no editing engine yet. This replaces the 2026-09-24 deferral of blank packages ("making new decks waits for a request"): this is the request.
 
 **2026-09-24 — build the loop, not a suite.** Office support is one experience:
 
@@ -24,6 +30,7 @@ Anything that does not serve that loop waits until someone asks for it.
 | Step | What the person sees | What makes it trustworthy |
 |---|---|---|
 | **File in** | Drop a file on the conversation, or send it on a channel. No import step. It appears as a quiet file card with a one-line summary and any security flags (macros, remote template, hidden text, sensitivity label). | The bytes never enter the prompt (F1). The file lands in `inbox/` in the Agent workspace and is parsed only in the worker. |
+| **Create** | "Write a one-page memo on the Q3 results", "make a budget workbook", "a six-slide deck on the launch". The Agent drafts the new file, which appears as a draft marked new, with **Review draft**. | The draft starts from Vak's built-in blank (or the workspace's template), never a file fetched from elsewhere. Every op is checked by a re-read like any edit, and nothing reaches the workspace until a person accepts it. |
 | **Read and cite** | The Agent answers and cites places: `Budget!B4`, `Slide 3`, a paragraph. Choosing a citation opens a structured view at that place. | Citations are anchors returned by the reader, bound to the file's digest. Hidden, deleted, white, off-slide and notes text is labelled, so a prompt injection hidden in the file is visible as hidden text. |
 | **Propose changes** | "Update the Q3 numbers and add a summary slide." The Agent edits a draft. In Word the edits are real tracked changes under the Agent's name. | One tool (`office_apply`) with a small, typed op set; every op names an anchor, is checked after it runs, and fails with an error a small model can repair. |
 | **Review** | A change list the way a person thinks: "Slide 3: title changed", "Budget: B4 100 → 120, 6 formulas will recalculate when opened", "§2 rewritten" as an inline redline. Accept all, or change by change. | The diff is computed from the op log and a re-read of the written package, never from the Agent's description. Checks are listed separately; a structural pass is never called "looks right". |
@@ -52,7 +59,7 @@ People and organisations hold large amounts of knowledge in Word, Excel, PowerPo
 
 **Read** covers the whole ECMA-376 / ISO/IEC 29500 family in Transitional and Strict conformance, including templates, macro-enabled variants and add-ins: `.docx .docm .dotx .dotm`, `.xlsx .xlsm .xltx .xltm .xlam`, `.pptx .pptm .potx .potm .ppsx .ppsm .ppam`, and Visio `.vsdx .vsdm .vstx .vstm .vssx .vssm`.
 
-**Edit and create** cover Word, Excel and PowerPoint through the op set in P2. Visio is read-only until asked.
+**Edit and create** cover Word, Excel and PowerPoint through the op set in P2. A new file starts from a workspace template or from Vak's built-in blank ("Creating from scratch — 2026-09-27"). Visio is read-only until its creation step lands.
 
 **Unsupported, reported with a reason** (and **Open with…** where the host has a handler): legacy binary (`.doc .xls .ppt .vsd`), `.xlsb`, ODF, IRM/RMS, and, until the deferred decryption lands, Agile-encrypted packages. Vak never installs or calls an external converter.
 
@@ -129,17 +136,19 @@ Each anchor carries a revision counter held in the draft's op log. An op states 
 ### Tool surface (one way each)
 
 - **`doc_read`** (brokered, built) serves the family through the `text`, `summary`, `outline` and `table` views and the `section` parameter, with anchors, the file's digest, and labels for hidden content, comments, tracked changes and flags.
-- **`office_apply`** (brokered, built) takes `path` (the workspace file the draft is for), an optional `source` (the file or template to start from; defaults to `path`), `base_digest` (the sha256 `doc_read` printed for the source) and ordered ops. It returns the new digest and per-op results, each confirmed by a re-read. **Creation is the same tool:** a template as `source` and a new `path`; a template becomes a document by changing only its main part's content type. It is a path-scoped write in the `PermissionEngine`, like `write` and `edit`. It writes a draft under `.vak/scratch/<agent>/<execution>/`, never the workspace file; that changes only when a person accepts the draft in Review, whole or in part.
+- **`office_apply`** (brokered, built) takes `path` (the workspace file the draft is for), an optional `source` (the file or template to start from; defaults to `path`), `base_digest` (the sha256 `doc_read` printed for the source) and ordered ops. It returns the new digest and per-op results, each confirmed by a re-read. **Creation is the same tool:** a template as `source` and a new `path` (a template becomes a document by changing only its main part's content type), or a new `path` with no `source` and no `base_digest`, which starts from Vak's built-in blank for the path's format. It is a path-scoped write in the `PermissionEngine`, like `write` and `edit`. It writes a draft under `.vak/scratch/<agent>/<execution>/`, never the workspace file; that changes only when a person accepts the draft in Review, whole or in part.
 - **`data_query`** (P1) gains worksheet ranges and tables as sources, and moves to the worker in the same change.
 
 **P2 op set, v1.** Deliberately small, so small local models use it reliably:
 
 | Vocabulary | Ops |
 |---|---|
-| Word | `replace_paragraph_text`, `insert_paragraph_after` (style by id or name), `delete_paragraph`; `set_table_cell`, `accept_changes` and `reject_changes` move to P3 with Review |
-| Excel | `set_cells` (values or formulas over a range), `append_rows`, `add_sheet` |
-| PowerPoint | `add_slide_from_layout`, `set_placeholder_text`, `set_notes`, `delete_slide`, `move_slide` |
+| Word | `replace_paragraph_text`, `add_paragraph` (style by id or name; after an anchor, or at the end), `add_table`, `delete_paragraph`; `set_table_cell`, `accept_changes` and `reject_changes` move to P3 with Review |
+| Excel | `set_cells` (values or formulas over a range), `append_rows`, `add_sheet`, `rename_sheet`, `format_cells`, `set_column_widths` |
+| PowerPoint | `add_slide_from_layout` (with its notes), `set_placeholder_text`, `set_notes`, `delete_slide`, `move_slide` |
 | Shared | `set_title` |
+
+`add_paragraph`, `add_table`, `rename_sheet`, `format_cells`, `set_column_widths` and slide notes were added on 2026-09-27 for creating from scratch; `add_paragraph` replaced `insert_paragraph_after`.
 
 Agent edits to an existing Word document are written as native tracked changes under the frozen Agent identity (`71-agent-character-system.md`); new documents are written clean. A paragraph edit takes the paragraph's whole new text and marks only the words that differ, keeping every other run's formatting and everything the reader does not show (2026-09-26, below). An edited formula is written with `fullCalcOnLoad` and its cached value is reported as **stale**, never as current. The op set grows only when a real request needs an op it lacks.
 
@@ -179,6 +188,40 @@ VBA macros hold real business logic, so they are made legible rather than treate
 ## Implementation ledger
 
 `[x]` means code exists in the tree **and** its stated evidence was observed. A passing build, a unit test on a synthetic fixture, or a model's claim does not close a journey item.
+
+### Creating from scratch — 2026-09-27
+
+Opened by the owner direction of the same date. Before it, `office_apply` could make a new file only from a template already in the workspace: asked for "a Word document about X" in an empty workspace, the Agent had no governed way to do it.
+
+**One way to create.** `office_apply` with a `path` that is not in the workspace and no `source` starts the draft from Vak's built-in blank for that path's format. There is nothing to have read, so `base_digest` is left out; a call that gives one for a file that does not exist is refused, because it shows the model believed it was editing a file (usually a mistyped name). Creation never replaces a file: a name that exists is edited (read, then `base_digest`) or a new name is chosen. A macro-enabled name (`.docm`, `.xlsm`, `.pptm` and the add-ins) is refused (O10); a template name (`.dotx`, `.xltx`, `.potx`) creates a template. The draft is a new document, written clean (R7). Review replays its ops from the same blank: a draft's lineage starts either at a workspace file with its digest or at `blank`, never at a file the replay cannot reproduce, so a from-scratch draft offers change-by-change choices like any other. `vak office apply` takes the same shape (no source file and no digest: from the blank).
+
+**The blanks** (`vak_ooxml::blank`) are written for Vak, not copied from an application, and are byte-identical for a given version. Each passes the `format.openxml` verifier and reads back with no content. They are deliberately plain; an organisation's look comes from its own template.
+- Word: A4 with 2.54 cm margins; Aptos body text and Aptos Display headings through the theme; the styles Normal, Title, Subtitle, Heading 1 to 3, List Bullet, List Number, Quote and the Table Grid table style, with bullet and number definitions; an empty body, as Word itself saves an empty document.
+- Excel: one empty sheet, `Sheet1`, in Aptos Narrow 11.
+- PowerPoint: 16:9, one master with the layouts Title Slide, Title and Content, Section Header, Two Content, Title Only and Blank, a notes master so slides can carry speaker notes, and no slides.
+
+**Ops that fill a new file in one call.** A model cannot know the anchors an op mints, so every op a new file needs works without one. Each also works in an existing file, where a Word change is a tracked change as always.
+
+| Vocabulary | Op | What it does |
+|---|---|---|
+| Word | `add_paragraph` (replaces `insert_paragraph_after`) | `text`, optional `style`, optional `after` (a paragraph anchor); without `after` the paragraph goes at the end of the document. A numbered-list paragraph continues the list directly above it, and otherwise starts a new list at 1. |
+| Word | `add_table` | `rows` of cell text and optional `after`. The first row is a header row (bold, repeated on each page) unless `header` is false. The table spans the text width in equal columns with single borders, and every cell paragraph gets its own anchor. |
+| Excel | `rename_sheet` | Refused while any formula, name, chart or other part refers to the sheet by name, so a reference is never broken: rename before writing formulas that name it. |
+| Excel | `format_cells` | A `range` and any of `bold`, `italic`, `number_format` (an Excel format code such as `#,##0.00` or `0%`), `fill` (an RGB hex colour) and `wrap`. Every other part of each cell's existing format is kept. |
+| Excel | `set_column_widths` | Widths in characters, by column letter. |
+| PowerPoint | `add_slide_from_layout` with `notes` | The new slide's speaker notes. `set_notes` also creates a slide's notes page when it has none, from the deck's notes master. |
+
+Text is plain: Markdown is not interpreted, and headings, lists and emphasis come from styles and ops. An op records every anchor it mints (a table mints one per cell paragraph), so Review's replay keeps a later edit tied to the paragraph it named.
+
+**Checks.** The same as any draft: each op's postcondition against a re-read, the format verifier in the worker, and Review's change list (the new file's summary, and one choice per op). Developer evidence for the blanks also records how macOS Quick Look draws a file made from each; that is never a runtime check or something shown to a person as one (O7).
+
+**Visio, next.** Visio has a reader and no editing engine. A drawing from scratch needs a blank drawing (one page, no masters) and three ops: `add_page`; `add_shape` (a label and a shape: rectangle, rounded rectangle, ellipse or diamond, with a `key` other ops name); and `connect` (from, to, an optional label). Shapes are laid out automatically in layers, so a model never places coordinates, and the reader gains connectors (`A → B`) so Review and the Drawing view can show them. Nothing on the machine that builds it can open a `.vsdx`, so its evidence will be the verifier, the reader and a structural check against the published schema.
+
+- [x] Built-in blanks for Word, Excel and PowerPoint, deterministic, verified and read back empty. *Evidence: `crates/vak-ooxml/tests/create.rs` (`each_blank_is_an_empty_deterministic_package_of_its_format`, `a_blank_is_refused_for_macro_enabled_names_and_visio`, `a_template_name_makes_a_template_from_the_blank`); `a_file_is_created_from_scratch_verified_and_read_from_the_command_line` (`crates/vak/tests/office_cli.rs`) creates each format through the worker and passes `format.openxml` and a facts read with no flags. Developer evidence only (O7): macOS Quick Look, which uses Apple's own Office importer, drew a memo, a workbook and a six-layout deck made from the blanks as intended: title, headings, bullets, lists numbered from 1 in each list, a bordered table with a shaded header row, a bold filled header row with `#,##0` and `0.0%` formats, and every layout's placeholders in place. Quick Look ignores Word table widths and table styles (a table python-docx writes from Word's own template renders the same way), and falls back to a serif because Aptos is not installed on the machine.*
+- [x] `office_apply` creation contract and the `blank` lineage origin through Review, narrowing and `vak office apply`. *Evidence: `a_new_file_is_created_from_scratch_as_a_draft` and `creating_is_refused_where_it_would_hide_a_mistake` (office_apply: an existing name, a digest for a missing file, a source without a digest, a macro-enabled name, Visio, a wrong-vocabulary op); `a_document_created_from_scratch_is_reviewed_narrowed_and_accepted` (vak-server, through the real worker: one choice per op replayed from the blank, a narrowed version that passes the format check, accepted clean); `a_from_scratch_draft_is_offered_change_by_change` (tests/create.rs, including a remapped table-cell anchor and a cell that needs the rename before it).*
+- [x] `add_paragraph` (replacing `insert_paragraph_after`), `add_table`, `rename_sheet`, `format_cells`, `set_column_widths`, slide notes. *Evidence: tests/create.rs (a memo with every blank style, two numbered lists each starting at 1, a tracked table in an existing document, a table refused inside a cell; a workbook renamed, filled, formatted and widened, with a bold total row that keeps its number format; a rename refused while a formula names the sheet; a deck from all six layouts with notes, and `set_notes` making a notes page), the `names_sheet` unit test, and the op schema test in office_apply. Two defects found on the way and fixed: a paragraph added inside a table cell failed its own postcondition (a cell paragraph is read as part of its row, so the check now finds it by its anchor there too), and a second numbered list kept counting in Apple's importer, which ignores Word's per-instance start override, so each new list is now its own copy of the list definition.*
+- [ ] Journey: in the web client against a live model, a Word document, a workbook and a deck each created from scratch in an empty workspace, reviewed and accepted, and viewed in the Canvas. *Progress, recorded live on 2026-09-27: a dev build in the web client, against the installed data home and its configured model, in an empty git workspace. The memo, the workbook and the deck were each drafted in one `office_apply` call with no source and no digest; Review showed each as a new file with one choice per op (a table as one choice with its rows; each cell of the workbook as its own choice, each saying it builds on the rename); each was accepted whole, and each accepted file passed `vak office verify`. The deck's first call was refused before writing anything because the model gave a Section Header a subtitle; it repaired the call from the error, and the description now lists each blank layout's placeholders. Opening a draft in the Canvas showed only a prompt to start a shared workspace, never the file (the shared Office workspace had replaced the view and showed it only inside a room): fixed, the file is shown and a saved version offers to start a workspace. Not closed because the Excel and PowerPoint views were checked in the Canvas but the grid shows formulas rather than values (Vakyartha does not calculate) and none of the new formatting (the reader does not read formats), the Document view draws lists without bullets or numbers and tables as text lines, the desktop shell was not run, and no file was opened in Office itself (none is installed).*
+- [ ] Visio: blank drawing, `add_page`, `add_shape`, `connect`, automatic layout, connectors in the reader. *Seen live on 2026-09-27, in FullAccess: asked for a hiring flowchart as `.vsdx`, the Agent installed a third-party Visio package with pip into the user's Python, built the drawing with a script from that package's sample file, wrote it straight into the workspace with no draft or Review, and said it had verified the file opens, which it had only loaded with that package. FullAccess allows the commands by design (invariant 13); what was missing was the instruction. The `bash` and `office_apply` descriptions and the Visio refusal now say a Visio drawing cannot be made yet and must not be built with a command or script. Not re-checked live after that change.*
 
 ### Closing — 2026-09-25
 
@@ -270,7 +313,7 @@ Decided 2026-09-24: the gateway saves a received file into the workspace inbox w
 - [x] Excel edits keep cell styles, set `fullCalcOnLoad`, drop the calculation chain when formulas change, and report cached values as stale. *Evidence: `tests/edit.rs`.*
 - [x] PowerPoint slides from the template's layouts and placeholders, placeholder text, notes, move and delete (including section-list slide ids). *Evidence: `tests/edit.rs`.*
 - [x] Creation from a workspace template: a `.potx`/`.dotx`/`.xltx` becomes the document named by `path`, theme, styles and layouts kept. *Evidence: `a_template_becomes_a_document_but_never_changes_macro_state`, `creates_a_deck_from_a_template_with_the_agent_as_author`.*
-- [ ] Built-in blank packages for Word, Excel and PowerPoint.
+- [x] Built-in blank packages for Word, Excel and PowerPoint. *Evidence: "Creating from scratch — 2026-09-27".*
 - [x] O8 protection enforcement and the O10 refusals, each with a test that the refusal happens before any byte is written. *Evidence: `protection_is_honoured_before_any_byte_is_written` (Word read-only and comments-only protection refused, tracked-changes-only protection allowed because every op is a tracked change, PowerPoint password to modify refused), `excel_refusals` (protected sheet), the workbook-structure check in `add_sheet`, the macro-state refusals, and `office_apply`'s test that a refused op leaves the file byte-identical with no temporary file behind.*
 - [ ] `prepare_to_share`.
 - [ ] Journey evidence: an Agent creates a six-slide deck from a brief and the workspace's template, freezes it as a candidate, and passes Vak's verifier. The CI oracles pass on that file. A manual PowerPoint open is recorded as developer evidence, not a runtime check.
@@ -318,7 +361,7 @@ Each of these needs a real request before it is started. The first rows were in 
 | A knowledge index across a folder of Office files | `doc_read` per file serves the loop. An index waits for a real "search my folder" need. |
 | A VBA interpreter, macro runs, VBA editing, trusted macros | Cut, not deferred (O10). |
 | Macro understanding: the CFB reader, MS-OVBA decompression, modules and entry points (bar item 6), and with the CFB reader, telling an encrypted package from a legacy binary file | Macros are detected and flagged today. Explaining one needs a new reader of a second hostile format; it waits for a real macro workbook to explain. |
-| Creating from templates and blank packages, `prepare_to_share` (bar item 2) | The loop edits files people bring; making new decks waits for a request. |
+| `prepare_to_share` | Waits for a request to clean a file before it leaves Vak. Creating from templates and blank packages, deferred here at the 2026-09-25 close, was reopened on 2026-09-27 ("Creating from scratch"). |
 | A live Telegram round trip (bar item 5) | Built and tested; the owner parked Telegram work on 2026-09-25. |
 | Scheduled Office jobs | Wait on the data architecture plan's M4 (runs and schedules). |
 | Application-authored corpus, the byte-identical no-op round trip over it, and the CI oracles (Open XML SDK, LibreOffice) | Need files saved by Office and a CI container; neither exists yet. Generated fixtures and the adversarial set cover the reader and writer meanwhile. |
@@ -384,7 +427,7 @@ Each amendment to `AGENTS.md` lands with the phase that enforces it; an invarian
 The loop is complete when, **on a machine with no Office application installed**, the running desktop app and web client (one shared UI) and the channel path demonstrate with real files, a real Agent and recorded evidence:
 
 1. a cited answer over a real document, workbook and deck, whose citations open at the quoted place;
-2. an Agent-created deck from the workspace's template, reviewed and accepted;
+2. an Agent-created deck, workbook and document, from the workspace's template or from scratch, reviewed and accepted;
 3. a Word redline by an Agent, partly accepted in Vak and then opened in Word with the remaining changes still tracked (developer evidence);
 4. a workbook edited by an Agent with formulas marked stale, reviewed change by change;
 5. a Telegram round trip returning the updated file with a change summary;

@@ -29,7 +29,17 @@ pub(crate) async fn run_office(action: OfficeAction) -> i32 {
             base_digest,
             out,
             agent,
-        } => apply(&worker, &file, &ops, &base_digest, &out, &agent).await,
+        } => {
+            apply(
+                &worker,
+                file.as_deref(),
+                &ops,
+                base_digest.as_deref(),
+                &out,
+                &agent,
+            )
+            .await
+        }
         OfficeAction::Diff { before, after } => diff(&worker, &before, &after).await,
         OfficeAction::Verify { file } => return verify(&worker, &file).await,
     };
@@ -59,9 +69,9 @@ async fn read(
 
 async fn apply(
     worker: &Path,
-    file: &Path,
+    file: Option<&Path>,
     ops: &str,
-    base_digest: &str,
+    base_digest: Option<&str>,
     out: &Path,
     agent: &str,
 ) -> Result<serde_json::Value, String> {
@@ -77,16 +87,35 @@ async fn apply(
     let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_str(&text).map_err(|error| {
         format!("ops are not valid: {error}. Pass a JSON array of ops, each an object with an \"op\" name and only that op's fields")
     })?;
-    // A template makes a new document, written clean; anything else is an
-    // edit of the file, tracked (docs/design/72, R7).
-    let new_file = file
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .and_then(vak_ooxml::Format::from_extension)
-        .is_some_and(|format| format.kind == vak_ooxml::FormatKind::Template);
+    let origin = match (file, base_digest) {
+        (Some(file), Some(base_digest)) => vak_tools::broker::OfficeOrigin::File {
+            path: absolute(file)?,
+            base_digest: base_digest.to_string(),
+        },
+        (None, None) => vak_tools::broker::OfficeOrigin::Blank,
+        (Some(_), None) => {
+            return Err(
+                "--base-digest is required with a file: pass the sha256 `vak office read` printed for it"
+                    .into(),
+            );
+        }
+        (None, Some(_)) => {
+            return Err(
+                "--base-digest names the content of a file; give the file, or leave both out to create --out from scratch"
+                    .into(),
+            );
+        }
+    };
+    // A new file from the blank or a template is written clean; anything
+    // else is an edit of the file, tracked (docs/design/72, R7).
+    let new_file = file.is_none_or(|file| {
+        file.extension()
+            .and_then(|extension| extension.to_str())
+            .and_then(vak_ooxml::Format::from_extension)
+            .is_some_and(|format| format.kind == vak_ooxml::FormatKind::Template)
+    });
     let lineage = vak_tools::broker::OfficeLineage {
-        source: absolute(file)?,
-        base_digest: base_digest.to_string(),
+        origin,
         ops,
         author: vak_tools::office_apply::tracked_change_author(agent),
         new_file,

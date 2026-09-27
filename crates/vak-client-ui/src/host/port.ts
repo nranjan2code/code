@@ -67,6 +67,10 @@ export interface Host {
    *  unsubscribe. */
   onFullscreenChange(handler: (fullscreen: boolean) => void): () => void;
 
+  /** Change the running window's icon where the host supports it. This does
+   * not change the icon installed by the operating system. */
+  setWindowIcon?(visualPack: "classic" | "dimensional"): Promise<void>;
+
   /** Open `cwd` as the active workspace. `trust` is the operator's answer
    *  when they have just been asked, and undefined when nobody is being
    *  asked — in which case the decision already on record governs. */
