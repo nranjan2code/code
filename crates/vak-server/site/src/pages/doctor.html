@@ -1,0 +1,47 @@
+<section class="page-hero doctor-hero">
+  <div class="wrap architecture-opening">
+    <div><p class="eyebrow">Meet Vakyartha Doctor</p><h1>Let’s see what<br />needs attention.</h1><p class="lead">A little check-up for your AI helper.<br />Find what’s ready, what needs a hand, and what to do next.</p><a class="button primary" href="#check-up">Meet your check-up <span aria-hidden="true">↓</span></a></div>
+    <figure class="doctor-scene"><img class="architecture-art" src="/site/architecture/doctor.webp" width="1536" height="1024" alt="Vakyartha in a white doctor's coat and stethoscope, checking a laptop with a checklist and toolkit" /><figcaption>Same bird. A little help looking after your installation.</figcaption></figure>
+  </div>
+</section>
+<nav class="wrap architecture-index" aria-label="Doctor chapters" id="doctor-chapters"><a href="#check-up">The check-up</a><a href="#understand">Understand the result</a><a href="#repair">A careful repair</a><a href="#start">Try Doctor</a><a href="/architecture">Explore the architecture ↗</a></nav>
+<section class="section architecture-band" id="check-up" aria-labelledby="check-up-title">
+  <div class="wrap"><p class="eyebrow">01 / First, take a look</p><h2 class="architecture-title" id="check-up-title">A useful place<br />to start.</h2><p class="architecture-intro">Perhaps voice has gone quiet. A connected chat cannot reach its working folder. Or something feels wrong after an update. Doctor checks the installation and gathers the problems into one report.</p>
+    <div class="doctor-checks">
+      <article><h3>Ready to help?</h3><p>Looks at your AI service setup, configuration and the capabilities available to Vakyartha.</p></article>
+      <article><h3>Ready to listen?</h3><p>Checks enabled voice settings and the readiness of any local speech engines you have configured.</p></article>
+      <article><h3>Work in the right place?</h3><p>Checks saved-work storage and whether connected chats can still reach their assigned folders.</p></article>
+      <article><h3>Installation in order?</h3><p>Checks installation layout and version consistency. The command also reports managed services that exited with an error.</p></article>
+    </div>
+    <p class="doctor-note">You get the check that failed and the reason it reported. The full report is available on your own installation.</p>
+    <div class="chapter-return"><a href="#doctor-chapters">All sections ↑</a></div>
+  </div>
+</section>
+<section class="section" id="understand" aria-labelledby="understand-title">
+  <div class="wrap architecture-split">
+    <figure class="doctor-scene"><img class="architecture-art" src="/site/architecture/doctor-diagnosis.webp" width="1536" height="1024" loading="lazy" alt="Doctor Vakyartha examines a checklist and a voice setup choice with a magnifying glass" /><figcaption>Look closely. Find the missing piece.</figcaption></figure>
+    <div><p class="eyebrow">02 / Make sense of it</p><h2 class="architecture-title" id="understand-title">From “something’s wrong”<br />to a next step.</h2><p class="architecture-intro">A helpful diagnosis gives you somewhere to go. Some problems need a choice only you can make.</p>
+      <div class="architecture-definitions"><article><h3>Voice has no model selected</h3><p>Choose the model you want to use in Voice settings. Doctor can identify the missing choice.</p></article><article><h3>A chat’s folder has moved</h3><p>Point the connection to the correct workspace in Admin. Doctor leaves that decision to you.</p></article><article><h3>An AI service needs a key</h3><p>Add your own credential in Settings. Your account and access stay yours to choose.</p></article></div>
+      <p class="doctor-note">Illustrative situations, written in everyday language. Your report shows the checks and details from your installation.</p>
+    </div>
+  </div><div class="wrap chapter-return"><a href="#doctor-chapters">All sections ↑</a></div>
+</section>
+<section class="section architecture-band" id="repair" aria-labelledby="repair-title">
+  <div class="wrap architecture-split">
+    <div><p class="eyebrow">03 / A careful repair</p><h2 class="architecture-title" id="repair-title">A known fix.<br />Then another look.</h2><p class="architecture-intro">When you ask Doctor to repair, it acts on the problems with a supported fix. It tells you what it attempted, then checks the installation again.</p><p class="architecture-intro">Anything that still needs your decision stays visible. A failed repair is reported as a failure.</p>
+      <details class="architecture-detail"><summary>What can it fix today?</summary><p>An installation version mismatch can trigger a reinstall. Retired plugins have a cleanup path. Pending channel requests past their configured expiry can be denied, with the reason kept visible.</p><p>Repair can change your installation or channel state. Begin with the check-up and read the findings before asking for a repair.</p></details>
+    </div>
+    <figure class="doctor-scene"><img class="architecture-art" src="/site/architecture/doctor-repair.webp" width="1536" height="1024" loading="lazy" alt="Doctor Vakyartha carefully fits a matching component beside a toolkit and a checked result" /><figcaption>Specific fixes. Visible attempts. A fresh report.</figcaption></figure>
+  </div><div class="wrap chapter-return"><a href="#doctor-chapters">All sections ↑</a></div>
+</section>
+<section class="section" id="start" aria-labelledby="start-title">
+  <div class="wrap architecture-split">
+    <div><p class="eyebrow">When you need a hand</p><h2 class="architecture-title" id="start-title">Your check-up<br />is close by.</h2><p class="architecture-intro">On your running installation, the admin Operations Center brings Doctor’s core health report together with service, delivery and incident information.</p><p class="architecture-intro">A passing report means these checks passed at that moment. An external service or a later request can still encounter a problem.</p></div>
+    <div>
+      <details class="architecture-detail"><summary>Run a check-up from the terminal</summary><p>In the working folder you use with Vakyartha, run:</p><code class="architecture-command">vak doctor</code><p>The terminal’s conversation interface also offers <code>/doctor</code>.</p></details>
+      <details class="architecture-detail"><summary>Ask for a supported repair</summary><p>After reviewing the diagnosis, run:</p><code class="architecture-command">vak doctor --repair</code><p>Read the fresh report afterwards. Problems without a known mechanical fix need your attention.</p></details>
+      <details class="architecture-detail"><summary>Look inside Doctor</summary><p>Doctor is part of Vakyartha’s open-source runtime. You can inspect both the shared checks and the repair decisions.</p><a class="text-link" href="https://github.com/nranjan2code/code/blob/main/crates/vak-core/src/health.rs" target="_blank" rel="noopener noreferrer">Read the health checks ↗</a><br /><a class="text-link" href="https://github.com/nranjan2code/code/blob/main/crates/vak/src/doctor.rs" target="_blank" rel="noopener noreferrer">Read the repair logic ↗</a></details>
+    </div>
+  </div><div class="wrap chapter-return"><a href="#doctor-chapters">All sections ↑</a></div>
+</section>
+<section class="closing-scene architecture-closing"><div class="wrap"><p class="eyebrow">A helper worth looking after</p><h2>Back to<br />your day.</h2><a class="button primary" href="/install">Set up Vakyartha <span aria-hidden="true">↗</span></a><nav class="architecture-return" aria-label="Return navigation"><a href="#main">Back to top ↑</a><a href="/architecture#doctor">Back to architecture ↗</a><a href="/">Home ↗</a></nav></div></section>

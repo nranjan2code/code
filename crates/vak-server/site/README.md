@@ -1,6 +1,6 @@
 # Vakyartha public site
 
-Ten static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+Twelve static pages, built here and embedded by `crates/vak-server/src/site.rs`.
 The public route names remain stable; the navigation uses plain labels.
 
 | Route | Purpose |
@@ -10,6 +10,8 @@ The public route names remain stable; the navigation uses plain labels.
 | `/tour` | Interactive request/result illustrations and a short walkthrough |
 | `/security` | Access, review, privacy and an explicitly illustrative decision |
 | `/install` | Public source build instructions and access to an existing installation |
+| `/architecture` | Illustrated architecture, ledger, context, voice, FinOps, admin and deployment |
+| `/doctor` | Everyday diagnostics and supported repairs, told in three illustrated scenes |
 | `/surfaces` | Desktop, browser, connected chats and terminal |
 | `/wallpapers` | All 16 desktop and mobile wallpaper downloads, without sign-in |
 | `/vak` | The name and Songbird identity |
@@ -53,6 +55,15 @@ To add a page, update `PAGES` in `build.py` and `ROUTES` in `src/site.rs`.
 `NAV_ROUTES` selects the primary navigation. A file appearing in `dist/` never
 implicitly becomes a public page.
 
+## Architecture page
+
+`/architecture` uses Vakyartha as its only character. Generated transparent
+illustrations introduce the core, request journey, workspace pool, ledger, context and expenditure. Doctor has three dedicated scenes.
+Readable HTML labels and explanations carry the technical meaning. Source links
+expose the implementation and distinguish shipped voice and self-hosting from
+planned realtime and cloud-remote work. Prompts and originals are in
+`docs/brand/library/public-site-scenes/architecture/`.
+
 ## Direction
 
 The follow-through content pass adds ongoing-work storytelling, commitments,
@@ -95,7 +106,8 @@ only the hero loads eagerly. No remote fonts or image services are required.
 
 The site has been checked in a browser at 1440 × 900 and 390 × 844 in both
 light and dark. Screenshots and the review record are under
-`docs/assets/public-site-refresh-2026/`.
+`docs/assets/public-site-refresh-2026/`. The architecture pass is recorded in
+`docs/assets/public-site-architecture-2026/`.
 
 ```sh
 node --check crates/vak-server/site/src/site.js

@@ -45,15 +45,19 @@ PAGES = [
      "Use Vakyartha on your desktop, in a browser, in a connected chat or from a terminal."),
     ("install.html", "/install", "Get started", "Get started | Vakyartha",
      "Build the open-source Vakyartha software on macOS or Linux, or open an existing installation."),
+    ("architecture.html", "/architecture", "Architecture", "Under the feathers | Vakyartha architecture",
+     "Explore Vakyartha’s open-source architecture: intent, commitments, CorePool, voice, evidence, FinOps, Doctor, admin and self-hosted deployment."),
     ("wallpapers.html", "/wallpapers", "Wallpapers", "Wallpapers | Vakyartha",
      "Take the whole crew with you. Download daylight and dusk wallpapers for your phone, laptop or desktop. No sign-in needed."),
+    ("doctor.html", "/doctor", "Doctor", "A little check-up | Vakyartha Doctor",
+     "Meet Doctor: understand what needs attention in your Vakyartha installation, find your next step, and apply supported repairs."),
     ("terms.html", "/terms", "Terms of use", "Terms of use | Vakyartha",
      "Terms for using the Vakyartha website and software, including the MIT License, warranty disclaimer and liability limits."),
     ("privacy.html", "/privacy", "Privacy", "Privacy and data | Vakyartha",
      "How the Vakyartha public website and self-hosted software handle information."),
 ]
 
-NAV_ROUTES = {"/outcomes", "/tour", "/security"}
+NAV_ROUTES = {"/outcomes", "/tour", "/security", "/architecture", "/wallpapers"}
 
 # Files that are inlined into every page rather than linked.
 INLINE_CSS = SRC / "styles.css"

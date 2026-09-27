@@ -1,0 +1,2135 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Under the feathers | Vakyartha architecture</title>
+    <meta name="description" content="Explore Vakyartha’s open-source architecture: intent, commitments, CorePool, voice, evidence, FinOps, Doctor, admin and self-hosted deployment." />
+    <meta property="og:title" content="Under the feathers | Vakyartha architecture" />
+    <meta property="og:description" content="Explore Vakyartha’s open-source architecture: intent, commitments, CorePool, voice, evidence, FinOps, Doctor, admin and self-hosted deployment." />
+    <meta property="og:type" content="website" />
+    <meta name="color-scheme" content="light dark" />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: light)"
+      content="#FFFFFF"
+    />
+    <meta
+      name="theme-color"
+      media="(prefers-color-scheme: dark)"
+      content="#10121A"
+    />
+    <link rel="icon" type="image/png" href="/app/assets/brand/icon-192.png" />
+    <script>
+      try {
+        var t = localStorage.getItem("vak-theme");
+        if (t === "light" || t === "dark")
+          document.documentElement.dataset.theme = t;
+      } catch (e) {}
+    </script>
+    <style>
+      /* Public site: crisp white, charcoal and the Songbird brand. */
+:root {
+  color-scheme: light;
+  --canvas: #ffffff;
+  --surface: #ffffff;
+  --ink: #1b1e36;
+  --muted: #565970;
+  --line: #e0e5ef;
+  --primary: #2f3c94;
+  --on-primary: #ffffff;
+  --live: #f5a400;
+  --live-ink: #8a5300;
+  --soft: #f0f3fa;
+  --danger: #a62e38;
+  --success: #28604b;
+  --bird: url("/app/assets/brand/songbird-colour.svg");
+  --word: url("/app/assets/brand/wordmark-colour.svg");
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --canvas: #10121a;
+  --surface: #191c27;
+  --ink: #ecebf5;
+  --muted: #b1b3c9;
+  --line: #363a50;
+  --primary: #a3adf7;
+  --on-primary: #10121a;
+  --live: #f5a400;
+  --live-ink: #ffd07a;
+  --soft: #232838;
+  --danger: #ff9ca5;
+  --success: #9fd7bd;
+  --bird: url("/app/assets/brand/songbird-reverse.svg");
+  --word: url("/app/assets/brand/wordmark-reverse.svg");
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --canvas: #10121a;
+    --surface: #191c27;
+    --ink: #ecebf5;
+    --muted: #b1b3c9;
+    --line: #363a50;
+    --primary: #a3adf7;
+    --on-primary: #10121a;
+    --live: #f5a400;
+    --live-ink: #ffd07a;
+    --soft: #232838;
+    --danger: #ff9ca5;
+    --success: #9fd7bd;
+    --bird: url("/app/assets/brand/songbird-reverse.svg");
+    --word: url("/app/assets/brand/wordmark-reverse.svg");
+  }
+}
+* {
+  box-sizing: border-box;
+}
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: 110px;
+}
+body {
+  margin: 0;
+  background: var(--canvas);
+  color: var(--ink);
+  font:
+    400 16px/1.55 -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button,
+a,
+summary {
+  -webkit-tap-highlight-color: transparent;
+}
+button,
+input {
+  font: inherit;
+}
+button,
+a {
+  touch-action: manipulation;
+}
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+  text-underline-offset: 5px;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  cursor: default;
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: 5px;
+}
+button[hidden],
+[hidden] {
+  display: none !important;
+}
+h1,
+h2,
+h3,
+p,
+figure {
+  margin: 0;
+}
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  line-height: 1.02;
+  letter-spacing: -0.045em;
+}
+h1 {
+  font-size: clamp(44px, 5.6vw, 78px);
+}
+h2 {
+  font-size: clamp(32px, 4vw, 52px);
+}
+h3 {
+  font-size: 25px;
+  letter-spacing: -0.025em;
+}
+p {
+  color: var(--muted);
+}
+svg {
+  flex-shrink: 0;
+}
+img {
+  max-width: 100%;
+}
+.wrap {
+  width: min(1248px, calc(100% - 96px));
+  margin: auto;
+}
+.skip {
+  position: fixed;
+  top: -100px;
+  left: 20px;
+  padding: 12px;
+  background: var(--surface);
+  z-index: 10;
+}
+.skip:focus {
+  top: 12px;
+}
+.rail {
+  border-bottom: 1px solid var(--line);
+  background: var(--canvas);
+}
+.rail-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  min-height: 96px;
+}
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.brand-bird {
+  width: 38px;
+  height: 43px;
+  background: var(--bird) center/contain no-repeat;
+}
+.brand-word {
+  width: 133px;
+  height: 29px;
+  background: var(--word) center/contain no-repeat;
+}
+.rail-nav,
+.rail-actions {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+}
+.rail-nav a {
+  color: var(--muted);
+  font-size: 14px;
+}
+.rail-nav a[aria-current] {
+  color: var(--ink);
+  text-decoration: underline;
+  text-underline-offset: 7px;
+}
+.rail-actions {
+  gap: 16px;
+}
+.button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  gap: 22px;
+  min-height: 46px;
+  padding: 10px 19px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+  background: var(--surface);
+}
+.button:hover {
+  text-decoration: none;
+  border-color: var(--primary);
+}
+.button.primary {
+  background: var(--primary);
+  color: var(--on-primary);
+  border-color: var(--primary);
+}
+.theme-button {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  height: 44px;
+  background: none;
+  border: 0;
+  color: var(--ink);
+  border-radius: 12px;
+}
+.eyebrow {
+  font-size: 13px;
+  letter-spacing: 0.03em;
+  margin-bottom: 22px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.eyebrow:before {
+  content: "";
+  display: block;
+  width: 24px;
+  height: 1px;
+  background: var(--muted);
+}
+.text-link {
+  font-size: 14px;
+  font-weight: 500;
+}
+.example-browser {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.example-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 28px;
+  border-bottom: 1px solid var(--line);
+}
+.example-toolbar p {
+  font-size: 12px;
+}
+.scenario-tabs {
+  display: flex;
+  gap: 6px;
+}
+.scenario-tabs button {
+  border: 0;
+  border-radius: 12px;
+  padding: 9px 17px;
+  min-height: 40px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+}
+.scenario-tabs button[aria-selected="true"] {
+  background: var(--ink);
+  color: var(--surface);
+}
+.scene {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  min-height: 354px;
+}
+.scene-input {
+  padding: 34px 40px;
+  background: var(--soft);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 24px;
+}
+.person {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.person svg {
+  width: 28px;
+  height: 28px;
+}
+.prompt {
+  color: var(--ink);
+  font-size: clamp(23px, 2.3vw, 32px);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: -0.025em;
+  max-width: 440px;
+}
+.attachment {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  align-self: flex-start;
+}
+.scene-result {
+  padding: 30px 40px;
+}
+.result-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 24px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.result-identity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.result-identity img {
+  width: 23px;
+  height: 28px;
+  object-fit: contain;
+}
+.result-identity .brand-bird {
+  width: 23px;
+  height: 28px;
+}
+.result-title {
+  font-size: 24px;
+  letter-spacing: -0.035em;
+  margin-bottom: 16px;
+}
+.meal-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.meal {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.meal .day {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.meal b {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.25;
+  display: block;
+  margin: 8px 0;
+}
+.meal small {
+  font-size: 12px;
+  color: var(--muted);
+}
+.plate {
+  display: grid;
+  place-items: center;
+  height: 58px;
+}
+.plate svg {
+  width: 74px;
+  height: 58px;
+  stroke: var(--ink);
+  fill: none;
+  stroke-width: 1.3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.result-note {
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 14px;
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.result-note svg {
+  width: 15px;
+  height: 15px;
+  stroke: var(--ink);
+  fill: none;
+}
+.scene-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+  padding: 12px 28px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--muted);
+}
+.scene-footer a {
+  font-size: 12px;
+}
+.section {
+  padding: 76px 0;
+  border-top: 1px solid var(--line);
+}
+.section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 30px;
+  margin-bottom: 35px;
+}
+.section-heading p {
+  max-width: 270px;
+  font-size: 14px;
+}
+
+.mini-art {
+  height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--soft);
+  border-radius: 12px;
+  padding: 24px;
+  overflow: hidden;
+}
+
+.footer {
+  padding: 34px 0;
+  border-top: 1px solid var(--line);
+}
+.footer-inner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.footer .brand-bird {
+  width: 27px;
+  height: 32px;
+}
+.footer .brand-word {
+  width: 100px;
+  height: 23px;
+}
+.footer p {
+  font-size: 12px;
+}
+.footer nav {
+  display: flex;
+  gap: 22px;
+  margin-left: auto;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.footer .footer-project {
+  width: 100%;
+  margin-left: 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.build-details {
+  width: 100%;
+  font-size: 12px;
+  color: var(--muted);
+}
+summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+summary:after {
+  content: "+";
+  margin-left: auto;
+  font-size: 20px;
+}
+details[open] > summary:after {
+  content: "−";
+}
+.build-details summary {
+  display: inline-flex;
+  gap: 12px;
+  min-height: 28px;
+}
+.build-details span {
+  display: block;
+}
+.page-hero {
+  padding: 64px 0 48px;
+}
+.page-hero h1 {
+  max-width: 950px;
+}
+.page-hero .lead {
+  max-width: 550px;
+  margin-top: 22px;
+  font-size: 18px;
+}
+.legal-copy {
+  max-width: 900px;
+  padding-bottom: 88px;
+}
+.legal-copy .legal-date {
+  font-size: 14px;
+}
+.legal-copy section {
+  padding: 28px 0;
+  border-bottom: 1px solid var(--line);
+}
+.legal-copy section:last-child {
+  border-bottom: 0;
+}
+.legal-copy h2 {
+  margin-bottom: 12px;
+}
+.legal-copy p + p {
+  margin-top: 16px;
+}
+.legal-copy a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.license-text {
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 24px;
+  padding-bottom: 64px;
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 60px;
+}
+
+.faq {
+  max-width: 760px;
+  margin: 0 auto;
+}
+.faq details {
+  border-top: 1px solid var(--line);
+  padding: 12px 0;
+}
+.faq summary {
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+}
+.faq details p,
+.faq details ul {
+  margin: 12px 0;
+  color: var(--muted);
+  font-size: 15px;
+}
+.faq details a {
+  text-decoration: underline;
+}
+.approval {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 32px;
+}
+.approval .status {
+  font-size: 13px;
+  color: var(--live-ink);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.status:before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--live);
+  border-radius: 50%;
+}
+.approval h2 {
+  font-size: 30px;
+  margin-bottom: 18px;
+}
+.approval p {
+  font-size: 14px;
+}
+.approval-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 24px;
+}
+.approval-message {
+  margin-top: 18px;
+  min-height: 44px;
+}
+.control-list {
+  display: grid;
+  gap: 24px;
+}
+.control-list article {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--line);
+}
+.control-list h3 {
+  font-size: 22px;
+  margin-bottom: 8px;
+}
+.control-list p {
+  font-size: 14px;
+}
+.about {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  gap: 100px;
+  padding: 56px 0 96px;
+}
+.about-art {
+  display: grid;
+  place-items: center;
+  background: var(--soft);
+  border-radius: 50%;
+  aspect-ratio: 1;
+}
+.about-art .brand-bird {
+  width: 55%;
+  height: 70%;
+}
+.about h1 {
+  font-size: 60px;
+}
+.about p {
+  margin-top: 24px;
+}
+.setup-card {
+  padding: 32px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  margin-bottom: 24px;
+}
+.setup-card h2 {
+  font-size: 30px;
+  margin-bottom: 16px;
+}
+.setup-card p {
+  font-size: 15px;
+  margin-bottom: 18px;
+}
+.setup-tag {
+  font-size: 12px;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 14px;
+}
+.code-block {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 16px;
+  background: var(--soft);
+  border-radius: 12px;
+  margin: 16px 0;
+}
+.code-block code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  flex: 1;
+  font-size: 13px;
+}
+.copy {
+  padding: 6px 12px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 12px;
+  color: var(--ink);
+  font-size: 12px;
+}
+.setup-card ol {
+  padding-left: 22px;
+  color: var(--muted);
+}
+.setup-card li {
+  padding: 8px 0;
+}
+.document-preview {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 20px;
+}
+.document-preview h3 {
+  font-size: 17px;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+.document-preview p {
+  font-size: 14px;
+}
+.document-preview .edit-line {
+  padding: 7px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 14px;
+}
+.document-preview del {
+  color: var(--danger);
+}
+.document-preview ins {
+  color: var(--success);
+  text-decoration: none;
+}
+.code-preview {
+  font:
+    13px/1.8 ui-monospace,
+    SFMono-Regular,
+    Consolas,
+    monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--soft);
+  padding: 16px;
+  border-radius: 12px;
+}
+.code-preview .removed {
+  color: var(--danger);
+}
+.code-preview .added {
+  color: var(--success);
+}
+.surface-card {
+  border-top: 1px solid var(--line);
+  padding: 24px 0;
+}
+.surface-card h2 {
+  font-size: 30px;
+  margin-top: 24px;
+}
+.surface-card p {
+  margin-top: 12px;
+  font-size: 15px;
+}
+.surface-card .mini-art {
+  height: 230px;
+}
+.surface-card .mini-preview {
+  max-width: 350px;
+}
+.device {
+  border: 1px solid var(--muted);
+  border-radius: 10px;
+  padding: 15px;
+  background: var(--surface);
+  width: 90%;
+  font-size: 13px;
+}
+.device-bar {
+  display: flex;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.device-bar i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.device-content {
+  display: flex;
+  gap: 12px;
+  margin: 16px 0;
+}
+.device-content .brand-bird {
+  width: 22px;
+  height: 25px;
+  flex-shrink: 0;
+}
+.device-input {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.phone {
+  width: 145px;
+  border-radius: 20px;
+  padding: 18px 12px;
+}
+.phone .device-content {
+  font-size: 12px;
+}
+.wide-section {
+  padding-bottom: 64px;
+}
+.no-script-note {
+  font-size: 12px;
+  padding: 10px 28px;
+  border-top: 1px solid var(--line);
+}
+
+.hero {
+  padding: 56px 0 36px;
+  overflow: hidden;
+}
+.hero-composition {
+  position: relative;
+  min-height: 580px;
+  display: flex;
+  align-items: flex-start;
+}
+.hero-copy {
+  position: relative;
+  z-index: 1;
+  width: 48%;
+}
+.hero h1 {
+  font-size: clamp(70px, 7.7vw, 110px);
+  line-height: 0.94;
+  letter-spacing: -0.065em;
+  font-weight: 600;
+}
+.hero h1 span {
+  margin-left: 54px;
+}
+.hero-description {
+  margin: 28px 0 24px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+.hero-source {
+  margin-top: 16px;
+  font-size: 14px;
+}
+.hero-source a {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.hero-art {
+  position: absolute;
+  width: 69%;
+  right: -7%;
+  top: 26px;
+}
+.hero-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.hero-art figcaption {
+  color: var(--muted);
+  font-size: 12px;
+  margin: -2% 0 0 21%;
+}
+
+.story-intro {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  padding: 44px 0 12px;
+}
+.story-intro p {
+  color: var(--ink);
+  font-size: 32px;
+  font-weight: 500;
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+.story-intro > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.day-chapter {
+  overflow: hidden;
+  padding: 64px 0 40px;
+}
+.chapter-composition {
+  display: flex;
+  align-items: center;
+  gap: 36px;
+}
+.chapter-art {
+  width: 61%;
+  flex-shrink: 0;
+  margin-left: -6%;
+}
+.chapter-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.chapter-copy {
+  flex: 1;
+  min-width: 0;
+}
+.chapter-copy h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 28px;
+}
+.chapter-work {
+  padding: 74px 0;
+  background: var(--soft);
+}
+.chapter-work .chapter-composition {
+  flex-direction: row-reverse;
+}
+.chapter-work .chapter-art {
+  margin-left: 0;
+  margin-right: -6%;
+  width: 63%;
+}
+.chapter-play .chapter-art {
+  width: 55%;
+  margin-left: 0;
+}
+.chapter-play .chapter-copy {
+  padding-left: 6%;
+}
+.companion-section h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 24px;
+}
+.companion-lineup {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 24px;
+  list-style: none;
+  padding: 24px 0 0;
+  margin: 0;
+}
+.companion-lineup img { width: 100%; height: auto; max-width: 128px; }
+.companion-lineup h3 { font-size: 18px; margin: 14px 0 8px; }
+.companion-lineup p { font-size: 14px; line-height: 1.5; }
+@media (max-width: 1000px) {
+  .companion-lineup { grid-template-columns: repeat(4, minmax(0, 1fr)); row-gap: 32px; }
+}
+@media (max-width: 480px) {
+  .companion-lineup { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.chapter-lead {
+  font-size: 16px;
+  line-height: 1.65;
+  max-width: 440px;
+  margin: 0 0 22px;
+}
+.continuity-story {
+  background: var(--soft);
+}
+.continuity-story .cast {
+  margin-bottom: 18px;
+}
+.commitment-story {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 64px;
+  align-items: start;
+}
+.commitment-story h2 {
+  font-size: clamp(36px, 4.1vw, 58px);
+  line-height: 1.04;
+  letter-spacing: -0.05em;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .commitment-story { grid-template-columns: 1fr; gap: 24px; }
+  .continuity-story .chapter-art { width: 100%; margin: 0; }
+}
+.request-list {
+  width: 100%;
+}
+.request-list details {
+  border-bottom: 1px solid var(--line);
+}
+.request-list summary {
+  display: grid;
+  grid-template-columns: 65px 1fr 16px;
+  gap: 10px;
+  align-items: start;
+  padding: 17px 0;
+  font-size: 15px;
+  line-height: 1.4;
+}
+.request-list summary:after {
+  font-size: 19px;
+  line-height: 1;
+  padding-top: 2px;
+}
+.request-person {
+  font-size: 12px;
+  color: var(--muted);
+  padding-top: 2px;
+}
+.request-result {
+  padding: 0 26px 20px 75px;
+}
+.request-result strong {
+  font-size: 14px;
+  font-weight: 500;
+}
+.request-result p {
+  font-size: 14px;
+  line-height: 1.6;
+  margin-top: 8px;
+}
+.cast {
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 22px;
+  max-width: 340px;
+}
+.example-disclosure {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 24px 0 44px;
+}
+.closing-scene {
+  padding: 64px 0 80px;
+}
+.closing-scene .wrap {
+  position: relative;
+}
+.closing-scene h2 {
+  font-size: clamp(64px, 7.2vw, 104px);
+  letter-spacing: -0.06em;
+  line-height: 0.98;
+  margin-bottom: 30px;
+}
+.closing-scene .text-link {
+  position: absolute;
+  bottom: 10px;
+  right: 0;
+}
+.process-lines article {
+  display: grid;
+  grid-template-columns: 50px 1fr 1fr;
+  align-items: center;
+  gap: 20px;
+  padding: 36px 0;
+  border-bottom: 1px solid var(--line);
+}
+.process-lines article > span {
+  font-size: 13px;
+  color: var(--muted);
+}
+.process-lines h2 {
+  font-size: 36px;
+}
+.process-lines p {
+  font-size: 15px;
+}
+.day-requests {
+  padding-top: 30px;
+  padding-bottom: 64px;
+}
+.day-requests .chapter-copy {
+  display: grid;
+  grid-template-columns: 1fr 1.1fr;
+  column-gap: 80px;
+}
+.day-requests .eyebrow {
+  grid-column: 1;
+}
+.day-requests h2 {
+  grid-column: 1;
+  font-size: 44px;
+}
+.day-requests .request-list {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+}
+.day-requests .cast {
+  grid-column: 1;
+  margin-top: 0;
+}
+@media (max-width: 1000px) {
+  .hero-composition {
+    min-height: 510px;
+  }
+  .hero h1 {
+    font-size: 76px;
+  }
+  .hero-art {
+    width: 65%;
+    right: -6%;
+    top: 75px;
+  }
+  .hero-art figcaption {
+    margin-left: 20%;
+    max-width: 230px;
+  }
+  .chapter-composition {
+    gap: 24px;
+  }
+  .chapter-art {
+    width: 54%;
+    margin-left: -4%;
+  }
+  .chapter-work .chapter-art {
+    width: 54%;
+    margin-right: -4%;
+  }
+  .chapter-play .chapter-copy {
+    padding-left: 0;
+  }
+}
+@media (max-width: 760px) {
+  .day-requests .chapter-copy {
+    display: block;
+  }
+  .day-requests h2 {
+    font-size: 36px;
+  }
+  .day-requests .cast {
+    margin-top: 18px;
+  }
+
+  .hero {
+    padding: 32px 0 24px;
+  }
+  .hero-composition {
+    display: block;
+    min-height: 0;
+  }
+  .hero-copy {
+    width: 100%;
+  }
+  .hero h1 {
+    font-size: clamp(56px, 17.4vw, 68px);
+  }
+  .hero h1 span {
+    margin-left: 36px;
+  }
+  .hero-description {
+    font-size: 15px;
+    margin: 22px 0 20px;
+  }
+  .hero-art {
+    position: relative;
+    width: 116%;
+    right: auto;
+    margin: 0 -8%;
+    top: auto;
+  }
+  .hero-art figcaption {
+    margin: 0 8%;
+    text-align: center;
+    font-size: 12px;
+  }
+
+  .story-intro {
+    display: block;
+    padding: 38px 0 0;
+  }
+  .story-intro p {
+    font-size: 28px;
+  }
+  .story-intro > span {
+    display: block;
+    margin-top: 22px;
+  }
+  .day-chapter {
+    padding: 32px 0 38px;
+  }
+  .chapter-composition,
+  .chapter-work .chapter-composition {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .chapter-art,
+  .chapter-work .chapter-art,
+  .chapter-play .chapter-art {
+    width: 116%;
+    margin: 0 -8%;
+  }
+  .chapter-copy {
+    width: 100%;
+  }
+  .chapter-copy h2 {
+    font-size: 40px;
+    margin-bottom: 18px;
+  }
+  .chapter-copy .eyebrow {
+    margin-bottom: 14px;
+  }
+  .chapter-play .chapter-copy {
+    padding: 0;
+  }
+  .request-list summary {
+    font-size: 14px;
+    grid-template-columns: 60px 1fr 16px;
+    padding: 16px 0;
+    gap: 8px;
+  }
+  .request-result {
+    padding-left: 68px;
+    padding-right: 14px;
+  }
+  .cast {
+    margin-top: 18px;
+  }
+  .example-disclosure {
+    padding: 12px 0 24px;
+  }
+  .closing-scene {
+    padding: 36px 0 44px;
+  }
+  .closing-scene h2 {
+    font-size: 64px;
+  }
+  .closing-scene .text-link {
+    position: static;
+    display: block;
+    margin-top: 24px;
+    font-size: 13px;
+  }
+  .process-lines article {
+    grid-template-columns: 32px 1fr;
+    gap: 14px;
+    padding: 24px 0;
+  }
+  .process-lines h2 {
+    font-size: 29px;
+  }
+  .process-lines p {
+    grid-column: 2;
+    font-size: 14px;
+  }
+}
+@media (max-width: 1000px) {
+  .wrap {
+    width: calc(100% - 48px);
+  }
+  .rail-inner {
+    gap: 15px;
+  }
+  .rail-nav {
+    gap: 16px;
+  }
+  .rail-actions {
+    gap: 6px;
+  }
+  .brand-word {
+    width: 110px;
+  }
+  .brand-bird {
+    width: 30px;
+  }
+
+  .scene-input,
+  .scene-result {
+    padding: 28px;
+  }
+  .columns {
+    gap: 32px;
+  }
+  .about {
+    gap: 50px;
+  }
+  .footer nav {
+    margin-left: 0;
+  }
+}
+@media (max-width: 760px) {
+  html {
+    scroll-padding-top: 24px;
+  }
+  .wrap {
+    width: calc(100% - 36px);
+  }
+  .rail-inner {
+    flex-wrap: wrap;
+    padding-top: 16px;
+    gap: 12px;
+    min-height: 112px;
+  }
+  .rail-nav {
+    order: 3;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 14px 24px;
+    width: 100%;
+    padding: 10px 0 15px;
+  }
+  .rail-nav a {
+    font-size: 13px;
+  }
+  .rail-actions .button {
+    font-size: 12px;
+    padding: 8px 12px;
+    gap: 10px;
+    min-height: 40px;
+  }
+  .theme-button {
+    min-width: 36px;
+    width: 36px;
+    height: 40px;
+  }
+  .brand-word {
+    width: 105px;
+  }
+  .brand-bird {
+    width: 29px;
+    height: 33px;
+  }
+  .brand {
+    gap: 6px;
+  }
+
+  .eyebrow {
+    font-size: 12px;
+    margin-bottom: 18px;
+  }
+
+  .example-toolbar {
+    display: block;
+    padding: 12px;
+  }
+  .example-toolbar p {
+    margin: 10px 5px 0;
+  }
+  .scenario-tabs {
+    justify-content: space-between;
+  }
+  .scenario-tabs button {
+    padding: 8px 12px;
+    flex: 1;
+  }
+  .scene {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+  .scene-input {
+    padding: 24px;
+    gap: 20px;
+    min-height: 220px;
+  }
+  .prompt {
+    font-size: 26px;
+  }
+  .scene-result {
+    padding: 24px 20px;
+    min-height: 315px;
+  }
+  .meal-grid {
+    gap: 10px;
+  }
+  .meal b {
+    font-size: 14px;
+  }
+  .result-top {
+    margin-bottom: 20px;
+  }
+  .scene-footer {
+    padding: 12px 18px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .section {
+    padding: 44px 0;
+  }
+  .section-heading {
+    display: block;
+  }
+  .section-heading p {
+    margin-top: 14px;
+    max-width: none;
+  }
+  .everyday-grid,
+  .gallery,
+  .story-steps,
+  .columns {
+    grid-template-columns: 1fr;
+    gap: 28px;
+  }
+
+  .mini-art {
+    height: 210px;
+  }
+
+  .footer-inner {
+    gap: 20px;
+  }
+  .footer nav {
+    gap: 18px;
+    width: 100%;
+  }
+  .page-hero {
+    padding: 36px 0;
+  }
+  .page-hero h1 {
+    font-size: 44px;
+  }
+  .page-hero .lead {
+    font-size: 16px;
+  }
+  .gallery {
+    padding-bottom: 44px;
+  }
+
+  .approval {
+    padding: 24px;
+  }
+  .about {
+    grid-template-columns: 1fr;
+    gap: 32px;
+    padding: 36px 0 60px;
+  }
+  .about-art {
+    max-width: 250px;
+    width: 100%;
+    margin: auto;
+  }
+  .about h1 {
+    font-size: 44px;
+  }
+  .about p {
+    margin-top: 18px;
+  }
+  .setup-card {
+    padding: 24px;
+  }
+  .code-block {
+    flex-wrap: wrap;
+  }
+  .code-block code {
+    min-width: 180px;
+  }
+  .wide-section {
+    padding-bottom: 44px;
+  }
+  .footer {
+    padding: 26px 0;
+  }
+  .footer p {
+    font-size: 12px;
+  }
+  .faq summary {
+    font-size: 17px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *:before,
+  *:after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Public wallpaper downloads. */
+.wallpaper-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 36px; }
+.wallpaper { min-width: 0; }
+.wallpaper-preview { display: block; width: 100%; border-radius: 24px; object-fit: cover; background: var(--soft); }
+.wallpaper-preview.portrait { width: min(100%, 340px); height: auto; aspect-ratio: 841 / 1870; margin-inline: auto; }
+.wallpaper-preview.landscape { height: auto; aspect-ratio: 16 / 9; }
+.wallpaper h3 { margin: 24px 0 4px; font-size: 24px; }
+.wallpaper p { margin: 0 0 16px; color: var(--muted); }
+.wallpaper-downloads { display: flex; flex-wrap: wrap; gap: 10px; }
+.wallpaper-downloads a { display: inline-flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 12px; color: var(--primary); font-size: 16px; }
+.wallpaper-downloads a:hover { background: var(--soft); }
+@media (max-width: 620px) { .wallpaper-grid { grid-template-columns: 1fr; gap: 48px; } }
+
+/* Ways to use it: a character-led welcome for people who do not need the jargon. */
+.surface-hero {
+  padding-bottom: 54px;
+}
+.surface-story {
+  display: grid;
+  grid-template-columns: 1.08fr 0.92fr;
+  gap: clamp(44px, 7vw, 112px);
+  align-items: center;
+  padding-bottom: 104px;
+}
+.surface-scene {
+  margin: 0;
+  border-radius: 28px;
+  overflow: hidden;
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+.surface-scene img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.35;
+  object-fit: cover;
+}
+.surface-scene figcaption {
+  padding: 14px 18px 16px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.surface-copy h2 {
+  max-width: 460px;
+  margin-bottom: 18px;
+}
+.surface-copy > p:not(.eyebrow) {
+  max-width: 470px;
+  font-size: 17px;
+}
+.surface-list {
+  margin-top: 34px;
+  border-top: 1px solid var(--line);
+}
+.surface-option {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 15px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line);
+}
+.surface-option h3 {
+  font-size: 20px;
+  letter-spacing: -0.025em;
+  margin-bottom: 5px;
+}
+.surface-option p {
+  font-size: 14px;
+  line-height: 1.5;
+}
+.surface-mark {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--live);
+  color: var(--ink);
+  font-size: 20px;
+  line-height: 1;
+}
+.surface-option:nth-child(2) .surface-mark {
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.surface-option:nth-child(3) .surface-mark {
+  background: var(--soft);
+  border: 1px solid var(--line);
+}
+.surface-invite {
+  padding: 80px 0 100px;
+  background: var(--soft);
+  border-top: 1px solid var(--line);
+}
+.surface-invite h2 {
+  max-width: 520px;
+  margin-bottom: 18px;
+}
+.surface-invite p:not(.eyebrow) {
+  max-width: 540px;
+  font-size: 17px;
+  margin-bottom: 28px;
+}
+@media (max-width: 760px) {
+  .surface-hero {
+    padding-bottom: 38px;
+  }
+  .surface-story {
+    grid-template-columns: 1fr;
+    gap: 42px;
+    padding-bottom: 64px;
+  }
+  .surface-scene {
+    border-radius: 20px;
+  }
+  .surface-scene img {
+    aspect-ratio: 1.2;
+  }
+  .surface-copy h2 {
+    font-size: 40px;
+  }
+  .surface-invite {
+    padding: 56px 0 68px;
+  }
+  .surface-invite h2 {
+    font-size: 40px;
+  }
+}
+
+/* Architecture uses the public site's existing theme and typography. */
+.architecture-opening { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; align-items: center; }
+.architecture-hero .lead, .doctor-hero .lead { margin-bottom: 28px; }
+.architecture-title { font-size: clamp(36px, 4.4vw, 64px); line-height: 1.04; letter-spacing: -0.05em; margin-bottom: 24px; }
+.architecture-intro { font-size: 17px; line-height: 1.7; max-width: 760px; margin-bottom: 36px; }
+.architecture-band { background: var(--soft); }
+.architecture-index { display: flex; flex-wrap: wrap; gap: 14px 28px; padding-top: 24px; padding-bottom: 28px; border-top: 1px solid var(--line); }
+.architecture-index a { font-size: 14px; color: var(--primary); text-underline-offset: 5px; }
+.architecture-split { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 72px; align-items: start; }
+.architecture-detail { border-top: 1px solid var(--line); padding: 20px 0; }
+.architecture-detail summary { font-size: 16px; }
+.architecture-detail p { font-size: 16px; line-height: 1.7; max-width: 850px; margin: 20px 0; }
+.architecture-detail a { font-size: 14px; }
+.architecture-notes { margin-top: 40px; }
+.architecture-definitions article { padding: 24px 0; border-bottom: 1px solid var(--line); }
+.architecture-definitions article:first-child { padding-top: 0; }
+.architecture-definitions h3, .architecture-two-notes h3 { font-size: 22px; margin-bottom: 10px; }
+.architecture-definitions p, .architecture-two-notes p { font-size: 16px; line-height: 1.7; }
+.architecture-two-notes { display: grid; grid-template-columns: 1fr 1fr; gap: 48px; margin: 32px 0; }
+.architecture-command { display: inline-block; margin-top: 18px; padding: 12px 18px; border-radius: 8px; background: var(--soft); color: var(--ink); font-size: 15px; }
+.diagram-kicker { font-size: 12px; letter-spacing: 0.035em; color: var(--muted); }
+.core-orbit { margin: 0; padding: 26px 0; }
+.core-orbit figcaption, .request-diagram figcaption, .commitment-diagram figcaption, .pool-diagram figcaption, .evidence-diagram figcaption, .spend-diagram figcaption, .admin-map figcaption, .deployment-map figcaption { font-size: 12px; line-height: 1.6; color: var(--muted); margin-top: 24px; }
+.request-diagram, .pool-diagram, .evidence-diagram, .spend-diagram, .admin-map, .deployment-map { margin: 40px 0; }
+.request-path { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); list-style: none; padding: 0; margin: 0; gap: 24px; }
+.request-path li { position: relative; }
+.request-path li:not(:last-child)::after { content: ''; position: absolute; top: 22px; left: 50px; right: -16px; height: 1px; background: var(--line); }
+.path-number { display: inline-grid; place-items: center; width: 44px; height: 44px; background: var(--primary); color: var(--on-primary); border-radius: 50%; font-size: 13px; }
+.request-path li:first-child .path-number { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 2px var(--live); }
+.request-path h3 { font-size: 20px; margin: 20px 0 12px; }
+.request-path p { font-size: 14px; line-height: 1.6; }
+.commitment-diagram { margin: 0; border-left: 1px solid var(--line); padding: 0 0 0 44px; }
+.commitment-diagram img { display: block; margin-bottom: 16px; }
+.commitment-path { list-style: none; padding: 0 0 0 18px; margin-top: 24px; }
+.commitment-path li { position: relative; border-left: 1px solid var(--line); padding: 0 0 28px 28px; }
+.commitment-path li::before { content: ''; position: absolute; left: -6px; top: 6px; width: 11px; height: 11px; border-radius: 50%; background: var(--primary); }
+.commitment-path li:nth-child(3)::before { background: var(--live); }
+.commitment-path li:last-child { border-left-color: transparent; padding-bottom: 0; }
+.commitment-path strong { display: block; font-size: 19px; }
+.commitment-path span { display: block; font-size: 14px; margin-top: 5px; }
+.diagram-entry { text-align: center; padding-bottom: 30px; }
+.diagram-entry strong { display: block; font-size: 20px; margin-top: 10px; }
+.pool-boundary { border: 1px solid var(--line); border-radius: 24px; padding: 28px; background: var(--surface); }
+.pool-label { display: flex; justify-content: center; align-items: center; gap: 18px; margin-bottom: 28px; }
+.pool-label h3 { font-size: 26px; }
+.pool-label p { font-size: 14px; }
+.pool-lanes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; border-top: 1px solid var(--line); padding-top: 28px; }
+.pool-lanes > div { border-left: 3px solid var(--primary); padding-left: 20px; }
+.pool-lanes span, .pool-lanes strong, .pool-lanes small { display: block; }
+.pool-lanes span { font-size: 13px; color: var(--muted); }
+.pool-lanes strong { font-size: 19px; margin: 8px 0; }
+.pool-lanes small { font-size: 14px; line-height: 1.6; }
+.evidence-diagram ol { list-style: none; padding: 0; margin: 0; }
+.evidence-diagram li { display: grid; grid-template-columns: 32px 1fr 1.1fr; gap: 12px; align-items: center; border-bottom: 1px solid var(--line); padding: 20px 0; }
+.evidence-diagram li > span { font-size: 12px; color: var(--primary); }
+.evidence-diagram strong { font-size: 19px; }
+.evidence-diagram small { font-size: 14px; }
+.spend-diagram ol { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; margin: 0; padding: 26px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.spend-diagram li { border-left: 3px solid var(--primary); padding-left: 24px; }
+.spend-diagram li:first-child { border-color: var(--live); }
+.spend-diagram h3 { font-size: 25px; margin: 12px 0; }
+.spend-diagram p { font-size: 16px; line-height: 1.65; }
+.admin-map { display: grid; grid-template-columns: 0.7fr 1.3fr; gap: 24px 64px; }
+.admin-spine { display: flex; flex-direction: column; align-items: center; justify-content: center; background: var(--soft); border-radius: 24px; padding: 32px; }
+.admin-spine h3 { font-size: 25px; margin: 16px 0 8px; }
+.admin-spine p { font-size: 14px; text-align: center; }
+.admin-spine code { font-size: 14px; margin-top: 16px; color: var(--primary); }
+.admin-branches { margin: 0; border-left: 1px solid var(--line); }
+.admin-branches > div { padding: 18px 0 18px 32px; position: relative; }
+.admin-branches > div::before { content: ''; position: absolute; left: 0; top: 31px; width: 20px; height: 1px; background: var(--primary); }
+.admin-branches dt { font-size: 22px; font-weight: 500; }
+.admin-branches dd { margin: 8px 0 0; font-size: 16px; line-height: 1.6; }
+.admin-map figcaption { grid-column: 1 / -1; margin-top: 0; }
+.deployment-clients, .deployment-services { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; }
+.deployment-clients span, .deployment-services span { border: 1px solid var(--line); border-radius: 99px; padding: 12px 20px; font-size: 14px; color: var(--ink); background: var(--surface); }
+.deployment-boundary { margin-top: 32px; border: 1px solid var(--line); padding: 28px; border-radius: 24px; }
+.deployment-boundary > .diagram-kicker { text-align: center; }
+.deployment-host { display: flex; justify-content: center; align-items: center; gap: 24px; margin: 24px 0; }
+.deployment-host h3 { font-size: 28px; }
+.deployment-host p { font-size: 15px; margin-top: 8px; }
+.deployment-notes { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; margin-bottom: 28px; }
+.deployment-notes article:first-child { padding-top: 24px; }
+.architecture-closing .hero-source { max-width: 650px; }
+@media (max-width: 1000px) {
+  .architecture-opening, .architecture-split { gap: 36px; }
+  .request-path { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 32px; }
+  .request-path li:nth-child(3)::after { display: none; }
+}
+@media (max-width: 760px) {
+  .architecture-opening, .architecture-split, .architecture-two-notes, .admin-map, .deployment-notes { grid-template-columns: 1fr; gap: 28px; }
+  .architecture-opening { gap: 24px; }
+  .core-orbit { padding: 10px 0; }
+  .architecture-index { gap: 14px 22px; }
+  .architecture-intro { font-size: 16px; }
+  .request-path { grid-template-columns: 1fr 1fr; gap: 30px 18px; }
+  .request-path li:nth-child(3)::after { display: block; }
+  .request-path li:nth-child(even)::after { display: none; }
+  .request-path h3 { font-size: 19px; }
+  .commitment-diagram { padding-left: 24px; margin-top: 12px; }
+  .pool-lanes, .spend-diagram ol { grid-template-columns: 1fr; gap: 28px; }
+  .pool-boundary, .deployment-boundary { padding: 22px 18px; border-radius: 18px; }
+  .diagram-entry strong { font-size: 18px; }
+  .evidence-diagram li { grid-template-columns: 24px 1fr 1.1fr; gap: 8px; }
+  .evidence-diagram strong { font-size: 17px; }
+  .evidence-diagram small { font-size: 13px; }
+  .deployment-host { flex-direction: column; text-align: center; gap: 14px; }
+  .deployment-host h3 { font-size: 24px; }
+  .deployment-clients span, .deployment-services span { padding: 10px 14px; }
+  .deployment-notes { gap: 0; }
+  .architecture-closing .text-link { position: static; display: block; margin-top: 22px; }
+}
+
+.architecture-art { display: block; width: 100%; height: auto; object-fit: contain; }
+.architecture-art-wide { max-width: 850px; margin: 0 auto 36px; }
+.architecture-image-labels { display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: center; font-size: 13px; }
+.architecture-image-labels strong { font-size: 18px; }
+.architecture-voice-bird { display: block; margin: 20px 0; }
+
+.architecture-return { display: flex; flex-wrap: wrap; gap: 24px; margin: 32px 0; font-size: 16px; }
+.architecture-return a { color: var(--primary); text-underline-offset: 5px; }
+
+.chapter-return { padding-top: 28px; font-size: 14px; }
+.chapter-return a { color: var(--primary); text-underline-offset: 5px; }
+
+/* Doctor tells the diagnostic story in everyday language. */
+.doctor-scene { margin: 0; align-self: center; }
+.doctor-scene figcaption { margin-top: 18px; font-size: 13px; line-height: 1.6; color: var(--muted); text-align: center; }
+.doctor-checks { display: grid; grid-template-columns: 1fr 1fr; gap: 32px 64px; }
+.doctor-checks article { border-top: 1px solid var(--line); padding-top: 24px; }
+.doctor-checks h3 { font-size: 24px; margin-bottom: 12px; }
+.doctor-checks p, .doctor-note { font-size: 16px; line-height: 1.7; }
+.doctor-note { margin-top: 28px; color: var(--muted); }
+@media (max-width: 760px) { .doctor-checks { grid-template-columns: 1fr; gap: 24px; } }
+
+.ledger-scene { margin: 36px 0; }
+.ledger-scene figcaption { font-size: 14px; line-height: 1.7; color: var(--muted); text-align: center; }
+
+    </style>
+  </head>
+  <body class="">
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="rail">
+      <div class="wrap rail-inner">
+        <a class="brand" href="/" aria-label="Vakyartha home"
+          ><span class="brand-bird" aria-hidden="true"></span
+          ><span class="brand-word" aria-hidden="true"></span
+        ></a>
+        <nav class="rail-nav" aria-label="Main navigation"><a href="/outcomes">Examples</a>
+      <a href="/tour">How it works</a>
+      <a href="/security">Your control</a>
+      <a href="/architecture" class="on" aria-current="page">Architecture</a>
+      <a href="/wallpapers">Wallpapers</a></nav>
+        <div class="rail-actions">
+          <button
+            class="theme-button"
+            id="theme"
+            type="button"
+            aria-label="Switch theme"
+            hidden
+          >
+            <svg
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <circle cx="12" cy="12" r="4" />
+              <path
+                d="M12 1v3m0 16v3M1 12h3m16 0h3M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2"
+              />
+            </svg></button
+          ><a class="button primary" href="/install"
+            >Get started <span aria-hidden="true">↗</span></a
+          >
+        </div>
+      </div>
+    </header>
+    <main id="main"><section class="page-hero architecture-hero">
+  <div class="wrap architecture-opening">
+    <div>
+      <p class="eyebrow">The architecture of Vakyartha</p>
+      <h1>Under<br />the feathers.</h1>
+      <p class="lead">A thoughtful front. A deliberate core.<br />Follow a request from intent to evidence, with the person in control.</p>
+      <a class="button primary" href="#request-path">Follow a request <span aria-hidden="true">↓</span></a>
+    </div>
+    <figure class="core-orbit" aria-labelledby="core-orbit-caption">
+      <img class="architecture-art" src="/site/architecture/core.webp" width="1536" height="1024" alt="Vakyartha at the centre of a connected circle of voice, conversation, a laptop, work and a cloud" />
+      <div class="architecture-image-labels"><span>Words &amp; voice</span><strong>One governed core</strong><span>Work &amp; evidence</span></div>
+      <figcaption id="core-orbit-caption">Many ways in. The same permission and evidence boundaries.</figcaption>
+    </figure>
+  </div>
+</section>
+<nav id="chapters" class="wrap architecture-index" aria-label="Architecture chapters">
+  <a href="#request-path">The request</a><a href="#intent">Intent &amp; commitments</a><a href="#core-pool">Core &amp; CorePool</a><a href="#ledger">Ledger</a><a href="#context">Context</a><a href="#evidence">Evidence &amp; evals</a><a href="#voice">Voice</a><a href="#finops">FinOps</a><a href="#operations">Admin</a><a href="#doctor">Doctor</a><a href="#deployment">Deployment</a>
+</nav>
+<section class="section architecture-band" id="request-path" aria-labelledby="request-title">
+  <div class="wrap">
+    <p class="eyebrow">01 / From words to work</p>
+    <h2 class="architecture-title" id="request-title">Every step has a reason.<br />Every action has a boundary.</h2>
+    <p class="architecture-intro">The model proposes. The runtime validates, authorises and records. A useful answer and a real-world action follow the same accountable path.</p>
+    <figure class="request-diagram" aria-labelledby="request-caption">
+      <img class="architecture-art architecture-art-wide" src="/site/architecture/journey.webp" width="1774" height="887" loading="lazy" alt="Vakyartha accompanies a request along a saffron path through work, checking and a finished result" />
+      <ol class="request-path">
+        <li><span class="path-number">01</span><h3>Understand</h3><p>Read the intent.<br />Define the outcome.</p></li>
+        <li><span class="path-number">02</span><h3>Admit</h3><p>Resolve access,<br />limits and approvals.</p></li>
+        <li><span class="path-number">03</span><h3>Prepare</h3><p>Select relevant context,<br />capabilities and route.</p></li>
+        <li><span class="path-number">04</span><h3>Execute</h3><p>Validate calls.<br />Dispatch through brokers.</p></li>
+        <li><span class="path-number">05</span><h3>Check</h3><p>Collect results.<br />Evaluate the evidence.</p></li>
+        <li><span class="path-number">06</span><h3>Deliver</h3><p>Present the outcome.<br />Keep open work visible.</p></li>
+      </ol>
+      <figcaption id="request-caption">A conceptual path. Tool execution can loop; a simple answer may need no tools.</figcaption>
+    </figure>
+    <details class="architecture-detail"><summary>What keeps the path inspectable?</summary><p>Model-visible inputs are recorded in append-only session history. A turn’s request can be reconstructed from that history. Streaming output preserves partial results on cancellation, and errors remain explicit outcomes. A capability or route decision does not grant new authority.</p><a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/03-agent-loop.md" target="_blank" rel="noopener noreferrer">Read the agent-loop design ↗</a></details>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section" id="intent" aria-labelledby="intent-title">
+  <div class="wrap architecture-split">
+    <div>
+      <p class="eyebrow">02 / Intent &amp; commitments</p>
+      <h2 class="architecture-title" id="intent-title">Understand the ask.<br />Keep the thread.</h2>
+      <p class="architecture-intro">Intent describes the work. Human authority sets its limits. A commitment gives ongoing work an identity beyond a single conversation.</p>
+      <div class="architecture-definitions">
+        <article><h3>Intent</h3><p>What kind of action, how long it lasts, its stakes, required evidence, clarity, modality and attendance. One request can contain several related pieces of work.</p></article>
+        <article><h3>Outcome</h3><p>What is wanted, what must be preserved, and what would count as done. That same specification informs execution and verification.</p></article>
+        <article><h3>Commitment</h3><p>A durable goal with progress, constraints, blockers and a completion standard. Quick answers stay lightweight; ongoing work can persist.</p></article>
+      </div>
+    </div>
+    <figure class="commitment-diagram" aria-labelledby="commitment-caption">
+      <img src="/site/companions/vak.webp" width="88" height="88" loading="lazy" alt="" />
+      <p class="diagram-kicker">The life of ongoing work</p>
+      <ol class="commitment-path"><li><strong>Proposed</strong><span>A goal takes shape</span></li><li><strong>Active</strong><span>Work makes progress</span></li><li><strong>Waiting or blocked</strong><span>A decision, condition or dependency</span></li><li><strong>Checking</strong><span>Compare the result with the criteria</span></li><li><strong>Closed, with a verdict</strong><span>Fulfilled, failed, unknown, or another explicit ending</span></li></ol>
+      <figcaption id="commitment-caption">Simplified lifecycle. Waiting work may resume. Replacement, abandonment and expiry are recorded too.</figcaption>
+    </figure>
+  </div>
+  <div class="wrap architecture-notes">
+    <details class="architecture-detail"><summary>Reading intent never widens permission</summary><p>Understanding is fallible. The intent kernel can narrow execution, approval and spending bounds; it cannot create permission. Declared controls and human grants remain separate from inferred meaning.</p></details>
+    <details class="architecture-detail"><summary>A commitment is not automatically a scheduled run</summary><p>A commitment retains the goal and state. Scheduled work uses TaskDef and needs a running installation with suitable access. Clock or condition upkeep can change a commitment’s state without dispatching a model. A recurring workflow needs the actual execution and delivery path configured.</p></details>
+    <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/47-commitment-kernel.md" target="_blank" rel="noopener noreferrer">Inside the intent and commitment kernel ↗</a>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section architecture-band" id="core-pool" aria-labelledby="pool-title">
+  <div class="wrap">
+    <p class="eyebrow">03 / Core, Agents &amp; CorePool</p>
+    <h2 class="architecture-title" id="pool-title">One engine.<br />More than one workspace.</h2>
+    <p class="architecture-intro">Core assembles configuration, model access, context, tools, permissions and the agent loop. An Agent owns its identity, conversations and scoped memory. CorePool reuses workspace runtimes with the right policy boundaries.</p>
+    <figure class="pool-diagram" aria-labelledby="pool-caption">
+      <img class="architecture-art architecture-art-wide" src="/site/architecture/pool.webp" width="1536" height="1024" loading="lazy" alt="Vakyartha oversees three separate trays of work, a visual metaphor for scoped workspace runtimes" />
+      <div class="diagram-entry"><span class="diagram-kicker">An authorised channel request</span><strong>Workspace + permission override + channel policy</strong></div>
+      <div class="pool-boundary"><div class="pool-label"><img src="/site/companions/vak.webp" width="64" height="64" loading="lazy" alt="" /><div><h3>CorePool</h3><p>Resolve · reuse · cap · evict idle entries</p></div></div>
+        <div class="pool-lanes"><div><span>Workspace A</span><strong>Core / policy A</strong><small>Trusted configuration and scoped tools</small></div><div><span>Workspace A</span><strong>Core / policy B</strong><small>A different override gets its own instance</small></div><div><span>Workspace B</span><strong>Core / policy C</strong><small>Its own workspace and security ceiling</small></div></div>
+      </div>
+      <figcaption id="pool-caption">Each tray represents a scoped runtime instance. CorePool is a pool of runtimes, not CPU cores or independent cloud machines.</figcaption>
+    </figure>
+    <div class="architecture-two-notes"><p><strong>Reuse without extra authority.</strong> Entries are created lazily, bounded in number and evicted when idle. Warm entries recheck persisted permission ceilings.</p><p><strong>Agent privacy stays scoped.</strong> Sharing a Core or a transport does not grant access to another Agent’s conversations, memory or audience.</p></div>
+    <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/crates/vak-server/src/core_pool.rs" target="_blank" rel="noopener noreferrer">Inspect CorePool in the source ↗</a>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section" id="ledger" aria-labelledby="ledger-title">
+  <div class="wrap"><p class="eyebrow">04 / The ledger</p><h2 class="architecture-title" id="ledger-title">The story behind<br />every step.</h2><p class="architecture-intro">What did I ask? What did Vakyartha try? What came back? The session ledger keeps a durable record of the conversation and the work around it, so an outcome has a history you can follow.</p>
+    <figure class="ledger-scene"><img class="architecture-art architecture-art-wide" src="/site/architecture/ledger.webp" width="1536" height="1024" loading="lazy" alt="Vakyartha adds an event to a ledger's continuing ribbon of conversation, tool, result and pause cards, with a separate branch from earlier history" /><figcaption>New events join the record. Earlier steps stay in place. A branch keeps its connection to where it began.</figcaption></figure>
+    <div class="doctor-checks"><article><h3>The request and the response</h3><p>Messages, tool calls and tool results belong to the session history. Inputs that reach the model must be reconstructable from that record.</p></article><article><h3>The work around the answer</h3><p>Recorded activity explains approvals, retries and changes of route. Work receipts capture what was dispatched, its attempts, reported usage and outcome.</p></article><article><h3>Ongoing work has a history</h3><p>Goal and managed-work events preserve how the work progressed. Commitment history adds its lifecycle and completion evidence; FinOps records usage and priced expenditure.</p></article><article><h3>A readable view of the record</h3><p>The app presents the conversation, progress and result. Technical views reveal more detail. The model receives the relevant conversation context; audit-only receipts and activity are kept out of that input.</p></article></div>
+    <div class="architecture-notes">
+      <details class="architecture-detail"><summary>What does “append-only” mean?</summary><p>Normal session activity adds a new entry instead of rewriting an earlier one. Each entry has an identity and a link to its parent. A branch continues from an earlier point while preserving the history it came from.</p><p>When a long conversation is condensed for context, that summary is itself recorded. Condensing what the model reads does not silently delete the earlier conversation.</p></details>
+      <details class="architecture-detail"><summary>What happens when work stops or takes a different route?</summary><p>Cancellation preserves partial output. Failures remain explicit outcomes. The session header records the initial admission setup; the work receipt records the actual dispatch for each turn, including attempts and usage. That distinction matters when a later turn uses a different available route.</p></details>
+      <details class="architecture-detail"><summary>How do the ledger, memory and spending records fit together?</summary><p>The session ledger records what happened in a conversation. Memory supports later recall within its authorised scope. Commitment records track ongoing goals, while FinOps helps account for model usage. They answer related questions and keep their own responsibilities.</p><p>Conversation history belongs to the Agent. Shared operations and FinOps provide an installation-wide view. Access rules still determine who can see a conversation; connecting a new chat does not grant access to private history.</p></details>
+      <details class="architecture-detail"><summary>Where is it kept, and what does the record prove?</summary><p>Session records are stored on your Vakyartha installation as structured entries. The record supports inspection of the inputs, attempts and evidence the runtime captured. An entry saying an action was attempted still needs a result or receipt to establish what actually happened outside the runtime.</p><p>Moving a conversation to Trash hides it from ordinary lists, search and model recall. The current Trash behaviour is not permanent erasure. The data-lifecycle design records track the planned erasure work.</p></details>
+      <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/02-sessions.md" target="_blank" rel="noopener noreferrer">Read the session ledger design ↗</a>
+    </div>
+  </div><div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div>
+</section>
+<section class="section architecture-band" id="context" aria-labelledby="context-title">
+  <div class="wrap"><p class="eyebrow">05 / Context management</p><h2 class="architecture-title" id="context-title">Keep the whole story.<br />Bring the useful parts.</h2><p class="architecture-intro">Imagine a long conversation about a trip, a document and next week’s plans. When you say “make the second option shorter,” Vakyartha needs the right earlier work and your latest instruction. Context management decides what to bring into that next request.</p>
+    <figure class="ledger-scene"><img class="architecture-art architecture-art-wide" src="/site/architecture/context.webp" width="1536" height="1024" loading="lazy" alt="Vakyartha selects relevant conversation cards from an intact shelf of history for a small working tray, with a ribbon back to the originals" /><figcaption>The ledger holds the original. Each model request gets a selected working set, with a way back to more detail.</figcaption></figure>
+    <div class="doctor-checks"><article><h3>Make room for the work</h3><p>The planner uses the model’s capacity profile and available usage evidence. It reserves room for instructions, the current turn and the answer before filling the remaining space with history.</p></article><article><h3>Choose what matters now</h3><p>Recent work, relevant earlier turns and references such as “the second one” help determine what is brought forward. Related steps stay together as a whole turn.</p></article><article><h3>Condense, with a way back</h3><p>Older work can become concise cards or a summary covering a named range. Large results can become digests linked to the stored evidence. The model can ask to recall the fuller record.</p></article><article><h3>Reuse what stays the same</h3><p>Stable instructions and tool definitions come first. Changing information comes later. This structure helps compatible providers reuse cached input, with actual usage recorded.</p></article></div>
+    <div class="architecture-notes">
+      <details class="architecture-detail"><summary>The techniques behind the scenes</summary><p><strong>Capacity profiles:</strong> provider metadata, available measurements and turn-by-turn feedback inform the usable budget. Hosted capacity probing is opt-in; a measured profile is not available for every model.</p><p><strong>Whole-turn selection:</strong> the planner weighs recency, relevance and references back to earlier work. It keeps a request and its related exchanges together.</p><p><strong>Cards, packets and recall:</strong> compact turn cards preserve what was asked, done and produced. Summary packets cover an identified range. Recall can reopen a turn or the evidence behind it.</p><p><strong>Stable request prefixes:</strong> unchanged instructions and tool schemas stay byte-stable where possible. Receipts record a prefix digest so changes affecting cache reuse can be explained. Caching depends on the provider and workload.</p></details>
+      <details class="architecture-detail"><summary>What if the model cannot fit the request?</summary><p>The working set can be planned again against the available capacity. Oversized evidence is condensed into a meaningful digest with a recall reference instead of being cut at an arbitrary character count. Older originals remain in the ledger.</p><p>Summaries and relevance decisions can still miss something important. The recall path makes the source reachable; it does not guarantee perfect recall or understanding. Provider-native compaction remains outside the implemented context engine.</p></details>
+      <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/68-context-engine.md" target="_blank" rel="noopener noreferrer">Explore the context engine and its design decisions ↗</a>
+    </div>
+  </div><div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div>
+</section>
+<section class="section" id="evidence" aria-labelledby="evidence-title">
+  <div class="wrap architecture-split">
+    <div><p class="eyebrow">06 / Evidence &amp; evaluations</p><h2 class="architecture-title" id="evidence-title">“Done” needs<br />something behind it.</h2><p class="architecture-intro">A model’s confidence, an observed tool result, and an external receipt carry different weight. Completion is checked against the work’s required evidence.</p>
+      <figure class="evidence-diagram" aria-labelledby="evidence-caption"><ol><li><span>01</span><strong>Asserted</strong><small>Model judgment</small></li><li><span>02</span><strong>Cited</strong><small>Supporting references</small></li><li><span>03</span><strong>Observed</strong><small>Runtime-checked result</small></li><li><span>04</span><strong>Attested</strong><small>External confirmation</small></li></ol><figcaption id="evidence-caption">Evidence strength must meet the configured completion requirement. “Unknown” remains an honest result.</figcaption></figure>
+    </div>
+    <div class="architecture-definitions">
+      <article><h3>Check the harness</h3><p>Deterministic evals exercise the production loop, tools, permissions and session records with a scripted provider and temporary workspaces.</p><code class="architecture-command">vak eval</code></article>
+      <article><h3>Check a real model</h3><p>Live evals ask the configured model to solve verifiable tasks. Reports include results, usage and duration. Provider usage may cost money.</p><code class="architecture-command">vak eval --live</code></article>
+      <article><h3>Check the actual result</h3><p>Evals measure the system on test cases. Each real task still needs its own evidence; a green suite does not verify a user’s document or guarantee success.</p><a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/12-evals.md" target="_blank" rel="noopener noreferrer">Explore the evaluation harness ↗</a></article>
+    </div>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section" id="voice" aria-labelledby="voice-title">
+  <div class="wrap architecture-split">
+    <div><p class="eyebrow">07 / Voice</p><h2 class="architecture-title" id="voice-title">Say it.<br />Keep the same thread.</h2><p class="architecture-intro">Speak a request, hear a reply, or send a voice note through a connected chat. Voice joins the same conversation, with the same permissions and recorded work.</p><img class="architecture-voice-bird" src="/site/companions/vak.webp" width="128" height="128" loading="lazy" alt="Vakyartha, ready to listen" /></div>
+    <div class="architecture-definitions"><article><h3>From speech to a governed turn</h3><p>A completed utterance becomes a transcript in the conversation. The ordinary agent loop handles the request; speech does not grant new authority.</p></article><article><h3>Your voice route</h3><p>Configure a supported hosted provider or your own local transcription and speech engines. Provider and model choices are explicit. Connected chats can inherit or narrow the workspace’s voice settings.</p></article><article><h3>Voice notes, with context</h3><p>Telegram, Discord and Slack notes are transcribed after access checks and duplicate detection. The transcript joins the typed message. A transcription failure is reported.</p></article></div>
+  </div>
+  <div class="wrap architecture-notes"><details class="architecture-detail"><summary>What is available today?</summary><p>The voice foundation supports utterance-based transcription, spoken replies and channel voice notes when configured. Continuous realtime streaming and physical-microphone acceptance remain open work in the design record. Hosted speech can incur provider charges; local engines must be installed and configured.</p></details><a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/49-live-voice.md" target="_blank" rel="noopener noreferrer">Read the shipped voice contract ↗</a></div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section architecture-band" id="finops" aria-labelledby="finops-title">
+  <div class="wrap">
+    <p class="eyebrow">08 / FinOps &amp; expenditure</p><h2 class="architecture-title" id="finops-title">Follow the work.<br />Follow the spend.</h2>
+    <p class="architecture-intro">FinOps puts model usage, estimated expenditure and budget admission in the same operational picture. Unknown pricing stays unknown.</p>
+    <figure class="spend-diagram" aria-labelledby="spend-caption"><img class="architecture-art architecture-art-wide" src="/site/architecture/spend.webp" width="1536" height="1024" loading="lazy" alt="Vakyartha reviews a budget jar, a usage ledger and deliberate controls" /><ol><li><span class="diagram-kicker">Before a paid call</span><h3>Check the budget</h3><p>Apply configured per-run and daily limits before dispatch.</p></li><li><span class="diagram-kicker">After the call</span><h3>Record the usage</h3><p>Attribute provider, model, session and observed token usage.</p></li><li><span class="diagram-kicker">Across the work</span><h3>Inspect the pattern</h3><p>Review trends, allocation, pricing coverage and alerts.</p></li></ol><figcaption id="spend-caption">Budget checks → recorded usage → a clearer view of expenditure. Illustration of the accounting path.</figcaption></figure>
+    <div class="architecture-two-notes"><div><h3>What you can see</h3><p>Provider and model breakdowns, input/output and available cache usage, a daily spending trend, budget alerts and instrumented runtime activity.</p></div><div><h3>What the numbers mean</h3><p>USD figures are estimates where pricing is available. Unpriced calls are marked unknown, not free. Vakyartha’s usage ledger is not your provider’s final invoice or a cloud-infrastructure billing service.</p></div></div>
+    <details class="architecture-detail"><summary>What happens at a limit?</summary><p>Budget admission runs before paid dispatch. A limit can block further work or require a decision through the applicable approval path. An unattended request does not gain permission because nobody answers. Limits depend on available usage and pricing evidence; they are not a guarantee of the final provider bill.</p></details>
+    <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/crates/vak-core/src/finops.rs" target="_blank" rel="noopener noreferrer">Read the FinOps implementation ↗</a>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section" id="operations" aria-labelledby="operations-title">
+  <div class="wrap">
+    <p class="eyebrow">09 / The admin &amp; operations console</p><h2 class="architecture-title" id="operations-title">See the system.<br />Know where to look.</h2><p class="architecture-intro">The secured admin console is served by the same Vakyartha installation. Move from an overview to a resource, incident or recorded result without creating a second source of truth.</p>
+    <figure class="admin-map" aria-labelledby="admin-caption"><div class="admin-spine"><img src="/site/companions/vak.webp" width="88" height="88" loading="lazy" alt="" /><h3>Admin console</h3><p>On your secured installation</p><code>/admin</code></div><dl class="admin-branches"><div><dt>Work &amp; attention</dt><dd>Conversations, commitments, active work, inbox and approvals.</dd></div><div><dt>FinOps</dt><dd>Expenditure estimates, usage, allocation, limits and pricing coverage.</dd></div><div><dt>Configuration &amp; access</dt><dd>Providers, tools, prompts, permissions, Agents and channel connections.</dd></div><div><dt>Operations</dt><dd>CorePool, services, scheduled work, delivery, incidents and Doctor checks.</dd></div></dl><figcaption id="admin-caption">The console brings work, expenditure, configuration and operations into one place.</figcaption></figure>
+    <p class="architecture-intro">The everyday app focuses on the conversation and result. Admin exposes the controls and evidence behind it. Changing the surface never grants permission to bypass execution rules.</p>
+    <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/design/33-admin-console.md" target="_blank" rel="noopener noreferrer">Explore the admin and operations design ↗</a>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="section architecture-doctor" id="doctor" aria-labelledby="doctor-title">
+  <div class="wrap architecture-split">
+    <div><p class="eyebrow">10 / Meet Doctor</p><h2 class="architecture-title" id="doctor-title">A little check-up.<br />A clearer next step.</h2><p class="architecture-intro">Something not working? Doctor looks through your Vakyartha installation, brings the failed checks together, and tells you what needs attention.</p><img class="architecture-art" src="/site/architecture/doctor.webp" width="1536" height="1024" loading="lazy" alt="Vakyartha in a white doctor's coat with a stethoscope, checking a laptop beside a diagnostic checklist and toolkit" /></div>
+    <div class="architecture-definitions">
+      <article><h3>Start with a diagnosis</h3><p>Check provider setup, configuration, saved-work storage, voice readiness, capabilities, channel bindings and installation consistency. The command also reports managed services that have exited with an error.</p><code class="architecture-command">vak doctor</code></article>
+      <article><h3>Understand the next step</h3><p>A missing voice model needs a model choice. An unreachable workspace needs the right location. Doctor reports the problem so you can make that decision with context.</p></article>
+      <article><h3>Repair what has a known fix</h3><p>When you ask for repair, Doctor applies supported mechanical fixes, reports each attempt, then checks again. Provider credentials and configuration decisions stay with you.</p><code class="architecture-command">vak doctor --repair</code></article>
+    </div>
+  </div>
+  <div class="wrap architecture-notes">
+    <details class="architecture-detail"><summary>Which repairs can Doctor make?</summary><p>Current repairs cover installation version mismatch, cleanup of retired plugins, and denying pending channel requests that have passed their configured expiry. Expired requests remain visible with their reason. An approved channel pointing to a missing workspace needs an operator to choose the correct location.</p><p>Repair is an explicit action and can change the installation or channel state. Run the diagnosis first to see what needs attention.</p></details>
+    <details class="architecture-detail"><summary>Where else can I see the check-up?</summary><p>The terminal’s /doctor command and the secured admin Operations Center use the same core health report. Operations combines that report with service, delivery and incident state. These are checks on your installation; a passing report does not guarantee every external service or future request will succeed.</p></details>
+    <a class="button primary" href="/doctor">Meet Doctor <span aria-hidden="true">↗</span></a>
+  </div>
+  <div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div>
+</section>
+<section class="section architecture-band" id="deployment" aria-labelledby="deployment-title">
+  <div class="wrap">
+    <p class="eyebrow">11 / Surfaces, channels &amp; deployment</p><h2 class="architecture-title" id="deployment-title">At your desk.<br />On a server you choose.</h2><p class="architecture-intro">The headless core can run locally or on a self-managed Linux host. Desktop, browser, terminal and connected chats reach governed execution through their own authenticated paths.</p>
+    <figure class="deployment-map" aria-labelledby="deployment-caption">
+      <div class="deployment-clients"><span>Desktop</span><span>Browser</span><span>Terminal / API</span><span>Telegram · Slack · Discord</span></div>
+      <div class="deployment-boundary"><p class="diagram-kicker">Authentication · authorised endpoint · scoped audience</p><div class="deployment-host"><img src="/site/companions/vak.webp" width="100" height="100" loading="lazy" alt="" /><div><h3>Your Vakyartha host</h3><p>Server · CorePool · Agents · local state</p><p>Permissions and budget checks before execution</p></div></div><div class="deployment-services"><span>Configured AI services</span><span>Brokered tools &amp; workers</span><span>Scoped integrations</span></div></div>
+      <figcaption id="deployment-caption">Conceptual topology. Remote access and each chat connection require explicit configuration.</figcaption>
+    </figure>
+    <div class="architecture-definitions deployment-notes">
+      <article><h3>Local or self-hosted cloud</h3><p>Run the server on macOS or Linux, including a Linux VM you manage. Loopback is the default. Remote access needs an explicit tunnel or configured hostname, authentication and appropriate TLS.</p></article>
+      <article><h3>Surfaces are not identities</h3><p>An Agent owns a conversation. A bot supplies a transport identity; a channel is an endpoint. Multiple bots in one chat keep separate bindings and policy. Connecting accounts does not automatically share history or access.</p></article>
+      <article><h3>Execution stays bounded</h3><p>File and shell tools cross broker boundaries. Restricted execution uses available OS sandboxing or configured Docker semantics. Full access is an explicit human decision, never an automatic fallback.</p></article>
+      <article><h3>Distributed messaging, when configured</h3><p>The optional message fabric supports an in-memory backend and NATS/JetStream for distributed events and work transport. CorePool itself is an in-process runtime pool, not a cluster scheduler. Deployment capacity depends on the host, providers and workload.</p></article>
+      <article><h3>Services have an owner</h3><p>launchd or systemd manages durable service recovery. Operations reports service and delivery state; it does not replace the operating system’s process manager.</p></article>
+      <article><h3>Cloud roadmap, clearly separate</h3><p>Self-hosting is available today. Cloud-remote storage and session handoff remain planned work; their design records describe the next steps.</p></article>
+    </div>
+    <a class="text-link" href="https://github.com/nranjan2code/code/blob/main/docs/hosting.md" target="_blank" rel="noopener noreferrer">Read the self-hosting guide ↗</a>
+  </div>
+<div class="wrap chapter-return"><a href="#chapters">All sections ↑</a></div></section>
+<section class="closing-scene architecture-closing"><div class="wrap"><p class="eyebrow">Completely open source.</p><h2>Nothing hidden<br />under the feathers.</h2><p class="architecture-intro">The runtime, interfaces, design records and evaluation harness are yours to read, run and build on under the MIT License.</p><a class="button primary" href="https://github.com/nranjan2code/code" target="_blank" rel="noopener noreferrer">Explore the source <span aria-hidden="true">↗</span></a><a class="text-link" href="/install">Set up Vakyartha ↗</a><nav class="architecture-return" aria-label="Return navigation"><a href="#main">Back to top ↑</a><a href="#chapters">Browse sections ↑</a><a href="/">Home ↗</a></nav><p class="hero-source">Conceptual diagrams describe the architecture. Feature-specific setup and limits still apply.</p></div></section>
+</main>
+    <footer class="footer">
+      <div class="wrap footer-inner">
+        <a class="brand" href="/" aria-label="Vakyartha home"
+          ><span class="brand-bird" aria-hidden="true"></span
+          ><span class="brand-word" aria-hidden="true"></span
+        ></a>
+        <p>Ask. Then go live your day.</p>
+        <nav aria-label="More about Vakyartha">
+          <a href="/vak">Our name</a><a href="/surfaces">Ways to use it</a
+          ><a href="/security">Your control</a
+          ><a href="/architecture">Architecture</a><a href="/doctor">Doctor</a><a href="/wallpapers">Wallpapers</a><a href="/install">Get started</a>
+        </nav>
+        <nav class="footer-project" aria-label="Project and policies">
+          <a href="https://github.com/nranjan2code/code" target="_blank" rel="noopener noreferrer">Source code</a>
+          <a href="https://github.com/nranjan2code/code/issues" target="_blank" rel="noopener noreferrer">Support</a>
+          <a href="/privacy">Privacy</a>
+          <a href="/terms">Terms of use</a>
+        </nav>
+        <details class="build-details">
+          <summary>Build details</summary>
+          <span id="build-stamp"
+            >Build information is available on a running Vakyartha server.</span
+          >
+        </details>
+      </div>
+    </footer>
+    <script src="/site/motion.48f39ffb.js" defer></script>
+    <!-- prettier-ignore -->
+    <script>(() => {
+  const root = document.documentElement;
+  const systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
+  const theme = document.getElementById("theme");
+  const currentTheme = () =>
+    root.dataset.theme || (systemTheme.matches ? "dark" : "light");
+  const labelTheme = () =>
+    theme.setAttribute(
+      "aria-label",
+      currentTheme() === "dark" ? "Use light theme" : "Use dark theme",
+    );
+  if (theme) {
+    theme.hidden = false;
+    labelTheme();
+    theme.addEventListener("click", () => {
+      root.dataset.theme = currentTheme() === "dark" ? "light" : "dark";
+      try {
+        localStorage.setItem("vak-theme", root.dataset.theme);
+      } catch (_) {}
+      labelTheme();
+    });
+    systemTheme.addEventListener("change", labelTheme);
+  }
+  const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+  function selectTab(tab) {
+    tabs.forEach((item) => {
+      const selected = item === tab;
+      item.setAttribute("aria-selected", String(selected));
+      item.tabIndex = selected ? 0 : -1;
+      document.getElementById(item.getAttribute("aria-controls")).hidden =
+        !selected;
+    });
+    const panel = document.getElementById(tab.getAttribute("aria-controls"));
+    if (
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
+      window.Motion?.animate
+    ) {
+      window.Motion.animate(panel, { opacity: [0.5, 1] }, { duration: 0.2 });
+    }
+  }
+  tabs.forEach((tab, index) => {
+    tab.addEventListener("click", () => selectTab(tab));
+    tab.addEventListener("keydown", (event) => {
+      let next;
+      if (event.key === "ArrowRight") next = (index + 1) % tabs.length;
+      if (event.key === "ArrowLeft")
+        next = (index + tabs.length - 1) % tabs.length;
+      if (event.key === "Home") next = 0;
+      if (event.key === "End") next = tabs.length - 1;
+      if (next === undefined) return;
+      event.preventDefault();
+      selectTab(tabs[next]);
+      tabs[next].focus();
+    });
+  });
+  document.querySelectorAll("[data-copy]").forEach((button) => {
+    button.hidden = false;
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(
+          document.getElementById(button.dataset.copy).textContent,
+        );
+        button.textContent = "Copied";
+      } catch (_) {
+        button.textContent = "Select text to copy";
+      }
+    });
+  });
+  const decision = document.getElementById("decision-result");
+  const actions = document.getElementById("decision-actions");
+  if (decision && actions) {
+    actions.hidden = false;
+    actions.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-decision]");
+      if (!button) return;
+      const allow = button.dataset.decision === "allow";
+      decision.textContent = allow
+        ? "In this example, the reviewed draft replaces the original. No real file was changed."
+        : "In this example, the original stays as it is. The draft is kept for later. No real file was changed.";
+    });
+  }
+  fetch("/version")
+    .then((response) => {
+      if (!response.ok) throw new Error("Build information unavailable");
+      return response.json();
+    })
+    .then((build) => {
+      const stamp = document.getElementById("build-stamp");
+      if (stamp && typeof build.version === "string")
+        stamp.textContent = "Vakyartha " + build.version;
+    })
+    .catch(() => {});
+})();
+</script>
+  </body>
+</html>
