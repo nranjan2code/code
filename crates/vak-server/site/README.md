@@ -1,6 +1,6 @@
 # Vakyartha public site
 
-Seven static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+Eight static pages, built here and embedded by `crates/vak-server/src/site.rs`.
 The public route names remain stable; the navigation uses plain labels.
 
 | Route | Purpose |
@@ -11,6 +11,7 @@ The public route names remain stable; the navigation uses plain labels.
 | `/security` | Access, review, privacy and an explicitly illustrative decision |
 | `/install` | Honest private-preview setup and access to an existing installation |
 | `/surfaces` | Desktop, browser, connected chats and terminal |
+| `/wallpapers` | All 16 desktop and mobile wallpaper downloads, without sign-in |
 | `/vak` | The name and Songbird identity |
 
 ## Edit and build
@@ -24,7 +25,7 @@ Edit `src/pages/*.html`, `src/layout.html`, `src/styles.css` or `src/site.js`,
 then regenerate `dist/`. The generated bundle is committed. The Rust build
 checks its source manifest; it must not embed a stale bundle.
 
-The builder copies `src/assets/*.webp` to `/site/`. CSS and the shared script
+The builder copies WebP and JPEG files recursively from `src/assets/` to `/site/`. CSS and the shared script
 are inlined. The optional, pinned Motion library is emitted under its content
 hash. Only the walkthrough's example transition uses Motion; content does not
 wait for it, and reduced motion disables the transition.
@@ -78,3 +79,6 @@ cargo test -p vak-server --lib site::tests
 
 The focused Rust tests cover every public page, trailing slashes, referenced
 `/site/` assets and the public-data fetch boundary.
+
+Wallpaper sources live in `docs/brand/library/wallpapers/`. Regenerate public
+assets with `npm --prefix scripts/brand run wallpapers`, then rebuild this site.

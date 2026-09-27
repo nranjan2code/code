@@ -1,6 +1,6 @@
 //! The public website, served at `/` (docs/design/48-web-client.md §4.6).
 //!
-//! Five static pages built from one source by `site/build.py` and embedded
+//! Static pages built from one source by `site/build.py` and embedded
 //! here, the same way `/admin` and `/app` embed their bundles. It replaced a
 //! single hand-written `assets/landing.html` when the front door grew past
 //! one page: a shared rail, footer and design system copied four times drift
@@ -43,6 +43,7 @@ pub(crate) const ROUTES: &[(&str, &str)] = &[
     ("/tour", "tour/index.html"),
     ("/security", "security/index.html"),
     ("/install", "install/index.html"),
+    ("/wallpapers", "wallpapers/index.html"),
 ];
 
 fn page(file: &'static str) -> axum::response::Response {
@@ -129,6 +130,32 @@ mod tests {
                 axum::http::StatusCode::OK,
                 "{path} is referenced but not routable"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn all_wallpaper_downloads_serve_jpegs() {
+        let (_, page) = get_path("/wallpapers").await;
+        let downloads: Vec<_> = page
+            .split('"')
+            .filter(|path| path.starts_with("/site/wallpapers/") && path.ends_with(".jpg"))
+            .collect();
+        assert_eq!(downloads.len(), 16);
+        for path in downloads {
+            let response = routes()
+                .with_state(crate::test_support::state())
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(path)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), axum::http::StatusCode::OK, "{path}");
+            assert_eq!(response.headers()["content-type"], "image/jpeg", "{path}");
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            assert!(bytes.starts_with(&[0xff, 0xd8, 0xff]), "{path}");
         }
     }
 

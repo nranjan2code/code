@@ -384,7 +384,7 @@ keeps it scoped.
 `/` used to answer a bare 401 with an empty body: someone opening
 `http://box:8901/` learned nothing — not that the product had two
 surfaces, not where they were, not even that anything was listening. It is
-now a five-page public site (`crates/vak-server/site/`), including the
+now an eight-page public site (`crates/vak-server/site/`), including the
 outcome-directed runtime story, auth-exempt and
 embedded with `include_dir!` like the two UI bundles, with each page's CSS
 and script inline and only one shared, deferred asset: the front door must
@@ -395,6 +395,12 @@ render before, and independently of, anything else being up.
 verifies — so a `src` edit that was never rebuilt fails `cargo build`
 rather than shipping the previous pages. `crates/vak-server/site/README.md`
 is the whole procedure.
+
+`/wallpapers` offers the daylight and dusk scenes in desktop and separately
+composed mobile editions. All 16 JPEG downloads and four lightweight previews
+are static public assets under `/site/wallpapers/`, available without sign-in.
+The shared footer links the gallery; the brand export script generates its
+assets from the reviewed wallpaper masters.
 
 What it may say is bounded by being auth-exempt. It shows the product, the
 mechanism, and `/version` — version and commit, which that endpoint

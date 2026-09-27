@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the seven static public pages embedded by vak-server.
+"""Build the static public pages embedded by vak-server.
 
 CSS and shared behavior are inlined so the page renders independently of
 application state. Character WebP scenes and optional vendored Motion are
@@ -45,6 +45,8 @@ PAGES = [
      "Use Vakyartha on your desktop, in a browser, in a connected chat or from a terminal."),
     ("install.html", "/install", "Get started", "Get started | Vakyartha",
      "Set up the Vakyartha private preview on macOS or Linux, or open an existing installation."),
+    ("wallpapers.html", "/wallpapers", "Wallpapers", "Wallpapers | Vakyartha",
+     "Take the whole crew with you. Download daylight and dusk wallpapers for your phone, laptop or desktop. No sign-in needed."),
 ]
 
 NAV_ROUTES = {"/outcomes", "/tour", "/security"}
@@ -124,8 +126,9 @@ def build() -> dict[str, bytes]:
     motion_src = f"/site/{motion_name}"
 
     out: dict[str, bytes] = {f"site/{motion_name}": motion}
-    for asset in sorted((SRC / "assets").glob("*.webp")):
-        out[f"site/{asset.name}"] = asset.read_bytes()
+    for asset in sorted((SRC / "assets").rglob("*")):
+        if asset.is_file() and asset.suffix in {".webp", ".jpg"}:
+            out[f"site/{asset.relative_to(SRC / 'assets').as_posix()}"] = asset.read_bytes()
 
     for src_name, route, _label, title, desc in PAGES:
         body = read(SRC / "pages" / src_name)

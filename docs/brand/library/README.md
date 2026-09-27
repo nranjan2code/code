@@ -29,7 +29,8 @@ choice. The flat vector stays the production geometry reference.
 
 ## Wallpaper exports
 
-Each scene has these ready-to-use JPEGs:
+Each scene has these ready-to-use JPEGs. The public `/wallpapers` page
+offers all 16 downloads without sign-in:
 
 | Size | Aspect | Typical use |
 | --- | --- | --- |
@@ -38,8 +39,17 @@ Each scene has these ready-to-use JPEGs:
 | 3840 × 2160 | 16:9 | 4K monitor |
 | 2560 × 1600 | 16:10 | Laptop |
 | 3840 × 2400 | 16:10 | High-density laptop |
+| 1080 × 2400 | 9:20 | Phone |
+| 1290 × 2796 | Approx. 9:19.5 | Phone |
+| 1440 × 3200 | 9:20 | High-density phone |
 
-The generated masters are **1672 × 941** (day) and **1586 × 992** (dusk).
+The separately composed mobile masters are **841 × 1870** for both scenes.
+They retain all eight characters and space above for the lock-screen clock.
+Their exact built-in imagegen prompts are in
+[`mobile-day-prompt.txt`](wallpapers/mobile-day-prompt.txt) and
+[`mobile-dusk-prompt.txt`](wallpapers/mobile-dusk-prompt.txt).
+
+The generated desktop masters are **1672 × 941** (day) and **1586 × 992** (dusk).
 Larger JPEGs are deterministic Lanczos enlargements, not native 4K renders;
 their dimensions fit the screen, but they contain no extra scene detail.
 Keep the masters for later higher-resolution re-generation. Export with:
@@ -51,8 +61,9 @@ npm --prefix scripts/brand run wallpapers:check
 ```
 
 The export script checks the reviewed master dimensions, center-crops to
-16:9 or 16:10, writes JPEG quality 92 with full chroma resolution, and can
-compare every saved export byte-for-byte. Re-review the crop if a new master
+the selected screen ratio, writes JPEG quality 92 with full chroma resolution, and can
+compare every saved export byte-for-byte. It also generates public-site
+JPEG copies and lightweight WebP previews; rebuild the site after export. Re-review the crop if a new master
 changes composition.
 
 ## Recreate or improve an image
