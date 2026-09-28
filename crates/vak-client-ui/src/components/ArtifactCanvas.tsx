@@ -53,7 +53,7 @@ export default function ArtifactCanvas() {
   const [previewWarning, setPreviewWarning] = createSignal<string | null>(null);
   const [preparationRequired, setPreparationRequired] = createSignal(false);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
-  /** A PDF shows its pages; its text view is the shared document pane. */
+  /** Small screens open the readable text view; the original pages stay available. */
   const [pdfText, setPdfText] = createSignal(false);
   const [rawText, setRawText] = createSignal("");
   const [tablePreview, setTablePreview] = createSignal<DelimitedPreview | null>(null);
@@ -62,6 +62,7 @@ export default function ArtifactCanvas() {
   const [reloadKey, setReloadKey] = createSignal(0);
   const [isClosing, setIsClosing] = createSignal(false);
   const [feedback, setFeedback] = createSignal("");
+  const [showFeedback, setShowFeedback] = createSignal(true);
   const [feedbackState, setFeedbackState] = createSignal<"idle" | "sending" | "sent" | "saved_only" | "error">("idle");
   const [commentLineStart, setCommentLineStart] = createSignal("");
   const [commentLineEnd, setCommentLineEnd] = createSignal("");
@@ -80,7 +81,9 @@ export default function ArtifactCanvas() {
 
   createEffect(() => {
     const artifact = canvasArtifact();
+    setPdfText(/\.pdf$/i.test(artifact?.artifactPath ?? "") && window.matchMedia("(max-width: 1100px)").matches);
     setFeedback("");
+    setShowFeedback(!/\.(docx|xlsx|pptx|pdf)$/i.test(artifact?.artifactPath ?? ""));
     setFeedbackState("idle");
     setCommentLineStart("");
     setCommentLineEnd("");
@@ -701,38 +704,22 @@ export default function ArtifactCanvas() {
             </Show>
 
             {/* Action Buttons */}
-            <button
-              type="button"
-              class="artifact-canvas-btn"
-              onClick={reload}
-              title="Reload preview"
-            >
-              <Icon name="sync" size={14} />
-            </button>
-            <button
-              type="button"
-              class="artifact-canvas-btn"
-              onClick={toggleCanvasMode}
-              title={
-                mode() === "split"
-                  ? "Expand to full width"
-                  : "Shrink to split view"
-              }
-            >
-              <Icon name={mode() === "split" ? "layers" : "restore"} size={14} />
-            </button>
-            <button
-              type="button"
-              class="artifact-canvas-btn"
-              onClick={popout}
-              title="Open in new window"
-            >
-              <Icon name="preview" size={14} />
-            </button>
+            <Show when={displayType() === "html" || displayType() === "server"}>
+              <button type="button" class="artifact-canvas-btn" onClick={reload} title="Reload preview" aria-label="Reload preview"><Icon name="sync" size={14} /></button>
+            </Show>
+            <Show when={displayType() !== "office" && displayType() !== "pdf"}>
+              <button type="button" class="artifact-canvas-btn" onClick={toggleCanvasMode} title={mode() === "split" ? "Expand to full width" : "Show beside conversation"} aria-label={mode() === "split" ? "Expand to full width" : "Show beside conversation"}><Icon name={mode() === "split" ? "layers" : "restore"} size={14} /></button>
+            </Show>
+            <Show when={displayType() === "html" || displayType() === "server"}>
+              <button type="button" class="artifact-canvas-btn" onClick={popout} title="Open in new window" aria-label="Open in new window"><Icon name="preview" size={14} /></button>
+            </Show>
             <Show when={canvasArtifact()?.candidateId && canvasArtifact()?.executionId}>
               <button type="button" class="artifact-canvas-btn" onClick={() => returnToReview()} title="Back to review">
                 <Icon name="diff" size={14} /> Review changes
               </button>
+            </Show>
+            <Show when={displayType() === "office" || displayType() === "pdf"}>
+              <button type="button" class="artifact-canvas-btn" aria-expanded={showFeedback()} onClick={() => setShowFeedback((show) => !show)}>{showFeedback() ? "Hide comments" : "Comment"}</button>
             </Show>
             <button
               type="button"
@@ -793,6 +780,7 @@ export default function ArtifactCanvas() {
               }</Show>
               <Show when={(displayType() === "office" || (displayType() === "pdf" && pdfText())) && canvasArtifact()}>{(artifact) =>
                 <OfficeWorkspacePane
+                  hideHeader
                   source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId, executionId: artifact().executionId }}
                   fileName={title()}
                   focus={artifact().anchor}
@@ -880,7 +868,7 @@ export default function ArtifactCanvas() {
           </Show>
         </div>
 
-        <section class="artifact-canvas-feedback" aria-label="Review this draft">
+        <Show when={showFeedback()}><section class="artifact-canvas-feedback" aria-label="Review this draft">
           <div class="artifact-canvas-feedback-intro">
             <strong>Work on this together</strong>
             <span>Tell the Agent what to change in this draft.</span>
@@ -926,10 +914,10 @@ export default function ArtifactCanvas() {
               }</For>
             </div>
           </Show>
-        </section>
+        </section></Show>
 
         {/* Security / Server Status Footer */}
-        <footer class="artifact-canvas-footer">
+        <Show when={displayType() !== "office" && displayType() !== "pdf"}><footer class="artifact-canvas-footer">
           <span class="artifact-canvas-security">
             <Icon name="shield" size={12} />
             <Show
@@ -943,7 +931,7 @@ export default function ArtifactCanvas() {
               Live preview: {activeServerPort() ? `http://127.0.0.1:${activeServerPort()}` : canvasArtifact()?.serverUrl}
             </Show>
           </span>
-        </footer>
+        </footer></Show>
       </div>
     </Show>
   );

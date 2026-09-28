@@ -64,16 +64,16 @@ export default function FeedsPanel() {
   };
 
   return (
-    <div class="feeds-panel" role="tabpanel" aria-label="Feed pipeline">
+    <div class="feeds-panel" role="tabpanel" aria-label="Sources">
       <Show when={error()}>
         <div class="worker-error">{error()}</div>
       </Show>
 
       <div class="dock-head">
-        <span>Feeds</span>
+        <span>Sources</span>
         <div style={{ display: "flex", gap: "4px" }}>
           <button class="btn sm" onClick={triggerIngest} disabled={busy()}>
-            {busy() ? "..." : "Ingest"}
+            {busy() ? "Updating…" : "Update sources"}
           </button>
         </div>
       </div>
@@ -96,12 +96,12 @@ export default function FeedsPanel() {
         >
           <input
             class="search-input"
-            placeholder="Search feeds..."
+            placeholder="Search sources…"
             value={query()}
             onInput={(e) => setQuery(e.currentTarget.value)}
           />
           <button class="btn primary sm" type="submit" disabled={!query().trim() || busy()}>
-            {busy() ? "..." : "Go"}
+            {busy() ? "Searching…" : "Search"}
           </button>
         </form>
 
@@ -141,7 +141,7 @@ export default function FeedsPanel() {
               </a>
             )}
           </For>}>
-            <div class="dock-empty">No items yet. Add sources and run ingestion.</div>
+            <div class="dock-empty">No items yet. Add a source, then update it here.</div>
           </Show>
         </div>
       </Show>

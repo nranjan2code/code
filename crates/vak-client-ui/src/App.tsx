@@ -1369,44 +1369,31 @@ export default function App() {
                 aria-label={`Task details: ${dockLabel(tab())}`}
               >
                 <div class="dock-tabs" data-titlebar>
-                  {/* Only general-purpose views are pinned — pinning a
-                      dev-only tool (Changes/Terminal) here would show up as
-                      permanent chrome in every conversation, undoing the
-                      general/developer split made in the header's menu. */}
-                  <For each={[
-                    ["workbench", "Files", "preview"],
-                    ["preview", "Live preview", "preview"],
-                  ] as const}>
-                    {([id, label, icon]) => (
-                      <button
-                        class="dock-tab"
-                        type="button"
-                        aria-label={label}
-                        classList={{ on: tab() === id }}
-                        aria-pressed={tab() === id}
-                        onClick={() => setDockTab(id)}
-                      >
-                        <Icon name={icon as IconName} />
-                        <span>{label}</span>
-                      </button>
-                    )}
-                  </For>
-                  <details class="dock-more">
-                    <summary class="dock-tab" aria-label="More workspace views"><Icon name="tune" /><span>More</span></summary>
-                    <div class="dock-more-menu" data-titlebar="false">
+                  <details class="dock-view-picker">
+                    <summary class="dock-view-current" aria-label={`Current view: ${dockLabel(tab())}. Choose another view`}>
+                      <span>{dockLabel(tab())}</span><Icon name="chevron" size={14} />
+                    </summary>
+                    <div class="dock-view-menu" data-titlebar="false">
+                      <div class="menu-group-label">Results</div>
                       <For each={[
-                        ["agents", "Parallel work", "grid"],
-                        ["feeds", "Sources", "bell"],
+                        ["workbench", "Files and activity", "file"],
+                        ["preview", "Live preview", "preview"],
+                      ] as const}>
+                        {([id, label, icon]) => <button type="button" class="dock-view-option" aria-current={tab() === id ? "page" : undefined} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
+                      </For>
+                      <div class="menu-group-label">Work</div>
+                      <For each={[
+                        ["agents", "Parallel work", "grid"], ["feeds", "Sources", "bell"],
                         ["commitments", "Open promises", "shield"],
                       ] as const}>
-                        {([id, label, icon]) => <button class="dock-tab" type="button" aria-label={label} aria-pressed={tab() === id} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
+                        {([id, label, icon]) => <button type="button" class="dock-view-option" aria-current={tab() === id ? "page" : undefined} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
                       </For>
-                      <div class="menu-group-label">Developer</div>
+                      <div class="menu-group-label">Developer tools</div>
                       <For each={[
                         ["diff", "Changes", "diff"], ["terminal", "Terminal", "terminal"],
                         ["editor", "Editor", "file"], ["pr", "Pull request", "git"],
                       ] as const}>
-                        {([id, label, icon]) => <button class="dock-tab" type="button" aria-label={label} aria-pressed={tab() === id} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
+                        {([id, label, icon]) => <button type="button" class="dock-view-option" aria-current={tab() === id ? "page" : undefined} onClick={(event) => { setDockTab(id); event.currentTarget.closest("details")?.removeAttribute("open"); }}><Icon name={icon as IconName} /><span>{label}</span></button>}
                       </For>
                     </div>
                   </details>
@@ -1513,14 +1500,14 @@ export default function App() {
 
 function dockLabel(tab: import("./store").DockTab): string {
   return {
-    workbench: "Result",
-    diff: "Review",
-    terminal: "Activity",
+    workbench: "Results",
+    diff: "Changes",
+    terminal: "Terminal",
     preview: "Live preview",
-    editor: "Files",
+    editor: "Editor",
     pr: "Pull request",
-    agents: "Workers",
-    feeds: "Feeds",
-    commitments: "Commitments",
+    agents: "Parallel work",
+    feeds: "Sources",
+    commitments: "Open promises",
   }[tab];
 }

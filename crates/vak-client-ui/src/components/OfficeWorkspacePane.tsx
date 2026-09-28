@@ -15,6 +15,7 @@ export default function OfficeWorkspacePane(props: {
   onSelect?: (anchor: string | null) => void;
   onReview?: (candidateId: string) => void;
   onClose?: () => void;
+  hideHeader?: boolean;
 }) {
   const [room, setRoom] = createSignal<api.OfficeWorkspace | null>(null);
   const [branchId, setBranchId] = createSignal("shared");
@@ -104,16 +105,16 @@ export default function OfficeWorkspacePane(props: {
   });
 
   return <section class="office-workspace-pane" aria-label="Office workspace">
-    <header class="office-workspace-head">
+    <Show when={!props.hideHeader || !!room()}><header class="office-workspace-head">
       <div class="office-workspace-title"><strong>{props.fileName}</strong><span>{branch()?.name ?? "Saved draft"}{busy() ? " · Saving" : " · Draft"}</span></div>
       <Show when={inRoom().length > 0}><div class="office-workspace-people" aria-label="People working in this file"><For each={inRoom()}>{(person) => <span title={person.office_anchor ? `${person.display_name} · ${person.office_anchor}` : person.display_name}>{person.display_name}{person.office_anchor ? ` · ${person.office_anchor}` : ""}</span>}</For></div></Show>
       <Show when={!!props.onReview && !!room()}><button type="button" class="btn sm" onClick={() => { const head = branch()?.head_candidate_id; if (head) props.onReview?.(head); }}>Review draft</button></Show>
       <Show when={props.onClose}><button type="button" class="btn sm" onClick={close}>Close</button></Show>
-    </header>
+    </header></Show>
     {/* Reading never waits on collaboration: without a shared workspace
         the file is shown read-only, and a saved version can start one. */}
     <Show when={room()} fallback={<>
-      <Show when={props.canStart}><div class="office-workspace-start"><p>Start a shared workspace so invited people can read, edit, and branch from this version.</p><button type="button" class="btn sm" disabled={busy()} onClick={() => void start()}>{busy() ? "Opening…" : "Start shared workspace"}</button></div></Show>
+      <Show when={props.canStart}><details class="office-workspace-collaborate"><summary>Work on this together</summary><div class="office-workspace-start"><p>Invite people to read, edit, and review this draft with you.</p><button type="button" class="btn sm" disabled={busy()} onClick={() => void start()}>{busy() ? "Opening…" : "Start shared workspace"}</button></div></details></Show>
       <Show when={error()}>{(message) => <p class="office-workspace-error" role="alert">{message()}</p>}</Show>
       <OfficeView source={props.source} fileName={props.fileName} focus={props.focus} onSelect={props.onSelect} />
     </>}>

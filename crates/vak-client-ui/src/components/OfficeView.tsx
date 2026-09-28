@@ -3,6 +3,7 @@ import * as api from "../api";
 import Redline from "./OfficeRedline";
 import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../officeCells";
 import { countOf } from "../officeFacts";
+import { technicalDetails } from "../store";
 
 // The Canvas views of an Office file (docs/design/72, P4, U1–U4): a
 // Document, Workbook or Deck view of the reader's own projection, and the
@@ -51,6 +52,7 @@ export default function OfficeView(props: {
   const [windowStart, setWindowStart] = createSignal(0);
   const [next, setNext] = createSignal<number | null>(null);
   const [tab, setTab] = createSignal<Tab>("content");
+  const [showOutline, setShowOutline] = createSignal(false);
   const [structure, setStructure] = createSignal<api.OfficeStructure | null>(null);
   const [selected, setSelected] = createSignal<string | null>(null);
   const [loading, setLoading] = createSignal(false);
@@ -107,6 +109,7 @@ export default function OfficeView(props: {
     setUnits([]);
     setStructure(null);
     setTab("content");
+    setShowOutline(false);
     select(null);
     void load(0, true, undefined, props.focus);
   }));
@@ -237,8 +240,11 @@ export default function OfficeView(props: {
     setPresentationUnits([]);
     setPresentationLoading(true);
     const generation = ++presentationRequest;
-    // Fullscreen must be requested while the click still has user activation.
-    void presentationRoot?.requestFullscreen?.().catch(() => undefined);
+    // Mobile browsers often reject fullscreen for an element. The viewport
+    // presentation remains available there without changing browser chrome.
+    if (!window.matchMedia("(max-width: 600px)").matches) {
+      void presentationRoot?.requestFullscreen?.().catch(() => undefined);
+    }
     try {
       const collected: api.OfficeUnit[] = [];
       let from: number | null = 0;
@@ -270,13 +276,11 @@ export default function OfficeView(props: {
       else if (event.key === "Escape") stopPresentation();
     };
     window.addEventListener("keydown", onKey);
-    const onFullscreenChange = () => { if (!document.fullscreenElement && showPresentation()) stopPresentation(); };
-    document.addEventListener("fullscreenchange", onFullscreenChange);
-    onCleanup(() => { window.removeEventListener("keydown", onKey); document.removeEventListener("fullscreenchange", onFullscreenChange); });
+    onCleanup(() => window.removeEventListener("keydown", onKey));
   });
 
   return (
-    <div classList={{ "office-view": true, "office-presentation-active": showPresentation() }} ref={presentationRoot}>
+    <div classList={{ "office-view": true, "office-presentation-active": showPresentation(), "office-outline-open": showOutline() }} ref={presentationRoot}>
       <Show when={showPresentation()}>
         {(() => {
           const slides = () => deckSlides();
@@ -304,6 +308,7 @@ export default function OfficeView(props: {
             <strong>{info().kind}</strong>
             <Show when={statsLine()}><span>{statsLine()}</span></Show>
             <For each={info().sensitivity_labels}>{(label) => <span class="office-label office-label-sensitivity">Label: {label}</span>}</For>
+            <Show when={info().vocabulary === "power_point"}><button type="button" class="btn sm office-present-action" onClick={() => void startPresentation()}>Present</button></Show>
           </div>
           <Show when={info().flags.length > 0}>
             <div class="office-view-flags" role="note">
@@ -311,10 +316,10 @@ export default function OfficeView(props: {
               <Show when={info().vocabulary !== "pdf"}><button type="button" class="btn sm" onClick={() => setTab("structure")}>Show structure</button></Show>
             </div>
           </Show>
-          <Show when={info().vocabulary === "power_point"}><button type="button" class="btn sm" onClick={() => void startPresentation()}>Run presentation</button></Show>
           <div class="office-view-tabs" role="tablist" aria-label="Views of this file">
             <button type="button" role="tab" aria-selected={tab() === "content"} classList={{ active: tab() === "content" }} onClick={() => setTab("content")}>{MAIN_TAB[info().vocabulary]}</button>
             <Show when={info().vocabulary !== "pdf"}><button type="button" role="tab" aria-selected={tab() === "structure"} classList={{ active: tab() === "structure" }} onClick={() => setTab("structure")}>Structure</button></Show>
+            <Show when={info().outline.length > 0 && tab() === "content" && info().vocabulary !== "excel"}><button type="button" class="office-outline-toggle" aria-expanded={showOutline()} onClick={() => setShowOutline((open) => !open)}>{showOutline() ? "Hide outline" : "Outline"}</button></Show>
           </div>
         </>
       )}</Show>
@@ -343,7 +348,7 @@ export default function OfficeView(props: {
             </Show>
           </div>
           <Show when={info().not_read.length > 0}>
-            <p class="office-view-not-read">Not shown yet: {info().not_read.join("; ")}.</p>
+            <details class="office-view-not-read"><summary>Some content may be missing from this view</summary><p>{info().not_read.join("; ")}.</p></details>
           </Show>
         </>
       )}</Show>
@@ -395,7 +400,7 @@ function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Of
             }>
               <p class="office-unit-heading" role="heading" aria-level={Math.min(6, Math.max(2, unit.level + 1))}><Redline text={unit.text} /></p>
             </Show>
-            <span class="office-unit-anchor">{unit.anchor}</span>
+            <Show when={technicalDetails()}><span class="office-unit-anchor">{unit.anchor}</span></Show>
             <Labels labels={unit.labels} />
           </div>
         )}</For>
@@ -438,8 +443,8 @@ function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Office
                 <For each={unit.text.split(PARAGRAPH_BREAK)}>{(paragraph) => (
                   <p classList={{ "office-unit-heading": unit.kind === "slide" }}><Redline text={paragraph} /></p>
                 )}</For>
-                <span class="office-unit-anchor">{unit.anchor}</span>
-                <Labels labels={unit.labels} />
+                <Show when={technicalDetails()}><span class="office-unit-anchor">{unit.anchor}</span></Show>
+                <Labels labels={unit.kind === "notes" ? unit.labels.filter((label) => label !== "speaker notes") : unit.labels} />
               </div>
             )}</For>
           </section>

@@ -134,6 +134,9 @@ export default function WorkbenchPanel() {
   const tab = workbenchTab;
   const setTab = setWorkbenchTab;
   const [selectedArtifact, setSelectedArtifact] = createSignal<string | null>(null);
+  const [browsingFiles, setBrowsingFiles] = createSignal(false);
+  const [showRunDetails, setShowRunDetails] = createSignal(false);
+  const [reviewFocus, setReviewFocus] = createSignal(false);
   const [artifactPreview, setArtifactPreview] = createSignal("");
   const [artifactContent, setArtifactContent] = createSignal<string | null>(null);
   const [artifactDataUrl, setArtifactDataUrl] = createSignal<string | null>(null);
@@ -242,6 +245,7 @@ export default function WorkbenchPanel() {
   createEffect(() => {
     void activeId();
     artifactRequest += 1;
+    setBrowsingFiles(false);
     setSelectedArtifact(null);
     setArtifactContent(null);
     setArtifactError(null);
@@ -375,6 +379,7 @@ export default function WorkbenchPanel() {
     // Artifact links are an intent to inspect, so move to the artifact
     // viewer immediately instead of leaving the operator on live logs.
     setTab("artifacts");
+    setBrowsingFiles(false);
     setSelectedArtifact(path);
     setLoadingArtifact(true);
     setArtifactError(null);
@@ -447,7 +452,7 @@ export default function WorkbenchPanel() {
   // users can still switch to activity when they want the mechanics.
   createEffect(() => {
     const artifacts = allArtifacts();
-    if (artifacts.length > 0 && selectedArtifact() === null) {
+    if (artifacts.length > 0 && selectedArtifact() === null && !browsingFiles()) {
       void inspectArtifact(artifacts[artifacts.length - 1].path);
     }
   });
@@ -767,7 +772,7 @@ export default function WorkbenchPanel() {
       <Show when={reviewOpen() && candidate()}>
         {(prepared) => <Sheet
           size="wide"
-          class="candidate-review"
+          class={reviewFocus() ? `candidate-review candidate-review-focused${isDocumentPath(reviewedPath() ?? "") ? " candidate-review-document-focused" : ""}` : "candidate-review"}
           title="Review changes"
           subtitle={`Nothing changes in ${destinationLabel()} until you accept.`}
           onClose={() => setReviewOpen(false)}
@@ -782,6 +787,7 @@ export default function WorkbenchPanel() {
               <section class="candidate-review-section" aria-label="Preview">
                 <div class="candidate-review-section-head">
                   <h3>{reviewedPath()?.split("/").pop() ?? "Choose a file"}</h3>
+                  <button type="button" class="btn sm" aria-pressed={reviewFocus()} onClick={() => setReviewFocus((focused) => !focused)}>{reviewFocus() ? "Show full review" : "Focus on this file"}</button>
                   <Show when={reviewedPath()}>{(path) =>
                     <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
                       const version = prepared();
@@ -811,6 +817,9 @@ export default function WorkbenchPanel() {
               </section>
               <section class="candidate-review-section" aria-label="Changes">
                 <h3>Changes</h3>
+                <Show when={reviewFocus() && (reviewFileError() || (prepared().draft_checks ?? []).some((check) => check.status !== "passed"))}>
+                  <p role="alert" class="inline-error">This draft needs attention before you can accept it. Show full review for details.</p>
+                </Show>
                 <Show when={pendingCandidates().filter((record) => record.execution_id === prepared().execution_id).length > 1}>
                   <label for="candidate-review-version">Draft version</label>
                   <select id="candidate-review-version" onChange={(event) => {
@@ -932,20 +941,6 @@ export default function WorkbenchPanel() {
       </Show>
       {/* Workbench Header */}
       <div class="workbench-header">
-        <div class="workbench-header-left">
-          <Icon name="terminal" size={16} />
-          <span class="workbench-title">Result</span>
-          <Show when={isAnyRunning()}>
-            <span class="workbench-status-badge running">
-              <span class="pulse-dot" /> Running
-            </span>
-          </Show>
-          <Show when={executions().length > 0}>
-            <span class="workbench-count-pill">
-              {executions().length} run{executions().length === 1 ? "" : "s"}
-            </span>
-          </Show>
-        </div>
         <div class="workbench-header-right">
           <div class="workbench-nav-tabs" role="tablist" aria-label="Workbench views">
             <button
@@ -958,7 +953,7 @@ export default function WorkbenchPanel() {
               classList={{ active: tab() === "execution" }}
               onClick={() => setTab("execution")}
             >
-              Activity
+              Activity<Show when={executions().length > 0}> ({executions().length})</Show>
             </button>
             <button
               class="workbench-nav-btn"
@@ -973,7 +968,8 @@ export default function WorkbenchPanel() {
               Files<Show when={allArtifacts().length > 0}> ({allArtifacts().length})</Show>
             </button>
           </div>
-          <Show when={executions().length > 0}>
+          <Show when={tab() === "execution" && executions().length > 0 && !technicalDetails()}><button type="button" class="workbench-detail-toggle" aria-pressed={showRunDetails()} onClick={() => setShowRunDetails((show) => !show)}>{showRunDetails() ? "Hide details" : "Technical details"}</button></Show>
+          <Show when={tab() === "execution" && executions().length > 0}>
             <button
               class="workbench-clear-btn"
               onClick={clearExecutions}
@@ -999,20 +995,20 @@ export default function WorkbenchPanel() {
       {/* Main Content */}
       <Show when={executions().length === 0 && !selectedArtifact()}>
         <div class="workbench-empty-state">
-          <Icon name="terminal" size={32} />
+          <Icon name={tab() === "artifacts" ? "file" : "history"} size={32} />
           <Show when={workbenchLoadError()}>
-            <p class="error-state" role="alert">Sandbox telemetry unavailable: {workbenchLoadError()}. Reopen this task to retry.</p>
+            <p class="error-state" role="alert">Couldn’t load this activity: {workbenchLoadError()}. Reopen this conversation to try again.</p>
           </Show>
-          <p class="empty-title">No activity yet</p>
+          <p class="empty-title">{tab() === "artifacts" ? "No files yet" : "No activity yet"}</p>
           <p class="empty-desc">
-            Files and execution details will appear here as Vakyartha works.
+            {tab() === "artifacts" ? "Files Vakyartha makes will appear here." : "You’ll see Vakyartha’s progress here when work begins."}
           </p>
         </div>
       </Show>
 
       <Show when={executions().length > 0 || selectedArtifact()}>
         <Show when={tab() === "execution"}>
-          <div id="workbench-panel-execution" role="tabpanel" aria-labelledby="workbench-tab-execution" class="workbench-body">
+          <div id="workbench-panel-execution" role="tabpanel" aria-labelledby="workbench-tab-execution" class="workbench-body" classList={{ "show-details": showRunDetails() || technicalDetails() }}>
             {/* Left list of runs */}
             <div class="workbench-runs-sidebar">
               <Index each={executions()}>
@@ -1043,8 +1039,8 @@ export default function WorkbenchPanel() {
                         >
                           {item().status === "running" ? "●" : item().exitCode === 0 ? "✓" : "✗"}
                         </span>
-                        <span class="run-time">{item().timestamp}</span>
-                        <Show when={item().durationMs !== undefined}>
+                        <span class="run-time">{technicalDetails() ? item().timestamp : item().status === "running" ? "Working" : item().status === "failed" ? "Step failed" : "Completed step"}</span>
+                        <Show when={technicalDetails() && item().durationMs !== undefined}>
                           <span class="run-duration">
                             {item().durationMs! < 1000
                               ? `${item().durationMs!}ms`
@@ -1052,9 +1048,7 @@ export default function WorkbenchPanel() {
                           </span>
                         </Show>
                       </div>
-                      <div class="run-cmd-snippet" title={item().command}>
-                        {item().command}
-                      </div>
+                      <Show when={technicalDetails()}><div class="run-cmd-snippet" title={item().command}>{item().command}</div></Show>
                     </button>
                   );
                 }}
@@ -1063,6 +1057,7 @@ export default function WorkbenchPanel() {
 
             {/* Execution Detail View */}
             <div class="workbench-run-detail">
+              <Show when={showRunDetails() || technicalDetails()}>
               <Show when={currentExec()}>
                 {(exec) => (
                   <div class="exec-detail-container">
@@ -1296,6 +1291,7 @@ export default function WorkbenchPanel() {
                   </div>
                 )}
               </Show>
+              </Show>
             </div>
           </div>
         </Show>
@@ -1303,14 +1299,7 @@ export default function WorkbenchPanel() {
         {/* Artifacts Tab */}
         <Show when={tab() === "artifacts"}>
           <div id="workbench-panel-artifacts" role="tabpanel" aria-labelledby="workbench-tab-artifacts" class="workbench-artifacts-tab">
-            <div class="result-intro">
-              <div class="result-intro-icon"><Icon name="preview" size={18} /></div>
-              <div>
-                <h2>Files</h2>
-                <p>Preview a file or keep refining it in chat.</p>
-              </div>
-            </div>
-            <div class="result-workspace">
+            <div class="result-workspace" classList={{ "has-selection": !!selectedArtifact() }}>
               <Show when={allArtifacts().length > 0}><div class="artifacts-list-sidebar">
               <Show
                 when={allArtifacts().length > 0}
@@ -1332,7 +1321,7 @@ export default function WorkbenchPanel() {
                           <div class="art-info">
                             <span class="art-name">{art.path.split("/").pop()}</span>
                             <span class="art-sub">
-                              {art.mimeType} · {formatBytes(art.sizeBytes)}
+                              {technicalDetails() ? art.mimeType : (art.mimeType?.includes("wordprocessingml") ? "Word document" : art.mimeType?.includes("spreadsheetml") ? "Spreadsheet" : art.mimeType?.includes("presentationml") ? "Presentation" : art.mimeType?.includes("pdf") ? "PDF" : "File")} · {formatBytes(art.sizeBytes)}
                             </span>
                           </div>
                         </button>
@@ -1366,6 +1355,7 @@ export default function WorkbenchPanel() {
                 }
               >
                 <div class="viewer-header">
+                  <button type="button" class="viewer-back" onClick={() => { setBrowsingFiles(true); setSelectedArtifact(null); }}>← All files</button>
                   <span class="viewer-path">{technicalDetails() ? selectedArtifact() : selectedArtifact()?.split("/").pop()}</span>
                   <Show when={loadingArtifact()}>
                     <Skeleton kind="text" label="Loading the file" />
@@ -1387,10 +1377,10 @@ export default function WorkbenchPanel() {
                         });
                       }
                     }}
-                    title="Open a larger preview"
+                    title="Open in the full viewer"
                     style={{ "margin-left": "auto" }}
                   >
-                    <Icon name="preview" size={12} /> Open preview
+                    <Icon name="preview" size={12} /> Open
                   </button>
                 </div>
                 <div class="viewer-content">

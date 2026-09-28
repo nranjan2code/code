@@ -373,6 +373,11 @@ export function openArtifactCanvas(preview: ActiveComponentPreview) {
     setDockTab(null);
   }
   canvasConversation = preview.sessionId ?? activeId();
+  // Documents need the whole application viewport for reading and review.
+  // Interactive previews can still open beside the conversation on wide screens.
+  const path = preview.artifactPath?.toLowerCase() ?? "";
+  const document = /\.(docx|xlsx|pptx|pdf)(?:$|[?#])/.test(path);
+  setCanvasMode(document || window.matchMedia("(max-width: 1100px)").matches ? "focused" : "split");
   setCanvasArtifact(preview);
 }
 
