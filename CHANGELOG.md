@@ -1,4 +1,4 @@
-## Unreleased
+## 5.2.5 — 2026-09-28
 
 - Carry typed result cards in channel delivery packets and render them using
   Telegram HTML, Slack Block Kit and Discord embeds, while retaining the
