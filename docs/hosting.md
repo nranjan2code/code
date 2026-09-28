@@ -95,6 +95,9 @@ new listener policy. The Admin screen reports both saved and active values
 so a pending restart is visible. This setup is independent of the cloud
 provider: DNS and a TLS reverse proxy still point at the host running
 Vakyartha.
+For a worked Amazon Linux EC2 deployment with local ARM64 builds, a private
+inventory, HTTPS proxy, update commands and an AI agent runbook, see
+[Headless Vakyartha on AWS EC2](hosting/aws-ec2.md).
 
 **1. Loopback (default).** Nothing to configure.
 

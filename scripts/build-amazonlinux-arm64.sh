@@ -85,5 +85,25 @@ for binary in vak vak-delivery-worker; do
     fi
 done
 
+# Keep the provenance and digests beside the ignored artifacts. Deployers
+# refuse a mismatched checkout or modified binary instead of shipping an
+# arbitrary old target/ file under the current source revision.
+python3 - "$OUTPUT_DIR" "$(git rev-parse HEAD)" <<'PY'
+import hashlib
+import json
+import pathlib
+import sys
+
+out = pathlib.Path(sys.argv[1])
+manifest = {
+    "source_commit": sys.argv[2],
+    "sha256": {
+        name: hashlib.sha256((out / name).read_bytes()).hexdigest()
+        for name in ("vak", "vak-delivery-worker")
+    },
+}
+(out / "build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+PY
+
 file "$OUTPUT_DIR/vak" "$OUTPUT_DIR/vak-delivery-worker"
 printf 'Binaries written to %s\n' "$OUTPUT_DIR"
