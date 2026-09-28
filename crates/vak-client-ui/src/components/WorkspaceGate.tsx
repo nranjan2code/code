@@ -6,6 +6,7 @@ import type { WorkspaceReview } from "../types";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
 import { headlessAuth } from "../headlessAuth";
+import { pendingRecoveryCodes, setPendingRecoveryCodes } from "../ownerRecovery";
 
 /**
  * Sign in (where that applies), choose a workspace, and decide about it —
@@ -40,7 +41,6 @@ export default function WorkspaceGate() {
   const [method, setMethod] = createSignal<"bootstrap" | "passkey" | null>(null);
   const [recoveryCode, setRecoveryCode] = createSignal("");
   const [showRecovery, setShowRecovery] = createSignal(false);
-  const [recoveryCodes, setRecoveryCodes] = createSignal<string[]>([]);
   const [recovered, setRecovered] = createSignal(false);
 
   onMount(() => {
@@ -63,7 +63,7 @@ export default function WorkspaceGate() {
       // authenticates, `authed()` starts `null` (unknown), and polling
       // through that window just fires 401s at a server that is behaving
       // correctly.
-      if (stop || backend().ready || authed() !== true || recoveryCodes().length > 0 || recovered()) return;
+      if (stop || backend().ready || authed() !== true || pendingRecoveryCodes().length > 0 || recovered()) return;
       await refreshBackend();
     };
     const t = setInterval(() => void tick(), 800);
@@ -91,7 +91,7 @@ export default function WorkspaceGate() {
     try {
       if (method() === "bootstrap") {
         const codes = await headlessAuth.enroll(token().trim());
-        setRecoveryCodes(codes);
+        setPendingRecoveryCodes(codes);
       } else if (showRecovery()) {
         await headlessAuth.recovery(recoveryCode());
         setRecovered(true);
@@ -100,7 +100,7 @@ export default function WorkspaceGate() {
       }
       setToken(""); // never keep it around after the exchange
       setAuthed(true);
-      if (recoveryCodes().length === 0 && !recovered()) await refreshBackend();
+      if (pendingRecoveryCodes().length === 0 && !recovered()) await refreshBackend();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -208,14 +208,6 @@ export default function WorkspaceGate() {
             </form>
           }
         >
-          <Show when={recoveryCodes().length > 0}>
-            <div>
-              <h1>Save your recovery codes</h1>
-              <p class="gate-lead">These appear only once. Store them in a password manager outside this server before continuing.</p>
-              <pre>{recoveryCodes().join("\n")}</pre>
-              <button class="btn primary lg" type="button" onClick={() => { setRecoveryCodes([]); void refreshBackend(); }}>I saved the codes</button>
-            </div>
-          </Show>
           <Show when={recovered()}>
             <div>
               <h1>Replace your passkey</h1>
@@ -224,7 +216,7 @@ export default function WorkspaceGate() {
               <Show when={error()}><div class="gate-err">{error()}</div></Show>
             </div>
           </Show>
-          <Show when={recoveryCodes().length === 0 && !recovered()}>
+          <Show when={pendingRecoveryCodes().length === 0 && !recovered()}>
           <Show when={review()} fallback={
             <Show when={browsing()} fallback={
               <>

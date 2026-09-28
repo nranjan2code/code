@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { api, AuthRequired } from "./api";
 import { headlessAuth } from "./headlessAuth";
+import { pendingRecoveryCodes, setPendingRecoveryCodes } from "./ownerRecovery";
 import {
   CHANNEL_MODES, ICONS, Icon, MODES, PageHeader, PathCell, SEC_KINDS, SETUP_STEPS, StatCard,
   chatSurfaces, chatSurfacesError, confirmDestructive, modeLabel, providerLabel, secKindLabel, setChatSurfaces,
@@ -368,7 +369,6 @@ function Login() {
   const [method, setMethod] = createSignal<"bootstrap" | "passkey" | null>(null);
   const [showRecovery, setShowRecovery] = createSignal(false);
   const [recoveryCode, setRecoveryCode] = createSignal("");
-  const [recoveryCodes, setRecoveryCodes] = createSignal<string[]>([]);
   const [recovered, setRecovered] = createSignal(false);
 
   onMount(() => {
@@ -389,7 +389,7 @@ function Login() {
     setError("");
     try {
       if (method() === "bootstrap") {
-        setRecoveryCodes(await headlessAuth.enroll(token().trim()));
+        setPendingRecoveryCodes(await headlessAuth.enroll(token().trim()));
       } else if (showRecovery()) {
         await headlessAuth.recovery(recoveryCode());
         setRecovered(true);
@@ -417,16 +417,11 @@ function Login() {
       <form class="login-card" onSubmit={submit}>
         <div class="login-logo"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></div>
         <h1>Vakyartha admin</h1>
-        <Show when={recoveryCodes().length > 0}>
-          <p class="hint">Save these recovery codes outside this server. They appear only once.</p>
-          <pre>{recoveryCodes().join("\n")}</pre>
-          <button type="button" onClick={finish}>I saved the codes</button>
-        </Show>
         <Show when={recovered()}>
           <p class="hint">The recovery code has been used. Add a new passkey now.</p>
           <button type="button" disabled={busy()} onClick={() => void replacePasskey()}>Add passkey</button>
         </Show>
-        <Show when={recoveryCodes().length === 0 && !recovered()}>
+        <Show when={pendingRecoveryCodes().length === 0 && !recovered()}>
         <p class="hint">{method() === "bootstrap" ? "Set up the owner account with a passkey. Enter the server bootstrap token to begin." : "Sign in with your passkey."}</p>
         <Show when={method() === "bootstrap" || showRecovery()}>
         <input
@@ -444,7 +439,7 @@ function Login() {
         <Show when={error()}>
           <div class="login-error">{error()}</div>
         </Show>
-        <Show when={recoveryCodes().length === 0 && !recovered()}>
+        <Show when={pendingRecoveryCodes().length === 0 && !recovered()}>
           <button type="submit" disabled={busy() || !method() || (method() === "bootstrap" && !token().trim()) || (showRecovery() && !recoveryCode().trim())}>
             {busy() ? "Signing in…" : method() === "bootstrap" ? "Create owner passkey" : showRecovery() ? "Use recovery code" : "Sign in with passkey"}
           </button>
@@ -6262,10 +6257,14 @@ export function Settings() {
   };
 
   const signOut = async () => {
-    await api.logout();
-    disconnectEvents();
-    setAuthed(false);
-    navigate("#/overview");
+    try {
+      await api.logout();
+      disconnectEvents();
+      setAuthed(false);
+      navigate("#/overview");
+    } catch (error) {
+      pushToast("alert", `Could not sign out: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   const rules = createMemo(() => parseRuleLists(config()?.permissions));
@@ -7936,6 +7935,7 @@ export default function App() {
   };
 
   return (
+    <>
     <Switch>
       <Match when={authed() === null}>
         <div class="boot"><div class="spin" /></div>
@@ -8020,5 +8020,16 @@ export default function App() {
         </div>
       </Match>
     </Switch>
+    <Show when={pendingRecoveryCodes().length > 0}>
+      <div class="login-wrap" style="position:fixed;inset:0;z-index:10000" role="dialog" aria-modal="true" aria-label="Save recovery codes">
+        <div class="login-card">
+          <h1>Save your recovery codes</h1>
+          <p class="hint">These appear only once. Save them in a password manager before continuing. The previous codes no longer work if you generated a new set.</p>
+          <pre>{pendingRecoveryCodes().join("\n")}</pre>
+          <button type="button" onClick={() => { setPendingRecoveryCodes([]); if (authed() !== true) { setAuthed(true); connectEvents(); navigate("#/overview"); } }}>I saved the codes</button>
+        </div>
+      </div>
+    </Show>
+    </>
   );
 }

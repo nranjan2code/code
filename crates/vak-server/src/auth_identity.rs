@@ -42,6 +42,7 @@ enum Pending {
     },
     Authentication {
         state: PasskeyAuthentication,
+        rotate_recovery: bool,
         expires: Instant,
     },
 }
@@ -431,6 +432,7 @@ pub(crate) async fn passkey_start(State(state): State<AppState>, headers: Header
         challenge_id.clone(),
         Pending::Authentication {
             state: authentication,
+            rotate_recovery: false,
             expires: Instant::now() + CHALLENGE_TTL,
         },
     );
@@ -445,6 +447,7 @@ pub(crate) async fn passkey_finish(
 ) -> Response {
     let Some(Pending::Authentication {
         state: authentication,
+        rotate_recovery: false,
         ..
     }) = state.owner_auth.pending_take(&body.challenge_id)
     else {
@@ -484,6 +487,116 @@ pub(crate) async fn passkey_finish(
     }
     audit(&state, "passkey_login", false);
     session_response(&state, &headers, serde_json::json!({"ok": true}))
+}
+
+/// A fresh passkey assertion is required to replace recovery codes; a
+/// long-lived browser cookie alone cannot authorize this account action.
+pub(crate) async fn rotate_recovery_start(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Response {
+    if !has_owner_session(&state, &headers) {
+        return fail(StatusCode::UNAUTHORIZED, "owner session required");
+    }
+    let Ok(_lock) = state.owner_auth.lock() else {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "identity store unavailable",
+        );
+    };
+    let Ok(Some(owner)) = state.owner_auth.read() else {
+        return fail(StatusCode::UNAUTHORIZED, "owner not enrolled");
+    };
+    let Ok(webauthn) = webauthn(&state, &headers) else {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "passkey origin unavailable",
+        );
+    };
+    let Ok((options, authentication)) = webauthn.start_passkey_authentication(&owner.passkeys)
+    else {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "passkey authentication unavailable",
+        );
+    };
+    let Ok(challenge_id) = random_hex(24) else {
+        return fail(StatusCode::SERVICE_UNAVAILABLE, "random source unavailable");
+    };
+    state.owner_auth.pending_insert(
+        challenge_id.clone(),
+        Pending::Authentication {
+            state: authentication,
+            rotate_recovery: true,
+            expires: Instant::now() + CHALLENGE_TTL,
+        },
+    );
+    Json(serde_json::json!({"challenge_id": challenge_id, "options": options.public_key}))
+        .into_response()
+}
+
+pub(crate) async fn rotate_recovery_finish(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<CeremonyFinish>,
+) -> Response {
+    if !has_owner_session(&state, &headers) {
+        return fail(StatusCode::UNAUTHORIZED, "owner session required");
+    }
+    let Some(Pending::Authentication {
+        state: authentication,
+        rotate_recovery: true,
+        ..
+    }) = state.owner_auth.pending_take(&body.challenge_id)
+    else {
+        return fail(StatusCode::BAD_REQUEST, "challenge expired or already used");
+    };
+    let Ok(webauthn) = webauthn(&state, &headers) else {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "passkey origin unavailable",
+        );
+    };
+    let Ok(credential) = serde_json::from_value::<PublicKeyCredential>(body.credential) else {
+        return fail(StatusCode::BAD_REQUEST, "invalid passkey response");
+    };
+    let Ok(result) = webauthn.finish_passkey_authentication(&credential, &authentication) else {
+        audit(&state, "recovery_rotation_failed", true);
+        return fail(StatusCode::UNAUTHORIZED, "passkey verification failed");
+    };
+    let Ok(_lock) = state.owner_auth.lock() else {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "identity store unavailable",
+        );
+    };
+    let Ok(Some(mut owner)) = state.owner_auth.read() else {
+        return fail(StatusCode::UNAUTHORIZED, "owner not enrolled");
+    };
+    if !owner
+        .passkeys
+        .iter_mut()
+        .any(|passkey| passkey.update_credential(&result).is_some())
+    {
+        audit(&state, "recovery_rotation_failed", true);
+        return fail(StatusCode::UNAUTHORIZED, "passkey verification failed");
+    }
+    let mut codes = Vec::with_capacity(10);
+    for _ in 0..10 {
+        let Ok(code) = random_hex(16) else {
+            return fail(StatusCode::SERVICE_UNAVAILABLE, "random source unavailable");
+        };
+        codes.push(code);
+    }
+    owner.recovery_hashes = codes.iter().map(|code| recovery_hash(code)).collect();
+    if state.owner_auth.write(&owner).is_err() {
+        return fail(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "identity store unavailable",
+        );
+    }
+    audit(&state, "recovery_codes_rotated", false);
+    Json(serde_json::json!({"recovery_codes": codes})).into_response()
 }
 
 #[derive(Deserialize)]

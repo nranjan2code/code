@@ -1128,6 +1128,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/auth/passkey/start", post(auth_identity::passkey_start))
         .route("/auth/passkey/finish", post(auth_identity::passkey_finish))
         .route("/auth/recovery", post(auth_identity::recovery))
+        .route("/auth/recovery/rotate/start", post(auth_identity::rotate_recovery_start))
+        .route("/auth/recovery/rotate/finish", post(auth_identity::rotate_recovery_finish))
         .route("/auth/passkey/add/start", post(auth_identity::add_start))
         .route("/auth/passkey/add/finish", post(auth_identity::add_finish))
         .route("/auth/account", get(auth_identity::account))

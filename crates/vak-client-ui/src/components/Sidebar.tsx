@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, on, onCleanup, Show } from "solid-js";
-import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
+import { activeAgentId, agentOpening, agentsEpoch, openingAgentId, backend, isRunning, sessions, settingsOpen, setAgentCreateOpen, setNotice, setSearchOpen, setSettingsOpen, setSettingsScope, setShowShortcuts, setSidebarOpen } from "../store";
 import { openAgentChat } from "../App";
 import * as api from "../api";
 import { host } from "../host";
@@ -96,7 +96,7 @@ export default function Sidebar() {
           <summary aria-label="Help and account"><Icon name="more" /></summary>
           <div class="sidebar-more-menu" role="menu">
             <button type="button" role="menuitem" onClick={(event) => { (event.currentTarget.closest("details") as HTMLDetailsElement).open = false; setShowShortcuts(true); }}><Icon name="tune" />Keyboard shortcuts</button>
-            <Show when={host.logout}><button type="button" role="menuitem" onClick={() => void host.logout?.().then(() => window.location.reload())}><Icon name="lock" />Sign out</button></Show>
+            <Show when={host.logout}><button type="button" role="menuitem" onClick={() => void host.logout?.().then(() => window.location.reload()).catch((error) => setNotice({ kind: "error", text: `Could not sign out: ${error instanceof Error ? error.message : String(error)}` }))}><Icon name="lock" />Sign out</button></Show>
           </div>
         </details>
       </div>

@@ -115,6 +115,7 @@ const WorkbenchPanel = lazy(() => import("./components/WorkbenchPanel"));
 const WorkersPanel = lazy(() => import("./components/WorkersPanel"));
 const CommitmentsPanel = lazy(() => import("./components/CommitmentsPanel"));
 import WorkspaceGate from "./components/WorkspaceGate";
+import { pendingRecoveryCodes, setPendingRecoveryCodes } from "./ownerRecovery";
 import WorkspaceHeader from "./components/WorkspaceHeader";
 import Icon, { type IconName } from "./components/Icon";
 import ResizeHandle from "./components/ResizeHandle";
@@ -1311,6 +1312,7 @@ export default function App() {
   });
 
   return (
+    <>
     <Show
       when={backend().ready ? backend() : null}
       fallback={<WorkspaceGate />}
@@ -1495,6 +1497,17 @@ export default function App() {
         </div>
       )}
     </Show>
+    <Show when={pendingRecoveryCodes().length > 0}>
+      <div class="gate" style="position:fixed;inset:0;z-index:10000" role="dialog" aria-modal="true" aria-label="Save recovery codes">
+        <div class="gate-card">
+          <h1>Save your recovery codes</h1>
+          <p class="gate-lead">These appear only once. Save them in a password manager before continuing. Creating a new set will invalidate this one.</p>
+          <pre>{pendingRecoveryCodes().join("\n")}</pre>
+          <button class="btn primary lg" type="button" onClick={() => { setPendingRecoveryCodes([]); void refreshBackend(); }}>I saved the codes</button>
+        </div>
+      </div>
+    </Show>
+    </>
   );
 }
 

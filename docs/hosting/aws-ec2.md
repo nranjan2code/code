@@ -176,6 +176,12 @@ codes in a password manager. Later visits use the passkey, not the token:
 scripts/hosting/aws-ec2.sh "$private_inventory" copy-token
 ```
 
+If the recovery-code screen is closed before saving, sign in with the
+registered passkey. In **Admin → Permissions & Security → Owner sign-in**, or
+**App → Settings → Privacy and safety → Your sign-in**, choose **Generate new
+recovery codes**. Confirm with the passkey and save the new set; generating it
+invalidates the previous codes.
+
 The script does not print the token or a token-bearing URL. Never send that
 token through chat, logs, screenshots, GitHub, or a public URL query string.
 If a token is exposed, revoke or rotate it through the secure credential

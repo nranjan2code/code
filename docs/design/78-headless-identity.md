@@ -37,8 +37,10 @@ bootstrap token does not become a backdoor after enrollment; disaster recovery
 requires an authenticated owner or deliberate local data-home maintenance.
 
 Additional passkeys can be enrolled from an authenticated owner session. The
-owner can sign out one browser session or revoke all sessions. Passkey removal
-and recovery-code rotation are follow-up account-management work. A restart invalidates in-memory browser
+owner can sign out one browser session or revoke all sessions. A fresh passkey
+assertion can replace the recovery-code set from Admin or app Settings; prior
+codes are invalidated atomically. Passkey removal remains follow-up account
+management. A restart invalidates in-memory browser
 sessions and pending challenges. Session expiry is enforced server-side.
 
 ## Storage and request rules

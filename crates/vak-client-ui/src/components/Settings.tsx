@@ -43,6 +43,8 @@ import ConfirmModal, { type ConfirmConfig } from "./ConfirmModal";
 import OperationsPanel from "./OperationsPanel";
 import DigestCard from "./DigestCard";
 import Skeleton from "./Skeleton";
+import { headlessAuth } from "../headlessAuth";
+import { setPendingRecoveryCodes } from "../ownerRecovery";
 
 type Page = SettingsPageId;
 
@@ -157,6 +159,19 @@ async function copySettingText(value: string, label: string): Promise<void> {
 }
 
 export default function Settings() {
+  const [recoveryBusy, setRecoveryBusy] = createSignal(false);
+  const rotateRecovery = async () => {
+    setRecoveryBusy(true);
+    try {
+      const codes = await headlessAuth.rotateRecovery();
+      setPendingRecoveryCodes(codes);
+      setSettingsOpen(false);
+    } catch (error) {
+      setNotice({ kind: "error", text: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setRecoveryBusy(false);
+    }
+  };
   let settingsMain: HTMLElement | undefined;
   let settingsRoot!: HTMLDivElement;
   const scope = () => settingsScope();
@@ -1371,6 +1386,16 @@ export default function Settings() {
 
             <Show when={page() === "privacy"}>
               <header><h1>Privacy and safety</h1><p>{scope() === "user" ? "What every agent may do unless it sets its own, and when it asks." : `What ${agentName()} may do, when it asks, and what it remembers.`}</p></header>
+              <Show when={host.authenticate}>
+                <Group title="Your sign-in">
+                  <Row title="Recovery codes" description="Create a new set after confirming with your passkey. The previous codes will stop working.">
+                    <button class="settings-button" disabled={recoveryBusy()} onClick={() => void rotateRecovery()}>{recoveryBusy() ? "Checking passkey…" : "Generate new codes"}</button>
+                  </Row>
+                  <Row title="This browser" description="End this browser session. You can sign in again with your passkey or a recovery code.">
+                    <button class="settings-button" onClick={() => void host.logout?.().then(() => window.location.reload()).catch((error) => setNotice({ kind: "error", text: `Could not sign out: ${error instanceof Error ? error.message : String(error)}` }))}>Sign out</button>
+                  </Row>
+                </Group>
+              </Show>
               <section class="settings-group"><h3>What it may do</h3>
               <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Look only", text: "Read and search this folder. Makes no changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Edit files in this folder", text: "Asks before anything sensitive.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access to this computer", text: "Runs any command and opens files outside this folder.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
               </section>

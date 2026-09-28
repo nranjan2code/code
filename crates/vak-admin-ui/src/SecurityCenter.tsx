@@ -1,6 +1,7 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { api } from "./api";
 import { headlessAuth } from "./headlessAuth";
+import { setPendingRecoveryCodes } from "./ownerRecovery";
 import { MODES, PageHeader, SEC_KINDS, confirmDestructive, secKindLabel } from "./display";
 import { timeAgo } from "./time";
 import { navigate, pushToast, route, selectedAgentId, selectedAgentIdOrUndefined } from "./store";
@@ -917,6 +918,13 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
     try { await headlessAuth.revokeAll(); window.location.reload(); }
     catch (error) { setAccountError(error instanceof Error ? error.message : String(error)); setAccountBusy(false); }
   };
+  const rotateRecovery = async () => {
+    if (!confirmDestructive("Generate new recovery codes? The previous set will stop working.")) return;
+    setAccountBusy(true); setAccountError("");
+    try { setPendingRecoveryCodes(await headlessAuth.rotateRecovery()); await refetchAccount(); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : String(error)); }
+    finally { setAccountBusy(false); }
+  };
   type SecTab = "execution" | "rules" | "approvals" | "audit";
   const [activeTab, setActiveTab] = createSignal<SecTab>("execution");
 
@@ -1025,6 +1033,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
           <p>{owner().passkeys} passkey{owner().passkeys === 1 ? "" : "s"} · {owner().recovery_codes_remaining} recovery codes left</p>
           <p>Passkeys sign you in to this server. Save recovery codes outside Vakyartha.</p>
           <button type="button" disabled={accountBusy()} onClick={() => void addOwnerPasskey()}>Add passkey</button>
+          <button type="button" disabled={accountBusy()} onClick={() => void rotateRecovery()}>Generate new recovery codes</button>
           <button type="button" disabled={accountBusy()} onClick={() => void signOutEverywhere()}>Sign out all browsers</button>
           <Show when={accountError()}><p role="alert">{accountError()}</p></Show>
         </section>}

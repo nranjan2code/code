@@ -170,14 +170,20 @@ REMOTE
         command -v curl >/dev/null || { printf 'curl is required.\n' >&2; exit 1; }
         command -v shasum >/dev/null || { printf 'shasum is required.\n' >&2; exit 1; }
         version=2.11.4
+        ip="$(host_ip)"
+        reuse=no
+        installed_version="$(remote "$ip" '/usr/local/bin/caddy version 2>/dev/null | head -n 1 | cut -d" " -f1' || true)"
+        if [[ "$installed_version" == "v$version" ]]; then reuse=yes; fi
         archive="caddy_${version}_linux_arm64.tar.gz"
         temp="$(mktemp -d "${TMPDIR:-/tmp}/vak-caddy.XXXXXXXX")"
         trap 'rm -rf -- "$temp"' EXIT
-        base="https://github.com/caddyserver/caddy/releases/download/v${version}"
-        curl -fL --retry 3 "$base/$archive" -o "$temp/$archive"
-        curl -fL --retry 3 "$base/caddy_${version}_checksums.txt" -o "$temp/checksums.txt"
-        (cd "$temp" && grep -F "  $archive" checksums.txt | shasum -a 512 -c -)
-        tar -xzf "$temp/$archive" -C "$temp" caddy
+        if [[ "$reuse" == no ]]; then
+            base="https://github.com/caddyserver/caddy/releases/download/v${version}"
+            curl -fL --retry 3 "$base/$archive" -o "$temp/$archive"
+            curl -fL --retry 3 "$base/caddy_${version}_checksums.txt" -o "$temp/checksums.txt"
+            (cd "$temp" && grep -F "  $archive" checksums.txt | shasum -a 512 -c -)
+            tar -xzf "$temp/$archive" -C "$temp" caddy
+        fi
         cat > "$temp/Caddyfile" <<CADDY
 $PUBLIC_HOST {
     encode zstd gzip
@@ -188,20 +194,22 @@ $PUBLIC_HOST {
 }
 CADDY
         cp "$ROOT/scripts/hosting/caddy.service" "$temp/caddy.service"
-        ip="$(host_ip)"
         stage="$(remote "$ip" 'mktemp -d "$HOME/.vak-proxy.XXXXXXXX"')"
         [[ "$stage" =~ ^/[^[:space:]]+\.vak-proxy\.[A-Za-z0-9]+$ ]] || {
             printf 'Remote staging path was unexpected.\n' >&2; exit 1;
         }
-        for name in caddy Caddyfile caddy.service; do copy_to "$ip" "$temp/$name" "$stage/$name"; done
-        remote "$ip" "bash -s -- $(printf '%q' "$stage")" <<'REMOTE'
+        files=(Caddyfile caddy.service)
+        if [[ "$reuse" == no ]]; then files+=(caddy); fi
+        for name in "${files[@]}"; do copy_to "$ip" "$temp/$name" "$stage/$name"; done
+        remote "$ip" "bash -s -- $(printf '%q' "$stage") $(printf '%q' "$reuse")" <<'REMOTE'
 set -Eeuo pipefail
 stage="$1"
+reuse="$2"
 trap 'rm -rf -- "$stage"' EXIT
 sudo id caddy >/dev/null 2>&1 || sudo useradd --system --home-dir /var/lib/caddy --create-home --shell /sbin/nologin caddy
 sudo install -d -m 0755 /etc/caddy
 sudo install -d -o caddy -g caddy -m 0750 /var/lib/caddy
-sudo install -m 0755 "$stage/caddy" /usr/local/bin/caddy
+if [[ "$reuse" == no ]]; then sudo install -m 0755 "$stage/caddy" /usr/local/bin/caddy; fi
 sudo install -m 0644 "$stage/Caddyfile" /etc/caddy/Caddyfile
 sudo install -m 0644 "$stage/caddy.service" /etc/systemd/system/caddy.service
 sudo /usr/local/bin/caddy validate --config /etc/caddy/Caddyfile

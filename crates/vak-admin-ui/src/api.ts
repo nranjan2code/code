@@ -154,7 +154,7 @@ export const api = {
   },
 
   async logout(): Promise<void> {
-    await fetch("/auth/logout", { method: "POST" });
+    await handleVoid(await fetch("/auth/logout", { method: "POST" }));
   },
 
   /** Is there a session, and — on loopback — may we simply be handed one?

@@ -158,6 +158,42 @@ async fn owner_enrolls_signs_in_and_spends_one_recovery_code() {
         .await
         .unwrap();
     assert_eq!(account["passkeys"], 1);
+    let rotate_start: serde_json::Value = client
+        .post(format!("{base}/auth/recovery/rotate/start"))
+        .header(reqwest::header::COOKIE, &owner_cookie)
+        .header(reqwest::header::ORIGIN, &base)
+        .json(&serde_json::json!({}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let challenge: RequestChallengeResponse =
+        serde_json::from_value(serde_json::json!({"publicKey": rotate_start["options"]})).unwrap();
+    let assertion = authenticator
+        .do_authentication(Url::parse(&base).unwrap(), challenge)
+        .unwrap();
+    let rotated: serde_json::Value = client
+        .post(format!("{base}/auth/recovery/rotate/finish"))
+        .header(reqwest::header::COOKIE, &owner_cookie)
+        .header(reqwest::header::ORIGIN, &base)
+        .json(&serde_json::json!({"challenge_id": rotate_start["challenge_id"], "credential": assertion}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(rotated["recovery_codes"].as_array().unwrap().len(), 10);
+    let old_code = codes["recovery_codes"][0].as_str().unwrap();
+    let obsolete = client
+        .post(format!("{base}/auth/recovery"))
+        .json(&serde_json::json!({"code": old_code}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(obsolete.status(), reqwest::StatusCode::UNAUTHORIZED);
     let revoke = client
         .post(format!("{base}/auth/sessions/revoke-all"))
         .header(reqwest::header::COOKIE, &owner_cookie)
@@ -175,7 +211,7 @@ async fn owner_enrolls_signs_in_and_spends_one_recovery_code() {
         .unwrap();
     assert_eq!(old_session.status(), reqwest::StatusCode::UNAUTHORIZED);
 
-    let code = codes["recovery_codes"][0].as_str().unwrap();
+    let code = rotated["recovery_codes"][0].as_str().unwrap();
     let recovered = client
         .post(format!("{base}/auth/recovery"))
         .json(&serde_json::json!({"code": code}))

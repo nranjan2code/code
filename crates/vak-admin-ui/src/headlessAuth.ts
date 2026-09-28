@@ -33,4 +33,10 @@ export const headlessAuth = {
     const credential = await startRegistration({ optionsJSON: start.options as Parameters<typeof startRegistration>[0]["optionsJSON"] });
     await json("/auth/passkey/add/finish", { challenge_id: start.challenge_id, credential });
   },
+  async rotateRecovery(): Promise<string[]> {
+    const start = await json<Ceremony>("/auth/recovery/rotate/start", {});
+    const credential = await startAuthentication({ optionsJSON: start.options as Parameters<typeof startAuthentication>[0]["optionsJSON"] });
+    const result = await json<{ recovery_codes: string[] }>("/auth/recovery/rotate/finish", { challenge_id: start.challenge_id, credential });
+    return result.recovery_codes;
+  },
 };
