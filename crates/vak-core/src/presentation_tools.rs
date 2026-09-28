@@ -1297,6 +1297,77 @@ mod tests {
     }
 
     #[test]
+    fn mixed_daily_scenarios_select_cards_by_answer_shape() {
+        let recipes = vak_delivery::built_in_recipes();
+        let offered: Vec<String> = EmitCardTool::all()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect();
+        let cases = [
+            ("capital fact", "Paris is the capital of France.", None),
+            (
+                "stock split explanation",
+                "A stock split increases share count while proportionally reducing per-share price.",
+                None,
+            ),
+            (
+                "weather now",
+                "Temperature is 28°C with a forecast of light rain.",
+                Some("emit_metric_card"),
+            ),
+            (
+                "latest news",
+                "News research synthesis: key takeaways from findings across sources: https://a.test https://b.test",
+                Some("emit_research_card"),
+            ),
+            (
+                "deep research",
+                "Research synthesis: key takeaways and findings from verified sources: https://a.test https://b.test",
+                Some("emit_research_card"),
+            ),
+            (
+                "single sourced price",
+                "The latest price is ₹100, according to sources: https://a.test https://b.test",
+                None,
+            ),
+            (
+                "compare returns",
+                "| Index | Weekly return |\n|---|---:|\n| Nifty | 1% |\n| Sensex | 2% |",
+                Some("emit_table_card"),
+            ),
+            (
+                "meeting details",
+                "Include the purpose, date, time, attendees, and location.",
+                None,
+            ),
+            (
+                "recipe",
+                "Recipe for an omelette.\n\nIngredients:\n- 2 eggs\n- Salt\n\nCook in butter for 3 minutes.",
+                Some("emit_recipe_card"),
+            ),
+            (
+                "workout advice",
+                "Stand, reach overhead, and hold for 20 seconds.",
+                None,
+            ),
+            (
+                "portfolio analysis",
+                "The largest holding is 45% of the portfolio; the rest is diversified across sectors.",
+                None,
+            ),
+            (
+                "three article summary",
+                "Key takeaways from research findings: https://a.test https://b.test https://c.test",
+                Some("emit_research_card"),
+            ),
+        ];
+        for (name, answer, expected_nudge) in cases {
+            let nudge = presentation_check_nudge(answer, &offered, &recipes).map(|n| n.tool);
+            assert_eq!(nudge.as_deref(), expected_nudge, "{name}");
+        }
+    }
+
+    #[test]
     fn every_emit_tool_is_reachable_from_its_types() {
         for shape in SHAPES {
             for t in shape.semantic_types {

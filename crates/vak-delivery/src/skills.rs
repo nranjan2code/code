@@ -433,7 +433,10 @@ pub fn built_in_recipes() -> RecipeCatalog {
         ),
         (
             "answer.research",
-            vec!["citations", "multiple_sources"],
+            // Citing several sources is not by itself a research synthesis:
+            // a one-number answer (such as a current stock price) can cite
+            // multiple sources and should stay prose or use a metric card.
+            vec!["citations", "multiple_sources", "synthesis"],
             vec!["research.synthesis"],
             vec!["desktop", "terminal"],
         ),

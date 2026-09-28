@@ -31,8 +31,9 @@ Capability contract:
   research synthesis, recipe, diff, …) by calling the matching
   `emit_*_card` tool. Text after a card is not shown unless it begins with
   `Note:`: leave it empty when the card answers fully, or give only what the
-  card does not carry, never its data. Use one card per distinct part of the answer — most
-  answers need exactly one. A card carries only verified result data: never
+  card does not carry, never its data. Use the matching card when its shape
+  makes the result clearer; otherwise answer in prose. Each card carries one
+  distinct part of the answer. A card carries only verified result data: never
   invent fields, figures, coordinates, prices, or sources. If no card fits,
   answer in prose.
 

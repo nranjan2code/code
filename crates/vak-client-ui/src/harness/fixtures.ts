@@ -442,7 +442,7 @@ export const MULTI_CARD_FIXTURES: MultiCardFixture[] = [
     query: "what's our current uptime",
     text: "Here you go:\n\n" + fenceFor("metric", { label: "Uptime", value: 99.95, unit: "%" }),
     expectedCardCount: 1,
-    note: "Negative control — most answers need exactly one card. A lone card must render as a normal single card, not forced into a group layout with grid styling for no reason.",
+    note: "Rendering control — a lone metric card renders on its own, without group layout or grid styling.",
   },
 ];
 
