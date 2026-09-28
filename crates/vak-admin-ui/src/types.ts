@@ -812,6 +812,20 @@ export interface ConfigLayer {
     inherit_skills?: boolean | null;
     inherit_plugins?: boolean | null;
   };
+  /** This layer's own backup lists; `same_model` holds `provider/model` spellings. */
+  route?: { same_model: string[][]; fallback_models: string[] };
+}
+
+/** One model as one service names it. */
+export interface ModelRefView {
+  provider: string;
+  model: string;
+}
+
+/** Proposed same-model groups; nothing is used until a person confirms one. */
+export interface SameModelSuggestions {
+  groups: ModelRefView[][];
+  errors: { provider: string; error: string }[];
 }
 
 export interface IntegrationStatus {
@@ -926,6 +940,8 @@ export interface MemoryItem {
   tag?: string;
   text: string;
   session_id?: string;
+  /** Added by the admin when combining per-agent memory ledgers. */
+  admin_agent_id?: string;
 }
 
 export interface WorkReceiptAttempt {
@@ -1353,6 +1369,8 @@ export interface Commitment {
   consecutive_stalls: number;
   drift: string[];
   updated_at: string;
+  /** Added by the admin when combining per-agent commitment ledgers. */
+  admin_agent_id?: string;
 }
 
 /** Why the scheduler ranked a commitment where it did. */

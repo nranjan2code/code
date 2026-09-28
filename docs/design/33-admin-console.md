@@ -82,6 +82,25 @@ The browser can therefore move from posture → subsystem → resource → incid
 responses; historical or unavailable records are labelled rather than filled
 with placeholders.
 
+### Agent scope and large rosters
+
+The shell distinguishes three scopes: **All agents** is an aggregate view of
+agent-owned records, **Global platform defaults** is the shared configuration
+layer, and a named agent resolves its own workspace and private ledger. The
+scope picker is searchable by agent name or id; Operations offers the same
+search next to its workspace filter. Lists remain native keyboard-operable
+controls rather than growing into a long row of agent tabs.
+
+Aggregate ledgers fan out to each agent in batches of eight requests. Returned
+memory and commitment rows retain their owning agent id, so a combined view
+never sends an edit to whichever agent happened to be selected previously.
+Memory writes and cleanup require one named agent; combined views are
+read-only for those actions. Home, Operations, sessions, commitments, memory,
+proposals, spending, and inbox signals apply their available agent/session
+filters to their values and rows, not only to the scope label. Settings show
+the shared default layer in the combined scope; choose a named agent to
+inspect or change that agent's effective configuration.
+
 ### Store (FTS5 index)
 
 - One SQLite DB at `cache_home()/store.db`, WAL mode, schema-versioned.
@@ -298,9 +317,12 @@ and workspace-scope enforcement as desktop and gateway clients.
 - **Inbox** — attention entries with unread badge (30 s poll) and acks.
 - **Security** — color-coded audit trail with per-kind filters.
 - **Gateway** — four sub-routes, one per operator task; see below.
-- **Settings** — provider/model editor (dirty-tracked), permission-mode
-  cards (ReadOnly / WorkspaceWrite / FullAccess with consequences stated),
-  gateway status, index rebuild, sign out.
+- **Settings** — provider/model editor (dirty-tracked), Backup models (the
+  same model at other services, proposed from live catalogues and confirmed
+  once for every agent, plus other models allowed per scope;
+  docs/design/15-reliability.md), permission-mode cards (ReadOnly /
+  WorkspaceWrite / FullAccess with consequences stated), gateway status,
+  index rebuild, sign out.
 - **Memory** — workspace and global profile notes with provenance, inline
   amend/explicit forget, effective search/write/reflection status, and a
   confirmed cleanup action for abandoned lock/temp artifacts.

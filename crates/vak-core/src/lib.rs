@@ -469,6 +469,10 @@ struct CoreInner {
     /// Same no-pin, always-take-latest shape as the memory overrides above.
     workers_override: std::sync::Mutex<Option<bool>>,
     work_override: std::sync::Mutex<Option<vak_config::WorkResolved>>,
+    /// `[route]` as last read from disk. `None` follows the cached
+    /// `inner.config.route`; every route refresh re-reads it, so a backup a
+    /// person allows reaches live sessions at their next turn.
+    route_settings_override: std::sync::Mutex<Option<vak_config::RouteResolved>>,
     /// Same no-pin, always-take-latest shape. `None` follows the cached
     /// `inner.config.plugins`; `refresh_persisted_preferences` re-derives
     /// it from disk after every persist, so a capability or egress change
@@ -1285,6 +1289,7 @@ impl Core {
                 memory_skill_proposals_override: std::sync::Mutex::new(None),
                 workers_override: std::sync::Mutex::new(None),
                 work_override: std::sync::Mutex::new(None),
+                route_settings_override: std::sync::Mutex::new(None),
                 plugins_override: std::sync::Mutex::new(None),
                 finops_max_run_usd_override: std::sync::Mutex::new(None),
                 finops_max_day_usd_override: std::sync::Mutex::new(None),
@@ -1335,6 +1340,19 @@ impl Core {
 
     pub fn apply_persisted_work(&self, work: vak_config::WorkResolved) {
         Self::write_override(&self.inner.work_override, Some(work));
+    }
+
+    /// The routing policy in force: the backups a person allowed and how
+    /// the ladder orders them. Re-read whenever the config files change,
+    /// like the route itself.
+    pub fn effective_route_settings(&self) -> vak_config::RouteResolved {
+        self.refresh_route_if_stale();
+        Self::read_override(&self.inner.route_settings_override)
+            .unwrap_or_else(|| self.inner.config.route.clone())
+    }
+
+    pub fn apply_persisted_route_settings(&self, route: vak_config::RouteResolved) {
+        Self::write_override(&self.inner.route_settings_override, Some(route));
     }
 
     /// Effective live voice runtime settings. Persisted updates are applied
@@ -1425,10 +1443,16 @@ impl Core {
     /// CLI, task, heartbeat, or worker contract.
     pub fn refresh_persisted_route(&self) -> Result<RouteSelection, CoreError> {
         let current = self.effective_route();
+        let loaded = vak_config::load_with_trust(&self.inner.cwd, self.inner.trust_project_config);
+        // A pinned route pins provider and model only; which backups may
+        // stand in for it still follows the files.
+        if let Ok(config) = &loaded {
+            self.apply_persisted_route_settings(config.route.clone());
+        }
         if current.runtime_pinned {
             return Ok(current);
         }
-        let config = vak_config::load_with_trust(&self.inner.cwd, self.inner.trust_project_config)?;
+        let config = loaded?;
         let route = route_from_config(&self.inner.cwd, &config, false);
         if route != current {
             self.replace_route(route.clone());
@@ -2668,6 +2692,7 @@ impl Core {
             Some(config.finops.max_day_usd),
         );
         self.apply_persisted_work(config.work.clone());
+        self.apply_persisted_route_settings(config.route.clone());
         self.apply_persisted_tools(config.tools.web_fetch, config.tools.browse);
         self.apply_persisted_commitment(config.commitment.enabled);
         self.apply_persisted_approval_mode(config.approval_mode);
@@ -5137,15 +5162,15 @@ impl Core {
         }
     }
 
-    /// Frozen-ladder admission (docs/design/15-reliability.md + Phase R).
+    /// Order the route ladder (docs/design/15-reliability.md + Phase R).
     ///
     /// Pure with respect to its inputs: warm discovery caches, the
     /// evidence ledger, session beliefs, config, and tool count. No
     /// network, no invented model ids. The operator-selected primary is
-    /// pinned to the head; v2 ordering decides only the FALLBACK order.
-    /// Order the frozen ladder for a session.
+    /// pinned to the head; v2 ordering decides only the FALLBACK order,
+    /// with the same model somewhere else ahead of any other model.
     ///
-    /// `demand` is what the first turn's reading concluded about this work.
+    /// `demand` is what the turn's reading concluded about this work.
     /// It is optional because a session can be opened before anyone has said
     /// what it is for; when absent the demand facts fall back to the
     /// conservative defaults below rather than being fabricated.
@@ -5154,70 +5179,63 @@ impl Core {
         primary: vak_llm::RouteLeg,
         demand: Option<vak_intent::DemandHint>,
     ) -> routing::RoutePlan {
+        let catalogues = self.warm_catalogues();
+        self.plan_route_ladder_over(primary, demand, &catalogues)
+    }
+
+    /// Every model list discovery fetched inside its TTL, for a credential
+    /// that still resolves. Reads the cache only: planning never waits on
+    /// the network.
+    fn warm_catalogues(&self) -> Vec<routing::WarmCatalogue> {
         const DISCOVERY_TTL: std::time::Duration = std::time::Duration::from_secs(300);
-        let mut candidates = vec![primary.clone()];
+        let mut catalogues: Vec<routing::WarmCatalogue> = match self.inner.models_cache.lock() {
+            Ok(cache) => cache
+                .iter()
+                .filter(|(_, (fetched_at, _))| fetched_at.elapsed() < DISCOVERY_TTL)
+                .map(
+                    |((provider, credential_id), (_, models))| routing::WarmCatalogue {
+                        provider: provider.clone(),
+                        credential_id: credential_id.clone(),
+                        models: models.clone(),
+                    },
+                )
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        catalogues.retain(|catalogue| {
+            self.provider_auth_for_leg(&catalogue.provider, Some(&catalogue.credential_id))
+                .is_ok()
+        });
+        catalogues
+            .sort_by(|a, b| (&a.provider, &a.credential_id).cmp(&(&b.provider, &b.credential_id)));
+        catalogues
+    }
 
-        // Same-model legs on other keyed providers (legacy Phase B set).
-        if let Ok(cache) = self.inner.models_cache.lock() {
-            for ((p, credential_id), (fetched_at, models)) in cache.iter() {
-                if fetched_at.elapsed() >= DISCOVERY_TTL {
-                    continue;
-                }
-                if models.contains(&primary.model)
-                    && !candidates.iter().any(|c| {
-                        c.provider == *p && c.credential_id.as_deref() == Some(credential_id)
-                    })
-                    && self.provider_auth_for_leg(p, Some(credential_id)).is_ok()
-                {
-                    candidates.push(vak_llm::RouteLeg {
-                        provider: p.clone(),
-                        model: primary.model.clone(),
-                        dialect: vak_llm::EndpointDialect::for_provider(
-                            p,
-                            !self.tool_names().is_empty(),
-                        ),
-                        credential_id: Some(credential_id.clone()),
-                    });
-                }
-            }
-        }
-
+    fn plan_route_ladder_over(
+        &self,
+        primary: vak_llm::RouteLeg,
+        demand: Option<vak_intent::DemandHint>,
+        catalogues: &[routing::WarmCatalogue],
+    ) -> routing::RoutePlan {
+        let route_cfg = self.effective_route_settings();
+        let needs_tools = !self.tool_names().is_empty();
+        let stand_ins =
+            routing::stand_in_legs(&primary, catalogues, &route_cfg.same_model, needs_tools);
         // Phase R cross-model legs: ONLY exact ids from the explicit
         // `[route].fallback_models` allowlist, admitted when warm
         // discovery shows a configured key reaches them.
-        let route_cfg = &self.inner.config.route;
-        if !route_cfg.fallback_models.is_empty()
-            && let Ok(cache) = self.inner.models_cache.lock()
-        {
-            for ((p, credential_id), (fetched_at, models)) in cache.iter() {
-                if fetched_at.elapsed() >= DISCOVERY_TTL {
-                    continue;
-                }
-                if self.provider_auth_for_leg(p, Some(credential_id)).is_err() {
-                    continue;
-                }
-                for m in models {
-                    if route_cfg.fallback_models.contains(m)
-                        && m != &primary.model
-                        && !candidates.iter().any(|c| {
-                            c.provider == *p
-                                && c.model == *m
-                                && c.credential_id.as_deref() == Some(credential_id)
-                        })
-                    {
-                        candidates.push(vak_llm::RouteLeg {
-                            provider: p.clone(),
-                            model: m.clone(),
-                            dialect: vak_llm::EndpointDialect::for_provider(
-                                p,
-                                !self.tool_names().is_empty(),
-                            ),
-                            credential_id: Some(credential_id.clone()),
-                        });
-                    }
-                }
-            }
-        }
+        let alternates: Vec<vak_llm::RouteLeg> = routing::alternate_legs(
+            &primary,
+            catalogues,
+            &route_cfg.fallback_models,
+            needs_tools,
+        )
+        .into_iter()
+        .filter(|leg| !stand_ins.contains(leg))
+        .collect();
+        let mut candidates = vec![primary.clone()];
+        candidates.extend(stand_ins.iter().cloned());
+        candidates.extend(alternates.iter().cloned());
         candidates.sort();
         candidates.dedup();
 
@@ -5250,22 +5268,26 @@ impl Core {
         };
         let finops_cfg = self.inner.config.finops.clone();
         let home = self.sessions_home();
-        let hints = route_cfg.quality_hints.clone();
         let ranked = vak_llm::order_ladder_v2(
             candidates,
             &routing::EvidenceLedger::new(&home).snapshot(),
             &belief_map,
             objective,
-            &hints,
+            &route_cfg.quality_hints,
             move |m: &str| {
                 vak_config::finops::resolve_usd_per_mtok(m, &finops_cfg.price_overrides)
                     .map(|(_, out)| out)
             },
         );
+        let (ranked_stand_ins, ranked_alternates): (Vec<_>, Vec<_>) = ranked
+            .into_iter()
+            .filter(|leg| *leg != primary)
+            .partition(|leg| stand_ins.contains(leg));
 
         let (ladder, annotations) = routing::assemble_ladder(
             &primary,
-            ranked,
+            ranked_stand_ins,
+            ranked_alternates,
             route_cfg.max_fallbacks,
             !route_cfg.fallback_models.is_empty(),
         );
@@ -6269,7 +6291,7 @@ impl Core {
         // fails typed rather than quietly dropping the image (invariant 10).
         // The reading never shortens the ladder: a fallback is resilience,
         // and a misread greeting must not cost a turn its recovery.
-        let modality_hints = self.inner.config.route.modality_hints.clone();
+        let modality_hints = self.effective_route_settings().modality_hints;
         if !engagement.limits.required_modalities.is_empty() && !modality_hints.is_empty() {
             let supports = |model: &str| {
                 intent::leg_supports_modalities(
@@ -7782,6 +7804,73 @@ mod task_copy_boundary_tests {
             ),
             vak_permission::Decision::Deny { .. }
         ));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod route_backup_tests {
+    use super::*;
+
+    fn leg(provider: &str, model: &str, credential: &str) -> vak_llm::RouteLeg {
+        vak_llm::RouteLeg {
+            provider: provider.into(),
+            model: model.into(),
+            dialect: vak_llm::EndpointDialect::for_provider(provider, true),
+            credential_id: Some(credential.into()),
+        }
+    }
+
+    fn catalogue(provider: &str, credential: &str, models: &[&str]) -> routing::WarmCatalogue {
+        routing::WarmCatalogue {
+            provider: provider.into(),
+            credential_id: credential.into(),
+            models: models.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
+    fn write_project(dir: &std::path::Path, text: &str) {
+        std::fs::create_dir_all(dir.join(".vak")).unwrap();
+        std::fs::write(dir.join(".vak/config.toml"), text).unwrap();
+    }
+
+    fn models(plan: &routing::RoutePlan) -> Vec<&str> {
+        plan.ladder.iter().map(|leg| leg.model.as_str()).collect()
+    }
+
+    #[test]
+    fn a_confirmed_group_reaches_the_ladder_live_ahead_of_other_models() {
+        isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        write_project(dir.path(), "[route]\nfallback_models = [\"model-b\"]\n");
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let primary = leg("anthropic", "model-a", "acct-a");
+        let catalogues = [
+            catalogue("anthropic", "acct-a", &["model-a", "model-b"]),
+            catalogue("openrouter", "acct-r", &["vendor/model-a", "model-a"]),
+        ];
+
+        let plan = core.plan_route_ladder_over(primary.clone(), None, &catalogues);
+        assert_eq!(
+            models(&plan),
+            vec!["model-a", "model-b"],
+            "an id at another service is not the same model until someone says so"
+        );
+
+        write_project(
+            dir.path(),
+            "[route]\n\
+             fallback_models = [\"model-b\"]\n\
+             same_model = [[\"anthropic/model-a\", \"openrouter/vendor/model-a\"]]\n",
+        );
+        let plan = core.plan_route_ladder_over(primary, None, &catalogues);
+        assert_eq!(
+            models(&plan),
+            vec!["model-a", "vendor/model-a", "model-b"],
+            "the confirmation applies without a restart, and the same model \
+             somewhere else is tried before a different one"
+        );
+        assert_eq!(plan.ladder[1].provider, "openrouter");
     }
 }
 

@@ -23,13 +23,12 @@ export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
   localStorage.getItem("vak_admin_selected_agent") || "global",
 );
 
-/** The selected Agent as an `?agent=` query value — "global" (Platform
- * Defaults) isn't a real Agent, so it maps to `undefined` (the server's own
- * default, the built-in "vak" Agent), matching the mapping `SessionForensics`
- * already uses for its own scoping. */
+/** A concrete Agent as an `?agent=` query value. Aggregate and shared-default
+ * views are handled by their endpoint-specific selectors, so neither sentinel
+ * may be sent as an Agent id. */
 export const selectedAgentIdOrUndefined = () => {
   const id = selectedAgentId();
-  return id === "global" ? undefined : id;
+  return id === "global" || id === "all" ? undefined : id;
 };
 
 export async function refreshAdminAgents() {
@@ -46,6 +45,17 @@ export async function refreshAdminAgents() {
   } catch (err) {
     console.warn("Failed to load agent catalogue", err);
   }
+}
+
+/** Fetch per-agent data without flooding a local server when the roster grows. */
+export async function mapAdminAgents<T>(load: (agent: AgentScopeItem) => Promise<T>, concurrency = 8): Promise<Array<{ agent: AgentScopeItem; value: T }>> {
+  const agents = adminAgents();
+  const rows: Array<{ agent: AgentScopeItem; value: T }> = [];
+  for (let start = 0; start < agents.length; start += concurrency) {
+    const batch = agents.slice(start, start + concurrency);
+    rows.push(...await Promise.all(batch.map(async (agent) => ({ agent, value: await load(agent) }))));
+  }
+  return rows;
 }
 
 export interface FeedItem {

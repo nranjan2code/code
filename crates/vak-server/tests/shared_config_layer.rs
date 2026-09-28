@@ -210,3 +210,107 @@ async fn removing_retired_plugins_prunes_the_layer_of_each_scope() {
     assert_eq!(network_allow(&global), json!(["project-eval", "kept"]));
     assert_eq!(network_allow(&project), json!(["user-eval", "kept"]));
 }
+
+async fn get(app: &Router, uri: &str) -> (StatusCode, Value) {
+    let response = app
+        .clone()
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// Backups a person allows land in the layer they chose, read back through
+/// that layer alone (invariant 21), and reach the running process without a
+/// restart. Groups that share a member are saved as one.
+#[tokio::test]
+async fn route_backups_write_one_layer_and_apply_live() {
+    let _home = private_home();
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".vak")).unwrap();
+    std::fs::write(
+        dir.path().join(".vak/config.toml"),
+        "[route]\nfallback_models = [\"project-backup\"]\n",
+    )
+    .unwrap();
+    vak_core::trust::record(dir.path()).unwrap();
+    let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    let app = vak_server::router(core.clone());
+
+    let (status, _) = patch_global(
+        &app,
+        json!({
+            "route_same_model": [
+                ["anthropic/model-a", "openrouter/vendor/model-a"],
+                ["openrouter/vendor/model-a", "bedrock/us.vendor.model-a-v1:0"],
+            ],
+            "route_fallback_models": [" shared-backup ", "shared-backup"],
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (_, shared) = get(&app, "/config/global").await;
+    assert_eq!(
+        shared["route"]["same_model"],
+        json!([[
+            "anthropic/model-a",
+            "bedrock/us.vendor.model-a-v1:0",
+            "openrouter/vendor/model-a"
+        ]])
+    );
+    assert_eq!(shared["route"]["fallback_models"], json!(["shared-backup"]));
+    let (_, project) = get(&app, "/config/project").await;
+    assert_eq!(
+        project["route"]["fallback_models"],
+        json!(["project-backup"]),
+        "a layer read reports that layer, never the merged view"
+    );
+
+    let settings = core.effective_route_settings();
+    assert_eq!(settings.same_model.len(), 1, "applied without a restart");
+    assert_eq!(
+        settings.fallback_models,
+        vec!["shared-backup", "project-backup"]
+    );
+    let (_, effective) = get(&app, "/config").await;
+    assert_eq!(
+        effective["route"]["fallback_models"],
+        json!(["shared-backup", "project-backup"])
+    );
+    assert_eq!(
+        effective["route"]["same_model"],
+        shared["route"]["same_model"]
+    );
+
+    for refused in [
+        json!({ "route_same_model": [["nowhere/model-a", "anthropic/model-a"]] }),
+        json!({ "route_same_model": [["anthropic/model-a"]] }),
+        json!({ "route_fallback_models": ["  "] }),
+    ] {
+        let (status, body) = patch_global(&app, refused.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{refused} → {body}");
+    }
+    let (status, _) = get(&app, "/config/route/suggestions?model=no-provider").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, _) = patch_global(
+        &app,
+        json!({ "route_same_model": [], "route_fallback_models": [] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, shared) = get(&app, "/config/global").await;
+    assert_eq!(shared["route"]["same_model"], json!([]));
+    assert!(core.effective_route_settings().same_model.is_empty());
+    assert_eq!(
+        core.effective_route_settings().fallback_models,
+        vec!["project-backup"]
+    );
+}

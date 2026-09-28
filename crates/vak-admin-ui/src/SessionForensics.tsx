@@ -1065,7 +1065,7 @@ export function buildWorkflowGraph(
 
 export function SessionsList() {
   const [agentsRes] = createResource(async () => (await api.agents())?.agents ?? []);
-  const effectiveAgent = () => (selectedAgentId() === "global" ? "all" : selectedAgentId());
+  const effectiveAgent = () => (selectedAgentId() === "global" || selectedAgentId() === "all" ? "all" : selectedAgentId());
   const [sessions, { refetch }] = createResource(
     effectiveAgent,
     (agent) => api.sessions(200, agent === "all" ? undefined : agent),
@@ -1275,7 +1275,7 @@ export function SessionsList() {
             value={effectiveAgent()}
             onChange={(e) => {
               const val = e.currentTarget.value;
-              const next = val === "all" ? "global" : val;
+              const next = val === "all" ? "all" : val;
               setSelectedAgentId(next);
               localStorage.setItem("vak_admin_selected_agent", next);
             }}
@@ -1927,16 +1927,16 @@ export function SessionForensics(props: { sessionId: string }) {
                     <svg class="workflow-edges-layer" width={workflowGraph().width} height={workflowGraph().height}>
                       <defs>
                         <marker id="arrow" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--border-strong, #64748b)" />
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--border-strong)" />
                         </marker>
                         <marker id="arrow-active" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 1 L 8 5 L 0 9 z" fill="#10b981" />
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--green)" />
                         </marker>
                         <marker id="arrow-warn" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 1 L 8 5 L 0 9 z" fill="#f59e0b" />
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--yellow)" />
                         </marker>
                         <marker id="arrow-bad" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                          <path d="M 0 1 L 8 5 L 0 9 z" fill="#ef4444" />
+                          <path d="M 0 1 L 8 5 L 0 9 z" fill="var(--red)" />
                         </marker>
                       </defs>
                       <For each={workflowGraph().edges}>
@@ -2041,7 +2041,7 @@ export function SessionForensics(props: { sessionId: string }) {
                             y1={src.y + src.height / 2}
                             x2={dst.x + dst.width / 2}
                             y2={dst.y + dst.height / 2}
-                            stroke="#475569"
+                            stroke="var(--muted)"
                             stroke-width="6"
                           />
                         );
@@ -2055,7 +2055,7 @@ export function SessionForensics(props: { sessionId: string }) {
                           width={node.width}
                           height={node.height}
                           rx="12"
-                          fill={node.status === "bad" ? "#ef4444" : node.status === "warn" ? "#f59e0b" : selectedNodeId() === node.id ? "#818cf8" : "#334155"}
+                          fill={node.status === "bad" ? "var(--red)" : node.status === "warn" ? "var(--yellow)" : selectedNodeId() === node.id ? "var(--accent)" : "var(--surface-raised)"}
                         />
                       )}
                     </For>

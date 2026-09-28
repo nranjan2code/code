@@ -917,7 +917,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
     navigate(`#/security/${tab}`);
   };
 
-  const [config, { refetch: refetchConfig }] = createResource(() => api.config());
+  const [config, { refetch: refetchConfig }] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
   const [layer, { refetch: refetchLayer }] = createResource(props.scope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [gatewayPolicy, { refetch: refetchPolicy }] = createResource(() => api.gatewayApprovals());
   const [health, { refetch: refetchHealth }] = createResource(() => api.health());
@@ -1048,7 +1048,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
             <strong style={{ "font-size": "18px", "font-weight": "700" }}>
               {events()?.events.length ?? 0}
             </strong>
-            <span class="dim" style={{ "font-size": "11px" }}>recorded events</span>
+            <span class="dim" style={{ "font-size": "12px" }}>recorded events</span>
           </div>
           <span class="stat-card-hint">Append-only JSONL</span>
         </div>

@@ -19,13 +19,14 @@
 /// than rendering a decorative green tick.
 import { For, Index, Show, createEffect, createMemo, createResource, createSignal, onCleanup } from "solid-js";
 import { api, AuthRequired } from "./api";
+import { scopeOperations } from "./OperationsCenter";
 import {
   EVENT_LABELS, PageHeader, PathCell, SETUP_STEPS, modeLabel, providerLabel, secKindLabel,
   summarizeEvent,
 } from "./display";
 import {
   activity, approvalsVersion, conn, feed, navigate, observingSince, pushToast, sessionsVersion,
-  setAuthed, statsVersion, selectedAgentId, adminAgents, selectedAgentIdOrUndefined,
+  setAuthed, statsVersion, selectedAgentId, adminAgents, selectedAgentIdOrUndefined, mapAdminAgents,
 } from "./store";
 import { clock, shortId, timeAgo } from "./time";
 import type {
@@ -44,7 +45,7 @@ const STATE_WORD: Record<SignalState, string> = {
   warn: "needs a look",
   bad: "failing",
   off: "not configured",
-  unknown: "unread",
+  unknown: "not checked",
 };
 
 interface Subsystem {
@@ -151,7 +152,7 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
 
   const verdict = createMemo(() => {
     if (failing() > 0) return { tone: "bad", text: `${failing()} subsystem${failing() === 1 ? "" : "s"} failing` };
-    if (unread() > 0) return { tone: "unknown", text: `${unread()} probe${unread() === 1 ? "" : "s"} unread` };
+    if (unread() > 0) return { tone: "unknown", text: `${unread()} health ${unread() === 1 ? "check" : "checks"} not reported` };
     if (watching() > 0) return { tone: "warn", text: `${watching()} need${watching() === 1 ? "s" : ""} a look` };
     if (counted() === 0) return { tone: "unknown", text: "nothing configured yet" };
     return { tone: "ok", text: "all probes reporting healthy" };
@@ -163,10 +164,10 @@ function ReadinessRing(props: { subsystems: Subsystem[]; sampledAt?: string }) {
         <div>
           <span class="eyebrow">Readiness</span>
           <h2>System health</h2>
-          <p class="dim">Live health probes per subsystem.</p>
+          <p class="dim">Latest health check for each service.</p>
         </div>
         <Show when={props.sampledAt}>
-          <span class="mono dim">sampled {clock(props.sampledAt!)}</span>
+          <span class="mono dim">updated {clock(props.sampledAt!)}</span>
         </Show>
       </div>
       <div class="home-ring-body">
@@ -263,7 +264,7 @@ function AttentionQueue(props: {
         <div>
           <span class="eyebrow">Queue</span>
           <h2>Action queue</h2>
-          <p class="dim">Active approvals, security audits, and system notices.</p>
+          <p class="dim">Approvals, security updates, and notices that need your attention.</p>
         </div>
         <div class="home-severity-tally">
           <div class="home-queue-tabs">
@@ -306,13 +307,13 @@ function AttentionQueue(props: {
         when={props.items.length > 0}
         fallback={
           <div class="home-clear">
-            <div class="home-clear-icon">✓</div>
+            <div class="home-clear-icon" classList={{ warning: props.degraded }}>{props.degraded ? "!" : "✓"}</div>
             <div>
-              <strong>All clear — nothing is waiting on you.</strong>
+              <strong>{props.degraded ? "No items are listed for review." : "Nothing is waiting for your review."}</strong>
               <p class="dim">
                 {props.degraded
-                  ? "Some probes could not be read; open Operations for full evidence."
-                  : `Derived from ${props.probes} live probes${props.sampledAt ? ` sampled at ${clock(props.sampledAt)}` : ""}. System running nominally.`}
+                  ? "Some health checks did not respond. Review Operations before assuming system health."
+                  : `${props.probes} health checks reported${props.sampledAt ? ` at ${clock(props.sampledAt)}` : ""}.`}
               </p>
             </div>
           </div>
@@ -341,7 +342,7 @@ function AttentionQueue(props: {
           <span class="dim">
             {bySeverity("critical") > 0
               ? `${bySeverity("critical")} critical action(s) require intervention.`
-              : "Zero blocking actions. Background processes running autonomously."}
+              : props.degraded ? "No approval requests are listed. Some health checks have not reported." : "No approval requests are waiting."}
           </span>
         </div>
       </Show>
@@ -449,7 +450,7 @@ function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
         </div>
         <button class="ghost small" onClick={() => navigate("#/operations/work")}>Open live work</button>
       </div>
-      <Show when={!props.error} fallback={<div class="error-state"><strong>Control plane unreadable</strong><p>The operations snapshot did not load, so nothing here can be reported.</p></div>}>
+      <Show when={!props.error} fallback={<div class="error-state"><strong>Could not load system status</strong><p>The operations summary did not load, so current service health and running work cannot be confirmed.</p></div>}>
         <Show when={runs().length > 0} fallback={<div class="empty">No run is in flight. The agent is idle, not stuck.</div>}>
           <ul class="home-run-list">
             <Index each={runs()}>
@@ -699,7 +700,7 @@ function MoneyPanel(props: { finops: FinOpsStatus | null; error: boolean }) {
         </div>
         <button class="ghost small" onClick={() => navigate("#/finops")}>Budgets</button>
       </div>
-      <Show when={!props.error} fallback={<div class="error-state"><strong>Cost ledger unreadable</strong><p>No spend figure can be shown without it.</p></div>}>
+      <Show when={!props.error} fallback={<div class="error-state"><strong>Could not load spending</strong><p>Spending totals are unavailable right now.</p></div>}>
         <div class="home-money-head">
           <div class="home-money-figure">
             <strong>{money(spend())}</strong>
@@ -784,16 +785,23 @@ export function Home() {
   const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals());
   const [sessions, sessionsActions] = createResource(
     () => ({ ver: sessionsVersion(), agent: selectedAgentId() }),
-    ({ agent }) => api.sessions(100, agent === "global" ? undefined : agent),
+    ({ agent }) => api.sessions(100, agent === "global" || agent === "all" ? undefined : agent),
   );
   const [bestofn, bestofnActions] = createResource(sessionsVersion, () => api.bestofn());
-  const [config, configActions] = createResource(statsVersion, () => api.config());
+  const [config, configActions] = createResource(
+    () => ({ version: statsVersion(), agent: selectedAgentIdOrUndefined() }),
+    ({ agent }) => api.config(agent),
+  );
   const [onboarding, onboardingActions] = createResource(statsVersion, () => api.onboarding());
   const [gateway, gatewayActions] = createResource(statsVersion, () => api.gatewayStatus());
   const [allowlist, allowlistActions] = createResource(statsVersion, () => api.gatewayAllowlist());
   const [proposals, proposalsActions] = createResource(
-    () => ({ ver: statsVersion(), agent: selectedAgentIdOrUndefined() }),
-    ({ agent }) => api.skillProposals(agent),
+    () => ({ version: statsVersion(), selected: selectedAgentId(), agent: selectedAgentIdOrUndefined(), agents: adminAgents().map((a) => a.id).join("\u001f") }),
+    async ({ selected, agent, agents }) => {
+      if (selected !== "all" && selected !== "global") return api.skillProposals(agent);
+      const results = await mapAdminAgents((item) => api.skillProposals(item.id));
+      return { proposals: results.flatMap(({ value }) => value.proposals) };
+    },
   );
   const [inbox, inboxActions] = createResource(statsVersion, () => api.inbox(true, 20));
 
@@ -819,7 +827,12 @@ export function Home() {
     approvalsSeen = true;
   });
 
-  const snapshot = () => ops() ?? null;
+  const snapshot = createMemo(() => {
+    const value = ops();
+    if (!value) return null;
+    const selected = selectedAgentId();
+    return scopeOperations(value, selected !== "global" && selected !== "all" ? `agent:${selected}` : "all", "live");
+  });
   const opsFailed = () => !ops.loading && ops() == null;
   const auxiliaryFailures = createMemo(() => [
     finops, approvals, sessions, bestofn, config, onboarding, gateway, allowlist, proposals, inbox,
@@ -845,6 +858,27 @@ export function Home() {
   const providerTrouble = createMemo(() =>
     activity().filter((a) => a.type === "ProviderError" || a.type === "RateLimit").length,
   );
+  const sessionIds = createMemo(() => new Set((sessions()?.sessions ?? []).map((session) => session.session_id)));
+  const taskIds = createMemo(() => new Set((snapshot()?.tasks ?? []).map((task) => task.id)));
+  const scopedApprovals = createMemo(() => {
+    const rows = approvals()?.approvals ?? [];
+    return selectedAgentId() === "global" || selectedAgentId() === "all"
+      ? rows
+      : rows.filter((approval) => sessionIds().has(approval.session_id));
+  });
+  const scopedBestofn = createMemo(() => {
+    const rows = bestofn()?.runs ?? [];
+    return selectedAgentId() === "global" || selectedAgentId() === "all"
+      ? rows
+      : rows.filter((run) => sessionIds().has(run.session_id));
+  });
+  const scopedInbox = createMemo(() => {
+    const entries = inbox()?.entries ?? [];
+    if (selectedAgentId() === "global" || selectedAgentId() === "all") return entries;
+    return entries.filter((entry) =>
+      entry.session_id ? sessionIds().has(entry.session_id) : entry.task_id ? taskIds().has(entry.task_id) : true,
+    );
+  });
   const setupGaps = createMemo(() => incompleteSteps(onboarding()));
   const capShare = createMemo(() => {
     const f = finops();
@@ -857,7 +891,7 @@ export function Home() {
   const subsystems = createMemo<Subsystem[]>(() => {
     const snap = snapshot();
     const unknown = (id: string, label: string, href: string): Subsystem => ({
-      id, label, href, state: "unknown", detail: "probe did not answer",
+      id, label, href, state: "unknown", detail: "This check did not respond.",
     });
 
     const doctor: Subsystem = !snap
@@ -965,7 +999,7 @@ export function Home() {
       });
     }
 
-    const pending = approvals()?.approvals ?? [];
+    const pending = scopedApprovals();
     if (pending.length > 0) {
       items.push({
         id: "approvals", severity: "critical",
@@ -1091,7 +1125,7 @@ export function Home() {
       });
     }
 
-    const drafts = bestofn()?.total ?? 0;
+    const drafts = scopedBestofn().length;
     if (drafts > 0) {
       items.push({
         id: "bestofn", severity: "info",
@@ -1101,12 +1135,12 @@ export function Home() {
       });
     }
 
-    const unreadInbox = inbox()?.unread_count ?? 0;
+    const unreadInbox = scopedInbox().filter((entry) => entry.origin_state !== "unavailable").length;
     if (unreadInbox > 0) {
       items.push({
         id: "inbox", severity: "info",
         title: `${unreadInbox} unread in the inbox`,
-        detail: (inbox()?.entries ?? []).slice(0, 2).map((e) => e.title).join(" · ") || "Proactive check-ins and alerts Vakyartha raised on its own.",
+        detail: scopedInbox().slice(0, 2).map((e) => e.title).join(" · ") || "Proactive check-ins and alerts Vakyartha raised on its own.",
         action: "Read them", href: "#/inbox",
       });
     }
@@ -1178,7 +1212,7 @@ export function Home() {
     allowlistActions.refetch();
     proposalsActions.refetch();
     inboxActions.refetch();
-    pushToast("info", "Re-read every probe");
+    pushToast("info", "Refreshing admin information");
   };
 
   const blocking = createMemo(() => attention().filter((i) => i.severity === "critical").length);
@@ -1190,37 +1224,47 @@ export function Home() {
     if (opsFailed()) {
       return {
         tone: "bad",
-        status: "CONTROL PLANE UNREACHABLE",
-        title: "Control Plane Offline",
-        detail: "The operations telemetry endpoint did not answer. Subsystem health and active runs cannot be confirmed.",
+        status: "Status unavailable",
+        title: "Could not load system status",
+        detail: "The system status service did not respond. Current health and running work cannot be confirmed.",
       };
     }
     if (blocking() > 0) {
       return {
         tone: "bad",
-        status: "ACTION REQUIRED",
-        title: `${blocking()} Action${blocking() === 1 ? "" : "s"} Blocking Execution`,
-        detail: `${blocking()} run${blocking() === 1 ? " is" : "s are"} held waiting for operator approval before tool execution can proceed.`,
+        status: "Needs attention",
+        title: `${blocking()} ${blocking() === 1 ? "item needs" : "items need"} approval`,
+        detail: `${blocking() === 1 ? "One run is" : `${blocking()} runs are`} waiting for your approval before they can continue.`,
+      };
+    }
+    const healthChecks = subsystems().filter((s) => s.state !== "off");
+    const notReported = healthChecks.filter((s) => s.state === "unknown").length;
+    if (notReported > 0) {
+      return {
+        tone: "warn",
+        status: "Checks incomplete",
+        title: "Some health checks need attention",
+        detail: `${notReported} health ${notReported === 1 ? "check did" : "checks did"} not respond. Refresh to try again.`,
       };
     }
     if (attention().length > 0) {
       const warnCount = attention().filter((i) => i.severity === "warning").length;
       const infoCount = attention().filter((i) => i.severity === "info").length;
       const label = warnCount > 0
-        ? `${warnCount} Warning${warnCount === 1 ? "" : "s"}`
-        : `${infoCount} Advisory Notice${infoCount === 1 ? "" : "s"}`;
+        ? `${warnCount} ${warnCount === 1 ? "warning" : "warnings"}`
+        : `${infoCount} ${infoCount === 1 ? "notice" : "notices"}`;
       return {
         tone: warnCount > 0 ? "warn" : "ok",
-        status: warnCount > 0 ? "ATTENTION" : "OPERATIONAL",
-        title: `All Systems Operational · ${label}`,
-        detail: `Core runtime and models healthy. ${attention().length} non-blocking advisory item${attention().length === 1 ? " is" : "s are"} listed below in the Action Queue for your review.`,
+        status: warnCount > 0 ? "Review needed" : "Running",
+        title: `Everything is running · ${label}`,
+        detail: `${attention().length} item${attention().length === 1 ? "" : "s"} to review. They are listed in the action queue below.`,
       };
     }
     return {
       tone: "ok",
-      status: "ALL SYSTEMS OPERATIONAL",
-      title: "All Systems Operational",
-      detail: "Health probes green, budget nominal, and no actions held in queue.",
+      status: "Everything is running",
+      title: "Everything is running",
+      detail: "Services are responding, spending is within limits, and nothing is waiting for review.",
     };
   });
 
@@ -1242,7 +1286,7 @@ export function Home() {
                 {statusSummary().status}
               </span>
               <Show when={snapshot()}>
-                <span class="dim"> · live telemetry sampled {clock(snapshot()!.generated_at)}</span>
+                <span class="dim"> · Updated {clock(snapshot()!.generated_at)}</span>
               </Show>
             </div>
             <h1 class="home-deck-title">{statusSummary().title}</h1>
@@ -1250,87 +1294,87 @@ export function Home() {
           </div>
 
           <div class="home-deck-actions">
-            <button class="ghost small" onClick={refreshAll} title="Refetch all telemetry">Refresh</button>
-            <button class="ghost small" onClick={() => navigate("#/settings")}>Change Model</button>
-            <button class="ghost small" onClick={() => navigate("#/operations")}>Operations Center</button>
-            <button class="small primary-cta" onClick={newSession}>+ New Session</button>
+            <button class="ghost small" onClick={refreshAll} title="Update the information on this page">Refresh</button>
+            <button class="ghost small" onClick={() => navigate("#/settings")}>Change model</button>
+            <button class="ghost small" onClick={() => navigate("#/operations")}>Operations</button>
+            <button class="small primary-cta" onClick={newSession}>+ New conversation</button>
           </div>
         </div>
 
         <Show when={snapshot()}>
           <div class="home-deck-tags">
             <div class="deck-tag">
-              <span class="deck-tag-k">Active Agent</span>
-              <span class="font-semibold">✦ {snapshot()!.agents?.find(a => a.id === "vak")?.name || "Vakyartha"}{snapshot()!.agents && snapshot()!.agents!.length > 1 ? ` (+${snapshot()!.agents!.length - 1} specialist)` : ""}</span>
+              <span class="deck-tag-k">Agents in view</span>
+              <span class="font-semibold">{selectedAgentId() === "all" ? `All ${adminAgents().length} agents` : selectedAgentId() === "global" ? "Shared defaults" : adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</span>
             </div>
             <div class="deck-tag">
-              <span class="deck-tag-k">Target Dir</span>
-              <PathCell path={snapshot()!.server.cwd} budget={28} />
+              <span class="deck-tag-k">Workspace</span>
+              <span>{selectedAgentId() === "global" || selectedAgentId() === "all" ? "Across agent workspaces" : <PathCell path={snapshot()!.server.cwd} budget={28} />}</span>
             </div>
             <div class="deck-tag">
-              <span class="deck-tag-k">Route</span>
-              <span class="mono">{providerLabel(config()?.provider ?? snapshot()!.health.provider)} · {config()?.model ?? snapshot()!.health.model}</span>
+              <span class="deck-tag-k">Model</span>
+              <span class="mono">{selectedAgentId() === "all" ? "Configured per agent" : providerLabel(config()?.provider ?? snapshot()!.health.provider) + " · " + (config()?.model ?? snapshot()!.health.model)}</span>
             </div>
             <div class="deck-tag">
-              <span class="deck-tag-k">Permission</span>
+              <span class="deck-tag-k">Access</span>
               <span>{modeLabel(config()?.permission_mode ?? snapshot()!.health.permission_mode)}</span>
             </div>
             <div class="deck-tag">
-              <span class="deck-tag-k">Sandbox</span>
+              <span class="deck-tag-k">Isolation</span>
               <span>{snapshot()!.health.sandbox}</span>
             </div>
           </div>
         </Show>
 
         <div class="home-deck-metrics">
-          <a href="#/operations/incidents" class="deck-metric-card" data-tone={failedChecks().length > 0 ? "bad" : "ok"}>
+          <a href="#/operations/incidents" class="deck-metric-card" data-tone={failedChecks().length > 0 ? "bad" : subsystems().some((s) => s.state === "unknown") ? "warn" : "ok"}>
             <div class="deck-metric-head">
-              <span class="deck-metric-lbl">System Health</span>
-              <span class={`kpi-tag ${failedChecks().length > 0 ? "bad" : "ok"}`}>
-                {failedChecks().length > 0 ? "ALERT" : "OPERATIONAL"}
+              <span class="deck-metric-lbl">Service health</span>
+              <span class={`kpi-tag ${failedChecks().length > 0 ? "bad" : subsystems().some((s) => s.state === "unknown") ? "warn" : "ok"}`}>
+                {failedChecks().length > 0 ? "Needs attention" : subsystems().some((s) => s.state === "unknown") ? "Checks incomplete" : "Running"}
               </span>
             </div>
             <div class="deck-metric-val">
-              {failedChecks().length > 0 ? `${failedChecks().length} Failing` : "Healthy"}
+              {failedChecks().length > 0 ? `${failedChecks().length} failing` : subsystems().some((s) => s.state === "unknown") ? "Needs review" : "Healthy"}
             </div>
             <div class="deck-metric-sub">
-              {subsystems().filter((s) => s.state === "ok").length}/{subsystems().filter((s) => s.state !== "off").length} probes passing
+              {subsystems().filter((s) => s.state === "ok").length}/{subsystems().filter((s) => s.state !== "off").length} checks reported
             </div>
           </a>
 
           <a href="#/operations/runtime" class="deck-metric-card">
             <div class="deck-metric-head">
-              <span class="deck-metric-lbl">Active Work</span>
+              <span class="deck-metric-lbl">Running work</span>
               <span class={`kpi-tag ${(snapshot()?.runs.length ?? 0) > 0 ? "ok" : "info"}`}>
-                {(snapshot()?.runs.length ?? 0) > 0 ? "RUNNING" : "IDLE"}
+                {(snapshot()?.runs.length ?? 0) > 0 ? "Running" : "Idle"}
               </span>
             </div>
             <div class="deck-metric-val">
               {snapshot()?.runs.length ?? 0}
             </div>
             <div class="deck-metric-sub">
-              {snapshot()?.runs.length ?? 0} active · {snapshot()?.pool ? `${snapshot()!.pool.entries.length}/${snapshot()!.pool.max} pool` : "0 pool"}
+              {snapshot()?.runs.length ?? 0} running · {snapshot()?.pool ? `${snapshot()!.pool.entries.length} of ${snapshot()!.pool.max} ready` : "none ready"}
             </div>
           </a>
 
           <a href="#/inbox" class="deck-metric-card" data-tone={blocking() > 0 ? "bad" : attention().length > 0 ? "info" : "ok"}>
             <div class="deck-metric-head">
-              <span class="deck-metric-lbl">Action Queue</span>
+              <span class="deck-metric-lbl">Needs review</span>
               <span class={`kpi-tag ${blocking() > 0 ? "bad" : attention().length > 0 ? "info" : "ok"}`}>
-                {blocking() > 0 ? `${blocking()} BLOCKING` : attention().length > 0 ? "ADVISORY" : "CLEAR"}
+                {blocking() > 0 ? `${blocking()} waiting` : attention().length > 0 ? "Review" : "Clear"}
               </span>
             </div>
             <div class="deck-metric-val">
               {attention().length}
             </div>
             <div class="deck-metric-sub">
-              {blocking() > 0 ? `${blocking()} blocking` : `${attention().length} advisory item${attention().length === 1 ? "" : "s"}`}
+              {blocking() > 0 ? `${blocking()} waiting for approval` : `${attention().length} item${attention().length === 1 ? "" : "s"}`}
             </div>
           </a>
 
           <a href="#/finops" class="deck-metric-card" data-tone={capShare() != null && capShare()! >= 100 ? "bad" : capShare() != null && capShare()! >= 80 ? "warn" : undefined}>
             <div class="deck-metric-head">
-              <span class="deck-metric-lbl">Spend Today</span>
+              <span class="deck-metric-lbl">Spent today</span>
               <Show when={capShare() != null}>
                 <span class={`kpi-tag ${capShare()! >= 100 ? "bad" : capShare()! >= 80 ? "warn" : "info"}`}>
                   {capShare()!.toFixed(0)}%
@@ -1341,20 +1385,20 @@ export function Home() {
               {finops()?.day_usd != null ? money(finops()!.day_usd) : "$0.00"}
             </div>
             <div class="deck-metric-sub">
-              {capShare() != null ? `${capShare()!.toFixed(0)}% of daily cap` : "No daily cap configured"}
+              {capShare() != null ? `${capShare()!.toFixed(0)}% of daily cap` : "No daily spending limit set"}
             </div>
           </a>
 
           <a href="#/operations/runtime" class="deck-metric-card">
             <div class="deck-metric-head">
-              <span class="deck-metric-lbl">Throughput</span>
-              <span class="kpi-tag info">{conn().toUpperCase()}</span>
+              <span class="deck-metric-lbl">Recent activity</span>
+              <span class="kpi-tag info">{conn() === "live" ? "Live" : conn() === "connecting" ? "Connecting" : "Offline"}</span>
             </div>
             <div class="deck-metric-val">
-              {liveRate()} <small style="font-size: 13px; font-weight: 500; color: var(--muted)">ev/m</small>
+              {liveRate()} <small style="font-size: 13px; font-weight: 500; color: var(--muted)">events per minute</small>
             </div>
             <div class="deck-metric-sub">
-              {feed().length} live events held
+              {feed().length} recent events
             </div>
           </a>
         </div>
@@ -1366,12 +1410,12 @@ export function Home() {
           items={attention()}
           probes={probeCount()}
           sampledAt={snapshot()?.generated_at}
-          degraded={opsFailed()}
+          degraded={opsFailed() || subsystems().some((s) => s.state === "unknown")}
         />
       </div>
 
-      <Show when={(approvals()?.approvals.length ?? 0) > 0}>
-        <ApprovalGates approvals={approvals()!.approvals} onAnswered={() => approvalActions.refetch()} />
+      <Show when={scopedApprovals().length > 0}>
+        <ApprovalGates approvals={scopedApprovals()} onAnswered={() => approvalActions.refetch()} />
       </Show>
 
       <div class="home-grid">
@@ -1387,9 +1431,9 @@ export function Home() {
               <span class="eyebrow">History</span>
               <h2>Recent sessions</h2>
               <p class="dim">
-                {selectedAgentId() === "global"
-                  ? "The latest conversations, across every workspace this store indexes."
-                  : `The latest conversations for agent ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}.`}
+                {selectedAgentId() === "global" || selectedAgentId() === "all"
+                  ? `The latest conversations across ${adminAgents().length} agents.`
+                  : `The latest conversations for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}.`}
               </p>
             </div>
             <button class="ghost small" onClick={() => navigate("#/sessions")}>View all</button>

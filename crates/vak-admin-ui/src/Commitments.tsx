@@ -14,7 +14,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 
 import { api } from "./api";
 import { PageHeader } from "./display";
-import { navigate, pushToast, route, selectedAgentIdOrUndefined } from "./store";
+import { mapAdminAgents, navigate, pushToast, route, selectedAgentId, selectedAgentIdOrUndefined } from "./store";
 import { timeAgo } from "./time";
 import type {
   Commitment,
@@ -206,7 +206,7 @@ function CloseControl(props: { commitment: Commitment; onDone: () => void }) {
   const close = async () => {
     setBusy(true);
     try {
-      await api.closeCommitment(props.commitment.commitment_id, verdict(), note(), selectedAgentIdOrUndefined());
+      await api.closeCommitment(props.commitment.commitment_id, verdict(), note(), props.commitment.admin_agent_id ?? selectedAgentIdOrUndefined());
       pushToast("info", `Closed as ${verdict()}`);
       setOpen(false);
       props.onDone();
@@ -278,15 +278,15 @@ function Row(props: {
         <td class="crow-objective">
           <span class="crow-title">{props.commitment.spec.objective}</span>
           <span class="crow-sub">
-            <span class="chip chip-phrase" style={{ "font-size": "10px", "padding": "1px 6px" }}>
+            <span class="chip chip-phrase" style={{ "font-size": "12px", "padding": "1px 6px" }}>
               {props.commitment.spec.reading.act}
             </span>
             {" · "}
-            <span class="chip chip-phrase" style={{ "font-size": "10px", "padding": "1px 6px" }}>
+            <span class="chip chip-phrase" style={{ "font-size": "12px", "padding": "1px 6px" }}>
               {props.commitment.spec.reading.horizon}
             </span>
             {" · "}
-            <span class="chip chip-phrase" style={{ "font-size": "10px", "padding": "1px 6px" }}>
+            <span class="chip chip-phrase" style={{ "font-size": "12px", "padding": "1px 6px" }}>
               {props.commitment.spec.reading.stakes}
             </span>
             <Show when={props.commitment.consecutive_stalls > 0}>
@@ -372,12 +372,12 @@ function Row(props: {
                           <span class="cdetail-stmt">
                             <strong>{criterion.statement}</strong>
                             <Show when={criterion.result?.kind === "passed"}>
-                              <span class="dim" style={{ "display": "block", "font-size": "11px", "margin-top": "2px" }}>
+                              <span class="dim" style={{ "display": "block", "font-size": "12px", "margin-top": "2px" }}>
                                 Evidence: {(criterion.result as { kind: "passed"; evidence: string }).evidence}
                               </span>
                             </Show>
                             <Show when={criterion.result && ("reason" in criterion.result)}>
-                              <span class="dim" style={{ "display": "block", "font-size": "11px", "margin-top": "2px", "color": "var(--red)" }}>
+                              <span class="dim" style={{ "display": "block", "font-size": "12px", "margin-top": "2px", "color": "var(--red)" }}>
                                 Failure: {(criterion.result as { reason: string }).reason}
                               </span>
                             </Show>
@@ -400,7 +400,7 @@ function Row(props: {
                     <For each={props.commitment.episodes}>
                       {(ep: CommitmentEpisode) => (
                         <div class="episode-item">
-                          <span class="mono" style={{ "font-size": "11px" }}>{ep.episode_id.slice(0, 8)}</span>
+                          <span class="mono" style={{ "font-size": "12px" }}>{ep.episode_id.slice(0, 8)}</span>
                           <a
                             href={`#/sessions/${ep.session_id}`}
                             class="mono dim"
@@ -1248,10 +1248,17 @@ export function Commitments() {
   const [evidenceFilter, setEvidenceFilter] = createSignal<string>("all");
   const [searchQuery, setSearchQuery] = createSignal<string>("");
 
-  const [data, { refetch }] = createResource(() => api.commitments(true, selectedAgentIdOrUndefined()));
+  const [data, { refetch }] = createResource(selectedAgentId, async (scope) => {
+    if (scope !== "all" && scope !== "global") return api.commitments(true, scope);
+    const lists = await mapAdminAgents(async (agent) => api.commitments(true, agent.id));
+    return {
+      commitments: lists.flatMap(({ agent, value }) => value.commitments.map((item) => ({ ...item, admin_agent_id: agent.id }))),
+      priorities: lists.flatMap(({ value }) => value.priorities),
+    };
+  });
 
-  const priorityFor = (id: string) =>
-    data()?.priorities.find((p) => p.commitment_id === id);
+  const priorityFor = (item: Commitment) =>
+    data()?.priorities.find((p) => p.commitment_id === item.commitment_id);
 
   // Filtered Commitments
   const filteredCommitments = createMemo(() => {
@@ -1587,7 +1594,7 @@ export function Commitments() {
                   {(commitment) => (
                     <Row
                       commitment={commitment}
-                      priority={priorityFor(commitment.commitment_id)}
+                      priority={priorityFor(commitment)}
                       onChange={() => void refetch()}
                     />
                   )}

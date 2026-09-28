@@ -453,7 +453,7 @@ export function PromptsSection(props: {
             <span>Fingerprint</span>
             <button
               class="ghost small"
-              style="padding: 1px 6px; font-size: 11px;"
+              style="padding: 1px 6px; font-size: 12px;"
               onClick={() => copyToClipboard(currentFingerprint(), "fingerprint")}
             >
               {copiedFingerprint() ? "Copied" : "Copy hash"}
@@ -957,7 +957,7 @@ export function PromptsSection(props: {
                       <td>
                         <strong>{d.block}</strong>
                         <Show when={isSelected()}>
-                          <span class="chip chip-ok" style="margin-left: 6px; font-size: 10px;">viewing</span>
+                          <span class="chip chip-ok" style="margin-left: 6px; font-size: 12px;">viewing</span>
                         </Show>
                       </td>
                       <td>

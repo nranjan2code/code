@@ -963,6 +963,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/config/project", get(get_workspace_config_layer))
         .route("/config/mode", post(set_permission_mode))
         .route(
+            "/config/route/suggestions",
+            get(route_same_model_suggestions),
+        )
+        .route(
             "/agent-network/capabilities",
             post(agent_network_capability),
         )
@@ -13570,15 +13574,24 @@ fn refresh_control_plane(state: &AppState) {
 
 /// Picker data for provider/model UIs. Reports WHICH env var authenticates
 /// each provider and whether it resolves right now — never the value.
-async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value> {
-    refresh_control_plane(&state);
-    let route = state.core.effective_route();
+async fn list_providers(
+    State(state): State<AppState>,
+    Query(query): Query<AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let core = if query.agent.is_some() {
+        scoped_core!(&state, None, query.agent.as_deref())
+    } else {
+        refresh_control_plane(&state);
+        state.core.clone()
+    };
+    let route = core.effective_route();
     let mut providers = Vec::new();
-    for name in state.core.provider_names() {
+    for name in core.provider_names() {
         let requires_key = name != "ollama";
-        let configured = state.core.provider_configured(&name);
-        let credential_ids = state.core.provider_credential_ids(&name);
-        let (project_key, user_key, process_key) = state.core.provider_key_sources(&name);
+        let configured = core.provider_configured(&name);
+        let credential_ids = core.provider_credential_ids(&name);
+        let (project_key, user_key, process_key) = core.provider_key_sources(&name);
         providers.push(serde_json::json!({
             "label": Core::provider_label(&name).unwrap_or(&name),
             "name": name,
@@ -13600,9 +13613,10 @@ async fn list_providers(State(state): State<AppState>) -> Json<serde_json::Value
         "current_provider_source": route.provider_source,
         "current_model_source": route.model_source,
         "route_revision": route.revision,
-        "current_configured": state.core.provider_configured(&state.core.effective_provider()),
+        "current_configured": core.provider_configured(&core.effective_provider()),
         "providers": providers,
     }))
+    .into_response()
 }
 
 fn pool_env_var(provider: &str) -> Option<&'static str> {
@@ -13614,6 +13628,8 @@ struct ProviderRef {
     provider: String,
     #[serde(default)]
     scope: Option<ConfigScope>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Revoke a provider key. Reports when the variable is still set in the
@@ -13624,13 +13640,16 @@ async fn delete_provider_key(
     Json(body): Json<ProviderRef>,
 ) -> axum::response::Response {
     let scope = body.scope.unwrap_or(ConfigScope::User);
-    match state
-        .core
-        .remove_provider_key_scoped(&body.provider, scope.is_workspace())
+    let core = if body.agent.is_some() {
+        scoped_core!(&state, None, body.agent.as_deref())
+    } else {
+        state.core.clone()
+    };
+    match core.remove_provider_key_scoped(&body.provider, scope.is_workspace())
     {
         Ok(removed) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &core.sessions_home(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "provider_key_removed",
                 &format!(
@@ -13666,6 +13685,7 @@ async fn delete_provider_key(
 async fn discover_models(
     State(state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
+    Query(query): Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     if !Core::provider_known(&name) {
         return (
@@ -13674,10 +13694,15 @@ async fn discover_models(
         )
             .into_response();
     }
-    match state.core.discover_models(&name).await {
+    let core = if query.agent.is_some() {
+        scoped_core!(&state, None, query.agent.as_deref())
+    } else {
+        state.core.clone()
+    };
+    match core.discover_models(&name).await {
         Ok(models) => {
             if name == "bedrock" {
-                match state.core.bedrock_model_availability(&models).await {
+                match core.bedrock_model_availability(&models).await {
                     Ok(availability) => Json(serde_json::json!({ "provider": name, "models": models, "availability": availability })).into_response(),
                     Err(e) => Json(serde_json::json!({ "provider": name, "models": models, "availability_error": e.to_string() })).into_response(),
                 }
@@ -13693,9 +13718,94 @@ async fn discover_models(
     }
 }
 
+#[derive(serde::Deserialize, Default)]
+struct SameModelSuggestionQuery {
+    #[serde(default)]
+    agent: Option<String>,
+    /// Only proposals that include this `provider/model`.
+    #[serde(default)]
+    model: Option<String>,
+}
+
+/// Propose which ids at the connected services name one model
+/// (docs/design/15-reliability.md, "Same model at other services").
+///
+/// Reads every configured service's model list through the same discovery
+/// the pickers use, and writes nothing: a proposal takes effect only once a
+/// person confirms it into `[route] same_model`. What is already confirmed
+/// is left out (`model_identity::unconfirmed`), and a service whose list
+/// cannot be read is reported rather than guessed at.
+async fn route_same_model_suggestions(
+    State(state): State<AppState>,
+    Query(query): Query<SameModelSuggestionQuery>,
+) -> axum::response::Response {
+    let core = scoped_core!(&state, None, query.agent.as_deref());
+    let only = match query.model.as_deref().map(vak_llm::ModelRef::parse) {
+        None => None,
+        Some(Some(model)) => Some(model),
+        Some(None) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "model must read provider/model" })),
+            )
+                .into_response();
+        }
+    };
+    let providers: Vec<String> = core
+        .provider_names()
+        .into_iter()
+        .filter(|provider| core.provider_configured(provider))
+        .collect();
+    let lists = futures::future::join_all(
+        providers
+            .iter()
+            .map(|provider| core.discover_models(provider)),
+    )
+    .await;
+    let mut catalogues = Vec::new();
+    let mut errors = Vec::new();
+    for (provider, list) in providers.into_iter().zip(lists) {
+        match list {
+            Ok(models) => {
+                // Two provider names over one key are one service, so the
+                // account's non-secret fingerprint is what tells them apart.
+                let service = core
+                    .provider_credential_ids(&provider)
+                    .into_iter()
+                    .next()
+                    .unwrap_or_else(|| provider.clone());
+                catalogues.push((provider, service, models));
+            }
+            Err(error) => {
+                let mut body = provider_error_body(&error);
+                body["provider"] = serde_json::Value::String(provider);
+                errors.push(body);
+            }
+        }
+    }
+    let views: Vec<vak_llm::model_identity::Catalogue<'_>> = catalogues
+        .iter()
+        .map(
+            |(provider, service, models)| vak_llm::model_identity::Catalogue {
+                provider,
+                service,
+                models,
+            },
+        )
+        .collect();
+    let confirmed = core.effective_route_settings().same_model;
+    let groups = vak_llm::model_identity::unconfirmed(
+        vak_llm::model_identity::suggest_groups(&views),
+        &confirmed,
+        only.as_ref(),
+    );
+    Json(serde_json::json!({ "groups": groups, "errors": errors })).into_response()
+}
+
 async fn model_availability(
     State(state): State<AppState>,
     axum::extract::Path(name): axum::extract::Path<String>,
+    Query(query): Query<AgentScopeQuery>,
 ) -> axum::response::Response {
     if name != "bedrock" {
         return (
@@ -13704,7 +13814,12 @@ async fn model_availability(
         )
             .into_response();
     }
-    let models = match state.core.discover_models("bedrock").await {
+    let core = if query.agent.is_some() {
+        scoped_core!(&state, None, query.agent.as_deref())
+    } else {
+        state.core.clone()
+    };
+    let models = match core.discover_models("bedrock").await {
         Ok(models) => models,
         Err(e) => {
             let mut body = provider_error_body(&e);
@@ -13712,7 +13827,7 @@ async fn model_availability(
             return (StatusCode::BAD_GATEWAY, Json(body)).into_response();
         }
     };
-    match state.core.bedrock_model_availability(&models).await {
+    match core.bedrock_model_availability(&models).await {
         Ok(availability) => {
             Json(serde_json::json!({"provider":name,"models":availability})).into_response()
         }
@@ -13752,6 +13867,8 @@ struct ProviderKeyBody {
     key: String,
     #[serde(default)]
     scope: Option<ConfigScope>,
+    #[serde(default)]
+    agent: Option<String>,
 }
 
 /// Persists a credential to the Shared secret scope and makes it
@@ -13761,13 +13878,16 @@ async fn put_provider_key(
     Json(body): Json<ProviderKeyBody>,
 ) -> axum::response::Response {
     let scope = body.scope.unwrap_or(ConfigScope::User);
-    match state
-        .core
-        .set_provider_key_scoped(&body.provider, &body.key, scope.is_workspace())
+    let core = if body.agent.is_some() {
+        scoped_core!(&state, None, body.agent.as_deref())
+    } else {
+        state.core.clone()
+    };
+    match core.set_provider_key_scoped(&body.provider, &body.key, scope.is_workspace())
     {
         Ok(env_var) => {
             vak_core::security_events::record(
-                &state.core.sessions_home(),
+                &core.sessions_home(),
                 vak_core::security_events::EventKind::ProviderKeyChange,
                 "provider_key_set",
                 &format!("provider={} scope={}", body.provider, scope.label()),
@@ -14248,6 +14368,12 @@ async fn get_config(
     let cfg = core.config();
     let work = core.effective_work();
     let route = core.effective_route();
+    let route_settings = core.effective_route_settings();
+    let same_model: Vec<Vec<String>> = route_settings
+        .same_model
+        .iter()
+        .map(|group| group.iter().map(vak_llm::ModelRef::spelling).collect())
+        .collect();
     let permission_rules = core.effective_permission_rules();
     let project_path = vak_config::project_path(core.cwd());
     Json(serde_json::json!({
@@ -14304,10 +14430,11 @@ async fn get_config(
             "confirmation": work.confirmation,
         },
         "route": {
-            "objective": cfg.route.objective,
-            "fallback_models": cfg.route.fallback_models,
-            "max_fallbacks": cfg.route.max_fallbacks,
-            "quality_hints": cfg.route.quality_hints,
+            "objective": route_settings.objective,
+            "fallback_models": route_settings.fallback_models,
+            "same_model": same_model,
+            "max_fallbacks": route_settings.max_fallbacks,
+            "quality_hints": route_settings.quality_hints,
         },
         "integrations": {
             "mcp_servers": cfg.mcp.servers.keys().collect::<Vec<_>>(),
@@ -14390,6 +14517,12 @@ fn config_layer_response(
             "inherit_skills": layer.capabilities.inherit_skills,
             "inherit_commands": layer.capabilities.inherit_commands,
             "inherit_plugins": layer.capabilities.inherit_plugins,
+        },
+        // This layer's own lists, never the merged view: they seed a write
+        // that replaces exactly these (invariant 21).
+        "route": {
+            "same_model": layer.route.same_model,
+            "fallback_models": layer.route.fallback_models,
         },
     }))
 }
@@ -14640,8 +14773,80 @@ struct ConfigPatch {
     /// Grants are privileged and refused for an untrusted project layer.
     #[serde(default)]
     plugins_network_allow: Option<Vec<String>>,
+    /// `[route] same_model` for the selected layer, as groups of
+    /// `provider/model` spellings. `Some(groups)` replaces that layer's list
+    /// (empty removes it); absent leaves it alone.
+    #[serde(default)]
+    route_same_model: Option<Vec<Vec<String>>>,
+    /// `[route] fallback_models` for the selected layer, same convention.
+    #[serde(default)]
+    route_fallback_models: Option<Vec<String>>,
     #[serde(default)]
     agent: Option<String>,
+}
+
+type RouteBackups = (Option<Vec<Vec<vak_llm::ModelRef>>>, Option<Vec<String>>);
+
+/// Check and normalise a `[route]` backup write before anything is
+/// persisted: every member names a provider this build knows and a model id,
+/// and groups that share a member merge.
+fn route_backups_from_patch(body: &ConfigPatch) -> Result<RouteBackups, String> {
+    const MAX_ENTRIES: usize = 64;
+    const MAX_ID_CHARS: usize = 256;
+    let same_model = match &body.route_same_model {
+        None => None,
+        Some(groups) => {
+            if groups.len() > MAX_ENTRIES {
+                return Err(format!(
+                    "route_same_model holds at most {MAX_ENTRIES} groups"
+                ));
+            }
+            let mut parsed = Vec::with_capacity(groups.len());
+            for group in groups {
+                if !(2..=MAX_ENTRIES).contains(&group.len()) {
+                    return Err(format!(
+                        "each route_same_model group names 2 to {MAX_ENTRIES} models"
+                    ));
+                }
+                let mut members = Vec::with_capacity(group.len());
+                for spelling in group {
+                    let member = vak_llm::ModelRef::parse(spelling)
+                        .filter(|member| {
+                            Core::provider_known(&member.provider)
+                                && member.model.chars().count() <= MAX_ID_CHARS
+                        })
+                        .ok_or_else(|| {
+                            format!("'{spelling}' is not provider/model for a known provider")
+                        })?;
+                    members.push(member);
+                }
+                parsed.push(members);
+            }
+            Some(vak_llm::model_identity::merge_groups(parsed))
+        }
+    };
+    let fallback_models = match &body.route_fallback_models {
+        None => None,
+        Some(models) => {
+            if models.len() > MAX_ENTRIES {
+                return Err(format!(
+                    "route_fallback_models holds at most {MAX_ENTRIES} models"
+                ));
+            }
+            let mut unique: Vec<String> = Vec::with_capacity(models.len());
+            for model in models {
+                let model = model.trim();
+                if model.is_empty() || model.chars().count() > MAX_ID_CHARS {
+                    return Err("each route_fallback_models entry is a model id".into());
+                }
+                if !unique.iter().any(|seen| seen == model) {
+                    unique.push(model.to_string());
+                }
+            }
+            Some(unique)
+        }
+    };
+    Ok((same_model, fallback_models))
 }
 
 async fn patch_config(
@@ -14789,6 +14994,16 @@ async fn patch_config_scope(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    let (route_same_model, route_fallback_models) = match route_backups_from_patch(&body) {
+        Ok(backups) => backups,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
     let permission_mode = body.permission_mode.as_deref().and_then(parse_mode);
     let approval_mode = body.approval_mode.as_deref().and_then(parse_approval_mode);
     let voice_patch = vak_config::VoicePatch {
@@ -15079,6 +15294,35 @@ async fn patch_config_scope(
             ));
         } else {
             changes.push(format!("plugins_network_allow={grant:?}"));
+        }
+    }
+    if route_same_model.is_some() || route_fallback_models.is_some() {
+        let path = if global {
+            vak_config::global_path().ok_or(StatusCode::INTERNAL_SERVER_ERROR)
+        } else {
+            Ok(vak_config::project_path(core.cwd()))
+        };
+        let Ok(path) = path else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        if vak_config::persist_route_backups_at(
+            path,
+            route_same_model.as_deref(),
+            route_fallback_models.as_deref(),
+        )
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        // Live sessions read the routing policy fresh at their next turn.
+        if core.refresh_persisted_preferences().is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        if let Some(groups) = &route_same_model {
+            changes.push(format!("route.same_model={} group(s)", groups.len()));
+        }
+        if let Some(models) = &route_fallback_models {
+            changes.push(format!("route.fallback_models={models:?}"));
         }
     }
     if body.inherit_mcp.is_some()

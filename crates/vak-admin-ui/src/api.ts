@@ -9,6 +9,7 @@ import type {
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
+  SameModelSuggestions,
   FrozenContract,
   GatewayStatus,
   HealthInfo,
@@ -242,7 +243,7 @@ export const api = {
   rebuild: (): Promise<RebuildStats> =>
     fetch("/admin/api/store/rebuild", { method: "POST" }).then((r) => handle(r)),
 
-  config: () => fetch("/admin/api/config").then((r) => handle<ConfigInfo>(r)),
+  config: (agent?: string) => fetch(withAgent("/admin/api/config", agent)).then((r) => handle<ConfigInfo>(r)),
 
   gatewayStatus: () =>
     fetch("/admin/api/gateway/status").then((r) => handle<GatewayStatus>(r)),
@@ -530,27 +531,31 @@ export const api = {
       method: "POST",
     }).then(handleVoid),
 
-  providers: (): Promise<ProviderListResponse> =>
-    fetch("/providers").then((r) => handle(r)),
+  providers: (agent?: string): Promise<ProviderListResponse> =>
+    fetch(withAgent("/providers", agent)).then((r) => handle(r)),
 
-  models: (providerName: string): Promise<DiscoveredModelsResponse> =>
-    fetch(`/providers/${encodeURIComponent(providerName)}/models`).then((r) => handle(r)),
+  models: (providerName: string, agent?: string): Promise<DiscoveredModelsResponse> =>
+    fetch(withAgent(`/providers/${encodeURIComponent(providerName)}/models`, agent)).then((r) => handle(r)),
+
+  /** Reads every connected service's model list and proposes which ids name `model` (`provider/model`). */
+  sameModelSuggestions: (model: string, agent?: string): Promise<SameModelSuggestions> =>
+    fetch(withAgent(`/config/route/suggestions?model=${encodeURIComponent(model)}`, agent)).then((r) => handle(r)),
 
   voiceProviders: (): Promise<VoiceProviderListResponse> =>
     fetch("/voice/providers").then((r) => handle(r)),
 
-  setProviderKey: (provider: string, key: string, scope: ConfigScope): Promise<void> =>
+  setProviderKey: (provider: string, key: string, scope: ConfigScope, agent?: string): Promise<void> =>
     fetch("/config/key", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider, key, scope }),
+      body: JSON.stringify({ provider, key, scope, agent }),
     }).then(handleVoid),
 
-  deleteProviderKey: (provider: string, scope: ConfigScope): Promise<void> =>
+  deleteProviderKey: (provider: string, scope: ConfigScope, agent?: string): Promise<void> =>
     fetch("/config/key", {
       method: "DELETE",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ provider, scope }),
+      body: JSON.stringify({ provider, scope, agent }),
     }).then(handleVoid),
 
   finops: (agent?: string): Promise<FinOpsStatus> =>

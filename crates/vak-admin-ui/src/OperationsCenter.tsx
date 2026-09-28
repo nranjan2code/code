@@ -101,7 +101,7 @@ function workspaceLabel(path: string, data?: OperationsSnapshot): string {
   return parts.at(-1) || path;
 }
 
-function scopeOperations(data: OperationsSnapshot, scopeFilter: string, windowName: TimeWindow): OperationsSnapshot {
+export function scopeOperations(data: OperationsSnapshot, scopeFilter: string, windowName: TimeWindow): OperationsSnapshot {
   const cutoff = cutoffFor(windowName);
   const isAgent = scopeFilter.startsWith("agent:");
   const targetAgent = isAgent ? scopeFilter.slice("agent:".length) : null;
@@ -156,14 +156,21 @@ function OperationsContextBar(props: {
   timeWindow: TimeWindow;
   onAskDoctor: () => void;
 }) {
+  const [agentSearch, setAgentSearch] = createSignal("");
+  const filteredAgents = createMemo(() => {
+    const query = agentSearch().trim().toLocaleLowerCase();
+    return (props.data.agents ?? [{ id: "vak", name: "Vakyartha" }])
+      .filter((agent) => !query || `${agent.name} ${agent.id}`.toLocaleLowerCase().includes(query))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  });
   const connectionLabel = () => conn() === "live" ? "Live stream" : conn() === "connecting" ? "Connecting" : "Disconnected";
   return <section class="ops-context-bar" aria-label="Operational context">
     <div class="ops-context-group">
-      <label class="ops-context-field"><span>Scope</span><select value={props.workspace || "all"} onChange={(event) => {
+      <label class="ops-context-field"><span>Scope</span><input class="ops-agent-search" type="search" aria-label="Find an agent" placeholder={`Find among ${(props.data.agents ?? []).length} agents`} value={agentSearch()} onInput={(event) => setAgentSearch(event.currentTarget.value)} /><select value={props.workspace || "all"} onChange={(event) => {
         const val = event.currentTarget.value;
         if (val === "all") {
-          setSelectedAgentId("global");
-          localStorage.setItem("vak_admin_selected_agent", "global");
+          setSelectedAgentId("all");
+          localStorage.setItem("vak_admin_selected_agent", "all");
         } else if (val.startsWith("agent:")) {
           const ag = val.slice("agent:".length);
           setSelectedAgentId(ag);
@@ -171,11 +178,12 @@ function OperationsContextBar(props: {
         }
         operationNavigate(operationPath(), { workspace: val });
       }}>
-        <option value="all">🌐 Global Platform</option>
-        <optgroup label="Specialist Agents">
-          <For each={props.data.agents ?? [{ id: "vak", name: "Vakyartha" }]}>
-            {(agent) => <option value={`agent:${agent.id}`}>✦ {agent.name} ({agent.id})</option>}
+        <option value="all">All agents</option>
+        <optgroup label={`Agents (${filteredAgents().length}${agentSearch() ? ` of ${(props.data.agents ?? []).length}` : ""})`}>
+          <For each={filteredAgents()}>
+            {(agent) => <option value={`agent:${agent.id}`}>{agent.name} ({agent.id})</option>}
           </For>
+          <Show when={filteredAgents().length === 0}><option disabled>No agents match</option></Show>
         </optgroup>
         <optgroup label="Working Directories">
           <For each={workspaceOptions(props.data)}>{(workspace) => <option value={workspace}>{workspaceLabel(workspace, props.data)} · {workspace}</option>}</For>
@@ -310,7 +318,7 @@ function RuntimeView(props: { data: OperationsSnapshot; act: (service: "gateway"
             Daemon lifecycle and event fabric run at the platform level. Actions here apply to the host rather than an individual agent.
           </p>
         </div>
-        <button class="ghost small" onClick={() => { setSelectedAgentId("global"); localStorage.setItem("vak_admin_selected_agent", "global"); }}>
+        <button class="ghost small" onClick={() => { setSelectedAgentId("all"); localStorage.setItem("vak_admin_selected_agent", "all"); }}>
           Switch to Global
         </button>
       </div>
@@ -494,7 +502,7 @@ export function OperationsCenter(props: { section?: Section }) {
     const fromQuery = operationQuery().get("workspace");
     if (fromQuery) return fromQuery;
     const currentAgent = selectedAgentId();
-    if (currentAgent && currentAgent !== "global") {
+    if (currentAgent && currentAgent !== "global" && currentAgent !== "all") {
       return `agent:${currentAgent}`;
     }
     return "all";

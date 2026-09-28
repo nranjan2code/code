@@ -525,6 +525,7 @@ async fn config_endpoint_exposes_route_policy() {
     assert_eq!(route["objective"], "auto");
     assert_eq!(route["max_fallbacks"], 4);
     assert!(route["fallback_models"].is_array());
+    assert!(route["same_model"].is_array());
     assert!(route["quality_hints"].is_array());
 }
 

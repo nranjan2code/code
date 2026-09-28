@@ -685,6 +685,12 @@ pub struct RouteSettings {
     /// candidate legs WHEN warm discovery shows a configured key can
     /// reach them; empty keeps the legacy same-model-only ladder.
     pub fallback_models: Vec<String>,
+    /// Confirmed groups of `provider/model` ids that name one model at
+    /// different services. A member stands in for the primary only through
+    /// a group: one model has a different id at each service, so an id
+    /// alone is never evidence across services. Groups that share a member
+    /// merge; every layer's groups apply.
+    pub same_model: Vec<Vec<String>>,
     /// Total ladder length cap INCLUDING the primary leg (default 4).
     pub max_fallbacks: Option<usize>,
     /// Caller-declared frontier-tier model-id substrings promoted under
@@ -1396,6 +1402,9 @@ pub struct RouteResolved {
     pub objective: String,
     /// Cross-model fallback allowlist (exact model ids).
     pub fallback_models: Vec<String>,
+    /// Confirmed same-model groups, merged across layers so no member
+    /// appears in two groups.
+    pub same_model: Vec<Vec<vak_llm::ModelRef>>,
     /// Total ladder length cap including the primary leg.
     pub max_fallbacks: usize,
     /// Frontier-tier model-id substrings (lowercased for matching).
@@ -1607,6 +1616,7 @@ impl Default for Config {
             route: RouteResolved {
                 objective: "auto".into(),
                 fallback_models: Vec::new(),
+                same_model: Vec::new(),
                 max_fallbacks: 4,
                 quality_hints: Vec::new(),
                 modality_hints: Vec::new(),
@@ -2061,6 +2071,49 @@ pub fn persist_evidence_max_age(path: PathBuf, seconds: i64) -> Result<(), Confi
             "evidence_max_age_secs".into(),
             toml::Value::Integer(seconds.max(0)),
         );
+        Ok(())
+    })
+}
+
+/// Replace one layer's `[route]` backup lists. `Some(list)` replaces that
+/// layer's own list and an empty one removes the key; `None` leaves it
+/// alone. Other layers are untouched, so what a wider layer allows still
+/// applies (lists are unions across layers).
+pub fn persist_route_backups_at(
+    path: PathBuf,
+    same_model: Option<&[Vec<vak_llm::ModelRef>]>,
+    fallback_models: Option<&[String]>,
+) -> Result<(), ConfigError> {
+    update_config_file(&path, |document| {
+        let route = child_table(document, "route", &path)?;
+        if let Some(groups) = same_model {
+            if groups.is_empty() {
+                route.remove("same_model");
+            } else {
+                let groups = groups
+                    .iter()
+                    .map(|group| {
+                        toml::Value::Array(
+                            group
+                                .iter()
+                                .map(|member| toml::Value::String(member.spelling()))
+                                .collect(),
+                        )
+                    })
+                    .collect();
+                route.insert("same_model".into(), toml::Value::Array(groups));
+            }
+        }
+        if let Some(models) = fallback_models {
+            if models.is_empty() {
+                route.remove("fallback_models");
+            } else {
+                route.insert(
+                    "fallback_models".into(),
+                    toml::Value::Array(models.iter().cloned().map(toml::Value::String).collect()),
+                );
+            }
+        }
         Ok(())
     })
 }
@@ -2903,6 +2956,7 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         }
     };
     cfg.route.fallback_models = merged.route.fallback_models.clone();
+    cfg.route.same_model = resolve_same_model(&merged.route.same_model, &mut cfg.warnings);
     cfg.route.max_fallbacks = merged.route.max_fallbacks.unwrap_or(4).clamp(1, 16);
     cfg.route.quality_hints = merged
         .route
@@ -3696,6 +3750,35 @@ fn unknown_key_warnings(path: &Path, text: &str) -> Vec<String> {
     out
 }
 
+/// Read `[route] same_model`. A member that does not spell `provider/model`
+/// is dropped with a warning, and groups that share a member merge, so the
+/// resolved list states each fact once.
+fn resolve_same_model(
+    groups: &[Vec<String>],
+    warnings: &mut Vec<String>,
+) -> Vec<Vec<vak_llm::ModelRef>> {
+    let mut parsed = Vec::with_capacity(groups.len());
+    for group in groups {
+        let mut members = Vec::with_capacity(group.len());
+        for spelling in group {
+            match vak_llm::ModelRef::parse(spelling) {
+                Some(member) => members.push(member),
+                None => warnings.push(format!(
+                    "route.same_model member '{spelling}' is not provider/model; ignored"
+                )),
+            }
+        }
+        if members.len() < 2 {
+            warnings.push(format!(
+                "route.same_model group {group:?} names fewer than two models; ignored"
+            ));
+            continue;
+        }
+        parsed.push(members);
+    }
+    vak_llm::model_identity::merge_groups(parsed)
+}
+
 fn merge_into(base: &mut FileConfig, over: FileConfig) {
     if over.provider.is_some() {
         base.provider = over.provider;
@@ -3945,6 +4028,11 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     for m in over.route.fallback_models {
         if !base.route.fallback_models.contains(&m) {
             base.route.fallback_models.push(m);
+        }
+    }
+    for group in over.route.same_model {
+        if !base.route.same_model.contains(&group) {
+            base.route.same_model.push(group);
         }
     }
     if over.route.max_fallbacks.is_some() {
@@ -4915,6 +5003,130 @@ mod tests {
         assert_eq!(cfg.ui.theme, "dark");
         assert_eq!(cfg.deny, vec!["bash"]);
         assert_eq!(cfg.route.objective, "quality-critical");
+    }
+
+    #[test]
+    fn route_same_model_parses_merges_and_warns() {
+        crate::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "[route]\n\
+             same_model = [\n\
+               [\"anthropic/model-a\", \"openrouter/vendor/model-a\"],\n\
+               [\"bedrock/us.vendor.model-a-v1:0\", \"openrouter/vendor/model-a\"],\n\
+               [\"no-provider\", \"google/model-b\"],\n\
+             ]\n\
+             quality_hints = [\"model-a\"]\n\
+             modality_hints = [\"vision\"]\n",
+        );
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        let spelled: Vec<Vec<String>> = cfg
+            .route
+            .same_model
+            .iter()
+            .map(|group| group.iter().map(vak_llm::ModelRef::spelling).collect())
+            .collect();
+        assert_eq!(
+            spelled,
+            vec![vec![
+                "anthropic/model-a",
+                "bedrock/us.vendor.model-a-v1:0",
+                "openrouter/vendor/model-a",
+            ]],
+            "groups sharing a member merge into one"
+        );
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("'no-provider' is not provider/model")),
+            "{:?}",
+            cfg.warnings
+        );
+        assert!(
+            cfg.warnings
+                .iter()
+                .any(|w| w.contains("fewer than two models")),
+            "{:?}",
+            cfg.warnings
+        );
+        assert_eq!(cfg.route.quality_hints, vec!["model-a"]);
+        assert_eq!(cfg.route.modality_hints, vec!["vision"]);
+    }
+
+    #[test]
+    fn route_lists_are_unions_across_layers() {
+        let group = |a: &str, b: &str| vec![a.to_string(), b.to_string()];
+        let mut base = FileConfig {
+            route: RouteSettings {
+                fallback_models: vec!["shared-backup".into()],
+                same_model: vec![group("p/x", "q/x")],
+                quality_hints: vec!["shared".into()],
+                ..RouteSettings::default()
+            },
+            ..FileConfig::default()
+        };
+        let over = FileConfig {
+            route: RouteSettings {
+                fallback_models: vec!["agent-backup".into(), "shared-backup".into()],
+                same_model: vec![group("p/x", "q/x"), group("r/y", "s/y")],
+                quality_hints: vec!["agent".into()],
+                modality_hints: vec!["vision".into()],
+                ..RouteSettings::default()
+            },
+            ..FileConfig::default()
+        };
+        merge_into(&mut base, over);
+        assert_eq!(
+            base.route.fallback_models,
+            vec!["shared-backup", "agent-backup"]
+        );
+        assert_eq!(
+            base.route.same_model,
+            vec![group("p/x", "q/x"), group("r/y", "s/y")]
+        );
+        assert_eq!(base.route.quality_hints, vec!["shared", "agent"]);
+        assert_eq!(base.route.modality_hints, vec!["vision"]);
+    }
+
+    #[test]
+    fn route_backups_persist_to_one_layer_and_clear_in_place() {
+        crate::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        write_project_config(
+            dir.path(),
+            "deny = [\"bash\"]\n[route]\nobjective = \"utility\"\n",
+        );
+        let path = project_path(dir.path());
+        let group = vec![
+            vak_llm::ModelRef::parse("anthropic/model-a").unwrap(),
+            vak_llm::ModelRef::parse("openrouter/vendor/model-a").unwrap(),
+        ];
+        persist_route_backups_at(
+            path.clone(),
+            Some(std::slice::from_ref(&group)),
+            Some(&["backup-model".to_string()]),
+        )
+        .unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(cfg.route.same_model, vec![group.clone()]);
+        assert_eq!(cfg.route.fallback_models, vec!["backup-model"]);
+        assert_eq!(cfg.route.objective, "utility");
+        assert_eq!(cfg.deny, vec!["bash"]);
+
+        persist_route_backups_at(path.clone(), None, Some(&[])).unwrap();
+        let cfg = load_with_trust(dir.path(), true).unwrap();
+        assert_eq!(
+            cfg.route.same_model,
+            vec![group],
+            "absent leaves a list alone"
+        );
+        assert!(cfg.route.fallback_models.is_empty());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !text.contains("fallback_models"),
+            "an empty list removes the key:\n{text}"
+        );
     }
 
     #[test]

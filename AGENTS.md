@@ -1070,7 +1070,10 @@ crates/vak-llm       unified provider API (anthropic / openai-responses /
                      (work.rs), frozen-ladder ordering: demand-scored
                      objectives, belief demotion, cross-model fallbacks
                      (route.rs) -- docs/design/42-managed-work-contracts.md
-                     Phases A+B+R. `ChatRequest.cache` (session key +
+                     Phases A+B+R. Which ids at different services name
+                     one model (model_identity.rs): confirmed
+                     `[route] same_model` groups, and suggestions read
+                     from id spelling alone, used only once confirmed. `ChatRequest.cache` (session key +
                      per-message breakpoints) and `ToolDefinition.defer`
                      render per provider: Anthropic `cache_control` (<=4
                      breakpoints) + `defer_loading` + the server-side tool

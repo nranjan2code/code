@@ -170,6 +170,23 @@ Phase R (vakrouter adoption) upgrades the ordering machinery:
   turn route and leaves replay exact.
 - **Cross-model fallbacks are opt-in**: `[route].fallback_models` allowlist
   ∩ warm discovery; the user's primary never loses the head position.
+- **Same model at other services** (`crates/vak-llm/src/model_identity.rs`,
+  `routing::stand_in_legs`): one model has a different id at each service
+  (a bare name at its maker, `vendor/name` at an aggregator,
+  `region.vendor.name-v1:0` on Bedrock), so an id is evidence of identity
+  only within one account: another key for the primary's provider, or a
+  provider name sharing its credential fingerprint (one account, two wire
+  protocols). Across services a leg stands in for the primary only as a
+  member of a confirmed `[route] same_model` group, spelled `provider/model`
+  as `[intent] classify_model` is; groups that share a member merge, and every
+  layer's groups apply. The admin portal's Backup models panel proposes groups
+  from live catalogues (`GET /config/route/suggestions`) by reading how ids
+  are spelled, never what a model is (invariant 9), and a proposal is used
+  only once a person confirms it, because a wrong match would quietly serve a
+  different model. Stand-ins are seated before any cross-model alternate: the
+  same model elsewhere is a like-for-like swap, another model changes
+  behaviour. `[route]` applies live: every route refresh re-reads it, so a
+  confirmation reaches a running session at its next turn.
 - **Diversity caps + annotations**: ⌈max_total/3⌉ seats per provider;
   thin-chain/dominant-domain/unreachable warnings frozen into the header,
   visible in TUI introspection.

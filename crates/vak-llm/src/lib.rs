@@ -10,6 +10,7 @@ pub mod error;
 pub mod gate;
 pub mod google;
 pub mod google_live;
+pub mod model_identity;
 pub mod models;
 pub mod ollama;
 pub mod openai;
@@ -26,6 +27,7 @@ pub mod work;
 
 pub use error::LlmError;
 pub use gate::credential_id;
+pub use model_identity::ModelRef;
 pub use registry::{ProviderAuth, ProviderRegistry};
 pub use route::{
     BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EndpointDialect, EvidenceSnapshot,

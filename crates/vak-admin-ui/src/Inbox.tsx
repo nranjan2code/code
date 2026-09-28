@@ -14,7 +14,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 
 import { api } from "./api";
 import { PageHeader } from "./display";
-import { navigate, pushToast, route, selectedAgentIdOrUndefined } from "./store";
+import { navigate, pushToast, route, selectedAgentId, selectedAgentIdOrUndefined } from "./store";
 import { timeAgo } from "./time";
 import type { InboxEntry, PendingApproval, SkillProposal } from "./types";
 
@@ -50,13 +50,14 @@ export const INBOX_KIND_TONES: Record<string, "warning" | "danger" | "info" | "s
 };
 
 export const INBOX_KIND_ACCENTS: Record<string, string> = {
-  approval_pending: "#f59e0b",
-  approval_denied: "#ef4444",
-  budget_alert: "#f43f5e",
-  proposal_opened: "#8b5cf6",
-  heartbeat: "#06b6d4",
-  task_summary: "#10b981",
-  digest: "#64748b",
+  approval_pending: "var(--yellow)",
+  approval_denied: "var(--red)",
+  budget_alert: "var(--red)",
+  proposal_opened: "var(--accent)",
+  heartbeat: "var(--blue)",
+  task_summary: "var(--green)",
+  digest: "var(--muted)",
+  routine_failed: "var(--red)",
 };
 
 /** Scheduled work: what a routine said, a digest, or why it could not run. */
@@ -77,7 +78,18 @@ export function Inbox() {
   const [selectedEntryId, setSelectedEntryId] = createSignal<string | null>(null);
 
   // Live resources
-  const [inboxData, { refetch: refetchInbox }] = createResource(unreadOnly, (u) => api.inbox(u));
+  const [inboxData, { refetch: refetchInbox }] = createResource(
+    () => ({ unread: unreadOnly(), selected: selectedAgentId() }),
+    async ({ unread, selected }) => {
+      const result = await api.inbox(unread, 200);
+      if (selected === "all" || selected === "global") return result;
+      const sessions = await api.sessions(5000, selected);
+      const ids = new Set(sessions.sessions.map((session) => session.session_id));
+      const entries = result.entries.filter((entry) => !!entry.session_id && ids.has(entry.session_id));
+      const unreadEntries = unread ? entries : (await api.inbox(true, 5000)).entries.filter((entry) => !!entry.session_id && ids.has(entry.session_id));
+      return { entries, unread_count: unreadEntries.length };
+    },
+  );
   const [approvalsData, { refetch: refetchApprovals }] = createResource(() => api.approvals().catch(() => ({ approvals: [], total: 0 })));
   const [proposalsData, { refetch: refetchProposals }] = createResource(
     selectedAgentIdOrUndefined,
@@ -448,7 +460,7 @@ export function Inbox() {
             <For each={filteredEntries()}>
               {(entry) => {
                 const tone = () => INBOX_KIND_TONES[entry.kind] ?? "neutral";
-                const accentColor = () => INBOX_KIND_ACCENTS[entry.kind] ?? "#64748b";
+                const accentColor = () => INBOX_KIND_ACCENTS[entry.kind] ?? "var(--muted)";
                 const matchingApproval = () => findApprovalForSession(entry.session_id);
                 const isSelected = () => selectedEntryId() === entry.id;
 
@@ -568,7 +580,7 @@ export function Inbox() {
                               <button
                                 type="button"
                                 class="button small"
-                                style="background: var(--ok); color: #fff; border: none;"
+                                style="background: var(--ok); color: var(--on-accent); border: none;"
                                 onClick={() =>
                                   void handleResolveApproval(
                                     approval().session_id,

@@ -12,6 +12,7 @@ import { Commitments } from "./Commitments";
 import { PromptsSection } from "./Prompts";
 import { SecurityCenter } from "./SecurityCenter";
 import { Inbox } from "./Inbox";
+import { BackupModels } from "./BackupModels";
 import { SessionsList, SessionForensics } from "./SessionForensics";
 import { clock, shortId, timeAgo } from "./time";
 import {
@@ -24,6 +25,7 @@ import {
   setAuthed, statsVersion, toasts,
   adminAgents, setAdminAgents, selectedAgentId, setSelectedAgentId, refreshAdminAgents,
   selectedAgentIdOrUndefined,
+  mapAdminAgents,
 } from "./store";
 import type { AgentScopeItem } from "./store";
 import type {
@@ -81,21 +83,42 @@ function PromptsPage() {
 }
 
 function ScopeControl() {
+  const [agentSearch, setAgentSearch] = createSignal("");
+  const filteredAgents = createMemo(() => {
+    const query = agentSearch().trim().toLocaleLowerCase();
+    return adminAgents()
+      .filter((agent) => !query || `${agent.name} ${agent.id}`.toLocaleLowerCase().includes(query))
+      .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  });
   const currentAgent = () => adminAgents().find((a) => a.id === selectedAgentId());
 
   const handleScopeChange = (val: string) => {
     setSelectedAgentId(val);
     localStorage.setItem("vak_admin_selected_agent", val);
-    if (val === "global") {
+    setAgentSearch("");
+    if (val === "global" || val === "all") {
       setConfigScopePersisted("user");
     } else {
       setConfigScopePersisted("project");
+    }
+    const current = route();
+    const path = current.split("?", 1)[0];
+    if (path === "#/operations" || path.startsWith("#/operations/")) {
+      const params = new URLSearchParams(current.split("?", 2)[1] || "");
+      const query = val !== "global" && val !== "all" ? `agent:${val}` : "all";
+      if (query === "all") params.delete("workspace");
+      else params.set("workspace", query);
+      const suffix = params.toString();
+      navigate(`${path}${suffix ? `?${suffix}` : ""}`);
     }
   };
 
   const scopeDetail = () => {
     if (selectedAgentId() === "global") {
-      return "Global platform defaults & fleet telemetry";
+      return "Shared defaults for every agent";
+    }
+    if (selectedAgentId() === "all") {
+      return `${adminAgents().length} agents · combined view`;
     }
     const ag = currentAgent();
     if (ag) {
@@ -106,20 +129,30 @@ function ScopeControl() {
 
   return (
     <label class="scope-control" aria-label="Admin scope">
-      <span class="scope-control-label">Agent & Scope</span>
+      <span class="scope-control-label">View</span>
+      <input
+        class="scope-agent-search"
+        type="search"
+        aria-label="Find an agent"
+        placeholder={`Find among ${adminAgents().length} agents`}
+        value={agentSearch()}
+        onInput={(e) => setAgentSearch(e.currentTarget.value)}
+      />
       <select
         value={selectedAgentId()}
         onChange={(e) => handleScopeChange(e.currentTarget.value)}
       >
-        <option value="global">🌐 Global Platform Defaults</option>
-        <optgroup label="Specialist Agents">
-          <For each={adminAgents()}>
+        <option value="all">All agents</option>
+        <option value="global">Global platform defaults</option>
+        <optgroup label={`Agents (${filteredAgents().length}${agentSearch() ? ` of ${adminAgents().length}` : ""})`}>
+          <For each={filteredAgents()}>
             {(agent) => (
               <option value={agent.id}>
                 ✦ {agent.name} ({agent.id})
               </option>
             )}
           </For>
+          <Show when={filteredAgents().length === 0}><option disabled>No agents match</option></Show>
         </optgroup>
       </select>
       <span>{scopeDetail()}</span>
@@ -142,14 +175,18 @@ function AdminContextBar() {
           <>
             <span class={`scope-mark scope-mark-${scope()}`} aria-hidden="true" />
             <strong>
-              {selectedAgentId() === "global"
-                ? "Global Platform"
-                : `Agent: ${agent()?.name || selectedAgentId()}`}
+              {selectedAgentId() === "all"
+                ? "All agents"
+                : selectedAgentId() === "global"
+                  ? "Global Platform"
+                  : `Agent: ${agent()?.name || selectedAgentId()}`}
             </strong>
             <span class="admin-context-detail">
-              {selectedAgentId() === "global"
-                ? "system-wide evidence, fleet telemetry, and shared defaults"
-                : "dedicated workspace, private ledger, and personality instructions"}
+              {selectedAgentId() === "all"
+                ? `combined view across ${adminAgents().length} agents`
+                : selectedAgentId() === "global"
+                  ? "status, usage, and shared defaults"
+                  : "private workspace and conversation history"}
             </span>
             <Show when={scope() === "switchable"}>
               <button class="ghost small context-action" onClick={() => navigate("#/operations")}>
@@ -160,14 +197,18 @@ function AdminContextBar() {
         }
       >
         <strong>
-          {selectedAgentId() === "global"
-            ? "Global Platform Defaults"
-            : `Agent: ${agent()?.name || selectedAgentId()}`}
+          {selectedAgentId() === "all"
+            ? "All agents"
+            : selectedAgentId() === "global"
+              ? "Global Platform Defaults"
+              : `Agent: ${agent()?.name || selectedAgentId()}`}
         </strong>
         <span class="admin-context-detail">
-          {selectedAgentId() === "global"
-            ? "applies across all agents and channels"
-            : `applies to ${agent()?.name || selectedAgentId()}'s dedicated workspace`}
+          {selectedAgentId() === "all"
+            ? `combined view across ${adminAgents().length} agents`
+            : selectedAgentId() === "global"
+              ? "applies across all agents and channels"
+              : `applies to ${agent()?.name || selectedAgentId()}'s dedicated workspace`}
         </span>
       </Show>
     </div>
@@ -1700,7 +1741,7 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule �
 // ---- Extensions section shell ----------------------------------------------
 
 function ExtensionsSection() {
-  const [config] = createResource(() => api.config());
+  const [config] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
   const [mcp, mcpActions] = createResource(configScope, (scope) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
   const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope, selectedAgentIdOrUndefined()));
   const [skills, skillsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.skills(agent));
@@ -1886,8 +1927,12 @@ const MEMORY_PRESETS = [
 ] as const;
 
 function MemoryView() {
-  const [memoryData, { refetch }] = createResource(selectedAgentIdOrUndefined, (agent) => api.memory(agent));
-  const [configData, { refetch: refetchConfig }] = createResource(() => api.config());
+  const [memoryData, { refetch }] = createResource(selectedAgentId, async (selected) => {
+    if (selected !== "all" && selected !== "global") return api.memory(selected);
+    const ledgers = await mapAdminAgents((agent) => api.memory(agent.id));
+    return { notes: ledgers.flatMap(({ agent, value }) => value.notes.map((note) => ({ ...note, admin_agent_id: agent.id }))) };
+  });
+  const [configData, { refetch: refetchConfig }] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
@@ -1900,6 +1945,8 @@ function MemoryView() {
   const [filterScope, setFilterScope] = createSignal<"all" | "profile" | "workspace">("all");
   const [filterFreshness, setFilterFreshness] = createSignal<"all" | "fresh" | "stale">("all");
   const [query, setQuery] = createSignal("");
+  const canWriteMemory = () => selectedAgentId() !== "all" && selectedAgentId() !== "global";
+  const memoryOwner = (note?: MemoryItem) => note?.admin_agent_id ?? selectedAgentIdOrUndefined();
 
   const notes = createMemo(() => memoryData()?.notes ?? []);
   const profileCount = createMemo(() => notes().filter((n) => n.scope === "profile").length);
@@ -1949,6 +1996,7 @@ function MemoryView() {
   };
 
   const cleanArtifacts = async () => {
+    if (!canWriteMemory()) return;
     if (!confirmDestructive("Remove only abandoned memory lock/temp files and empty workspace folders? Notes will not be deleted.")) return;
     setCleaning(true);
     try {
@@ -1962,7 +2010,7 @@ function MemoryView() {
   };
 
   const addNote = async () => {
-    if (!noteText().trim() || busy()) return;
+    if (!noteText().trim() || busy() || !canWriteMemory()) return;
     setBusy(true);
     try {
       await api.addMemory(scope(), noteText().trim(), tag().trim() || undefined, selectedAgentIdOrUndefined());
@@ -1981,7 +2029,7 @@ function MemoryView() {
     if (!confirmDestructive("Forget this note? Vakyartha stops taking it into account.")) return;
     try {
       const note = memoryData()?.notes?.find((m) => m.id === id);
-      await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace", selectedAgentIdOrUndefined());
+      await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace", memoryOwner(note));
       await refetch();
       pushToast("info", "Forgotten");
     } catch (err) {
@@ -2008,8 +2056,9 @@ function MemoryView() {
       <PageHeader
         title="Memory"
         description="Things Vakyartha should keep in mind between sessions — about you, or about this workspace."
-        actions={<button class="ghost small" disabled={cleaning()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
+        actions={<button class="ghost small" disabled={cleaning() || !canWriteMemory()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
       />
+      <Show when={!canWriteMemory()}><div class="info-banner">This combined view gathers notes from each agent. Select one agent to add, edit, forget, or clean its memory.</div></Show>
 
       <div class="stat-strip">
         <StatCard label="Total memories" value={notes().length} />
@@ -2082,14 +2131,14 @@ function MemoryView() {
                         <span class="note-freshness" data-age={noteAgeBucket(m.ts)} title={`Last touched ${timeAgo(m.ts)}`} />
                         <span class={`chip ${m.scope === "profile" ? "chip-mode" : "chip-tool"}`} title={m.scope}>{m.scope === "profile" ? "about me" : "about this workspace"}</span>
                         <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
-                        <span class="dim" style="margin-left:auto; font-size:11px">{timeAgo(m.ts)}</span>
+                        <span class="dim" style="margin-left:auto; font-size:12px">{timeAgo(m.ts)}</span>
                       </div>
                       <Show when={editing() === m.id} fallback={<div class="note-text">{m.text}</div>}>
                         <textarea value={editText()} onInput={(e) => setEditText(e.currentTarget.value)} />
                         <button class="small" onClick={async () => {
                           if (!editText().trim()) return;
                           try {
-                            await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim(), selectedAgentIdOrUndefined());
+                            await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim(), memoryOwner(m));
                             await refetch();
                             setEditing(null);
                             pushToast("info", "Memory amended");
@@ -2100,13 +2149,13 @@ function MemoryView() {
                       </Show>
                       <div class="note-foot">
                         <Show when={editing() !== m.id}>
-                          <button class="small" onClick={() => { setEditing(m.id); setEditText(m.text); }}>Amend</button>
+                          <button class="small" disabled={!canWriteMemory()} onClick={() => { setEditing(m.id); setEditText(m.text); }}>Amend</button>
                         </Show>
                         <Show when={m.session_id}>
                           <button class="ghost small" onClick={() => navigate(`#/sessions/${m.session_id}`)}>From this session</button>
                         </Show>
                         <span class="spacer" />
-                        <button class="danger small" onClick={() => forget(m.id)}>Forget</button>
+                        <button class="danger small" disabled={!canWriteMemory()} onClick={() => forget(m.id)}>Forget</button>
                       </div>
                     </li>
                   )}
@@ -2163,7 +2212,7 @@ function MemoryView() {
           </div>
 
           <div class="row-gap" style="margin-top:14px">
-            <button disabled={busy() || !noteText().trim()} onClick={addNote}>
+            <button disabled={busy() || !noteText().trim() || !canWriteMemory()} onClick={addNote}>
               {busy() ? "Recording…" : "Save Note"}
             </button>
           </div>
@@ -2227,7 +2276,7 @@ function SpendTrendChart(props: { points: FinOpsDailyPoint[]; capUsd: number | n
             <div style="font-weight:600; margin-bottom:2px">{h().date}</div>
             <div style="color:var(--text-soft)">Estimated: <strong>${h().usd.toFixed(4)}</strong></div>
             <Show when={props.capUsd != null && props.capUsd! > 0}>
-              <div style="font-size:10px; color:var(--faint); margin-top:1px">
+              <div style="font-size:12px; color:var(--faint); margin-top:1px">
                 {((h().usd / props.capUsd!) * 100).toFixed(1)}% of daily cap
               </div>
             </Show>
@@ -2406,7 +2455,7 @@ function SpendAllocationCard(props: { byProvider: FinOpsRollupEntry[]; byModel: 
                         style={{ width: `${Math.max(barPct, item.calls > 0 ? 3 : 0)}%` }}
                       />
                     </div>
-                    <div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--faint)">
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--faint)">
                       <span>{item.calls} {item.calls === 1 ? "call" : "calls"}</span>
                       <span>{totalTokens > 0 ? `${(totalTokens / 1000).toFixed(1)}k tokens` : "0 tokens"}</span>
                     </div>
@@ -2470,7 +2519,7 @@ function FinOpsRollupTable(props: { title: string; rows: FinOpsRollupEntry[] }) 
                           <div style="width:36px; height:4px; background:var(--surface-raised); border-radius:2px; overflow:hidden">
                             <div style={{ width: `${Math.min(100, Math.max(0, share))}%`, height: "100%", background: "var(--accent)" }} />
                           </div>
-                          <span class="dim" style="font-size:11px; min-width:28px">
+                          <span class="dim" style="font-size:12px; min-width:28px">
                             {total() > 0 ? `${share.toFixed(0)}%` : "—"}
                           </span>
                         </div>
@@ -2660,7 +2709,7 @@ function FinOpsView() {
                   {savingCaps() ? "Saving…" : "Save caps"}
                 </button>
                 <Show when={data()?.day_cap_usd}>
-                  <span class="dim" style="font-size:11px">
+                  <span class="dim" style="font-size:12px">
                     ${(data()?.day_usd ?? 0).toFixed(4)} spent of ${data()!.day_cap_usd!.toFixed(2)} limit ({dayProgress()?.toFixed(1)}%)
                   </span>
                 </Show>
@@ -2725,7 +2774,7 @@ function FinOpsView() {
                         const successRate = row.calls > 0 ? (row.successes / row.calls) * 100 : 100;
                         return (
                           <tr>
-                            <td><span class="chip" style="font-size:10.5px">{row.kind}</span></td>
+                            <td><span class="chip" style="font-size:12px">{row.kind}</span></td>
                             <td class="mono">{row.name}</td>
                             <td>{row.plugin ?? "—"}</td>
                             <td>{row.calls}</td>
@@ -3031,7 +3080,7 @@ function GatewayBindingEditor(props: {
   createEffect(async () => {
     if (inherit()) return;
     try {
-      const found = (await api.models(provider())).models ?? [];
+      const found = (await api.models(provider(), selectedAgentIdOrUndefined())).models ?? [];
       setModels(found);
       if (found.length && !found.includes(model())) setModel(found[0]);
     } catch {
@@ -3544,7 +3593,7 @@ function ChannelAccessEditor(props: {
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
     try {
-      const found = (await api.models(provider())).models ?? [];
+      const found = (await api.models(provider(), selectedAgentIdOrUndefined())).models ?? [];
       setModels(found);
       if (found.length && !found.includes(model())) setModel(found[0]);
     } catch {
@@ -3694,7 +3743,7 @@ function PendingChannelCard(props: {
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
     try {
-      const found = (await api.models(provider())).models ?? [];
+      const found = (await api.models(provider(), selectedAgentIdOrUndefined())).models ?? [];
       setModels(found);
       if (found.length && !found.includes(model())) setModel(found[0]);
     } catch {
@@ -3864,7 +3913,7 @@ function BotAccessEditor(props: {
   createEffect(async () => {
     if (!pinRoute() || !provider()) return;
     try {
-      const found = (await api.models(provider())).models ?? [];
+      const found = (await api.models(provider(), selectedAgentIdOrUndefined())).models ?? [];
       setModels(found);
       if (found.length && !found.includes(model())) setModel(found[0]);
     } catch {
@@ -4025,7 +4074,7 @@ function BotRow(props: {
         <div class="cred-id">
           <SurfaceBadge channelKey={`${props.bot.surface}:`} />
           <span class="binding-meta">{props.bot.label}</span>
-          <span class="chip chip-tone-muted" style="margin-left:6px; font-size:11px;">
+          <span class="chip chip-tone-muted" style="margin-left:6px; font-size:12px;">
             ✦ {props.bot.agent_id || "vak"}
           </span>
           <code class="binding-meta">{props.bot.token_env}</code>
@@ -4850,9 +4899,9 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
   const [chosenProvider, setChosenProvider] = createSignal("");
   const [models, { refetch: refetchModels }] = createResource(
     () => chosenProvider() || undefined,
-    (name: string) => api.models(name),
+    (name: string) => api.models(name, selectedAgentIdOrUndefined()),
   );
-  const [providers, { refetch: refetchProviders }] = createResource(() => api.providers());
+  const [providers, { refetch: refetchProviders }] = createResource(selectedAgentIdOrUndefined, (agent) => api.providers(agent));
 
   const run = async (what: string, f: () => Promise<unknown>) => {
     setBusy(true);
@@ -4907,7 +4956,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
               disabled={busy()}
               onClick={() =>
                 void run("Key saved — pick a model below", async () => {
-                  if (key().trim()) await api.setProviderKey(chosenProvider(), key().trim(), "user");
+                  if (key().trim()) await api.setProviderKey(chosenProvider(), key().trim(), "user", selectedAgentIdOrUndefined());
                   setKey("");
                   // A stored key is not success: the route is only
                   // verified once the provider tells us what it can run.
@@ -5314,7 +5363,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
                 {st()?.chat_allowlist_open ? "Open (Allow All)" : "Strict (Review Required)"}
               </span>
             </div>
-            <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+            <p class="dim" style={{ "font-size": "12px", "margin": "4px 0 0" }}>
               Baseline route and security floor inherited by every workspace.
             </p>
           </div>
@@ -5330,7 +5379,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
           <div class="topology-tier-body">
             <div>
               <span class="dim">Root Directory:</span>
-              <span class="mono wrap" style={{ "display": "block", "font-size": "11px", "color": "var(--text)" }}>
+              <span class="mono wrap" style={{ "display": "block", "font-size": "12px", "color": "var(--text)" }}>
                 {st()?.workspace || "—"}
               </span>
             </div>
@@ -5340,7 +5389,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
                 {st()?.core_pool ? `${st()!.core_pool.entries.length} warm / ${st()!.core_pool.max} max` : "—"}
               </strong>
             </div>
-            <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+            <p class="dim" style={{ "font-size": "12px", "margin": "4px 0 0" }}>
               Isolates concurrent tenants into warm Core instances with distinct memory.
             </p>
           </div>
@@ -5366,7 +5415,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
                         <strong>{b.label}</strong>
                         <span class="dim mono" style={{ "font-size": "10.5px", "margin-left": "4px" }}>({b.surface})</span>
                       </div>
-                      <span class={`chip chip-tone-${b.token_configured ? "success" : "warning"}`} style={{ "font-size": "10px" }}>
+                      <span class={`chip chip-tone-${b.token_configured ? "success" : "warning"}`} style={{ "font-size": "12px" }}>
                         {b.token_configured ? "token set" : "no token"}
                       </span>
                     </div>
@@ -5396,7 +5445,7 @@ function ChannelTopologyMatrix(props: { ctx: GatewayCtx }) {
                 <span class="chip chip-tone-danger">{deniedCount()} denied</span>
               </Show>
             </div>
-            <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+            <p class="dim" style={{ "font-size": "12px", "margin": "4px 0 0" }}>
               Keys are <code>surface:chat:bot_id</code>. Policy chains: chat capped by bot capped by workspace.
             </p>
           </div>
@@ -5442,7 +5491,7 @@ function GatewaySection() {
   );
   const [status, { refetch: refetchStatus }] = createResource(() => api.gatewayStatus());
   const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
-  const [providers] = createResource(() => api.providers());
+  const [providers] = createResource(selectedAgentIdOrUndefined, (agent) => api.providers(agent));
   const [bots, { refetch: refetchBots }] = createResource(() => api.listBots());
 
   const refresh = () => {
@@ -5832,9 +5881,9 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<v
 /// how this instance is configured; nothing here is a summary of a screen
 /// that already exists elsewhere.
 export function Settings() {
-  const [config, { refetch: refetchConfig }] = createResource(() => api.config());
+  const [config, { refetch: refetchConfig }] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
-  const [providersData, { refetch: refetchProviders }] = createResource(() => api.providers());
+  const [providersData, { refetch: refetchProviders }] = createResource(selectedAgentIdOrUndefined, (agent) => api.providers(agent));
   const [rebuilding, setRebuilding] = createSignal(false);
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
   const [runningDoctor, setRunningDoctor] = createSignal(false);
@@ -5866,7 +5915,7 @@ export function Settings() {
     setProbing(true);
     const start = performance.now();
     try {
-      const res = await api.models(prov);
+      const res = await api.models(prov, selectedAgentIdOrUndefined());
       if (prov !== selectedProvider() || mod !== selectedModel()) return;
       const latency = Math.round(performance.now() - start);
       const models = res.models ?? [];
@@ -5937,7 +5986,7 @@ export function Settings() {
     setBedrockAvailability([]);
     const current = () => revision === discoveryRevision && provider === selectedProvider();
     try {
-      const res = await api.models(provider);
+      const res = await api.models(provider, selectedAgentIdOrUndefined());
       if (!current()) return;
       const models = res.models ?? [];
       setDiscoveredModels(models);
@@ -6019,7 +6068,7 @@ export function Settings() {
     const scope = configScope();
     setSavingKey(true);
     try {
-      await api.setProviderKey(provider, providerKeyInput().trim(), scope);
+      await api.setProviderKey(provider, providerKeyInput().trim(), scope, selectedAgentIdOrUndefined());
       await refetchProviders();
       pushToast("info", `Key saved for ${providerLabel(provider)} in ${scope === "user" ? "Global" : "Workspace"}`);
       if (provider === selectedProvider()) { setProviderKeyInput(""); await discover(provider); }
@@ -6072,7 +6121,7 @@ export function Settings() {
   return (
     <div class="view">
       <PageHeader
-        title="Settings & Configuration"
+        title="Model & providers"
         description="Choose an AI service and model, manage account keys, and set platform rules."
       />
       <Show when={config.error || layer.error || providersData.error}>
@@ -6089,7 +6138,7 @@ export function Settings() {
           class={`settings-tab-btn ${activeTab() === "models" ? "active" : ""}`}
           onClick={() => { setActiveTab("models"); navigate("#/settings"); }}
         >
-          <span class="tab-icon">✦</span> Models & AI
+          Model & keys
           <span class="tab-pill mono">{selectedModel() || "Default"}</span>
         </button>
         <button
@@ -6097,7 +6146,7 @@ export function Settings() {
           class={`settings-tab-btn ${activeTab() === "permissions" ? "active" : ""}`}
           onClick={() => { setActiveTab("permissions"); navigate("#/settings/permissions"); }}
         >
-          <span class="tab-icon">🛡</span> Permissions & Governance
+          Permissions & security
           <span class="tab-pill">{modeLabel(selectedPermissionMode())}</span>
         </button>
         <button
@@ -6105,7 +6154,7 @@ export function Settings() {
           class={`settings-tab-btn ${activeTab() === "infrastructure" ? "active" : ""}`}
           onClick={() => { setActiveTab("infrastructure"); navigate("#/settings/infrastructure"); }}
         >
-          <span class="tab-icon">⚡</span> Event Bus & Fabric
+          Infrastructure
           <span class={`tab-pill ${busData()?.runtime?.connected ? "pill-ok" : ""}`}>
             {selectedAgentId() === "global"
               ? (busData()?.runtime?.backend === "nats" ? "NATS" : "In-Process")
@@ -6117,7 +6166,7 @@ export function Settings() {
           class={`settings-tab-btn ${activeTab() === "preferences" ? "active" : ""}`}
           onClick={() => { setActiveTab("preferences"); navigate("#/settings/preferences"); }}
         >
-          <span class="tab-icon">⚙</span> System & Maintenance
+          Preferences
           <span class="tab-pill">{theme()}</span>
         </button>
       </div>
@@ -6128,11 +6177,11 @@ export function Settings() {
             <section class="panel">
               <div class="panel-title-row">
                 <div>
-                  <h2>{selectedAgentId() === "global" ? "Platform Model Route" : `Agent Model Route (✦ ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()})`}</h2>
+                  <h2>{selectedAgentId() === "global" ? "Main model" : `Model for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}`}</h2>
                   <p class="dim">
                     {selectedAgentId() === "global"
-                      ? "Primary provider and model answering turns across the platform, planned fresh per turn ladder."
-                      : `Provider and model override answering turns for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}'s dedicated workspace.`}
+                      ? "The provider and model used for new work. A temporary failure may use a backup for that turn."
+                      : `The provider and model used for new work in ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}'s workspace.`}
                   </p>
                 </div>
               </div>
@@ -6215,7 +6264,7 @@ export function Settings() {
                 </div>
 
                 <div class="model-selection-badge">
-                  <span class="dim">Active Selection:</span>
+                  <span class="dim">Selected route:</span>
                   <strong class="mono">{providerLabel(selectedProvider())}</strong>
                   <span class="mono">· {selectedModel() || "None"}</span>
                 </div>
@@ -6297,7 +6346,7 @@ export function Settings() {
                     )}
                   </Show>
                   <Show when={probeResult()?.message}>
-                    <p class="dim" style={{ "font-size": "11px", "margin": "4px 0 0" }}>
+                    <p class="dim" style={{ "font-size": "12px", "margin": "4px 0 0" }}>
                       {probeResult()!.message}
                     </p>
                   </Show>
@@ -6338,7 +6387,7 @@ export function Settings() {
               <section class="panel">
                 <div class="panel-title-row">
                   <div>
-                    <h2>Provider Key Vault</h2>
+                    <h2>Provider key</h2>
                     <p class="dim">
                       Authentication credential for {providerLabel(selectedProvider())}. Written to the selected
                       scope’s secure credential store and never shown again.
@@ -6349,7 +6398,7 @@ export function Settings() {
                   </span>
                 </div>
                 <div class="form-row">
-                  <label>API Key / Bearer Token</label>
+                  <label>Provider key</label>
                   <input
                     type="password"
                     autocomplete="off"
@@ -6368,7 +6417,7 @@ export function Settings() {
                       onClick={() =>
                         void guard(async () => {
                           if (!confirmDestructive(`Delete the stored ${providerLabel(selectedProvider())} key?`)) return;
-                          await api.deleteProviderKey(selectedProvider(), configScope());
+                          await api.deleteProviderKey(selectedProvider(), configScope(), selectedAgentIdOrUndefined());
                           await refetchProviders();
                           setDiscoveredModels([]);
                         }, `Key deleted for ${providerLabel(selectedProvider())}`)
@@ -6380,6 +6429,7 @@ export function Settings() {
                 </div>
               </section>
             </Show>
+            <BackupModels scope={configScope()} agent={selectedAgentIdOrUndefined()} provider={selectedProvider()} model={selectedModel()} />
           </div>
 
           <div class="stack">
@@ -6406,11 +6456,11 @@ export function Settings() {
                       <input id="voice-provider" value={voice().provider ?? ""} placeholder="gemini, openai or local (inherit if empty)" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Voice provider saved")} />
                     </div>
                     <div class="form-row">
-                      <label for="voice-transcription-model">Transcription Model</label>
+                      <label for="voice-transcription-model">Transcription model</label>
                       <input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Transcription model saved")} />
                     </div>
                     <div class="form-row">
-                      <label for="voice-synthesis-model">Synthesis Model</label>
+                      <label for="voice-synthesis-model">Synthesis model</label>
                       <input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")} />
                     </div>
                   </div>
@@ -6419,11 +6469,9 @@ export function Settings() {
             </section>
 
             <div class="settings-info-box">
-              <h3>✦ Multi-Provider Ladder Contract</h3>
+              <h3>When a provider is unavailable</h3>
               <p>
-                In accordance with <code>AGENTS.md</code> Invariant 7, the route ladder is planned fresh on every turn
-                from the live evidence ledger, session belief state, warm discovery cache, and your effective route.
-                Failed requests fall back across candidate models automatically without rewriting your primary route.
+                Each turn uses the current provider choice and health information. A temporary failure can use a backup for that turn; it does not change your saved choice.
               </p>
             </div>
           </div>
@@ -6870,8 +6918,8 @@ const operationsTab = () => {
 };
 
 const SETTINGS_TABS = [
-  { hash: "#/settings", label: "Model & Keys" },
-  { hash: "#/settings/permissions", label: "Access & Security" },
+  { hash: "#/settings", label: "Models & keys" },
+  { hash: "#/settings/permissions", label: "Access rules" },
   { hash: "#/settings/infrastructure", label: "Infrastructure" },
   { hash: "#/settings/preferences", label: "Preferences" },
 ] as const;
@@ -6930,7 +6978,7 @@ const NAV: NavItem[] = [
     children: GATEWAY_TABS,
     activeChild: gatewayTab,
   },
-  { group: "Configure", hash: "#/security", label: "Permissions & security", icon: ICONS.security, scope: "global" },
+  { group: "Configure", hash: "#/security", label: "Security status", icon: ICONS.security, scope: "global" },
   { group: "Configure", hash: "#/prompts", label: "Prompts", icon: ICONS.prompts, scope: "layered" },
   {
     group: "Configure",
@@ -7345,7 +7393,7 @@ function FeedsSection() {
             </div>
           </div>
           <Show when={searchResults()}>
-            <pre style={{ "font-size": "11px", "max-height": "400px", overflow: "auto", "white-space": "pre-wrap" }}>
+            <pre style={{ "font-size": "12px", "max-height": "400px", overflow: "auto", "white-space": "pre-wrap" }}>
               {JSON.stringify(searchResults(), null, 2)}
             </pre>
           </Show>
@@ -7618,6 +7666,7 @@ function FeedWizard(props: { onClose: () => void; onAdded: () => void | Promise<
 }
 
 export default function App() {
+  const [mobileNavOpen, setMobileNavOpen] = createSignal(false);
   /** Ask the canonical endpoint, not a data route.
    *
    * This used to probe by calling `api.config()` and reading the 401,
@@ -7716,19 +7765,19 @@ export default function App() {
       </Match>
       <Match when={authed() === true}>
         <div class="shell">
-          <aside class="sidebar">
-            <div class="brand" aria-label="Vakyartha"><span class="brand-mark"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></span><span class="brand-wordmark" aria-hidden="true" /></div>
+          <aside class="sidebar" classList={{ "mobile-expanded": mobileNavOpen() }}>
+            <div class="brand" aria-label="Vakyartha"><span class="brand-mark"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></span><span class="brand-wordmark" aria-hidden="true" /><button class="mobile-nav-toggle" type="button" aria-expanded={mobileNavOpen()} aria-controls="admin-primary-nav" onClick={() => setMobileNavOpen((open) => !open)}>{mobileNavOpen() ? "Close menu" : "Menu"}</button></div>
             <div class="sidebar-scope">
               <ScopeControl />
             </div>
-            <nav aria-label="Primary">
+            <nav id="admin-primary-nav" aria-label="Primary">
               <For each={NAV}>
                 {(item, index) => (
                   <>
                     <Show when={index() === 0 || NAV[index() - 1].group !== item.group}>
                       <div class="nav-group-label">{item.group}</div>
                     </Show>
-                    <a href={navHref(item.hash)} classList={{ active: navItemActive(item) }}>
+                    <a href={navHref(item.hash)} classList={{ active: navItemActive(item) }} onClick={() => setMobileNavOpen(false)}>
                       <Icon d={item.icon} />
                       {item.label}
                       <Show when={"badge" in item && item.badge?.() && Number(item.badge!()) > 0}>
@@ -7743,6 +7792,7 @@ export default function App() {
                               class="sub"
                               href={navHref(child.hash)}
                               classList={{ active: item.activeChild?.() === child.hash }}
+                              onClick={() => setMobileNavOpen(false)}
                             >
                               {child.label}
                             </a>

@@ -550,47 +550,59 @@ pub(crate) async fn list_bestofn(State(state): State<AppState>) -> Json<serde_js
 
 // ---- GET /admin/api/config ------------------------------------------------
 
-pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serde_json::Value> {
-    // Report the EFFECTIVE provider, model, turns, mode, and theme so runtime
-    // overrides applied by PATCH /config and POST /config/mode are accurately returned.
-    crate::refresh_control_plane(&state);
-    let route = state.core.effective_route();
-    let cfg = state.core.config();
-    let work = state.core.effective_work();
+pub(crate) async fn get_config_admin(
+    State(state): State<AppState>,
+    axum::extract::Query(query): axum::extract::Query<crate::AgentScopeQuery>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    // Report the selected Agent's effective settings when the admin scope is
+    // agent-specific. With no agent, retain the shared server Core view.
+    let core = if let Some(agent) = query.agent.as_deref() {
+        match crate::resolve_scoped_core(&state, None, Some(agent)) {
+            Ok(core) => core,
+            Err(response) => return response,
+        }
+    } else {
+        crate::refresh_control_plane(&state);
+        state.core.clone()
+    };
+    let route = core.effective_route();
+    let cfg = core.config();
+    let work = core.effective_work();
     // The lists the engine actually evaluates, not the ones loaded at
     // startup: `PUT /config/permissions` changes them without a restart, and
     // a console showing the stale set would be reporting rules no run uses.
-    let permission_rules = state.core.effective_permission_rules();
+    let permission_rules = core.effective_permission_rules();
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
         "provider_source": route.provider_source,
         "model_source": route.model_source,
         "route_revision": route.revision,
-        "max_turns": state.core.effective_max_turns(),
-        "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        "max_turns": core.effective_max_turns(),
+        "permission_mode": format!("{:?}", core.effective_permission_mode()),
         // These three were consumed by the console and never sent. The
         // console's `ConfigInfo` declared all of them, so nothing caught it:
         // the approval-mode picker could not show which mode was in force,
         // "Effective sandbox" rendered its loading placeholder forever, and
         // the workers toggle rendered unchecked whatever the real value
         // was — so the first click wrote the opposite of what was displayed.
-        "approval_mode": state.core.effective_approval_mode().as_str(),
-        "sandbox": state.core.effective_sandbox_name(),
-        "workers": state.core.effective_workers(),
-        "theme": state.core.effective_theme(),
+        "approval_mode": core.effective_approval_mode().as_str(),
+        "sandbox": core.effective_sandbox_name(),
+        "workers": core.effective_workers(),
+        "theme": core.effective_theme(),
         "voice": {
-            "enabled": state.core.effective_voice().enabled,
-            "max_session_secs": state.core.effective_voice().max_session_secs,
-            "max_concurrent": state.core.effective_voice().max_concurrent,
-            "max_audio_bytes": state.core.effective_voice().max_audio_bytes,
+            "enabled": core.effective_voice().enabled,
+            "max_session_secs": core.effective_voice().max_session_secs,
+            "max_concurrent": core.effective_voice().max_concurrent,
+            "max_audio_bytes": core.effective_voice().max_audio_bytes,
             // Keep quota semantics explicit for operators. These values are
             // the live workspace admission limits; narrower bot/chat pins
             // are reported by their binding endpoints and never merged here.
             "quota": {
-                "session_seconds": state.core.effective_voice().max_session_secs,
-                "concurrent_sessions": state.core.effective_voice().max_concurrent,
-                "inbound_audio_bytes": state.core.effective_voice().max_audio_bytes,
+                "session_seconds": core.effective_voice().max_session_secs,
+                "concurrent_sessions": core.effective_voice().max_concurrent,
+                "inbound_audio_bytes": core.effective_voice().max_audio_bytes,
                 "scope": "workspace",
                 "source": "effective",
             },
@@ -616,7 +628,7 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
         // (`sessions_home/sessions/<hash(cwd)>/`). This is that same hash,
         // matching `project_hash` on each session row — the console uses it
         // to tell which rows those actions can actually reach.
-        "workspace_project_hash": vak_core::memory::hash_cwd(state.core.cwd()),
+        "workspace_project_hash": vak_core::memory::hash_cwd(core.cwd()),
         // The resolved rule lists the permission engine actually evaluates
         // (vak_permission::Rule syntax: `Tool`, `Tool(glob)`, with a
         // `+`/`?`/`-` prefix for allow/ask/deny). The admin console shows
@@ -629,6 +641,7 @@ pub(crate) async fn get_config_admin(State(state): State<AppState>) -> Json<serd
             "deny": permission_rules.2,
         },
     }))
+    .into_response()
 }
 
 // ---- GET /admin/api/gateway/status ----------------------------------------

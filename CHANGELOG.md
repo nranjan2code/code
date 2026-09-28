@@ -1,3 +1,15 @@
+## Unreleased
+
+- Recognise the same model at another AI service. A model has a different
+  name at each service, so a backup at another service is now used only
+  after you confirm that its name is the same model; the admin portal's new
+  Backup models panel finds likely matches across your connected services
+  for you to confirm. A confirmed match is tried before any other backup
+  model. Another key for the same service still counts automatically.
+- Allow and remove other backup models in the admin portal, for every agent
+  or for one, instead of by editing the config file. Routing changes apply
+  from the next message, without a restart.
+
 ## 5.2.2 — 2026-09-28
 
 - Add a full-screen reading view for PowerPoint decks, with slide navigation,

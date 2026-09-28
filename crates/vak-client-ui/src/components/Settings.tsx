@@ -1327,7 +1327,7 @@ export default function Settings() {
                 <Row title="AI service" description={currentProviderInfo()?.requires_key ? "Uses your own account with this service." : "Uses the configured model server."}>
                   <span class="settings-value">{keyProviderLabel() || "Not chosen"}</span>
                 </Row>
-                <Row title="Model" description="Your chosen model. Automatic recovery may use an alternative allowed in admin.">
+                <Row title="Model" description="Your chosen model. If it stops responding, Vakyartha can switch to a backup you allow in the admin portal: the same model at another service, or a different model.">
                   <span class="settings-value">{displayedModel() || "Not chosen"}</span>
                 </Row>
                 <Row title="Change service or model" description="Check an account, choose an available model, then save. Nothing changes just by opening the list.">
@@ -1560,10 +1560,18 @@ export default function Settings() {
               <Group title="Route ladder">
                 <Row title="Objective" description={`How fallback legs are ordered: ${config()?.route.objective === "auto" ? "derived from request demand (utility / balanced / quality-critical)." : `fixed to ${config()?.route.objective}.`}`}><span class="metric">{config()?.route.objective}</span></Row>
                 <Row
+                  title="Same model at other services"
+                  description={config()?.route.same_model.length
+                    ? `Confirmed, tried first: ${config()!.route.same_model.map((group) => group.join(" = ")).join("; ")}.`
+                    : "None confirmed. An equal name at another service is never taken to be the same model; confirm matches in the admin portal."}
+                >
+                  <span class="metric">{config()?.route.same_model.length ?? 0}</span>
+                </Row>
+                <Row
                   title="Cross-model fallbacks"
                   description={config()?.route.fallback_models.length
                     ? `Allowed models, admitted only when discovery reaches them: ${config()!.route.fallback_models.join(", ")}.`
-                    : "Same model on other providers only. Add route.fallback_models in workspace config to allow named alternates."}
+                    : "None allowed. Allow backup models in the admin portal."}
                 >
                   <span class="metric">{config()?.route.fallback_models.length ?? 0}</span>
                 </Row>

@@ -431,6 +431,8 @@ export interface ConfigSnapshot {
   route: {
     objective: string;
     fallback_models: string[];
+    /// Confirmed groups of `provider/model` ids that name one model.
+    same_model: string[][];
     max_fallbacks: number;
     quality_hints: string[];
   };

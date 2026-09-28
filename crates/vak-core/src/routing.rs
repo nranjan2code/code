@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
-use vak_llm::{EvidenceSnapshot, ModelEvidence, RouteLeg};
+use vak_llm::{EvidenceSnapshot, ModelEvidence, ModelRef, RouteLeg};
 
 const EVIDENCE_TTL_DAYS: u64 = 30;
 
@@ -265,46 +265,152 @@ pub fn order(
     vak_llm::route::order_ladder_v1(candidates, snap, false, cost_of)
 }
 
-/// Assemble the frozen ladder from ranked candidates (Phase R diversity
+/// One service's model list as the ladder planner sees it: fetched inside
+/// the discovery TTL, with a credential that still resolves.
+#[derive(Debug, Clone)]
+pub struct WarmCatalogue {
+    pub provider: String,
+    pub credential_id: String,
+    pub models: Vec<String>,
+}
+
+fn leg_on(catalogue: &WarmCatalogue, model: &str, needs_tools: bool) -> RouteLeg {
+    RouteLeg {
+        provider: catalogue.provider.clone(),
+        model: model.to_string(),
+        dialect: vak_llm::EndpointDialect::for_provider(&catalogue.provider, needs_tools),
+        credential_id: Some(catalogue.credential_id.clone()),
+    }
+}
+
+/// Legs that serve the primary's own model somewhere else, in catalogue
+/// order; the caller ranks them.
+///
+/// An id is evidence of identity only within one account: the same id on
+/// another key for the primary's provider, or on a provider name that
+/// shares the primary's credential (one account, two wire protocols).
+/// Across services one model has a different id at each and a matching id
+/// proves nothing, so a leg there joins only as a member of a confirmed
+/// `[route] same_model` group.
+pub fn stand_in_legs(
+    primary: &RouteLeg,
+    catalogues: &[WarmCatalogue],
+    groups: &[Vec<ModelRef>],
+    needs_tools: bool,
+) -> Vec<RouteLeg> {
+    let mates = vak_llm::model_identity::group_mates(groups, &primary.provider, &primary.model);
+    let mut legs: Vec<RouteLeg> = Vec::new();
+    for catalogue in catalogues {
+        let same_account = catalogue.provider == primary.provider
+            || primary.credential_id.as_deref() == Some(catalogue.credential_id.as_str());
+        let own_id = same_account.then_some(primary.model.as_str());
+        let mate_ids = mates
+            .iter()
+            .filter(|mate| mate.provider == catalogue.provider)
+            .map(|mate| mate.model.as_str());
+        for model in own_id.into_iter().chain(mate_ids) {
+            if !catalogue.models.iter().any(|listed| listed == model) {
+                continue;
+            }
+            let leg = leg_on(catalogue, model, needs_tools);
+            let is_primary = leg.provider == primary.provider
+                && leg.model == primary.model
+                && leg.credential_id == primary.credential_id;
+            if !is_primary && !legs.contains(&leg) {
+                legs.push(leg);
+            }
+        }
+    }
+    legs
+}
+
+/// Legs for the other models the operator allowed as backups
+/// (`[route] fallback_models`): exact ids, on every service whose warm
+/// catalogue lists them.
+pub fn alternate_legs(
+    primary: &RouteLeg,
+    catalogues: &[WarmCatalogue],
+    allowed: &[String],
+    needs_tools: bool,
+) -> Vec<RouteLeg> {
+    let mut legs = Vec::new();
+    for catalogue in catalogues {
+        for model in &catalogue.models {
+            if model == &primary.model || !allowed.contains(model) {
+                continue;
+            }
+            let leg = leg_on(catalogue, model, needs_tools);
+            if !legs.contains(&leg) {
+                legs.push(leg);
+            }
+        }
+    }
+    legs
+}
+
+/// Assemble the ladder from ranked candidates (Phase R diversity
 /// constraints, ported from the vakrouter chain study).
 ///
 /// The operator-selected primary NEVER loses its head position — v2
 /// ordering decides the FALLBACK order, never whether the user's explicit
-/// choice serves first. Remaining seats cap per provider at
+/// choice serves first. The same model somewhere else is a like-for-like
+/// swap while another model changes behaviour, so stand-ins are seated
+/// before alternates, each tier in its ranked order. When an alternate is
+/// reachable and there are at least two fallback seats, the last seat is
+/// kept for it: every copy of one model can share an upstream outage, and a
+/// different model is the leg that survives one. A seat an alternate cannot
+/// take goes back to the stand-ins. Remaining seats cap per provider at
 /// ceil(max_total/3) so one failure domain cannot own every slot.
 /// Annotations are freeze-time warnings for traces/TUI, never model input.
 pub fn assemble_ladder(
     primary: &RouteLeg,
-    ranked: Vec<RouteLeg>,
+    stand_ins: Vec<RouteLeg>,
+    alternates: Vec<RouteLeg>,
     max_total: usize,
     cross_model_requested: bool,
 ) -> (Vec<RouteLeg>, Vec<String>) {
     let max_total = max_total.max(1);
     let seats_per_provider = max_total.div_ceil(3).max(1);
+    let alternates_unreachable = cross_model_requested && alternates.is_empty();
+    let stand_in_limit = if !alternates.is_empty() && max_total >= 3 {
+        max_total - 1
+    } else {
+        max_total
+    };
     let mut legs = vec![primary.clone()];
     let mut counts: HashMap<String, usize> = HashMap::new();
     counts.insert(primary.provider.clone(), 1);
-
-    for leg in ranked {
-        if legs.len() >= max_total {
-            break;
-        }
+    let mut seat = |leg: RouteLeg, legs: &mut Vec<RouteLeg>| {
         if leg == *primary {
-            continue;
+            return;
         }
         let seats = counts.entry(leg.provider.clone()).or_insert(0);
         let independent_credential = leg.provider == primary.provider
             && leg.credential_id.is_some()
             && leg.credential_id != primary.credential_id;
         if *seats >= seats_per_provider && !independent_credential {
-            continue;
+            return;
         }
         *seats += 1;
         legs.push(leg);
+    };
+
+    let mut stand_ins = stand_ins.into_iter();
+    while legs.len() < stand_in_limit {
+        let Some(leg) = stand_ins.next() else {
+            break;
+        };
+        seat(leg, &mut legs);
+    }
+    for leg in alternates.into_iter().chain(stand_ins) {
+        if legs.len() >= max_total {
+            break;
+        }
+        seat(leg, &mut legs);
     }
 
     let mut annotations = Vec::new();
-    if cross_model_requested && legs.iter().all(|l| l.model == primary.model) {
+    if alternates_unreachable {
         annotations.push(
             "cross-model fallback configured but none of the allowed models are \
              reachable by warm discovery"
@@ -479,7 +585,7 @@ mod tests {
         ];
         // max_total 4 → seats/provider = 2; openai can hold at most two
         // fallback seats alongside the primary.
-        let (legs, annotations) = assemble_ladder(&primary, ranked, 4, true);
+        let (legs, annotations) = assemble_ladder(&primary, Vec::new(), ranked, 4, true);
         assert_eq!(legs[0], primary, "primary must stay at the head");
         assert_eq!(legs.len(), 4);
         assert!(
@@ -493,6 +599,7 @@ mod tests {
         // IS a dominant failure domain worth surfacing.
         let (legs, annotations) = assemble_ladder(
             &primary,
+            Vec::new(),
             vec![mk("gpt-a"), mk("gpt-b"), mk("gpt-c")],
             7,
             false,
@@ -514,12 +621,13 @@ mod tests {
             dialect: vak_llm::EndpointDialect::AnthropicMessages,
             credential_id: None,
         };
-        let (legs, annotations) = assemble_ladder(&primary, vec![], 4, false);
+        let (legs, annotations) = assemble_ladder(&primary, vec![], vec![], 4, false);
         assert_eq!(legs.len(), 1);
         assert!(annotations.iter().any(|a| a.contains("single point")));
 
         let (_, annotations) = assemble_ladder(
             &primary,
+            vec![],
             vec![RouteLeg {
                 provider: "anthropic".into(),
                 model: "claude-y".into(),
@@ -533,7 +641,7 @@ mod tests {
             !annotations.iter().any(|a| a.contains("cross-model")),
             "a reachable alternate model means cross-model worked"
         );
-        let (_, annotations) = assemble_ladder(&primary, vec![], 4, true);
+        let (_, annotations) = assemble_ladder(&primary, vec![], vec![], 4, true);
         assert!(
             annotations.iter().any(|a| a.contains("cross-model")),
             "configured-but-unreachable fallbacks must be surfaced"
@@ -557,7 +665,7 @@ mod tests {
                 credential_id: None,
             },
         ];
-        let (legs, _) = assemble_ladder(&primary, ranked, 4, false);
+        let (legs, _) = assemble_ladder(&primary, Vec::new(), ranked, 4, false);
         assert_eq!(legs.len(), 2);
     }
 
@@ -573,8 +681,148 @@ mod tests {
             credential_id: Some("key-b".into()),
             ..primary.clone()
         };
-        let (legs, _) = assemble_ladder(&primary, vec![alternate], 3, false);
+        let (legs, _) = assemble_ladder(&primary, vec![alternate], Vec::new(), 3, false);
         assert_eq!(legs.len(), 2);
         assert_eq!(legs[1].credential_id.as_deref(), Some("key-b"));
+    }
+
+    fn leg(provider: &str, model: &str, credential: &str) -> RouteLeg {
+        RouteLeg {
+            provider: provider.into(),
+            model: model.into(),
+            dialect: vak_llm::EndpointDialect::for_provider(provider, true),
+            credential_id: Some(credential.into()),
+        }
+    }
+
+    fn catalogue(provider: &str, credential: &str, models: &[&str]) -> WarmCatalogue {
+        WarmCatalogue {
+            provider: provider.into(),
+            credential_id: credential.into(),
+            models: models.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_shared_id_stands_in_only_within_one_account() {
+        let primary = leg("openai", "gpt-x", "acct-o");
+        let catalogues = [
+            catalogue("openai", "acct-o", &["gpt-x"]),
+            catalogue("openai", "acct-o2", &["gpt-x"]),
+            catalogue("openai-responses", "acct-o", &["gpt-x"]),
+            catalogue("zen", "acct-z", &["gpt-x"]),
+            catalogue("openrouter", "acct-r", &["vendor/gpt-x"]),
+        ];
+        assert_eq!(
+            stand_in_legs(&primary, &catalogues, &[], true),
+            vec![
+                leg("openai", "gpt-x", "acct-o2"),
+                leg("openai-responses", "gpt-x", "acct-o"),
+            ],
+            "another key, or another wire over the same key, is the same account; \
+             an equal id at another service proves nothing"
+        );
+
+        let groups = vak_llm::model_identity::merge_groups([vec![
+            ModelRef::parse("openai/gpt-x").unwrap(),
+            ModelRef::parse("openrouter/vendor/gpt-x").unwrap(),
+            ModelRef::parse("zen/gpt-x").unwrap(),
+        ]]);
+        let legs = stand_in_legs(&primary, &catalogues, &groups, true);
+        assert!(legs.contains(&leg("openrouter", "vendor/gpt-x", "acct-r")));
+        assert!(legs.contains(&leg("zen", "gpt-x", "acct-z")));
+        assert!(
+            !legs
+                .iter()
+                .any(|l| l.credential_id.as_deref() == Some("acct-o") && l.provider == "openai"),
+            "the primary itself is never its own stand-in"
+        );
+    }
+
+    #[test]
+    fn alternates_are_allowed_ids_other_than_the_primary() {
+        let primary = leg("openai", "gpt-x", "acct-o");
+        let catalogues = [
+            catalogue("openai", "acct-o", &["gpt-x", "gpt-y", "gpt-z"]),
+            catalogue("zen", "acct-z", &["gpt-y", "gpt-x"]),
+        ];
+        let allowed = vec!["gpt-y".to_string(), "gpt-x".to_string()];
+        assert_eq!(
+            alternate_legs(&primary, &catalogues, &allowed, true),
+            vec![
+                leg("openai", "gpt-y", "acct-o"),
+                leg("zen", "gpt-y", "acct-z")
+            ]
+        );
+    }
+
+    #[test]
+    fn stand_ins_are_seated_before_any_alternate() {
+        let primary = leg("anthropic", "model-a", "acct-a");
+        let stand_in = leg("openrouter", "vendor/model-a", "acct-r");
+        let alternate = leg("google", "model-b", "acct-g");
+        let (legs, annotations) = assemble_ladder(
+            &primary,
+            vec![stand_in.clone()],
+            vec![alternate.clone()],
+            4,
+            true,
+        );
+        assert_eq!(legs, vec![primary.clone(), stand_in, alternate.clone()]);
+        assert!(
+            !annotations.iter().any(|a| a.contains("cross-model")),
+            "{annotations:?}"
+        );
+
+        let full = vec![
+            leg("openrouter", "vendor/model-a", "acct-r"),
+            leg("bedrock", "us.vendor.model-a-v1:0", "acct-b"),
+            leg("zen", "model-a", "acct-z"),
+        ];
+        let (legs, _) = assemble_ladder(&primary, full.clone(), vec![alternate.clone()], 4, true);
+        assert_eq!(
+            legs,
+            vec![
+                primary.clone(),
+                full[0].clone(),
+                full[1].clone(),
+                alternate.clone()
+            ],
+            "the last seat is kept for a different model"
+        );
+
+        let (legs, annotations) =
+            assemble_ladder(&primary, full.clone(), vec![alternate.clone()], 2, true);
+        assert_eq!(
+            legs,
+            vec![primary.clone(), full[0].clone()],
+            "one fallback seat goes to the same model"
+        );
+        assert!(
+            !annotations.iter().any(|a| a.contains("none of")),
+            "a reachable alternate that lost its seat is not unreachable: {annotations:?}"
+        );
+    }
+
+    #[test]
+    fn a_seat_an_alternate_cannot_take_goes_back_to_the_stand_ins() {
+        let primary = leg("anthropic", "model-a", "acct-a");
+        let stand_ins = vec![
+            leg("openrouter", "vendor/model-a", "acct-r"),
+            leg("openrouter", "vendor/model-a-copy", "acct-r"),
+            leg("zen", "model-a", "acct-z"),
+        ];
+        let blocked = leg("openrouter", "model-b", "acct-r");
+        let (legs, _) = assemble_ladder(&primary, stand_ins.clone(), vec![blocked], 4, true);
+        assert_eq!(
+            legs,
+            vec![
+                primary,
+                stand_ins[0].clone(),
+                stand_ins[1].clone(),
+                stand_ins[2].clone()
+            ],
+            "openrouter already holds its two seats, so the kept seat is refilled"
+        );
     }
 }

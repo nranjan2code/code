@@ -1775,11 +1775,23 @@ fn run_config_dump(cwd: PathBuf) {
                 core.config().goal.handoff_reset,
                 core.config().goal.max_audit_blocks,
             );
-            let r = &core.config().route;
+            let r = core.effective_route_settings();
+            let same_model: Vec<String> = r
+                .same_model
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(vak_llm::ModelRef::spelling)
+                        .collect::<Vec<_>>()
+                        .join(" = ")
+                })
+                .collect();
             println!(
-                "route            = objective {} · fallback_models [{}] · max_fallbacks {} · quality_hints [{}]",
+                "route            = objective {} · fallback_models [{}] · same_model [{}] · max_fallbacks {} · quality_hints [{}]",
                 r.objective,
                 r.fallback_models.join(", "),
+                same_model.join("; "),
                 r.max_fallbacks,
                 r.quality_hints.join(", "),
             );
