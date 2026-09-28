@@ -1123,8 +1123,7 @@ export default function Settings() {
     try {
       await api.readFile(relative);
     } catch {
-      const c = config();
-      await api.writeFile(relative, `provider = "${c?.provider ?? "anthropic"}"\nmodel = "${c?.model ?? "claude-sonnet-4-5"}"\npermission_mode = "workspace-write"\n`);
+      await api.writeFile(relative, `permission_mode = "workspace-write"\n`);
     }
     openInEditor(relative);
     setSettingsOpen(false);

@@ -1553,8 +1553,10 @@ pub struct AnthropicResolved {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            provider: "anthropic".into(),
-            model: "claude-sonnet-4-5".into(),
+            // A fresh install has no provider route until the operator
+            // chooses a provider and a model together.
+            provider: String::new(),
+            model: String::new(),
             max_tokens: 8192,
             max_turns: 40,
             permission_mode: PermissionMode::WorkspaceWrite,

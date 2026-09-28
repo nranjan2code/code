@@ -5950,7 +5950,7 @@ export function Settings() {
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
   const [runningDoctor, setRunningDoctor] = createSignal(false);
 
-  const [selectedProvider, setSelectedProvider] = createSignal("anthropic");
+  const [selectedProvider, setSelectedProvider] = createSignal("");
   const [selectedModel, setSelectedModel] = createSignal("");
   const [discoveredModels, setDiscoveredModels] = createSignal<string[]>([]);
   const [bedrockAvailability, setBedrockAvailability] = createSignal<import("./types").BedrockModelAvailability[]>([]);
@@ -6032,7 +6032,7 @@ export function Settings() {
     const scope = configScope();
     if (c && selectedLayer && selectedLayer !== initializedLayer) {
       initializedLayer = selectedLayer;
-      setSelectedProvider(selectedLayer.provider || (scope === "project" ? c.provider : "anthropic"));
+      setSelectedProvider(selectedLayer.provider || (scope === "project" ? c.provider : ""));
       setSelectedModel(selectedLayer.model || (scope === "project" ? c.model : ""));
       setMaxTurnsInput(String(selectedLayer.max_turns ?? (scope === "project" ? c.max_turns : "")));
     }
@@ -6257,9 +6257,10 @@ export function Settings() {
                     disabled={savingKey() || probing()}
                     onChange={(e) => { setSelectedModel(""); setProviderKeyInput(""); setProbeResult(null); setSelectedProvider(e.currentTarget.value); }}
                   >
+                    <option value="">Choose a provider…</option>
                     <For each={providersData()?.providers ?? []}>
                       {(p) => <option value={p.name}>
-                        {providerLabel(p.name)} {p.configured ? "✓ (configured)" : p.name === "ollama" ? "(local endpoint)" : "(key required)"}
+                        {providerLabel(p.name)} {p.name === "ollama" ? "(local endpoint)" : p.configured ? "✓ (configured)" : "(key required)"}
                       </option>}
                     </For>
                   </select>
@@ -6273,7 +6274,7 @@ export function Settings() {
                       <input
                         class="mono"
                         aria-label="Model"
-                        placeholder={loadingModels() ? "Asking the provider…" : "e.g. claude-sonnet-4-5, gemma4:e2b-mlx"}
+                        placeholder={loadingModels() ? "Asking the provider…" : "Enter a model ID from this provider"}
                         value={selectedModel()}
                         onInput={(e) => setSelectedModel(e.currentTarget.value)}
                       />
@@ -6446,19 +6447,31 @@ export function Settings() {
                 </section>
               }
             >
+              <Show when={selectedProvider()} fallback={
+                <section class="panel">
+                  <div class="panel-title-row">
+                    <div>
+                      <h2>Provider credentials</h2>
+                      <p class="dim">Choose any supported provider above to see its connection status and add its key. Ollama uses a local endpoint and does not need a key.</p>
+                    </div>
+                  </div>
+                </section>
+              }>
               <section class="panel">
                 <div class="panel-title-row">
                   <div>
-                    <h2>Provider key</h2>
+                    <h2>{selectedProvider() === "ollama" ? "Local model service" : "Provider key"}</h2>
                     <p class="dim">
-                      Authentication credential for {providerLabel(selectedProvider())}. Written to the selected
-                      scope’s secure credential store and never shown again.
+                      {selectedProvider() === "ollama"
+                        ? "Ollama does not require an API key. Set its endpoint in workspace settings if it is not running locally."
+                        : <>Authentication credential for {providerLabel(selectedProvider())}. Written to the selected scope’s secure credential store and never shown again.</>}
                     </p>
                   </div>
-                  <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
+                  <Show when={selectedProvider() !== "ollama"}><span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
                     {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
-                  </span>
+                  </span></Show>
                 </div>
+                <Show when={selectedProvider() !== "ollama"}>
                 <div class="form-row">
                   <label>Provider key</label>
                   <input
@@ -6469,8 +6482,10 @@ export function Settings() {
                     onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
                   />
                 </div>
+                </Show>
                 <div class="row-gap" style="margin-top:10px">
-                  <button disabled={savingKey() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
+                  <Show when={selectedProvider() !== "ollama"}>
+                  <button disabled={savingKey() || !selectedProvider() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
                     {savingKey() ? "Saving…" : "Save key"}
                   </button>
                   <Show when={keyConfigured()}>
@@ -6488,8 +6503,10 @@ export function Settings() {
                       Revoke
                     </button>
                   </Show>
+                  </Show>
                 </div>
               </section>
+              </Show>
             </Show>
             <BackupModels scope={configScope()} agent={selectedAgentIdOrUndefined()} provider={selectedProvider()} model={selectedModel()} />
           </div>

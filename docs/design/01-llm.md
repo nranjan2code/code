@@ -86,6 +86,11 @@ normally.
 
 ## Model discovery
 
+The built-in configuration selects no provider or model. First run and the
+in-app service picker ask the operator to choose a registered provider, add a
+key when that provider requires one, discover its live catalogue, and choose
+the model; the same flow remains available from Settings.
+
 There is no hardcoded model catalogue. Which models exist is a property of
 the user's key, so `models.rs` asks the provider and
 `Core::discover_models` memoises the answer for 5 minutes (invalidated

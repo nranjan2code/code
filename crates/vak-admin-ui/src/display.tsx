@@ -70,6 +70,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
   "openai-responses": "OpenAI (Responses)",
   google: "Google (Gemini)",
   openrouter: "OpenRouter",
+  "openrouter-responses": "OpenRouter (Responses API)",
   "opencode-zen": "OpenCode Zen",
   bedrock: "Amazon Bedrock",
   ollama: "Ollama (local)",

@@ -4465,7 +4465,7 @@ fn provider_unavailable(err: vak_core::CoreError) -> axum::response::Response {
 /// that decides the kind, for a refused turn and a model catalogue alike.
 fn provider_error_body(err: &vak_core::CoreError) -> serde_json::Value {
     match err {
-        vak_core::CoreError::MissingAuth { .. } => {
+        vak_core::CoreError::MissingAuth { .. } | vak_core::CoreError::RouteNotConfigured => {
             serde_json::json!({ "error": err.to_string(), "kind": "no_ai_service" })
         }
         _ => serde_json::json!({ "error": err.to_string() }),

@@ -42,7 +42,8 @@ and resumes inheritance.
 
 - **Provider and model are one atomic route.** Never persisted, applied, or
   reported independently. Model ids come from live discovery, never from a
-  source-code catalogue (`AGENTS.md` invariant 9).
+  source-code catalogue (`AGENTS.md` invariant 9). A fresh install has no
+  built-in vendor or model preference; the operator chooses both.
 - **Unknown keys warn and are never fatal.** A typo'd key is diffed against
   the schema and surfaced, so it is visible rather than silently dead.
 - **A GET that seeds a same-shape PUT reports only the layer that PUT

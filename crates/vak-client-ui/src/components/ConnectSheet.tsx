@@ -32,17 +32,6 @@ function ConnectForm() {
   let alive = true;
   onCleanup(() => { alive = false; });
   const chosen = () => providers().find((p) => p.name === provider());
-  // Protocol variants stay in admin; preserve one already deliberately selected.
-  const accounts = () => {
-    const seen = new Set<string>();
-    const preferred = providers().find((p) => p.name === current.provider);
-    return [...(preferred ? [preferred] : []), ...providers()].filter((p) => {
-      const id = p.env_var || p.name;
-      if (seen.has(id)) return false;
-      seen.add(id);
-      return true;
-    });
-  };
   const resetChoice = (name: string) => {
     setProvider(name); setKey(""); setSavedKey(false); setModels([]);
     setModel(""); setSearch(""); setChecked(false); setError(null);
@@ -134,7 +123,7 @@ function ConnectForm() {
           <label class="connect-field"><span>AI service</span>
             <select value={provider()} disabled={busy()} onChange={(e) => selectProvider(e.currentTarget.value)}>
               <option value="">Choose a service…</option>
-              <For each={accounts()}>{(p) => <option value={p.name}>{p.label}{p.configured && p.requires_key ? " (key available)" : ""}</option>}</For>
+              <For each={providers()}>{(p) => <option value={p.name}>{p.label}{p.configured && p.requires_key ? " (key available)" : ""}</option>}</For>
             </select>
           </label>
           <Show when={chosen()?.requires_key && !checked()}>

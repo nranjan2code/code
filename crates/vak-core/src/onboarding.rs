@@ -359,9 +359,17 @@ fn provider_and_route_steps(core: &Core) -> (StepState, StepState) {
         Err(e) => (
             StepState::Incomplete(
                 StepFailure::new(
-                    format!("{provider_name} is not connected."),
+                    if provider_name.trim().is_empty() {
+                        "No AI service is selected.".to_string()
+                    } else {
+                        format!("{provider_name} is not connected.")
+                    },
                     "No route was activated and nothing else was changed.",
-                    "Add a credential for this provider in setup, or choose another.",
+                    if provider_name.trim().is_empty() {
+                        "Choose a supported provider and model in setup or settings."
+                    } else {
+                        "Add a credential for this provider in setup, or choose another."
+                    },
                 )
                 .with_detail(e.to_string()),
             ),
