@@ -62,6 +62,7 @@ pub struct DiscordMessage {
 struct GatewayReply {
     chunks: Vec<String>,
     session_id: Option<String>,
+    delivery: Option<vak_delivery::DeliveryPacket>,
 }
 
 /// Parse a `GET /channels/{id}/messages` page into routable messages,
@@ -168,7 +169,7 @@ impl DiscordBridge {
                     continue;
                 }
                 let reply = self.process(&message).await;
-                if let Err(e) = self.send_message(channel_id, &reply.chunks).await {
+                if let Err(e) = self.send_message(channel_id, &reply).await {
                     eprintln!("[discord] send to {channel_id} failed: {e}");
                 }
                 if message.audio_url.is_some()
@@ -309,9 +310,16 @@ impl DiscordBridge {
             Ok(r) if r.status().is_success() => match r.json::<Value>().await {
                 Ok(v) => {
                     let session_id = v["session_id"].as_str().map(String::from);
-                    let chunks = super::prepared_chunks(v, "discord")
+                    let delivery = super::prepared_packet(v.clone(), "discord");
+                    let chunks = delivery
+                        .as_ref()
+                        .map(|packet| packet.chunks.clone())
                         .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
-                    GatewayReply { chunks, session_id }
+                    GatewayReply {
+                        chunks,
+                        session_id,
+                        delivery: delivery.ok(),
+                    }
                 }
                 Err(e) => GatewayReply {
                     chunks: vec![format!("(bad gateway reply: {e})")],
@@ -329,8 +337,52 @@ impl DiscordBridge {
         }
     }
 
-    async fn send_message(&self, channel_id: &str, chunks: &[String]) -> Result<(), String> {
-        for chunk in chunks {
+    async fn send_message(&self, channel_id: &str, reply: &GatewayReply) -> Result<(), String> {
+        let cards = reply
+            .delivery
+            .as_ref()
+            .map(vak_delivery::DeliveryPacket::structured_cards)
+            .unwrap_or_default();
+        if !cards.is_empty() {
+            let cards = cards.into_iter().cloned().collect::<Vec<_>>();
+            let chunks = if reply.chunks.is_empty() {
+                vec![String::new()]
+            } else {
+                reply.chunks.clone()
+            };
+            let body = serde_json::json!({
+                "content": chunks[0],
+                "embeds": vak_delivery::discord::structured_card_embeds(&cards),
+                "allowed_mentions": {"parse": []},
+            });
+            let resp = http()
+                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
+                .header("Authorization", format!("Bot {}", self.bot_token))
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("discord createMessage: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("discord createMessage returned {}", resp.status()));
+            }
+            for chunk in chunks.iter().skip(1) {
+                let response = http()
+                    .post(format!("{}/channels/{channel_id}/messages", self.api_base))
+                    .header("Authorization", format!("Bot {}", self.bot_token))
+                    .json(&serde_json::json!({"content":chunk,"allowed_mentions":{"parse":[]}}))
+                    .send()
+                    .await
+                    .map_err(|e| format!("discord createMessage: {e}"))?;
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "discord createMessage returned {}",
+                        response.status()
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        for chunk in &reply.chunks {
             let resp = http()
                 .post(format!("{}/channels/{channel_id}/messages", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
@@ -413,6 +465,28 @@ pub fn chunk_text(text: &str, max: usize) -> Vec<String> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    fn sample_card() -> vak_delivery::StructuredOutput {
+        vak_delivery::StructuredOutput {
+            semantic_type: "metric".into(),
+            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1".into(),
+            payload: serde_json::json!({"title":"Weather","Temperature":"23°C","Status":"Sunny"}),
+        }
+    }
+
+    #[test]
+    fn card_delivery_uses_native_discord_embeds() {
+        let embeds = vak_delivery::discord::structured_card_embeds(&[sample_card()]);
+        assert_eq!(embeds[0]["title"], "Weather");
+        assert!(
+            embeds[0]["fields"]
+                .as_array()
+                .is_some_and(|fields| fields.len() == 2)
+        );
+        assert!(!embeds[0].to_string().contains("\"semantic_type\""));
+    }
 
     fn bridge() -> DiscordBridge {
         DiscordBridge {
@@ -501,6 +575,7 @@ mod tests {
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect(),
             session_id: value["session_id"].as_str().map(String::from),
+            delivery: None,
         };
         assert_eq!(reply.session_id.as_deref(), Some("discord-session"));
     }

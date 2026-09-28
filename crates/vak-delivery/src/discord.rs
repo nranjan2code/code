@@ -219,6 +219,69 @@ fn strip_task_item(trimmed: &str) -> Option<String> {
         })
 }
 
+/// Lower typed cards to Discord embeds. The bridge owns message transport;
+/// this bounded projector owns only the surface-specific presentation shape.
+pub fn structured_card_embeds(cards: &[crate::StructuredOutput]) -> Vec<serde_json::Value> {
+    let mut remaining = 5_500usize;
+    let mut embeds = Vec::new();
+    for card in cards.iter().take(10) {
+        if remaining <= 300 {
+            break;
+        }
+        let title: String = card.payload["title"]
+            .as_str()
+            .unwrap_or(&card.semantic_type)
+            .chars()
+            .take(256.min(remaining))
+            .collect();
+        remaining = remaining.saturating_sub(title.chars().count());
+        let mut embed = serde_json::json!({"title":title,"color":0x5865F2});
+        let mut fields = Vec::new();
+        if let Some(object) = card.payload.as_object() {
+            for (key, value) in object {
+                if fields.len() >= 25 || remaining <= 100 {
+                    break;
+                }
+                if key == "title" || !(value.is_string() || value.is_number() || value.is_boolean())
+                {
+                    continue;
+                }
+                let value: String = value
+                    .as_str()
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| value.to_string())
+                    .chars()
+                    .take(remaining.min(1024))
+                    .collect();
+                remaining =
+                    remaining.saturating_sub(key.chars().count().min(256) + value.chars().count());
+                fields.push(serde_json::json!({"name":key.chars().take(256).collect::<String>(),"value":value,"inline":true}));
+            }
+        }
+        if fields.is_empty() {
+            let summary = crate::structured_markdown(card)
+                .split_once("\n\n```json")
+                .map_or_else(
+                    || crate::structured_markdown(card),
+                    |(summary, _)| summary.to_owned(),
+                );
+            embed["description"] =
+                serde_json::Value::String(summary.chars().take(remaining.min(4096)).collect());
+            remaining = remaining.saturating_sub(
+                embed["description"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .chars()
+                    .count(),
+            );
+        } else {
+            embed["fields"] = serde_json::Value::Array(fields);
+        }
+        embeds.push(embed);
+    }
+    embeds
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

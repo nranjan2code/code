@@ -325,9 +325,13 @@ relay can deduplicate and consume semantics while old receivers keep using
 `text`.
 
 Telegram, Slack, and Discord are sidecar adapters: `/gateway/inbound` returns
-the semantic packet and each bridge sends every chunk through its channel's
-own send call (`sendMessage`, `chat.postMessage`, and the Discord message
-endpoint respectively). Future Teams or Matrix sidecars can post optional
+the semantic packet plus typed cards from the run. Telegram maps typed cards
+to a rich HTML message layout with a title and key/value rows (the Bot API
+does not define a generic card object); Slack
+renders cards as Block Kit headers and fields with `text` retained as the
+accessible notification fallback; Discord renders cards as embeds with
+`content` retained as the readable fallback. Runs without typed cards continue
+through ordered text chunks. Future Teams or Matrix sidecars can post optional
 `capabilities` (`markup`, `max_chars`, tables, code, links, actions) and
 consume the same packet without changing the agent loop. Unknown surfaces
 start conservative; declared limits are capped at 100,000.

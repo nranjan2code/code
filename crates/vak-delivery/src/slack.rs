@@ -390,6 +390,42 @@ fn replace_spaced_pairs(value: &str, marker: &str, open: &str, close: &str) -> S
     }
 }
 
+/// Lower typed cards to Slack Block Kit. These are presentation outputs;
+/// message delivery, authentication and retry remain owned by the bridge.
+pub fn structured_card_blocks(cards: &[crate::StructuredOutput]) -> Vec<serde_json::Value> {
+    let mut blocks = Vec::new();
+    for card in cards.iter().take(10) {
+        let title = card.payload["title"]
+            .as_str()
+            .unwrap_or(&card.semantic_type);
+        if blocks.len() >= 50 {
+            break;
+        }
+        blocks.push(serde_json::json!({"type":"header","text":{"type":"plain_text","text":title.chars().take(150).collect::<String>()}}));
+        let fields: Vec<serde_json::Value> = card.payload.as_object().into_iter().flat_map(|object| object.iter())
+            .filter(|(key, value)| key.as_str() != "title" && (value.is_string() || value.is_number() || value.is_boolean()))
+            .take(10)
+            .map(|(key, value)| serde_json::json!({"type":"plain_text","text":format!("{}\n{}", key, value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string()).chars().take(1900).collect::<String>())}))
+            .collect();
+        if !fields.is_empty() {
+            for part in fields.chunks(2).take(50usize.saturating_sub(blocks.len())) {
+                blocks.push(serde_json::json!({"type":"section","fields":part}));
+            }
+        } else {
+            let summary = crate::structured_markdown(card)
+                .split_once("\n\n```json")
+                .map_or_else(
+                    || crate::structured_markdown(card),
+                    |(summary, _)| summary.to_owned(),
+                );
+            if blocks.len() < 50 {
+                blocks.push(serde_json::json!({"type":"section","text":{"type":"plain_text","text":summary.chars().take(2900).collect::<String>()}}));
+            }
+        }
+    }
+    blocks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

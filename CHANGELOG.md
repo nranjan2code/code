@@ -1,3 +1,9 @@
+## Unreleased
+
+- Carry typed result cards in channel delivery packets and render them using
+  Telegram HTML, Slack Block Kit and Discord embeds, while retaining the
+  readable text fallback.
+
 ## 5.2.4 — 2026-09-28
 
 - Make scheduled tasks easier to create and understand by distinguishing AI tasks from scripts, explaining their Git requirements, and showing the latest result or reason a run could not start.

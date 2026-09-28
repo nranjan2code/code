@@ -477,6 +477,7 @@ pub(crate) async fn render_response(
     bot_id: Option<&str>,
     session_id: Option<&str>,
     intent_posture: Option<vak_intent::DeliveryPosture>,
+    cards: Vec<vak_delivery::StructuredOutput>,
 ) -> Result<DeliveryPacket, String> {
     let runtime = runtime(core);
     let mut profile = profile_for_surface(core, surface, requested);
@@ -518,7 +519,9 @@ pub(crate) async fn render_response(
         profile,
         skill_registry: Some(merged_presentation_skills(core)),
     };
-    runtime.render(&job).await
+    let mut packet = runtime.render(&job).await?;
+    packet.attach_structured_cards(cards);
+    Ok(packet)
 }
 
 pub(crate) async fn deliver(

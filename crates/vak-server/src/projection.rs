@@ -123,17 +123,19 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         .filter(|item| {
             item.turn_id == turn
                 && item.kind == OutputKind::Card
-                && item
-                    .provenance
-                    .as_ref()
-                    .and_then(|p| p.source.as_deref())
-                    .is_some_and(|source| source.starts_with("emit_") && source.ends_with("_card"))
                 && matches!(
                     item.content,
                     OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
                 )
         })
         .map(|item| item.fallback_text.trim())
+        // Structured fallback text includes a JSON appendix for audit/export.
+        // Chat channels receive the semantic card separately and should not
+        // expose that appendix as the user-facing card.
+        .map(|text| {
+            text.split_once("\n\n```json")
+                .map_or(text, |(body, _)| body)
+        })
         .filter(|text| !text.is_empty())
         .collect();
     if cards.is_empty() {
@@ -144,6 +146,39 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
         Some(note) => format!("{cards}\n\n{note}"),
         None => cards,
     }
+}
+
+/// Typed cards from the latest turn, retained separately for channel-native
+/// renderers. The text fallback remains alongside them for older consumers.
+pub(crate) fn run_cards(session: &SessionLog) -> Vec<vak_delivery::StructuredOutput> {
+    let session_id = session
+        .header()
+        .map(|header| header.session_id.clone())
+        .unwrap_or_default();
+    let timeline = snapshot(&session_id, session);
+    let Some(turn) = timeline
+        .items
+        .iter()
+        .rev()
+        .find(|item| item.role == OutputRole::User)
+        .map(|item| item.turn_id.as_str())
+    else {
+        return Vec::new();
+    };
+    timeline
+        .items
+        .iter()
+        .filter(|item| item.turn_id == turn && item.kind == OutputKind::Card)
+        .filter_map(|item| match &item.content {
+            OutputContent::Structured { output } => Some(output.clone()),
+            OutputContent::Adaptive { fallback_text, .. } => {
+                vak_delivery::structured_outputs_from_text(fallback_text)
+                    .into_iter()
+                    .next()
+            }
+            _ => None,
+        })
+        .collect()
 }
 
 pub(crate) fn snapshot(session_id: &str, session: &SessionLog) -> OutputTimeline {
@@ -4622,6 +4657,13 @@ mod tests {
             text.contains("sales rise steadily"),
             "card content must reach the channel: {text}"
         );
+        assert!(
+            !text.contains("```json"),
+            "channel fallback must not leak the audit appendix: {text}"
+        );
+        let cards = super::run_cards(&log);
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].semantic_type, "chart");
         assert!(!text.contains("The chart is shown above."), "{text}");
         let with_note = super::text_with_run_cards(&log, "Note: Check the holiday dip.".into());
         assert!(with_note.contains("sales rise steadily"), "{with_note}");

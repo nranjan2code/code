@@ -56,6 +56,7 @@ pub struct SlackMessage {
 struct GatewayReply {
     chunks: Vec<String>,
     session_id: Option<String>,
+    delivery: Option<vak_delivery::DeliveryPacket>,
 }
 
 /// Parse a `conversations.history` response into routable messages,
@@ -162,7 +163,7 @@ impl SlackBridge {
                     continue;
                 }
                 let reply = self.process(&message).await;
-                if let Err(e) = self.send_message(channel_id, &reply.chunks).await {
+                if let Err(e) = self.send_message(channel_id, &reply).await {
                     eprintln!("[slack] send to {channel_id} failed: {e}");
                 }
                 if message.audio_url.is_some()
@@ -277,9 +278,16 @@ impl SlackBridge {
             Ok(r) if r.status().is_success() => match r.json::<Value>().await {
                 Ok(v) => {
                     let session_id = v["session_id"].as_str().map(String::from);
-                    let chunks = super::prepared_chunks(v, "slack")
+                    let delivery = super::prepared_packet(v.clone(), "slack");
+                    let chunks = delivery
+                        .as_ref()
+                        .map(|packet| packet.chunks.clone())
                         .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
-                    GatewayReply { chunks, session_id }
+                    GatewayReply {
+                        chunks,
+                        session_id,
+                        delivery: delivery.ok(),
+                    }
                 }
                 Err(e) => GatewayReply {
                     chunks: vec![format!("(bad gateway reply: {e})")],
@@ -297,8 +305,72 @@ impl SlackBridge {
         }
     }
 
-    async fn send_message(&self, channel_id: &str, chunks: &[String]) -> Result<(), String> {
-        for chunk in chunks {
+    async fn send_message(&self, channel_id: &str, reply: &GatewayReply) -> Result<(), String> {
+        let cards = reply
+            .delivery
+            .as_ref()
+            .map(vak_delivery::DeliveryPacket::structured_cards)
+            .unwrap_or_default();
+        if !cards.is_empty() {
+            let cards = cards.into_iter().cloned().collect::<Vec<_>>();
+            let chunks = if reply.chunks.is_empty() {
+                vec![String::new()]
+            } else {
+                reply.chunks.clone()
+            };
+            let body = serde_json::json!({
+                "channel": channel_id,
+                "text": chunks[0],
+                "blocks": vak_delivery::slack::structured_card_blocks(&cards),
+                "parse": "none",
+                "link_names": false,
+            });
+            let resp = http()
+                .post(format!("{}/chat.postMessage", self.api_base))
+                .bearer_auth(&self.bot_token)
+                .json(&body)
+                .send()
+                .await
+                .map_err(|e| format!("slack chat.postMessage: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("slack chat.postMessage returned {}", resp.status()));
+            }
+            let result: Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("slack chat.postMessage body: {e}"))?;
+            if result["ok"].as_bool() != Some(true) {
+                return Err(format!(
+                    "slack chat.postMessage not ok: {}",
+                    result["error"].as_str().unwrap_or("?")
+                ));
+            }
+            for chunk in chunks.iter().skip(1) {
+                let response = http()
+                    .post(format!("{}/chat.postMessage", self.api_base))
+                    .bearer_auth(&self.bot_token)
+                    .json(&serde_json::json!({"channel":channel_id,"text":chunk,"parse":"none","link_names":false}))
+                    .send().await.map_err(|e| format!("slack chat.postMessage: {e}"))?;
+                if !response.status().is_success() {
+                    return Err(format!(
+                        "slack chat.postMessage returned {}",
+                        response.status()
+                    ));
+                }
+                let result: Value = response
+                    .json()
+                    .await
+                    .map_err(|e| format!("slack chat.postMessage body: {e}"))?;
+                if result["ok"].as_bool() != Some(true) {
+                    return Err(format!(
+                        "slack chat.postMessage not ok: {}",
+                        result["error"].as_str().unwrap_or("?")
+                    ));
+                }
+            }
+            return Ok(());
+        }
+        for chunk in &reply.chunks {
             let resp = http()
                 .post(format!("{}/chat.postMessage", self.api_base))
                 .bearer_auth(&self.bot_token)
@@ -398,6 +470,30 @@ impl SlackBridge {
 mod tests {
     use super::*;
 
+    fn sample_card() -> vak_delivery::StructuredOutput {
+        vak_delivery::StructuredOutput {
+            semantic_type: "metric".into(),
+            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1".into(),
+            payload: serde_json::json!({"title":"Weather","Temperature":"23°C","Status":"Sunny"}),
+        }
+    }
+
+    #[test]
+    fn card_delivery_uses_native_block_kit_fields() {
+        let blocks = vak_delivery::slack::structured_card_blocks(&[sample_card()]);
+        assert_eq!(blocks[0]["type"], "header");
+        assert_eq!(blocks[0]["text"]["text"], "Weather");
+        assert_eq!(blocks[1]["fields"][0]["type"], "plain_text");
+        assert_eq!(blocks[1]["fields"][0]["text"], "Status\nSunny");
+        assert!(
+            !blocks
+                .iter()
+                .any(|block| block.to_string().contains("\"semantic_type\""))
+        );
+    }
+
     fn bridge() -> SlackBridge {
         SlackBridge {
             api_base: "http://localhost".into(),
@@ -483,6 +579,7 @@ mod tests {
                 .filter_map(|v| v.as_str().map(String::from))
                 .collect(),
             session_id: value["session_id"].as_str().map(String::from),
+            delivery: None,
         };
         assert_eq!(reply.session_id.as_deref(), Some("slack-session"));
     }

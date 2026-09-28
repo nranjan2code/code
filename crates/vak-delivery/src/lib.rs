@@ -594,6 +594,60 @@ pub struct DeliveryPacket {
     pub presentation: Option<OutputTimeline>,
 }
 
+impl DeliveryPacket {
+    /// Add the turn's emitted semantic cards to the canonical presentation
+    /// timeline carried by this delivery packet. Surface adapters consume
+    /// these typed items and keep `chunks` as their text fallback.
+    pub fn attach_structured_cards(&mut self, cards: impl IntoIterator<Item = StructuredOutput>) {
+        let cards: Vec<_> = cards.into_iter().collect();
+        if cards.is_empty() {
+            return;
+        }
+        let timeline = self.presentation.get_or_insert_with(|| OutputTimeline {
+            schema_version: PRESENTATION_SCHEMA_VERSION,
+            session_id: String::new(),
+            cursor: None,
+            items: Vec::new(),
+            diagnostics: Vec::new(),
+            goal: None,
+        });
+        for (index, output) in cards.into_iter().enumerate() {
+            timeline.items.push(OutputItem {
+                id: format!("{}/card/{index}", self.job_id),
+                timestamp: String::new(),
+                turn_id: self.job_id.clone(),
+                role: OutputRole::Tool,
+                kind: OutputKind::Card,
+                status: OutputStatus::Succeeded,
+                outcome: None,
+                fallback_text: structured_markdown(&output),
+                content: OutputContent::Structured { output },
+                provenance: Some(OutputProvenance {
+                    session_id: None,
+                    entry_id: None,
+                    tool_call_id: None,
+                    source: Some("channel_card".into()),
+                    presentation_id: None,
+                }),
+                actions: Vec::new(),
+            });
+        }
+    }
+
+    /// Typed cards for native surface renderers.
+    pub fn structured_cards(&self) -> Vec<&StructuredOutput> {
+        self.presentation
+            .iter()
+            .flat_map(|timeline| timeline.items.iter())
+            .filter(|item| item.kind == OutputKind::Card)
+            .filter_map(|item| match &item.content {
+                OutputContent::Structured { output } => Some(output),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "snake_case")]
 #[allow(clippy::large_enum_variant)]
@@ -1408,6 +1462,26 @@ pub mod worker {
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn channel_cards_live_in_the_delivery_packet_timeline() {
+        let mut packet =
+            render(&job(Markup::TelegramHtml, Some(3900))).expect("delivery job should render");
+        let card = StructuredOutput {
+            semantic_type: "metric".into(),
+            schema_version: PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1".into(),
+            payload: serde_json::json!({"title":"Service health","status":"Healthy"}),
+        };
+        packet.attach_structured_cards([card.clone()]);
+
+        assert_eq!(packet.structured_cards(), vec![&card]);
+        let wire = serde_json::to_value(&packet).expect("packet should serialize");
+        let restored: DeliveryPacket =
+            serde_json::from_value(wire).expect("packet should round-trip");
+        assert_eq!(restored.structured_cards(), vec![&card]);
+    }
 
     #[test]
     fn card_note_requires_explicit_additional_text() {

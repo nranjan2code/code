@@ -1841,6 +1841,7 @@ const DOCUMENT_INLINE_MAX_BYTES: usize = 64 * 1024;
 pub(crate) struct ChatReply {
     pub(crate) text: String,
     pub(crate) drafts: Vec<TurnDraft>,
+    pub(crate) cards: Vec<vak_delivery::StructuredOutput>,
 }
 
 /// The latest draft this turn made of one workspace file.
@@ -2695,6 +2696,7 @@ async fn gateway_inbound(
                 .as_ref()
                 .and_then(|capabilities| capabilities.accepts_files)
                 .unwrap_or(false);
+            let cards = reply.cards;
             let (text, files) =
                 return_drafts(&core, reply.text, &reply.drafts, accepts_files).await;
             // The turn's delivery posture, from its intent entry: the
@@ -2767,6 +2769,7 @@ async fn gateway_inbound(
                 body.bot_id.as_deref(),
                 session_id.as_deref(),
                 intent_posture,
+                cards,
             )
             .await
             {
@@ -3186,6 +3189,7 @@ async fn execute_turn_chain(
                         let _ = tx.send(ChatReply {
                             text: text.clone(),
                             drafts: turn_drafts(&log, core.cwd()),
+                            cards: crate::projection::run_cards(&log),
                         });
                     }
                     // Background reflection seam (docs/design/29 P1): the
@@ -3228,6 +3232,7 @@ async fn execute_turn_chain(
                         let _ = tx.send(ChatReply {
                             text: text.clone(),
                             drafts: Vec::new(),
+                            cards: Vec::new(),
                         });
                     }
                     (recovered, short_summary(&text), true)

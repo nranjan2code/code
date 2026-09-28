@@ -685,9 +685,15 @@ impl TelegramBridge {
         // its lossless fallback when the packet is absent or incompatible.
         let rendered = reply.delivery.as_ref().and_then(|packet| {
             let body = serde_json::json!({"delivery": packet});
-            super::prepared_packet(body, "telegram")
-                .ok()
-                .map(|packet| packet.chunks)
+            super::prepared_packet(body, "telegram").ok().map(|packet| {
+                let cards = packet.structured_cards();
+                if cards.is_empty() {
+                    packet.chunks
+                } else {
+                    let cards = cards.into_iter().cloned().collect::<Vec<_>>();
+                    vak_delivery::telegram::structured_card_chunks(&cards, Some(3900))
+                }
+            })
         });
         let (chunks, parse_html) = match rendered {
             Some(chunks) if !chunks.is_empty() => (chunks, true),
@@ -1037,6 +1043,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn telegram_card_projection_formats_typed_fields_without_json() {
+        let card = vak_delivery::StructuredOutput {
+            semantic_type: "metric".into(),
+            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1".into(),
+            payload: serde_json::json!({"title":"Weather Card","temperature":"23°C","status":"Sunny"}),
+        };
+        let chunks = vak_delivery::telegram::structured_card_chunks(&[card], Some(3900));
+        assert_eq!(chunks.len(), 1);
+        assert!(chunks[0].contains("<b>"));
+        assert!(chunks[0].contains("23°C"));
+        assert!(chunks[0].contains("Sunny"));
+        assert!(!chunks[0].contains("semantic_type"));
+        assert!(!chunks[0].contains("```json"));
+    }
+
+    #[test]
     fn approve_button_maps_to_a_yes_verdict_with_the_request_id() {
         assert_eq!(
             callback_data_to_verdict_text("approve:ab12cd34"),
@@ -1129,5 +1153,168 @@ mod tests {
         drop(a);
         let d = InstanceLock::acquire(&dir.path().to_path_buf(), "tok-A");
         assert!(d.is_ok(), "flock releases when holder drops");
+    }
+
+    /// Opt-in network smoke test: set `VAK_LIVE_TELEGRAM_CHAT_ID` and run
+    /// with `--ignored`. The bot credential is read from Vak's secret store
+    /// and is never included in output.
+    #[tokio::test]
+    #[ignore = "posts a clearly labeled card-rendering check to a real chat"]
+    async fn live_telegram_accepts_card_html() {
+        let chat_id = std::env::var("VAK_LIVE_TELEGRAM_CHAT_ID")
+            .expect("set VAK_LIVE_TELEGRAM_CHAT_ID to the authorized test chat");
+        let token_env = "BOT_TOKEN__VKAYARTHA";
+        let token = vak_config::user_env_path()
+            .and_then(|path| vak_config::read_env_file_var(&path, token_env))
+            .or_else(|| vak_config::get_var(token_env))
+            .expect("configured Telegram bot credential is unavailable");
+        let api_base = vak_config::get_var("TELEGRAM_API_BASE")
+            .unwrap_or_else(|| "https://api.telegram.org".into());
+        let samples = [
+            (
+                "Research brief",
+                "### Findings\n\nThree sources point to steady adoption growth. The clearest signal is **repeat use**, while pricing remains uncertain.\n\n- Strongest evidence: monthly active use\n- Open question: regional pricing",
+            ),
+            (
+                "Metric card",
+                "### Service health\n\n**Availability:** 99.95%\n\n**Latency:** p95 184 ms\n\nNo customer impact was detected.",
+            ),
+            (
+                "Comparison",
+                "### Options\n\n| Option | Cost | Fit |\n|---|---:|---|\n| A | Low | Fast setup |\n| B | Medium | More control |\n\n**Recommendation:** start with A.",
+            ),
+            (
+                "Test report",
+                "### Build checks\n\n- Passed: 128\n- Failed: 0\n- Skipped: 2\n\nThe two skipped checks need a configured simulator.",
+            ),
+            (
+                "Plan timeline",
+                "### This week\n\n1. Monday — confirm scope\n2. Wednesday — review the prototype\n3. Friday — decide whether to ship\n\nOwner: Product team.",
+            ),
+            (
+                "Decision brief",
+                "### Decision\n\nChoose the staged rollout. It limits exposure while keeping rollback simple.\n\n> Revisit after the first 500 users.",
+            ),
+            (
+                "Recipe card",
+                "### Lentil soup\n\n**Prep:** 10 min · **Cook:** 30 min\n\n- Red lentils\n- Onion and cumin\n- Lemon to finish\n\nSimmer until soft, then season.",
+            ),
+            (
+                "Incident update",
+                "### Checkout delay\n\n**Status:** Mitigated\n\nThe queue is draining normally. We are monitoring error rates for another 20 minutes.",
+            ),
+            (
+                "Release notes",
+                "### Version 2.4\n\n- Added export to CSV\n- Fixed a retry loop on slow networks\n- Improved keyboard navigation",
+            ),
+            (
+                "Command result",
+                "### Backup check\n\n`vak backup verify` completed successfully.\n\nFiles checked: 42\nErrors: 0",
+            ),
+            (
+                "Research links",
+                "### Sources\n\n1. [Product usage report](https://example.com/usage) — updated this month\n2. [Pricing overview](https://example.com/pricing) — current plans",
+            ),
+            (
+                "Checklist",
+                "### Before launch\n\n- [x] Rollback tested\n- [x] Support briefed\n- [ ] Regional notice approved",
+            ),
+            (
+                "Chart summary",
+                "### Weekly signups\n\nSignups rose from 420 to 610 over four weeks, with the largest increase after the onboarding change.",
+            ),
+            (
+                "Support digest",
+                "### Today\n\n**Resolved:** 18\n**Waiting:** 3\n\nMost reports concern account recovery. No outage is active.",
+            ),
+            (
+                "Preview status",
+                "### Preview ready\n\nThe mobile layout is ready for review. The primary action stays visible at narrow widths.",
+            ),
+        ];
+        let profile = vak_delivery::DeliveryProfile {
+            surface: "telegram".into(),
+            markup: vak_delivery::Markup::TelegramHtml,
+            max_chars: Some(3900),
+            supports_tables: false,
+            supports_code_blocks: true,
+            supports_links: true,
+            supports_actions: false,
+            template: None,
+            posture: vak_delivery::DeliveryPosture::default(),
+        };
+        let mut batches: Vec<String> = Vec::new();
+        for (index, (title, answer)) in samples.iter().enumerate() {
+            let job = vak_delivery::DeliveryJob {
+                job_id: format!("telegram-live-card-{}", index + 1),
+                target: format!("telegram:{chat_id}:Vkayartha"),
+                kind: vak_delivery::DeliveryKind::Assistant,
+                content: vak_delivery::DeliveryContent::Answer(
+                    vak_delivery::AnswerDraft::from_markdown(format!(
+                        "## Live delivery check {}/15 — {title}\n\n{answer}",
+                        index + 1
+                    )),
+                ),
+                profile: profile.clone(),
+                skill_registry: None,
+            };
+            let packet = vak_delivery::render(&job).expect("Telegram answer rendering failed");
+            assert_eq!(packet.surface, "telegram");
+            assert!(packet.chunks.iter().all(|chunk| !chunk.contains("```json")));
+            let rendered = packet.chunks.join("\n\n");
+            if index % 3 == 0 {
+                batches.push(rendered);
+            } else if let Some(batch) = batches.last_mut() {
+                batch.push_str("\n\n──────────\n\n");
+                batch.push_str(&rendered);
+            }
+        }
+        assert_eq!(samples.len(), 15);
+        let card = vak_delivery::StructuredOutput {
+            semantic_type: "metric".into(),
+            schema_version: vak_delivery::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1".into(),
+            payload: serde_json::json!({
+                "title": "Native Telegram card layout",
+                "availability": "99.95%",
+                "p95 latency": "184 ms",
+                "status": "Healthy"
+            }),
+        };
+        batches[0].push_str("\n\n──────────\n\n");
+        batches[0].push_str(
+            &vak_delivery::telegram::structured_card_chunks(&[card], Some(3900)).join("\n\n"),
+        );
+        for (index, text) in batches.iter().enumerate() {
+            let response = http()
+                .post(format!(
+                    "{}/bot{token}/sendMessage",
+                    api_base.trim_end_matches('/')
+                ))
+                .json(&serde_json::json!({
+                    "chat_id": chat_id,
+                    "text": text,
+                    "parse_mode": "HTML",
+                    "link_preview_options": {"is_disabled": true}
+                }))
+                .send()
+                .await
+                .expect("Telegram API request failed");
+            assert!(
+                response.status().is_success(),
+                "Telegram rejected live batch {}: {}",
+                index + 1,
+                response.status()
+            );
+            let body: serde_json::Value = response
+                .json()
+                .await
+                .expect("Telegram response was not JSON");
+            assert_eq!(body["ok"], true, "Telegram API did not accept live batch");
+            if index + 1 < batches.len() {
+                tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+            }
+        }
     }
 }

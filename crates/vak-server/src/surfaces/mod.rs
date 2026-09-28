@@ -46,14 +46,6 @@ fn validate_adaptive_fallbacks(packet: &vak_delivery::DeliveryPacket) -> Result<
     Ok(())
 }
 
-fn prepared_chunks(body: serde_json::Value, surface: &str) -> Result<Vec<String>, String> {
-    let packet = prepared_packet(body, surface)?;
-    if packet.chunks.is_empty() || packet.chunks.iter().any(String::is_empty) {
-        return Err("gateway supplied an empty delivery packet".into());
-    }
-    Ok(packet.chunks)
-}
-
 /// Watches a bridge's own credential and reports when it changes.
 ///
 /// A bridge used to read its token once at startup, which made revoking

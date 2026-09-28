@@ -579,6 +579,55 @@ pub fn strip_html(html: &str) -> String {
     out
 }
 
+/// Project semantic cards into Telegram's rich-message format. Telegram has
+/// no generic card object, so the native deliverable is a safe HTML message
+/// with a title and key/value rows, chunked with valid tags at each boundary.
+pub fn structured_card_chunks(
+    cards: &[crate::StructuredOutput],
+    max_chars: Option<usize>,
+) -> Vec<String> {
+    let markdown = cards
+        .iter()
+        .map(|card| {
+            let title = card.payload["title"]
+                .as_str()
+                .unwrap_or(&card.semantic_type);
+            let fields: Vec<String> = card
+                .payload
+                .as_object()
+                .into_iter()
+                .flat_map(|object| object.iter())
+                .filter(|(key, value)| {
+                    key.as_str() != "title"
+                        && (value.is_string() || value.is_number() || value.is_boolean())
+                })
+                .take(12)
+                .map(|(key, value)| {
+                    format!(
+                        "- **{key}:** {}",
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| value.to_string())
+                    )
+                })
+                .collect();
+            if fields.is_empty() {
+                crate::structured_markdown(card)
+                    .split_once("\n\n```json")
+                    .map_or_else(
+                        || crate::structured_markdown(card),
+                        |(summary, _)| summary.to_owned(),
+                    )
+            } else {
+                format!("### {title}\n\n{}", fields.join("\n"))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n---\n\n");
+    split_html_chunks(&markdown_to_html(&markdown), max_chars)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
