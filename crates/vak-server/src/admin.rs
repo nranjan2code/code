@@ -2044,7 +2044,12 @@ mod tests {
     #[tokio::test]
     async fn config_endpoint_reports_approval_mode_sandbox_and_workers() {
         let state = test_state();
-        let axum::Json(json) = crate::admin::get_config_admin(axum::extract::State(state)).await;
+        let response = crate::admin::get_config_admin(
+            axum::extract::State(state),
+            axum::extract::Query(crate::AgentScopeQuery::default()),
+        )
+        .await;
+        let json = body_json(response).await;
         assert!(json["approval_mode"].is_string(), "{json}");
         assert!(json["sandbox"].is_string(), "{json}");
         assert!(json["workers"].is_boolean(), "{json}");

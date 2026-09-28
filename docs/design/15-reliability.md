@@ -246,10 +246,78 @@ turn in that session read the frozen values unconditionally, which caused:
    after intent resolution to assemble a fresh ladder using:
    - Current evidence ledger (`routing-evidence.jsonl`, 30-day TTL)
    - Session belief state (domain-weighted doubt, clears on success)
-   - Warm discovery cache (TTL 5 min)
+   - Warm discovery: the last successful model catalogue per credential,
+     kept fresh in the background (see [How discovery stays
+     warm](#how-discovery-stays-warm))
    - Demand facts from this turn's intent reading (not hardcoded constants)
 3. Uses the fresh `turn_plan.ladder` to populate `cfg.ladder` (fallback legs),
    not `session_contract.route_ladder`.
+
+### How discovery stays warm
+
+A fallback leg is the primary's model on another keyed credential, or an
+exact id from `[route].fallback_models`, and planning admits one only where
+discovery shows a configured credential reaches that model. Planning never
+talks to a provider (invariants 7 and 25), so discovery has to be warm before
+the turn that reads it. It used to be written only when a person opened a
+model list, and only on the Core that served the list, so every other Core,
+each pooled gateway Core included, and any Core five minutes after its last
+picker read planned a primary-only ladder annotated as a single point of
+failure.
+
+The mechanism is `vak-core/src/discovery.rs`, level-triggered in the sense of
+invariant 31 (docs/design/41-capability-registry.md), in a loop of its own
+because a capability pass is offline by construction and this one is not.
+
+- **One store.** `ModelCatalogues` holds the last successful catalogue per
+  `(provider, credential_id)`, with the reason and retry time of the latest
+  failure beside it. Planning and the model pickers (`Core::discover_models`)
+  read and write the same store; a picker still serves a catalogue younger
+  than five minutes (`DISCOVERY_TTL`) without asking again.
+- **Shared across the pool.** A credential id fingerprints the base URL and
+  the key together, so a catalogue does not depend on which workspace asked.
+  `CorePool` (`vak-server/src/core_pool.rs`) hands every Core it builds the
+  default Core's store, and a channel Core built for its first message in an
+  hour plans from what the pool already knows. A Core makes legs only from
+  entries for credentials it resolves itself, so sharing never widens what a
+  workspace or an Agent can reach.
+- **Demand.** Every ladder plan, at session admission and on every turn,
+  notes that the turn's Agent is planning on this Core. Agents are tracked
+  separately because an Agent-private secret scope can hold keys of its own.
+- **The loop.** `Core::start_model_discovery` starts one refresh loop per
+  Core. The server starts it for its own Core and the pool for every Core it
+  builds, from `secured_router_with_port`, so `vak serve` and the desktop
+  shell behave alike. A pass is idempotent: for each Agent that planned a turn
+  in the last 30 minutes (`ACTIVE_WINDOW`) it resolves every keyed provider's
+  credential pool and fetches, concurrently, each catalogue that is missing or
+  older than four minutes (`REFRESH_AFTER`), recording each as it lands. The
+  loop ticks every 30 seconds (`RECONCILE_INTERVAL`), so a renewal lands
+  before the five-minute TTL. Hints, from the first turn after a quiet spell
+  and from a key change, only make it run sooner; a lost hint costs one tick.
+- **A failure is a reason with a retry, never data.** A failed listing never
+  replaces or empties a catalogue. Its reason is recorded beside it and it is
+  retried with capped backoff, 15 seconds doubling to five minutes, without
+  end. A picker asks straight away whatever the backoff, and reports the
+  reason rather than a list. The loop logs the first failure of a streak and
+  the recovery, and `/doctor` shows each credential's state in its "route
+  discovery" fact.
+- **Planning keeps the last good catalogue for 24 hours**
+  (`PLAN_STALE_BOUND`). A model withdrawn meanwhile costs one fast failed
+  dispatch on a fallback leg, reached only after the primary has failed, and
+  the walk moves on; dropping the catalogue would cost the whole fallback.
+  Nothing ever substitutes a static list (invariant 9).
+- **A quiet Core stops asking.** Past the active window its loop keeps
+  ticking but asks no provider, so an idle or evicted pooled Core does not
+  poll forever. Its next turn plans from the last catalogue and wakes the
+  loop. The loop holds its Core only for the length of a pass, so dropping
+  the Core ends the loop.
+
+What this does not cover: a process with no loop, such as a one-shot
+`vak exec`, plans only from what it discovered itself, which for a fresh
+process is nothing, so its ladder is primary-only unless a picker ran in it.
+The first turn after a server starts can race the first pass the same way.
+Catalogues are not persisted across processes, and closing that gap would
+need them to be.
 
 ### What the FrozenContract still governs (immutable)
 

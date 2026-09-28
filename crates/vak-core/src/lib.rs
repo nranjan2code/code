@@ -12,6 +12,7 @@ pub mod consolidation;
 pub mod custom_commands;
 pub mod data_engine;
 pub mod digest;
+pub mod discovery;
 pub mod entities;
 pub mod files;
 pub mod finops;
@@ -83,7 +84,6 @@ struct ProbeMetadata {
 
 type TaskSandboxMap =
     std::sync::Mutex<HashMap<String, (String, Arc<dyn vak_tools::sandbox::Sandbox>)>>;
-type ModelCache = std::sync::Mutex<HashMap<(String, String), (std::time::Instant, Vec<String>)>>;
 use vak_session::SessionLog;
 use vak_session::types::{CapabilityDescriptor, CapabilityKind, FrozenContract, SessionHeader};
 use vak_tools::sandbox::SandboxMode;
@@ -497,9 +497,10 @@ struct CoreInner {
     extra_allow: std::sync::Mutex<Vec<String>>,
     user_env_override: std::sync::Mutex<Option<PathBuf>>,
     tool_worker_exe: std::sync::Mutex<PathBuf>,
-    /// provider -> (fetched_at, model ids). Discovery is a network call;
-    /// pickers re-read it constantly, so results are memoised briefly.
-    models_cache: ModelCache,
+    /// Model catalogues per credential, the Agents planning turns here, and
+    /// the background refresh that keeps the first warm for the second
+    /// (`discovery.rs`). Route planning and model pickers both read it.
+    discovery: discovery::DiscoveryRuntime,
     /// Provider-reported per-model context limits. Unknown metadata is
     /// cached briefly too, so an unavailable metadata endpoint cannot stall
     /// every turn.
@@ -1250,7 +1251,79 @@ impl Core {
         } else {
             Vec::new()
         };
-        Ok(Core {
+        Ok(Core::from_inner(Arc::new(CoreInner {
+            config,
+            cwd,
+            sessions_home,
+            registry: default_registry(),
+            route: std::sync::Mutex::new(route),
+            route_fingerprint: std::sync::Mutex::new(route_fingerprint),
+            max_turns_override: std::sync::Mutex::new(None),
+            max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+            evidence_max_age_override: std::sync::Mutex::new(None),
+            mode_override: std::sync::Mutex::new(None),
+            permission_lease: std::sync::Mutex::new(CancellationToken::new()),
+            mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+            approval_mode_override: std::sync::Mutex::new(None),
+            rules_override: std::sync::Mutex::new(None),
+            sandbox_backend_override: std::sync::Mutex::new(None),
+            agent_network: Arc::new(std::sync::Mutex::new(
+                agent_network::AgentNetworkBroker::default(),
+            )),
+            task_sandboxes: std::sync::Mutex::new(HashMap::new()),
+            theme_override: std::sync::Mutex::new(None),
+            voice_override: std::sync::Mutex::new(None),
+            theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+            memory_search_enabled_override: std::sync::Mutex::new(None),
+            memory_write_enabled_override: std::sync::Mutex::new(None),
+            memory_reflection_override: std::sync::Mutex::new(None),
+            memory_skill_proposals_override: std::sync::Mutex::new(None),
+            workers_override: std::sync::Mutex::new(None),
+            work_override: std::sync::Mutex::new(None),
+            route_settings_override: std::sync::Mutex::new(None),
+            plugins_override: std::sync::Mutex::new(None),
+            finops_max_run_usd_override: std::sync::Mutex::new(None),
+            finops_max_day_usd_override: std::sync::Mutex::new(None),
+            provider_instance: std::sync::Mutex::new(None),
+            sessions_home_override: std::sync::Mutex::new(None),
+            breaker,
+            workers: Arc::new(vak_agent::WorkerRegistry::new()),
+            trust_project_config,
+            extra_allow: std::sync::Mutex::new(extra_allow),
+            user_env_override: std::sync::Mutex::new(None),
+            tool_worker_exe: std::sync::Mutex::new(
+                std::env::current_exe()
+                    .unwrap_or_else(|_| PathBuf::from("__vak_tool_worker_unavailable__")),
+            ),
+            discovery: discovery::DiscoveryRuntime::default(),
+            model_context_cache: std::sync::Mutex::new(HashMap::new()),
+            model_context_refreshing: std::sync::Mutex::new(std::collections::HashSet::new()),
+            capacity_cache: std::sync::Mutex::new(HashMap::new()),
+            capacity_probes: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            capacity_probe_attempted: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            mcp_override: std::sync::Mutex::new(None),
+            mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+            hooks_override: std::sync::Mutex::new(None),
+            hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
+            capabilities_override: std::sync::Mutex::new(None),
+            channel_policy: std::sync::Mutex::new(None),
+            web_fetch_override: std::sync::Mutex::new(None),
+            browse_override: std::sync::Mutex::new(None),
+            commitment_override: std::sync::Mutex::new(None),
+            beliefs: Arc::new(routing::BeliefState::new()),
+            spend_gates: std::sync::Mutex::new(HashMap::new()),
+            day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
+            mcp_cache: std::sync::Mutex::new(None),
+            capability_registry: std::sync::OnceLock::new(),
+            capability_shutdown: std::sync::Mutex::new(None),
+        })))
+    }
+
+    /// A handle on `inner` with every per-clone field as `new` sets it: how a
+    /// background loop that holds only a `Weak` turns it back into a `Core`.
+    fn from_inner(inner: Arc<CoreInner>) -> Core {
+        Core {
+            inner,
             task_copy_boundary: false,
             new_documents: Arc::default(),
             default_deliver_to: None,
@@ -1260,73 +1333,7 @@ impl Core {
             conversation_context: None,
             prompt_overlays: Arc::new(Vec::new()),
             approver_answerable: true,
-            inner: Arc::new(CoreInner {
-                config,
-                cwd,
-                sessions_home,
-                registry: default_registry(),
-                route: std::sync::Mutex::new(route),
-                route_fingerprint: std::sync::Mutex::new(route_fingerprint),
-                max_turns_override: std::sync::Mutex::new(None),
-                max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
-                evidence_max_age_override: std::sync::Mutex::new(None),
-                mode_override: std::sync::Mutex::new(None),
-                permission_lease: std::sync::Mutex::new(CancellationToken::new()),
-                mode_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
-                approval_mode_override: std::sync::Mutex::new(None),
-                rules_override: std::sync::Mutex::new(None),
-                sandbox_backend_override: std::sync::Mutex::new(None),
-                agent_network: Arc::new(std::sync::Mutex::new(
-                    agent_network::AgentNetworkBroker::default(),
-                )),
-                task_sandboxes: std::sync::Mutex::new(HashMap::new()),
-                theme_override: std::sync::Mutex::new(None),
-                voice_override: std::sync::Mutex::new(None),
-                theme_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
-                memory_search_enabled_override: std::sync::Mutex::new(None),
-                memory_write_enabled_override: std::sync::Mutex::new(None),
-                memory_reflection_override: std::sync::Mutex::new(None),
-                memory_skill_proposals_override: std::sync::Mutex::new(None),
-                workers_override: std::sync::Mutex::new(None),
-                work_override: std::sync::Mutex::new(None),
-                route_settings_override: std::sync::Mutex::new(None),
-                plugins_override: std::sync::Mutex::new(None),
-                finops_max_run_usd_override: std::sync::Mutex::new(None),
-                finops_max_day_usd_override: std::sync::Mutex::new(None),
-                provider_instance: std::sync::Mutex::new(None),
-                sessions_home_override: std::sync::Mutex::new(None),
-                breaker,
-                workers: Arc::new(vak_agent::WorkerRegistry::new()),
-                trust_project_config,
-                extra_allow: std::sync::Mutex::new(extra_allow),
-                user_env_override: std::sync::Mutex::new(None),
-                tool_worker_exe: std::sync::Mutex::new(
-                    std::env::current_exe()
-                        .unwrap_or_else(|_| PathBuf::from("__vak_tool_worker_unavailable__")),
-                ),
-                models_cache: std::sync::Mutex::new(HashMap::new()),
-                model_context_cache: std::sync::Mutex::new(HashMap::new()),
-                model_context_refreshing: std::sync::Mutex::new(std::collections::HashSet::new()),
-                capacity_cache: std::sync::Mutex::new(HashMap::new()),
-                capacity_probes: Arc::new(std::sync::Mutex::new(HashMap::new())),
-                capacity_probe_attempted: Arc::new(std::sync::Mutex::new(HashMap::new())),
-                mcp_override: std::sync::Mutex::new(None),
-                mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
-                hooks_override: std::sync::Mutex::new(None),
-                hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
-                capabilities_override: std::sync::Mutex::new(None),
-                channel_policy: std::sync::Mutex::new(None),
-                web_fetch_override: std::sync::Mutex::new(None),
-                browse_override: std::sync::Mutex::new(None),
-                commitment_override: std::sync::Mutex::new(None),
-                beliefs: Arc::new(routing::BeliefState::new()),
-                spend_gates: std::sync::Mutex::new(HashMap::new()),
-                day_budget: Arc::new(std::sync::Mutex::new(finops::DayBudget::new())),
-                mcp_cache: std::sync::Mutex::new(None),
-                capability_registry: std::sync::OnceLock::new(),
-                capability_shutdown: std::sync::Mutex::new(None),
-            }),
-        })
+        }
     }
 
     pub fn config(&self) -> &vak_config::Config {
@@ -4469,10 +4476,12 @@ impl Core {
     ///
     /// There is no baked-in catalogue: an out-of-date table silently hides
     /// models a provider shipped yesterday and offers ones the key cannot
-    /// use. Results are cached briefly because pickers poll this.
+    /// use. A catalogue younger than [`discovery::DISCOVERY_TTL`] is served
+    /// without asking again because pickers poll this; it is the same one
+    /// route planning reads, which the background refresh keeps warm.
     pub async fn discover_models(&self, provider: &str) -> Result<Vec<String>, CoreError> {
-        const TTL: std::time::Duration = std::time::Duration::from_secs(300);
         let pool = self.provider_auth_pool_for(provider)?;
+        let catalogues = self.model_catalogues();
         let mut all = Vec::new();
         let mut last_error = None;
         for auth in pool {
@@ -4480,21 +4489,19 @@ impl Core {
                 provider.to_string(),
                 auth.credential_id.clone().unwrap_or_default(),
             );
-            if let Ok(cache) = self.inner.models_cache.lock()
-                && let Some((at, models)) = cache.get(&key)
-                && at.elapsed() < TTL
-            {
+            if let Some(models) = catalogues.fresh(&key, std::time::Instant::now()) {
                 all.extend(models.iter().cloned());
                 continue;
             }
             match vak_llm::models::list_models(provider, &auth).await {
                 Ok(models) => {
                     all.extend(models.iter().cloned());
-                    if let Ok(mut cache) = self.inner.models_cache.lock() {
-                        cache.insert(key, (std::time::Instant::now(), models));
-                    }
+                    catalogues.record_success(&key, models, std::time::Instant::now());
                 }
-                Err(error) => last_error = Some(error),
+                Err(error) => {
+                    catalogues.record_failure(&key, &error.to_string(), std::time::Instant::now());
+                    last_error = Some(error);
+                }
             }
         }
         all.sort();
@@ -5145,15 +5152,26 @@ impl Core {
         }
     }
 
-    /// Drop memoised discovery for `provider` (or all of it) so the next
-    /// read reflects a key that just changed.
+    /// Drop memoised discovery for `provider` (or for every provider) so the
+    /// next read reflects a key that just changed, and wake the refresh loop
+    /// to fetch it. Only the credentials this Core now resolves are dropped:
+    /// catalogues are shared across a gateway pool, and another workspace's
+    /// key is not this change's to forget.
     pub fn invalidate_models_cache(&self, provider: Option<&str>) {
-        if let Ok(mut cache) = self.inner.models_cache.lock() {
-            match provider {
-                Some(p) => cache.retain(|(cached_provider, _), _| cached_provider != p),
-                None => cache.clear(),
-            }
-        }
+        let providers = match provider {
+            Some(p) => vec![p.to_string()],
+            None => self.provider_names(),
+        };
+        let keys: Vec<(String, String)> = providers
+            .iter()
+            .flat_map(|p| {
+                self.provider_credential_ids(p)
+                    .into_iter()
+                    .map(move |id| (p.clone(), id))
+            })
+            .collect();
+        self.model_catalogues().forget(&keys);
+        self.hint_model_discovery();
         if let Ok(mut cache) = self.inner.model_context_cache.lock() {
             match provider {
                 Some(p) => cache.retain(|(provider, _, _), _| provider != p),
@@ -5164,11 +5182,12 @@ impl Core {
 
     /// Order the route ladder (docs/design/15-reliability.md + Phase R).
     ///
-    /// Pure with respect to its inputs: warm discovery caches, the
-    /// evidence ledger, session beliefs, config, and tool count. No
-    /// network, no invented model ids. The operator-selected primary is
-    /// pinned to the head; v2 ordering decides only the FALLBACK order,
-    /// with the same model somewhere else ahead of any other model.
+    /// Reads warm discovery, the evidence ledger, session beliefs, config,
+    /// and tool count. No network, no invented model ids. Its one write is
+    /// noting that this Core's Agent is planning turns, which keeps discovery
+    /// warm for the next one. The operator-selected primary is pinned to the
+    /// head; v2 ordering decides only the fallback order, with same-model
+    /// stand-ins ahead of other models.
     ///
     /// `demand` is what the turn's reading concluded about this work.
     /// It is optional because a session can be opened before anyone has said
@@ -5179,36 +5198,21 @@ impl Core {
         primary: vak_llm::RouteLeg,
         demand: Option<vak_intent::DemandHint>,
     ) -> routing::RoutePlan {
-        let catalogues = self.warm_catalogues();
-        self.plan_route_ladder_over(primary, demand, &catalogues)
-    }
-
-    /// Every model list discovery fetched inside its TTL, for a credential
-    /// that still resolves. Reads the cache only: planning never waits on
-    /// the network.
-    fn warm_catalogues(&self) -> Vec<routing::WarmCatalogue> {
-        const DISCOVERY_TTL: std::time::Duration = std::time::Duration::from_secs(300);
-        let mut catalogues: Vec<routing::WarmCatalogue> = match self.inner.models_cache.lock() {
-            Ok(cache) => cache
-                .iter()
-                .filter(|(_, (fetched_at, _))| fetched_at.elapsed() < DISCOVERY_TTL)
-                .map(
-                    |((provider, credential_id), (_, models))| routing::WarmCatalogue {
-                        provider: provider.clone(),
-                        credential_id: credential_id.clone(),
-                        models: models.clone(),
-                    },
-                )
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        catalogues.retain(|catalogue| {
-            self.provider_auth_for_leg(&catalogue.provider, Some(&catalogue.credential_id))
-                .is_ok()
-        });
-        catalogues
-            .sort_by(|a, b| (&a.provider, &a.credential_id).cmp(&(&b.provider, &b.credential_id)));
-        catalogues
+        self.note_route_demand();
+        let catalogues = self.model_catalogues().usable(std::time::Instant::now());
+        let warm: Vec<routing::WarmCatalogue> = catalogues
+            .iter()
+            .filter_map(|((provider, credential_id), models)| {
+                self.provider_auth_for_leg(provider, Some(credential_id))
+                    .ok()?;
+                Some(routing::WarmCatalogue {
+                    provider: provider.clone(),
+                    credential_id: credential_id.clone(),
+                    models: (**models).clone(),
+                })
+            })
+            .collect();
+        self.plan_route_ladder_over(primary, demand, &warm)
     }
 
     fn plan_route_ladder_over(

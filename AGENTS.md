@@ -1321,6 +1321,12 @@ crates/vak-core      SDK facade, system prompt, checkpoints, worktrees,
                      is done, only when eligible (local, or hosted with
                      `[probe] hosted = "full"`), the cache is missing/stale,
                      and no probe for that key is already in flight),
+                     discovery.rs (the warm model discovery behind the turn
+                     ladder's fallback legs: one catalogue store per
+                     credential, shared across the gateway pool, kept fresh
+                     by a background loop that asks providers only while the
+                     Core is planning turns, never on the turn path;
+                     docs/design/15-reliability.md),
                      prompts.rs (`Resolution{text, tail}` -- the stable
                      prefix and the per-turn tail are two separate strings
                      since 3.5.0; see docs/design/07-prompt.md),

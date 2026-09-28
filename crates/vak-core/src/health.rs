@@ -576,6 +576,11 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         }
     ));
 
+    facts.push(model_discovery_fact(
+        core.model_discovery_started(),
+        &core.model_discovery_status(),
+    ));
+
     let cap_suffix = core
         .config()
         .finops
@@ -614,6 +619,68 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         facts,
         ladder,
         failures,
+    }
+}
+
+/// The warm discovery behind a turn's fallback legs
+/// (docs/design/15-reliability.md): for each keyed credential, how old the
+/// catalogue planning uses is, and why its refresh is failing where it is. A
+/// process that never started the refresh, `vak doctor` among them, says so
+/// rather than reading as a failure.
+fn model_discovery_fact(
+    refreshing: bool,
+    statuses: &[crate::discovery::ModelDiscoveryStatus],
+) -> String {
+    let state = if refreshing {
+        "refreshing"
+    } else {
+        "not refreshed in this process"
+    };
+    if statuses.is_empty() {
+        return format!("route discovery: {state} · no keyed provider");
+    }
+    let entries: Vec<String> = statuses
+        .iter()
+        .map(|status| {
+            let pooled = statuses
+                .iter()
+                .filter(|other| other.provider == status.provider)
+                .count()
+                > 1;
+            let name = if pooled {
+                let credential = status
+                    .credential_id
+                    .get(..8)
+                    .unwrap_or(&status.credential_id);
+                format!("{} ({credential})", status.provider)
+            } else {
+                status.provider.clone()
+            };
+            let catalogue = match (status.models, status.age) {
+                (Some(models), Some(age)) => format!("{models} models, {} old", short_span(age)),
+                _ => "no catalogue".to_string(),
+            };
+            match (&status.failure, status.retry_in) {
+                (Some(reason), Some(retry)) if retry.is_zero() => {
+                    format!("{name} {catalogue}, failing: {reason}; retry due")
+                }
+                (Some(reason), Some(retry)) => format!(
+                    "{name} {catalogue}, failing: {reason}; retry in {}",
+                    short_span(retry)
+                ),
+                _ => format!("{name} {catalogue}"),
+            }
+        })
+        .collect();
+    format!("route discovery: {state} · {}", entries.join(" · "))
+}
+
+fn short_span(span: std::time::Duration) -> String {
+    let secs = span.as_secs();
+    match secs {
+        0..120 => format!("{secs}s"),
+        120..7200 => format!("{}m", secs / 60),
+        _ => format!("{}h", secs / 3600),
     }
 }
 
@@ -666,6 +733,49 @@ fn voice_check(voice: &vak_config::VoiceSettings) -> Result<String, String> {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
     use super::*;
+    use crate::discovery::ModelDiscoveryStatus;
+    use std::time::Duration;
+
+    #[test]
+    fn route_discovery_fact_names_the_reason_and_the_retry() {
+        let status = |provider: &str, credential_id: &str| ModelDiscoveryStatus {
+            provider: provider.into(),
+            credential_id: credential_id.into(),
+            models: None,
+            age: None,
+            failure: None,
+            retry_in: None,
+        };
+        let statuses = vec![
+            ModelDiscoveryStatus {
+                models: Some(12),
+                age: Some(Duration::from_secs(150)),
+                ..status("anthropic", "0123456789abcdef")
+            },
+            ModelDiscoveryStatus {
+                models: Some(12),
+                age: Some(Duration::from_secs(90)),
+                failure: Some("overloaded".into()),
+                retry_in: Some(Duration::from_secs(30)),
+                ..status("anthropic", "fedcba9876543210")
+            },
+            ModelDiscoveryStatus {
+                failure: Some("connection refused".into()),
+                retry_in: Some(Duration::ZERO),
+                ..status("ollama", "00ff00ff00ff00ff")
+            },
+        ];
+        assert_eq!(
+            model_discovery_fact(true, &statuses),
+            "route discovery: refreshing · anthropic (01234567) 12 models, 2m old · \
+             anthropic (fedcba98) 12 models, 90s old, failing: overloaded; retry in 30s · \
+             ollama no catalogue, failing: connection refused; retry due"
+        );
+        assert_eq!(
+            model_discovery_fact(false, &[]),
+            "route discovery: not refreshed in this process · no keyed provider"
+        );
+    }
 
     fn write_allowlist(home: &Path, entries: serde_json::Value) {
         let path = allowlist_path(home);

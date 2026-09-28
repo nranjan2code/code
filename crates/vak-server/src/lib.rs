@@ -2898,6 +2898,10 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
     // Local routines: fires due scheduled tasks while this server lives.
     start_scheduler(&state);
     delivery::start_replay(&state.core);
+    // Keeps the model catalogues route planning reads warm for this Core and
+    // every Core the pool builds, so a turn's fallback legs never depend on
+    // someone having opened a model list (docs/design/15-reliability.md).
+    state.gateway.core_pool.start_model_discovery();
     // Capability discovery is NOT started here.
     //
     // It used to be, and the CLI did its own bounded wait, and the desktop
@@ -13645,8 +13649,7 @@ async fn delete_provider_key(
     } else {
         state.core.clone()
     };
-    match core.remove_provider_key_scoped(&body.provider, scope.is_workspace())
-    {
+    match core.remove_provider_key_scoped(&body.provider, scope.is_workspace()) {
         Ok(removed) => {
             vak_core::security_events::record(
                 &core.sessions_home(),
@@ -13883,8 +13886,7 @@ async fn put_provider_key(
     } else {
         state.core.clone()
     };
-    match core.set_provider_key_scoped(&body.provider, &body.key, scope.is_workspace())
-    {
+    match core.set_provider_key_scoped(&body.provider, &body.key, scope.is_workspace()) {
         Ok(env_var) => {
             vak_core::security_events::record(
                 &core.sessions_home(),

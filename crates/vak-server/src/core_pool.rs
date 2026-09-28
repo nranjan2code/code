@@ -28,10 +28,12 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use vak_config::PermissionMode;
 use vak_core::Core;
+use vak_core::discovery::ModelCatalogues;
 
 /// Pool identity. `None` in the second slot is "inherit this workspace's
 /// own configured mode" — today's behavior and the key the gateway's own
@@ -89,6 +91,15 @@ fn canonical(path: &Path) -> PathBuf {
 pub struct CorePool {
     default_workspace: PathBuf,
     agent_network: vak_core::agent_network::AgentNetworkBroker,
+    /// The default Core's model catalogues, shared by every Core the pool
+    /// builds (docs/design/15-reliability.md, "How discovery stays warm").
+    /// A catalogue is keyed by credential fingerprint, so a channel Core
+    /// built for its first message in an hour plans from what the pool
+    /// already knows instead of from nothing.
+    catalogues: ModelCatalogues,
+    /// Set once the host starts discovery refresh; every Core built after
+    /// that starts its own loop.
+    refreshing: AtomicBool,
     entries: Mutex<HashMap<PoolKey, PooledEntry>>,
     max: usize,
     idle: Duration,
@@ -100,6 +111,7 @@ impl CorePool {
     pub fn new(default_core: Core, max: usize, idle: Duration) -> Self {
         let default_workspace = canonical(default_core.cwd());
         let agent_network = default_core.agent_network_broker();
+        let catalogues = default_core.model_catalogues();
         let mut entries = HashMap::new();
         entries.insert(
             (default_workspace.clone(), None, String::new()),
@@ -111,9 +123,23 @@ impl CorePool {
         CorePool {
             default_workspace,
             agent_network,
+            catalogues,
+            refreshing: AtomicBool::new(false),
             entries: Mutex::new(entries),
             max: max.max(1),
             idle,
+        }
+    }
+
+    /// Start model-discovery refresh for every Core in the pool now, and for
+    /// each one it builds from here on. Idempotent. The host calls this once
+    /// it is serving; a Core's loop stops asking providers when that Core
+    /// stops planning turns, so an evicted entry goes quiet by itself.
+    pub fn start_model_discovery(&self) {
+        self.refreshing.store(true, Ordering::Release);
+        let entries = self.entries.lock().unwrap_or_else(|p| p.into_inner());
+        for entry in entries.values() {
+            entry.core.start_model_discovery();
         }
     }
 
@@ -199,6 +225,7 @@ impl CorePool {
             .map(|c| c.with_surface(vak_core::Surface::Server))
             .map_err(|e| e.to_string())?;
         core.set_agent_network_broker(self.agent_network.clone());
+        core.share_model_catalogues(self.catalogues.clone());
         if policy != vak_config::ChannelPolicy::default() {
             core.apply_channel_policy(policy);
         }
@@ -230,6 +257,11 @@ impl CorePool {
         }
         if entries.len() >= self.max {
             self.evict_oldest_idle_locked(&mut entries);
+        }
+        // Only the instance that is kept gets a loop; a loser of the race
+        // above is dropped without ever having asked a provider anything.
+        if self.refreshing.load(Ordering::Acquire) {
+            core.start_model_discovery();
         }
         entries.insert(
             key,
@@ -600,6 +632,47 @@ mod tests {
         // instance (Arc-backed clone), not a freshly started one.
         assert_eq!(first.cwd(), second.cwd());
         assert_eq!(pool.len(), 2);
+    }
+
+    /// Every Core the pool builds plans from the default Core's catalogues,
+    /// so a channel Core built for its first message in an hour is not cold;
+    /// and once the host starts refresh, every Core in the pool, resident or
+    /// built later, runs its own loop. The test never yields, so no loop
+    /// gets to ask a provider anything.
+    #[tokio::test]
+    async fn pooled_cores_share_catalogues_and_refresh_once_started() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let resident_dir = tempfile::tempdir().unwrap();
+        let later_dir = tempfile::tempdir().unwrap();
+        let default = test_core(default_dir.path());
+        let pool = CorePool::new(default.clone(), 8, Duration::from_secs(1800));
+
+        let resident = pool
+            .resolve_at(resident_dir.path(), None, Instant::now())
+            .expect("start");
+        assert!(
+            resident
+                .model_catalogues()
+                .same_store(&default.model_catalogues())
+        );
+        assert!(
+            !resident.model_discovery_started(),
+            "the host decides when refresh starts"
+        );
+
+        pool.start_model_discovery();
+        assert!(default.model_discovery_started());
+        assert!(resident.model_discovery_started());
+
+        let later = pool
+            .resolve_at(later_dir.path(), None, Instant::now())
+            .expect("start");
+        assert!(
+            later
+                .model_catalogues()
+                .same_store(&default.model_catalogues())
+        );
+        assert!(later.model_discovery_started());
     }
 
     /// A warm pool entry is reused, but its persisted permission ceiling is
