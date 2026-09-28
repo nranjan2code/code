@@ -100,7 +100,10 @@ Read before changing behaviour in these areas:
   one intake path feeding the catalog, agent-reachable, with shared
   lifecycle; supersedes the target model of `51-feed-system.md` and depends on
   the data-architecture catalog at M6.5. Its §9 is a standalone security fix
-  for the shipped pipeline).
+  for the shipped pipeline),
+  `79-private-headless-fleet.md` (the proposed dedicated 24/7 customer VM
+  fleet, operator-blind boundary, provisioning and disaster recovery; it
+  extends 73/74 without starting a data milestone).
 
 ### What is authoritative
 

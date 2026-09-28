@@ -7,6 +7,11 @@ what the tree does today, taken from the source and from sizes (never
 contents) of a real development data home; each defect names the file that
 causes it and says whether it was reproduced or read from code.
 
+`79-private-headless-fleet.md` is the proposal for one dedicated 24/7 VM per
+customer, operator-blind management and disaster recovery. It adds a hosted
+deployment trust boundary without changing the locked local-first decisions
+or claiming that a later data milestone has started.
+
 ## 0. Why this document exists
 
 A single developer's machine, ten days into the 4.x line, holds 1.83 GB of
@@ -334,7 +339,7 @@ locations*, not of file names.
 | **Workspace** | a space's working tree, Agent workspaces, worktrees, task environments | projection of objects + human edits | mutable | lifecycle of its Run/Space | via checkpoints → objects | via objects |
 | **Derived** | catalog, FTS, embeddings, belief state, route aggregates, thumbnails | rebuilt from records/objects | overwritten | any time | never | rebuilt remotely |
 | **Ephemeral** | scratch tmp, caches, locks, sockets, gates, browser profiles | none | anything | end of Execution/process, boot sweep | never | never |
-| **Telemetry** | logs, spans, metrics | none (records win) | rotated | size/age | never | optional OTLP export |
+| **Telemetry** | logs, spans, metrics | none (records win) | rotated | size/age | never | optional, allowlisted OTLP export; fleet receives no content (§11.2) |
 
 Four rules follow:
 
@@ -475,11 +480,16 @@ dedupe (review R1). The design is:
 - **Derived plaintext is the limit.** The catalog's FTS and embedding
   stores are plaintext derived copies. Erasure deletes their rows with
   `secure_delete` and checkpoints the WAL. Locally, their at-rest
-  protection relies on OS disk encryption; the cloud uses managed
-  encryption.
+  protection relies on OS disk encryption; the cloud baseline uses managed
+  encryption. For an operator-blind hosted customer, this is insufficient:
+  the catalog and every derived copy must remain inside the customer VM's
+  protected boundary, or receive equivalent customer-controlled encryption
+  and attested key release (doc 79 §5). A fleet operator cannot receive its
+  plaintext through a search or troubleshooting endpoint.
 - **Backups** carry ciphertext and *wrapped* keys, never the KEK unless
   escrow is requested. Restoring re-applies every erasure tombstone before
-  anything becomes readable.
+  anything becomes readable. Fleet DR also needs a coherent record/ref/object
+  manifest, off-VM copies, fencing and a measured restore drill (§11.1).
 - **Transparency and honesty.**
   - Encryption at rest is a per-tenant policy, on by default because
     erasure depends on it.
@@ -487,7 +497,12 @@ dedupe (review R1). The design is:
     product promises.
   - On a headless host, the encrypted-file store keeps its key beside its
     data, so at-rest protection there is nominal. Crypto-shred still works,
-    because it destroys the scope key.
+    because it destroys the scope key. This describes the local baseline,
+    not an operator-blind customer hosting solution. Ordinary EBS encryption,
+    a customer key unlocked into operator-replaceable code, or a staff role
+    that hides plaintext only in the panel cannot meet doc 79's privacy
+    promise. Hosted key custody and approved-code measurements are a
+    separate release gate, with no operator escrow by default.
 
 ### 7.4 Default policies
 
@@ -609,6 +624,61 @@ The cloud is a *remote*, as in git, not a different product:
   performed on one side cannot be resurrected by the other.
 - **Multi-machine** (doc 56) becomes the same mechanism with two personal
   machines as remotes of each other.
+
+### 11.1 Dedicated fleet and disaster recovery
+
+The hosted fleet in `79-private-headless-fleet.md` deploys one tenant to one
+dedicated, continuously running VM. This deployment unit is distinct from
+the `Remote` protocol and from `CorePool`'s workspace cache. A customer may
+have several Agents inside its VM, but another customer's runtime or data is
+never placed there. The fleet control plane may operate signed software and
+observe content-free health; it is not a second data home or a route into
+tenant records, secrets or detailed logs. The customer's stable HTTPS origin
+survives VM replacement so owner passkeys continue to work (doc 78).
+
+A VM, EBS volume or snapshot is not the sole recovery record. A complete
+recovery point binds sealed/open record-chain heads, refs, object inventory,
+key grants, Desired state, software/data baseline and the latest erasure
+watermark in one verified manifest. Copies live outside the VM's failure
+domain as ciphertext under customer-controlled keys. A restore checks every
+referenced object and chain before admission, replays erasure decisions before
+readability, rebuilds Derived stores and obtains a new fenced writer epoch.
+The old VM must be unable to resume schedules, channel polling, writes or
+delivery after the new epoch is active. Recovered external actions are
+reconciled from receipts rather than replayed blindly. A restore without the
+customer's key authority fails closed; the fleet cannot decrypt on behalf
+of an absent customer.
+
+The initial design targets are RPO ≤15 minutes and RTO ≤60 minutes for a
+single VM/availability-zone loss when the key authority and AWS region are
+available. They are **not** current service guarantees. Cross-region and
+customer-key outages need separate targets and consent to any residency
+change. Scheduled isolated restore drills measure the actual gap and time,
+and verify `derive_messages()`, leases, passkey sign-in, delivery dedupe and
+erasure non-resurrection. Doc 79 §8 owns the failure matrix and tests.
+
+### 11.2 Fleet privacy and telemetry
+
+The remote and catalog contracts may be backed by local SQLite, object
+storage and Postgres as the plan states, but a hosted fleet implementation
+cannot infer that a shared cloud database may expose tenant content or
+sensitive metadata to operators. Content, key grants and derived search
+material stay within the customer-protected boundary or have an equivalent
+attested, customer-keyed protection. Remote refs and object inventories can
+reveal activity and must be classified, access-controlled and retained as
+customer data even when their payload objects are encrypted.
+
+Central fleet telemetry is an allowlist of deployment identity, signed
+version, coarse resource use, health, backup age, bounded counts and typed
+failure classes. No free-form error, raw command, filename, URL, prompt,
+reply, secret, browser session or raw application log crosses it. Opaque
+trace ids and timestamps can still be linkable personal data: they need a
+purpose, access controls, retention and deletion. Customer Admin sees its
+own detailed evidence within the customer boundary; fleet operators get no
+impersonation or plaintext support override. A chosen inference provider and
+external channel still receive the data needed for customer-authorized
+calls, and their limits must be disclosed. Doc 79 §§5–6 and §9 own the
+operator-blind threat test and data-protection release gates.
 
 ## 12. Sizing guidance
 
