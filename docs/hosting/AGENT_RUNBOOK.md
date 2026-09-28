@@ -20,10 +20,13 @@ destroy cloud resources without the user's request.
    web ports, EIP, DNS provider, billing impact, and backup location.
    Existing resources should be reused when safe; avoid duplicate hosts.
 4. **Build and install.** Build from a clean committed revision with
-   `scripts/hosting/aws-ec2.sh PRIVATE_ENV build`; transfer and install via
-   the matching `deploy` command. Never run Cargo on the small EC2 host or
-   replace managed binaries directly. `self verify`, service status, and
-   version evidence determine whether deployment succeeded.
+   `scripts/hosting/aws-ec2.sh PRIVATE_ENV build`; this uses the pinned
+   Amazon Linux Docker image and Rust toolchain on the operator machine. The
+   build records commit, lockfile, environment and artifact hashes in a
+   full-commit directory. Do not compile on the small EC2 host or overwrite
+   an earlier artifact. Deploy only that verified commit with the matching
+   `deploy` command. `self verify`, service status, and version evidence
+   determine whether deployment succeeded.
 5. **Configure with the product.** Complete the setup wizard, choose the
    provider/model and enter keys in Vakyartha. Configure public address and
    trusted hostname in Admin. Use the proxy command after DNS resolves.
@@ -37,10 +40,11 @@ destroy cloud resources without the user's request.
    operator's local clipboard for the browser form. Never ask for it in chat,
    or show the token or recovery codes in logs or an agent answer.
 7. **Update carefully.** Read release notes, preserve a backup and previous
-   artifact, build, deploy, check managed manifest and service state, then
-   check HTTPS and the app. If an update fails, diagnose the specific
-   service and restore a compatible previous release through `self install`.
-   Never patch the live binary or generated systemd unit by hand.
+   full-commit artifact, build, deploy, check managed manifest and service
+   state, then check HTTPS and the app. If an update fails, diagnose first
+   and reinstall the retained compatible artifact by passing its full commit
+   to `deploy`; verify status and HTTPS after rollback. Never patch the live
+   binary or generated systemd unit by hand.
 8. **Maintain a private audit trail.** Record date, source commit, build
    artifact, host resource IDs, DNS/proxy state, installer result, active
    version, verification evidence, and any incident in the private note.

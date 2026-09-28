@@ -8,10 +8,15 @@ ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 CONFIG="${1:-}"
 ACTION="${2:-}"
 usage() {
-    printf 'Usage: %s /outside/repo/aws.env {build|deploy|setup|status|logs|tunnel|copy-token|proxy|web-check}\n' "$0" >&2
+    printf 'Usage: %s /outside/repo/aws.env {build [source-commit]|deploy [source-commit]|setup|status|logs|tunnel|copy-token|proxy|web-check}\n' "$0" >&2
     exit 2
 }
-[[ -n "$CONFIG" && -n "$ACTION" && $# -eq 2 ]] || usage
+[[ -n "$CONFIG" && -n "$ACTION" ]] || usage
+if [[ "$ACTION" == build || "$ACTION" == deploy ]]; then
+    [[ $# -eq 2 || $# -eq 3 ]] || usage
+else
+    [[ $# -eq 2 ]] || usage
+fi
 [[ -f "$CONFIG" ]] || { printf 'Private inventory file is missing.\n' >&2; exit 1; }
 
 # The inventory is deliberately a local, trusted shell file. Never source one
@@ -55,12 +60,14 @@ remote() {
     local ip="$1"
     shift
     ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
-        "$SSH_USER@$ip" "$@"
+        "$SSH_USER@$ip" "$@" \
+        2> >(sed -E 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/<deployment-host>/g' >&2)
 }
 copy_to() {
     local ip="$1" source="$2" destination="$3"
     scp -q -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
-        "$source" "$SSH_USER@$ip:$destination"
+        "$source" "$SSH_USER@$ip:$destination" \
+        2> >(sed -E 's/[0-9]{1,3}(\.[0-9]{1,3}){3}/<deployment-host>/g' >&2)
 }
 require_host() {
     : "${PUBLIC_HOST:?Set PUBLIC_HOST in the private inventory}"
@@ -71,11 +78,26 @@ require_host() {
 
 case "$ACTION" in
     build)
-        "$ROOT/scripts/build-amazonlinux-arm64.sh"
+        source_commit="${3:-$(git -C "$ROOT" rev-parse HEAD)}"
+        "$ROOT/scripts/build-amazonlinux-arm64.sh" "$source_commit"
         ;;
     deploy)
-        artifacts="$ROOT/target/amazonlinux-arm64"
-        for name in vak vak-delivery-worker; do
+        source_commit="${3:-$(git -C "$ROOT" rev-parse HEAD)}"
+        [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || {
+            printf 'Deployment source must be a full 40-character Git commit.\n' >&2; exit 1;
+        }
+        git -C "$ROOT" cat-file -e "$source_commit^{commit}" || {
+            printf 'Deployment source commit is not present in this checkout.\n' >&2; exit 1;
+        }
+        builder_sha="$(git -C "$ROOT" show HEAD:docker/Dockerfile.amazonlinux-build | python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+        artifacts="$ROOT/target/amazonlinux-arm64/$source_commit/$builder_sha"
+        for name in vak vak-delivery-worker build-environment.txt; do
+            if [[ "$name" == build-environment.txt ]]; then
+                [[ -s "$artifacts/$name" ]] || {
+                    printf 'Missing builder environment evidence; run the build command first.\n' >&2; exit 1;
+                }
+                continue
+            fi
             [[ -x "$artifacts/$name" ]] || {
                 printf 'Missing %s; run the build command first.\n' "$name" >&2; exit 1;
             }
@@ -83,10 +105,12 @@ case "$ACTION" in
         [[ -z "$(git -C "$ROOT" status --porcelain)" ]] || {
             printf 'Commit or stash source changes before deploying.\n' >&2; exit 1;
         }
-        python3 - "$artifacts" "$(git -C "$ROOT" rev-parse HEAD)" <<'PY'
+python3 - "$artifacts" "$source_commit" "$ROOT" <<'PY'
 import hashlib
 import json
 import pathlib
+import re
+import subprocess
 import sys
 
 out = pathlib.Path(sys.argv[1])
@@ -97,6 +121,38 @@ for name in ("vak", "vak-delivery-worker"):
     digest = hashlib.sha256((out / name).read_bytes()).hexdigest()
     if digest != manifest["sha256"].get(name):
         raise SystemExit(f"Built artifact {name} has changed; rebuild first")
+environment_hash = hashlib.sha256((out / "build-environment.txt").read_bytes()).hexdigest()
+if manifest.get("builder_environment_sha256") != environment_hash:
+    raise SystemExit("Builder environment evidence has changed; rebuild first")
+if manifest.get("target") != "aarch64-unknown-linux-gnu":
+    raise SystemExit("Build manifest target is not the supported Amazon Linux ARM64 target")
+locked = subprocess.run(
+    ["git", "-C", sys.argv[3], "show", f"{sys.argv[2]}:Cargo.lock"],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout
+lock_hash = hashlib.sha256(locked).hexdigest()
+if manifest.get("cargo_lock_sha256") != lock_hash:
+    raise SystemExit("Build manifest dependency lock hash does not match Cargo.lock")
+builder = subprocess.run(
+    ["git", "-C", sys.argv[3], "show", "HEAD:docker/Dockerfile.amazonlinux-build"],
+    check=True,
+    stdout=subprocess.PIPE,
+).stdout
+if manifest.get("builder_dockerfile_sha256") != hashlib.sha256(builder).hexdigest():
+    raise SystemExit("Build manifest does not match the committed builder definition")
+text = builder.decode("utf-8")
+image = re.search(r"^FROM (\S+) AS builder$", text, re.MULTILINE)
+release = re.search(r"^ARG AMAZON_LINUX_RELEASE=(\S+)$", text, re.MULTILINE)
+toolchain = re.search(r"^ENV RUSTUP_TOOLCHAIN=(\S+)$", text, re.MULTILINE)
+if not image or "@sha256:" not in image.group(1):
+    raise SystemExit("Committed builder image is not pinned by digest")
+if manifest.get("builder_image") != image.group(1):
+    raise SystemExit("Build manifest builder image does not match the committed builder")
+if not release or manifest.get("amazon_linux_release") != release.group(1):
+    raise SystemExit("Build manifest Amazon Linux release does not match the committed builder")
+if not toolchain or manifest.get("rust_toolchain") != toolchain.group(1):
+    raise SystemExit("Build manifest Rust toolchain does not match the committed builder")
 PY
         ip="$(host_ip)"
         stage="$(remote "$ip" 'mktemp -d "$HOME/.vak-deploy.XXXXXXXX"')"
@@ -134,7 +190,7 @@ REMOTE
     status)
         ip="$(host_ip)"
         aws_ec2 describe-instances --instance-ids "$INSTANCE_ID" \
-            --query 'Reservations[0].Instances[0].[State.Name,InstanceType,Architecture,PublicIpAddress,SecurityGroups[0].GroupId]' --output text
+            --query 'Reservations[0].Instances[0].[State.Name,InstanceType,Architecture]' --output text
         remote "$ip" 'bash -s' <<'REMOTE'
 set -Eeuo pipefail
 prefix="$HOME/.local/share/vak/local/release"
@@ -222,7 +278,7 @@ REMOTE
         ;;
     web-check)
         require_host
-        for path in /app /admin; do
+        for path in /health /app /admin; do
             curl --fail --silent --show-error --location --output /dev/null \
                 --write-out "%{http_code} TLS=%{ssl_verify_result} $path\n" \
                 "https://$PUBLIC_HOST$path"

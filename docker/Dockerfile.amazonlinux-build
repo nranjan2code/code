@@ -3,14 +3,16 @@
 # not contact an AWS account.
 
 # syntax=docker/dockerfile:1.7
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023@sha256:06da5a3362eda00c5114227ac81abe56dd9b943395553b7c64a310457f4d9e2b AS builder
 
-RUN dnf install -y ca-certificates gcc gcc-c++ make perl pkgconf-pkg-config tar gzip openssl-devel \
+ARG AMAZON_LINUX_RELEASE=2023.12.20260918
+RUN dnf install -y --releasever=${AMAZON_LINUX_RELEASE} ca-certificates gcc gcc-c++ make perl pkgconf-pkg-config tar gzip openssl-devel \
     && dnf clean all
 
 ENV PATH="/root/.cargo/bin:${PATH}"
+ENV RUSTUP_TOOLCHAIN=1.98.1
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-    | sh -s -- -y --profile minimal
+    | sh -s -- -y --profile minimal --default-toolchain 1.98.1
 
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
@@ -28,8 +30,16 @@ RUN --mount=type=cache,target=/root/.cargo/registry \
     CARGO_BUILD_JOBS=1 CARGO_PROFILE_RELEASE_DEBUG=0 \
       cargo build --locked --release --package vak --package vak-delivery \
     && install -Dm755 target/release/vak /out/vak \
-    && install -Dm755 target/release/vak-delivery-worker /out/vak-delivery-worker
+    && install -Dm755 target/release/vak-delivery-worker /out/vak-delivery-worker \
+    && { \
+        printf '%s\n' '--- /etc/os-release ---'; cat /etc/os-release; \
+        printf '%s\n' '--- rustc --version --verbose ---'; rustc --version --verbose; \
+        printf '%s\n' '--- cargo --version ---'; cargo --version; \
+        printf '%s\n' '--- gcc --version ---'; gcc --version; \
+        printf '%s\n' '--- installed RPM packages ---'; rpm -qa | sort; \
+    } > /out/build-environment.txt
 
 FROM scratch AS export
 COPY --from=builder /out/vak /vak
 COPY --from=builder /out/vak-delivery-worker /vak-delivery-worker
+COPY --from=builder /out/build-environment.txt /build-environment.txt

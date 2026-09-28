@@ -17,8 +17,8 @@ An AI agent operating this path should follow the
 
 ## 1. Local prerequisites and private inventory
 
-Install Docker with Buildx, AWS CLI v2, OpenSSH, Python 3 and `curl`. Sign in
-with an AWS CLI profile; use short-lived IAM Identity Center credentials
+Install Docker with Buildx, AWS CLI v2, OpenSSH, Python 3, `git`, and `curl`.
+Sign in with an AWS CLI profile; use short-lived IAM Identity Center credentials
 where possible. Confirm account and region before changing resources:
 
 ```bash
@@ -91,20 +91,33 @@ refuse an unknown or changed host.
 
 Build locally from a **committed, clean source tree**, then install using
 Vakyartha's managed installer. The builder stages tracked source only into
-Docker, with no local `.env`, `.vak`, Git metadata, or AWS credentials:
+Docker, with no local `.env`, `.vak`, Git metadata, or AWS credentials. The
+Amazon Linux base image and repository release are pinned, and Rust is pinned
+to 1.98.1.
+`Cargo.lock`, target triple, Docker Buildx version, complete builder
+package/toolchain inventory, and SHA-256 digests are recorded beside each
+release. Artifacts are retained under
+the full source commit and builder-definition digest, so a later release or a
+changed builder cannot overwrite the last one:
 
 ```bash
 scripts/hosting/aws-ec2.sh "$private_inventory" build
 scripts/hosting/aws-ec2.sh "$private_inventory" deploy
 scripts/hosting/aws-ec2.sh "$private_inventory" status
+scripts/hosting/aws-ec2.sh "$private_inventory" web-check
 ```
 
-`deploy` checks a build manifest against the current commit and both binary
-digests, copies `vak` and `vak-delivery-worker` into a temporary host
-directory, calls `vak self install --force`, and checks `self verify`. If a
-gateway service was already registered it also calls `self services-sync`
-and `self status`. A first install is left inactive until setup. Never
-overwrite binaries in the managed prefix by hand: that breaks its manifest.
+`deploy` checks the manifest's source commit, lockfile digest, pinned
+builder/toolchain, builder environment evidence, and both binary digests
+before transfer. It copies
+`vak` and `vak-delivery-worker` into a temporary host directory, calls
+`vak self install --force`, and checks `self verify`. If a gateway service was
+already registered it also calls `self services-sync` and `self status`. A
+first install is left inactive until setup. Never overwrite binaries in the
+managed prefix by hand: that breaks its manifest. A clean release build can
+take several minutes at the final Rust link step; do not interrupt it merely
+because that step is quiet. Check `docker buildx history ls` before deciding
+that a build is stalled.
 The canonical host workspace is `~/vak-home`. On a fresh host complete the
 terminal setup wizard before expecting a ready model route:
 
@@ -196,9 +209,13 @@ store and restart affected services; do not merely remove the leaked text.
 
 ## 5. Update and operate
 
-Read the release notes and supported data baseline before an upgrade. Keep
-the old artifact/source revision available for recovery. Commit the new
-source first because the builder refuses a dirty tree; then:
+Read the release notes and supported data baseline before an upgrade. Check
+the AWS caller profile, host status, deployed source commit, service state,
+disk capacity and backup freshness first. Confirm the existing host key is
+trusted in `known_hosts`; never disable strict host key checking. Keep the
+previous source commit and its full-commit artifact directory locally. Commit
+the new source first because the builder refuses a dirty tree. Build and
+install the exact full commit:
 
 ```bash
 scripts/hosting/aws-ec2.sh "$private_inventory" build
@@ -206,6 +223,42 @@ scripts/hosting/aws-ec2.sh "$private_inventory" deploy
 scripts/hosting/aws-ec2.sh "$private_inventory" status
 scripts/hosting/aws-ec2.sh "$private_inventory" web-check
 ```
+
+The build command writes
+`target/amazonlinux-arm64/<full-commit>/<builder-definition-sha256>/`. Review
+its `build-manifest.json` and `build-environment.txt`; the deploy command
+refuses an artifact for another commit, a changed Cargo lockfile, a different
+builder image/toolchain, or modified binaries. Keep that directory until the new
+release has passed its checks and the rollback window has ended.
+
+If an update fails, inspect `status` and sanitized gateway logs before
+retrying. To reinstall a retained, previously validated artifact without
+checking out another branch, pass its full 40-character commit:
+
+```bash
+scripts/hosting/aws-ec2.sh "$private_inventory" deploy PREVIOUS_FULL_COMMIT
+scripts/hosting/aws-ec2.sh "$private_inventory" status
+scripts/hosting/aws-ec2.sh "$private_inventory" web-check
+```
+
+If no artifact for that source and current builder exists, first run
+`scripts/hosting/aws-ec2.sh "$private_inventory" build PREVIOUS_FULL_COMMIT`.
+This materializes the exact old application source from Git objects, while
+using the current pinned builder. The deploy command requires that commit to
+exist in the local Git object database and verifies its `Cargo.lock` and
+builder definition against the retained manifest. After
+rollback, record the failed and restored commits and diagnose before another
+attempt. The command output intentionally omits public IPs and AWS resource
+identifiers; consult the private operations note or AWS console when those
+identifiers are needed.
+
+The post-deploy checks prove binary integrity, service state and HTTPS shell
+availability. For a provider-backed voice smoke test, sign in to the deployed
+Admin UI, confirm the intended agent voice route and provider key state, then
+exercise a short synthesis in the owning channel. Do not put provider keys in
+CLI arguments or logs. Without an authorized provider key, report voice
+runtime verification as pending rather than inferring it from `/app` or
+`/admin` returning 200.
 
 For day-to-day investigation:
 
