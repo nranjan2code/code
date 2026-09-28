@@ -87,6 +87,7 @@ import {
   openWorkbenchFolder,
   isScratchDirectory,
   isDirectoryPath,
+  restorePendingApprovals,
   canvasOpen,
   canvasMode,
   type ReplyTarget,
@@ -219,6 +220,12 @@ export async function refreshSessions() {
 
 export async function retryHydrate(id: string) {
   await hydrate(id);
+  try {
+    const { approvals } = await api.pendingApprovals(id);
+    restorePendingApprovals(id, approvals);
+  } catch (error) {
+    console.warn("vak: could not restore pending approvals", error);
+  }
 }
 
 async function settledTranscript(id: string): ReturnType<typeof api.transcript> {
@@ -490,11 +497,17 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
   const cwd = backend().cwd;
   openingAgent = (async () => {
   try {
-    // Each Agent can own several conversations. Resume the one this client
-    // last viewed; on a fresh client, choose its most recent nonempty task.
+    // Desktop and web share the Agent's canonical local conversation. Channel
+    // conversations belong to their external audience and must never become
+    // the local default merely because they were updated more recently.
+    const localConversation = (session: SessionSummary) =>
+      session.agent?.id === agentId
+      && session.conversation?.audience_id === "local"
+      && session.conversation?.conversation_id === `agent:${agentId}:local`;
     const remembered = lastSessionByAgent.get(agentId);
-    const recent = sessions().find((session) => session.agent?.id === agentId && session.title)?.session_id;
+    const recent = sessions().find((session) => session.title && localConversation(session))?.session_id;
     const existing = remembered && sessions().some((session) => session.session_id === remembered)
+      && sessions().some((session) => session.session_id === remembered && localConversation(session))
       ? remembered
       : recent;
     if (existing && !createNew) {

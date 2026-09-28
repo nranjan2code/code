@@ -380,10 +380,10 @@ pub(crate) async fn open(
         Ok(pair) => pair,
         Err(response) => return response,
     };
-    // The desktop surface has one durable conversation per selected Agent.
-    // This is deliberately derived from the Agent identity, not from browser
-    // storage or a transient session id, so reopening the same Agent resumes
-    // the same conversation while another Agent gets an independent ledger.
+    // Desktop and web share one durable local conversation per selected
+    // Agent. This is deliberately derived from the Agent identity, not from
+    // browser storage or a transient session id, so either local client
+    // resumes the same ledger while another Agent gets an independent one.
     let conversation = ConversationContext {
         conversation_id: if request.create_new {
             format!("agent:{}:local:{}", identity.id, uuid::Uuid::now_v7())

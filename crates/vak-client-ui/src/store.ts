@@ -932,6 +932,25 @@ export function itemsOf(id: string | null, bucket: Bucket = "main"): Item[] {
   return itemsBySession[K(bucket, id)] ?? [];
 }
 
+/** Restore live approval cards after reconnecting to a session. */
+export function restorePendingApprovals(id: string, approvals: api.PendingApproval[]) {
+  if (!approvals.length) return;
+  setItemsBySession(id, (items) => {
+    const existing = new Set(items.filter((item) => item.kind === "approval").map((item) => item.id));
+    const restored: Item[] = approvals
+      .filter((approval) => !existing.has(approval.id))
+      .map((approval) => ({
+        kind: "approval",
+        id: approval.id,
+        tool: approval.tool,
+        argsJson: approval.args_json,
+        reason: approval.reason,
+        resolved: null,
+      }));
+    return [...items, ...restored];
+  });
+}
+
 export function isRunning(id: string | null, bucket: Bucket = "main"): boolean {
   return !!(id && runningMap[K(bucket, id)]);
 }
@@ -1288,14 +1307,16 @@ export function applyEvent(
         : it,
     );
   } else if ("ApprovalRequested" in ev) {
-    pushItem("main", id, {
-      kind: "approval",
-      id: ev.ApprovalRequested.id,
-      tool: ev.ApprovalRequested.tool,
-      argsJson: ev.ApprovalRequested.args_json,
-      reason: ev.ApprovalRequested.reason,
-      resolved: null,
-    });
+    updateList("main", id, (items) => items.some((item) => item.kind === "approval" && item.id === ev.ApprovalRequested.id)
+      ? items
+      : [...items, {
+          kind: "approval",
+          id: ev.ApprovalRequested.id,
+          tool: ev.ApprovalRequested.tool,
+          argsJson: ev.ApprovalRequested.args_json,
+          reason: ev.ApprovalRequested.reason,
+          resolved: null,
+        }]);
     opts.onApproval?.(ev.ApprovalRequested.id, ev.ApprovalRequested.tool);
   } else if ("WorkerStarted" in ev) {
     pushItem(b, id, {

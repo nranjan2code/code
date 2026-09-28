@@ -742,6 +742,18 @@ export interface ApprovalAnswer {
   learn_error: string | null;
 }
 
+export interface PendingApproval {
+  id: string;
+  tool: string;
+  args_json: string;
+  reason: string;
+  requested_at: string;
+}
+
+export function pendingApprovals(id: string): Promise<{ approvals: PendingApproval[] }> {
+  return req(`/sessions/${encodeURIComponent(id)}/approvals`);
+}
+
 export function answerApproval(
   id: string,
   requestId: string,

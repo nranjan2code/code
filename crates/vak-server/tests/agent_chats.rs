@@ -255,6 +255,18 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         found,
         "newly opened active agent session must be present in list_sessions even if header-only"
     );
+    let (_, session_summaries) = call(&app, "GET", "/sessions", json!({})).await;
+    let summary = session_summaries["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["session_id"] == sid)
+        .unwrap();
+    assert_eq!(summary["conversation"]["audience_id"], "local");
+    assert_eq!(
+        summary["conversation"]["conversation_id"],
+        "agent:newsy:local"
+    );
     let (_, b) = call(&app, "POST", "/agents/other/open", json!({})).await;
     assert_ne!(b["session_id"], sid);
     run(&app, &sid, "Remember private-newsy-marker").await;

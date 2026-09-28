@@ -60,6 +60,32 @@ separate individual sender attribution. Membership revocation/unlinking removes
 access immediately, including cached grants; already disclosed data cannot be
 recalled. Sharing an Agent does not imply sharing a conversation or its history.
 
+### Surface conversation ownership
+
+The authenticated local client conversation is shared by desktop and web:
+both use the canonical `ConversationKey` for the Agent and local audience, so
+switching between these two clients resumes the same ledger. Remote channels
+such as Telegram, Discord, and Slack use a distinct conversation per
+authorized audience (and bot where bot identity is part of the channel key).
+Attaching a channel to an Agent grants it access to that Agent's identity and
+admitted capabilities; it does not merge channel messages into the local
+conversation or expose local history. Any future cross-surface history sharing
+must be an explicit audience grant enforced at admission, reads, search,
+memory, and delivery.
+
+Web and desktop may disconnect while a local turn continues on the server.
+The session remains the durable home for its result and pending local HIL
+gates; reconnecting restores the transcript and any still-live approval cards.
+The admin approval-forwarding policy remains explicit for connected-chat
+runs, which can route a gate to an assigned, authorized channel.
+
+Session discovery returns the Agent, `ConversationKey`, audience, and origin
+as one summary. The local Agent picker may resume only the canonical local
+conversation, never the most recently updated channel conversation. Channel
+history remains available through the authorized history surface with its
+transport and audience provenance. Every reply follows the immutable
+request-origin destination recorded at admission.
+
 ## Durable records
 
 All identifiers are stable UUID/slug values, not display names. New stores are

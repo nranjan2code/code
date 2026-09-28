@@ -19,6 +19,15 @@ non-interactive channel message must never change completion, approval or
 authority semantics. See `docs/design/52-outcome-directed-runtime.md` and
 `docs/design/30-output-engineering.md` for the cross-surface contract.
 
+**Conversation boundary:** desktop and web share the Agent's canonical local
+conversation. A channel attached to that Agent gets its own conversation per
+authorized audience (and bot-scoped identity where applicable). Channel
+admission must use the same Agent execution workspace and private Agent data
+home as local admission, while retaining the channel's restrictive policy and
+permission overlays. The channel's ledger is not folded into local history;
+delivery returns to the immutable inbound origin. See
+`docs/design/64-agent-owned-platform.md` for the full ownership contract.
+
 Two sub-pieces are deliberately **deferred**, not silently dropped:
 
 1. **Real-time transports for the new bridges.** Discord's gateway

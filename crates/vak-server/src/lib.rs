@@ -834,6 +834,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/subagents", get(list_workers))
         .route("/sessions/{id}/subagents/{child}/steer", post(steer_worker))
         .route("/sessions/{id}/subagents/{child}/stop", post(stop_worker))
+        .route("/sessions/{id}/approvals", get(list_pending_approvals))
         .route("/sessions/{id}/approvals/{req_id}", post(answer_approval))
         .route("/sessions/{id}/outcome-review", post(record_outcome_review))
         .route("/sessions/{id}/events", get(events_sse))
@@ -4351,7 +4352,7 @@ async fn list_sessions(
             .ok()
             .and_then(|m| m.modified().ok())
             .map(|t| chrono::DateTime::<chrono::Utc>::from(t).to_rfc3339());
-        let (created_at, title, entry_count, cwd, agent) = summarize_jsonl(&path);
+        let (created_at, title, entry_count, cwd, agent, conversation) = summarize_jsonl(&path);
         // A user-created Agent lives in its own isolated workspace (see
         // agent_chats::open / agent_workspace), independent of whichever
         // default workspace the browser client currently has open — that
@@ -4387,6 +4388,7 @@ async fn list_sessions(
             "updated_at": updated_at,
             "entries": entry_count,
             "agent": agent,
+            "conversation": conversation,
             "title": title,
             "running": running,
             "archived": archived,
@@ -4406,16 +4408,18 @@ fn summarize_jsonl(
     u64,
     Option<String>,
     Option<vak_session::types::AgentIdentity>,
+    Option<vak_session::types::ConversationContext>,
 ) {
     use std::io::BufRead;
     let Ok(file) = std::fs::File::open(path) else {
-        return (None, None, 0, None, None);
+        return (None, None, 0, None, None, None);
     };
     let mut reader = std::io::BufReader::new(file);
     let mut created_at = None;
     let mut title = None;
     let mut cwd = None;
     let mut agent = None;
+    let mut conversation = None;
     let mut entries = 0u64;
     let mut line = String::new();
     loop {
@@ -4430,6 +4434,7 @@ fn summarize_jsonl(
                             created_at = Some(h.created_at.to_rfc3339());
                             cwd = Some(h.cwd.to_string_lossy().into_owned());
                             agent = h.agent;
+                            conversation = h.conversation;
                         }
                         vak_session::EntryPayload::Message(rec) => {
                             if title.is_none()
@@ -4470,7 +4475,7 @@ fn summarize_jsonl(
             Err(_) => break,
         }
     }
-    (created_at, title, entries, cwd, agent)
+    (created_at, title, entries, cwd, agent, conversation)
 }
 
 #[derive(serde::Deserialize)]
@@ -6411,6 +6416,35 @@ async fn answer_approval(
         })),
     )
         .into_response()
+}
+
+/// Return live gates so a local client can restore HIL cards after closing
+/// while a server-side run continued.
+async fn list_pending_approvals(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let pending = handle
+        .pending
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let approvals: Vec<_> = pending
+        .values()
+        .map(|request| {
+            serde_json::json!({
+                "id": request.id,
+                "tool": request.tool,
+                "args_json": request.args_json,
+                "reason": request.reason,
+                "requested_at": request.requested_at,
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "approvals": approvals })).into_response()
 }
 
 /// Dispatch forensics (docs/design/42-managed-work-contracts.md): the session's work

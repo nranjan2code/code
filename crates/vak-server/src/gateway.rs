@@ -626,7 +626,7 @@ impl GatewayState {
             .filter(|e| e.inherit_bot_policy)
             .and_then(|e| e.bot_id.as_deref())
             .and_then(|id| self.bot_get(id));
-        let workspace = allowed_entry
+        let configured_workspace = allowed_entry
             .and_then(|e| e.workspace.clone())
             .or_else(|| bot.as_ref().and_then(|b| b.workspace.clone()))
             .unwrap_or_else(|| default_core.cwd().clone());
@@ -654,12 +654,11 @@ impl GatewayState {
             (None, None) => None,
         };
 
-        let resolved = self.core_pool.resolve_at_with_policy(
-            &workspace,
-            permission_override,
-            policy,
-            std::time::Instant::now(),
-        )?;
+        // A channel's configured workspace is the Agent's base space. The
+        // Agent itself owns the isolated execution workspace beneath it,
+        // exactly as it does for desktop/web admission. Keep channel policy
+        // and permission overlays on the pooled Core, but resolve the
+        // endpoint's effective Agent before asking for that Core.
         let selected_agent = allowed_entry
             .and_then(|entry| {
                 let entry_agent = entry.agent_id.as_deref();
@@ -674,11 +673,55 @@ impl GatewayState {
             })
             .or_else(|| bot.as_ref().and_then(|b| b.agent_id.as_deref()))
             .unwrap_or("vak");
+        let default_root = vak_config::paths::default_workspace();
+        let configured_catalog = if selected_agent != "vak" {
+            Some(self.core_pool.resolve_at_with_policy(
+                &configured_workspace,
+                None,
+                vak_config::ChannelPolicy::default(),
+                std::time::Instant::now(),
+            )?)
+        } else {
+            None
+        };
+        let workspace_scoped = selected_agent != "vak"
+            && configured_workspace != default_root
+            && configured_catalog
+                .as_ref()
+                .is_some_and(Core::project_config_trusted)
+            && crate::agents::load(&configured_workspace)
+                .unwrap_or_default()
+                .iter()
+                .any(|profile| profile.id == selected_agent);
+        // Match local Agent admission: a workspace profile is effective only
+        // in a trusted workspace; otherwise the shared/default Agent owns the
+        // conversation and its execution workspace.
+        let agent_base = if selected_agent != "vak" && !workspace_scoped {
+            default_root
+        } else {
+            configured_workspace.clone()
+        };
+        let effective_catalog = if selected_agent == "vak" {
+            None
+        } else if workspace_scoped {
+            configured_catalog.clone()
+        } else {
+            Some(self.core_pool.resolve_at_with_policy(
+                &agent_base,
+                None,
+                vak_config::ChannelPolicy::default(),
+                std::time::Instant::now(),
+            )?)
+        };
         let identity = if selected_agent == "vak" {
             vak_core::vak_agent_identity()
         } else {
-            let profiles = crate::agents::effective(&resolved)
-                .map_err(|error| format!("agent catalog unavailable: {error}"))?;
+            let profiles = crate::agents::effective(
+                effective_catalog
+                    .as_ref()
+                    .ok_or_else(|| "effective Agent catalog was not resolved".to_string())?,
+            )
+            .map_err(|error| format!("agent catalog unavailable: {error}"))?;
             profiles
                 .into_iter()
                 .find(|profile| profile.id == selected_agent)
@@ -686,6 +729,44 @@ impl GatewayState {
                 .map(|profile| profile.identity())
                 .ok_or_else(|| format!("configured Agent '{selected_agent}' is unavailable"))?
         };
+        let workspace = if selected_agent == "vak" {
+            agent_base.clone()
+        } else {
+            vak_config::paths::agent_workspace(&agent_base, selected_agent)
+        };
+        if !workspace.is_dir() {
+            std::fs::create_dir_all(&workspace).map_err(|error| {
+                format!(
+                    "could not create Agent workspace {}: {error}",
+                    workspace.display()
+                )
+            })?;
+        }
+        if identity.id != "vak"
+            && effective_catalog
+                .as_ref()
+                .is_some_and(Core::project_config_trusted)
+            && !vak_core::trust::is_trusted(&workspace)
+        {
+            let _ = vak_core::trust::mark_trusted(&workspace);
+        }
+
+        let resolved = self.core_pool.resolve_at_with_policy(
+            &workspace,
+            permission_override,
+            policy,
+            std::time::Instant::now(),
+        )?;
+        resolved.set_sessions_home(default_core.shared_data_home());
+        if let Some(provider) = default_core.provider_instance_override() {
+            resolved.set_provider_instance(provider);
+        }
+        if let Some(mode) = default_core.permission_mode_override_value() {
+            resolved.set_permission_mode(mode.capped_by(resolved.effective_permission_mode()));
+        }
+        if let Some(backend) = default_core.sandbox_backend_override_value() {
+            resolved.set_sandbox_backend(Some(backend));
+        }
         Ok(resolved.with_agent_identity(Some(identity)))
     }
 

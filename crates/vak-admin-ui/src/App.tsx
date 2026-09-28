@@ -5742,7 +5742,7 @@ function ApprovalForwarding() {
         "info",
         next.mode === "forward"
           ? `Gates now go to ${next.approver} for a yes or no`
-          : "Gates on chat surfaces are refused without asking",
+          : "Connected chat runs will refuse approval requests",
       );
     } catch (err) {
       pushToast("alert", `${err}`);
@@ -5755,10 +5755,11 @@ function ApprovalForwarding() {
     <section class="panel">
       <div class="panel-title-row">
         <div>
-          <h2>Can a chat ask you first?</h2>
+          <h2>Can connected chats ask you first?</h2>
           <p class="dim">
-            When Vakyartha running in a chat hits something that needs approval, it either refuses on
-            the spot or asks you in a chat you choose.
+            When a Telegram, Discord, Slack, or other connected chat run needs approval, Vakyartha
+            refuses or sends the request to the chat you choose. Web and desktop approval cards
+            remain available when you return to the session.
           </p>
         </div>
         <Show when={policy()}>
@@ -5775,7 +5776,7 @@ function ApprovalForwarding() {
           <>
             <Show when={p().gateway_enabled === false || p().enabled === false}>
               <p class="dim">
-                Chat surfaces are switched off, so nothing here takes effect yet. Turn them on
+                Connected chat surfaces are switched off, so channel forwarding is inactive. Turn them on
                 under <a href="#/gateway">Chats</a>.
               </p>
             </Show>

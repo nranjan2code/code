@@ -303,6 +303,7 @@ export type ClientEvent =
 
 export interface SessionSummary {
   agent?: { id: string; name: string; revision: number; character?: string; animation?: "subtle" | "expressive" | "off"; voice?: string } | null;
+  conversation?: { conversation_id: string; audience_id: string; origin?: { surface: string; address: string; bot_id?: string | null } | null } | null;
   session_id: string;
   cwd?: string;
   created_at?: string | null;

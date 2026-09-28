@@ -126,11 +126,15 @@ inbound arrives mid-run:
 
 Unattended surfaces cannot click "approve". Gateway-driven turns run with
 `AutoDeny`: Ask-classified tool calls are denied with the reason fed back to
-the model as a tool error, which it can route around. Interactive surfaces
-(TUI/desktop) keep their existing approval queues untouched — they share the
-session, not the policy.
+the model as a tool error, which it can route around. Interactive local
+surfaces (web and desktop) keep their interactive approval queue. If the
+client closes while a run waits, the gate remains on the server-side session
+handle; `GET /sessions/{id}/approvals` restores the card when the same local
+conversation is reopened. Disconnecting does not cancel the run or approve
+the gate.
 
-Since G2, `approvals = "forward"` routes each gate to the configured
+Since G2, `approvals = "forward"` routes each gate raised by a connected-chat
+run to the configured
 `approver` target through the normal delivery transports. The request is
 announced (and published as an `ApprovalRequested` event for SSE consumers),
 then the turn blocks until one of:
