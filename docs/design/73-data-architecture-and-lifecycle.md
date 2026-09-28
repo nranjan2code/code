@@ -635,6 +635,23 @@ never placed there. The fleet control plane may operate signed software and
 observe content-free health; it is not a second data home or a route into
 tenant records, secrets or detailed logs. The customer's stable HTTPS origin
 survives VM replacement so owner passkeys continue to work (doc 78).
+The fleet may prepare unused, running VMs to shorten signup, but customer
+data, owner identity, keys and records begin only after an atomic one-customer
+binding. A VM that reached binding is never recycled for another customer;
+its data follows the governed offboarding and erasure path. Pool inventory
+and readiness are infrastructure records, not tenant records. Doc 79 §3.1
+owns the pool lifecycle, TLS and measured readiness contract.
+Portal signup and billing identity are fleet metadata, not authorization to
+read tenant records. First-owner claim, VM login and recovery follow doc 78;
+the portal cannot mint a VM session or release a decryption key on its own.
+Doc 79 §3.2 owns the hosted signup and separation-of-authority proposal.
+Fleet inventory, infrastructure operation and billable-usage ledgers are
+separate control-plane records, not a second copy of tenant Runs or objects.
+The payment provider owns invoices/settlement, AWS owns resource and cost
+evidence, and the fleet reconciles their references by opaque deployment id.
+Doc 79 §§10–13 define the proposed dashboards, alerts, network paths, AI
+operations boundary and bookkeeping; they do not change this document's
+local-first record/object/ref authority.
 
 A VM, EBS volume or snapshot is not the sole recovery record. A complete
 recovery point binds sealed/open record-chain heads, refs, object inventory,
@@ -643,6 +660,20 @@ watermark in one verified manifest. Copies live outside the VM's failure
 domain as ciphertext under customer-controlled keys. A restore checks every
 referenced object and chain before admission, replays erasure decisions before
 readability, rebuilds Derived stores and obtains a new fenced writer epoch.
+The fleet backup contract also covers the current canonical data home and
+every registered durable state path until this model replaces them. Generated
+OS/application images and caches are rebuilt; customer records and encrypted
+credentials are preserved. A storage snapshot without a logical manifest is
+not a complete restore point. Patch and replacement workflows record the
+backup id, image/software baseline, attested key decision and post-restore
+integrity result before admitting new work (doc 79 §§7–8).
+For a later no-loss-of-acknowledged-writes mode, every durable mutation must
+join an encrypted off-VM commit before its caller receives `saved`: objects
+first, an ordered complete manifest/ref marker last, verified on restore.
+Periodic backup alone supports only a measured nonzero RPO. This is a new
+write-acknowledgement contract for all file, credential, owner, schedule and
+delivery paths, not a property gained by adding S3 to the current tree.
+Doc 79 §8.1 specifies the degraded-mode disclosure and failure tests.
 The old VM must be unable to resume schedules, channel polling, writes or
 delivery after the new epoch is active. Recovered external actions are
 reconciled from receipts rather than replayed blindly. A restore without the
