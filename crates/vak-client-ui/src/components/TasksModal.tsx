@@ -6,8 +6,10 @@ import {
   setDiffTarget,
   setDockTab,
   setTasksOpen,
+  setTaskFocusId,
   setTranscriptViewId,
   tasksOpen,
+  taskFocusId,
 } from "../store";
 import * as api from "../api";
 import type { TaskDef } from "../types";
@@ -64,9 +66,11 @@ export default function TasksModal() {
   const [minutes, setMinutes] = createSignal(60);
   const [schedule, setSchedule] = createSignal("");
   const [script, setScript] = createSignal("");
+  const [taskKind, setTaskKind] = createSignal<"prompt" | "script">("prompt");
   const [modelPin, setModelPin] = createSignal("");
   const [agents, setAgents] = createSignal<api.Agent[]>([]);
   const [agentId, setAgentId] = createSignal("");
+  const scrolledTaskIds = new Set<string>();
 
   const refresh = async () => {
     try {
@@ -84,13 +88,18 @@ export default function TasksModal() {
     onCleanup(() => clearInterval(t));
   });
 
+  createEffect(() => {
+    const id = taskFocusId();
+    if (!id || !tasksOpen() || scrolledTaskIds.has(id) || !tasks().some((task) => task.id === id)) return;
+    scrolledTaskIds.add(id);
+    requestAnimationFrame(() => document.getElementById(`scheduled-task-${id}`)?.scrollIntoView({ block: "nearest" }));
+  });
+
   // Cron wins over the interval picker; prompt and script are mutually
   // exclusive by contract (`TaskDef::validate`), enforced here so the user
   // sees why before the server ever rejects.
   const draftValid = () => {
-    const hasPrompt = !!prompt().trim();
-    const hasScript = !!script().trim();
-    return !!name().trim() && (hasPrompt !== hasScript);
+    return !!name().trim() && !!(taskKind() === "prompt" ? prompt().trim() : script().trim());
   };
 
   const resetForm = () => {
@@ -98,6 +107,7 @@ export default function TasksModal() {
     setPrompt("");
     setSchedule("");
     setScript("");
+    setTaskKind("prompt");
     setModelPin("");
     setAgentId("");
     setMinutes(60);
@@ -108,10 +118,10 @@ export default function TasksModal() {
     try {
       await api.createTask({
         name: name().trim(),
-        prompt: script().trim() ? "" : prompt().trim(),
+        prompt: taskKind() === "script" ? "" : prompt().trim(),
         interval_secs: minutes() * 60,
         schedule: schedule().trim() || null,
-        script: script().trim() || null,
+        script: taskKind() === "script" ? script().trim() : null,
         model_pin: modelPin().trim() || null,
         agent_id: agentId() || null,
         agent_revision: agents().find((agent) => agent.id === agentId())?.revision ?? null,
@@ -180,14 +190,14 @@ export default function TasksModal() {
 
   return (
     <Show when={tasksOpen()}>
-      <Sheet size="wide" class="tasks-modal" title="Scheduled tasks" subtitle="Work that runs on a schedule, each run in its own copy of the project." onClose={() => setTasksOpen(false)}>
+      <Sheet size="wide" class="tasks-modal" title="Scheduled tasks" subtitle="Prompt tasks need a Git project. Scripts can run without Git." onClose={() => { const focused = taskFocusId(); if (focused) scrolledTaskIds.delete(focused); setTasksOpen(false); setTaskFocusId(null); }}>
           <Show when={error()}>
             <div class="gate-err">{error()}</div>
           </Show>
 
           <For each={tasks()} fallback={<div class="dock-empty">No tasks yet.</div>}>
             {(t) => (
-              <div class="task-row">
+              <div id={`scheduled-task-${t.id}`} class="task-row" classList={{ focused: taskFocusId() === t.id }}>
                 <span
                   class="dot"
                   classList={{
@@ -217,7 +227,7 @@ export default function TasksModal() {
                     </Show>
                   </div>
                   <Show when={t.last_run_at || t.last_summary || t.last_session_id}>
-                    <details class="task-run">
+                    <details class="task-run" open={taskFocusId() === t.id}>
                       <summary>
                         <Icon name="history" size={12} />
                         <span>last run</span>
@@ -278,26 +288,33 @@ export default function TasksModal() {
           <Show
             when={!adding()}
             fallback={
-              <div class="task-add-form">
+          <div class="task-add-form">
                 <input placeholder="name" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
-                <textarea
-                  rows={2}
-                  placeholder="prompt the agent will run…"
-                  disabled={!!script().trim()}
-                  value={prompt()}
-                  onInput={(e) => setPrompt(e.currentTarget.value)}
-                />
-                <label class="watchdog-row">
+                <div class="task-kind-switch" role="group" aria-label="Task type">
+                  <button type="button" class={taskKind() === "prompt" ? "btn primary" : "btn"} aria-pressed={taskKind() === "prompt"} onClick={() => setTaskKind("prompt")}>Ask Vakyartha</button>
+                  <button type="button" class={taskKind() === "script" ? "btn primary" : "btn"} aria-pressed={taskKind() === "script"} onClick={() => setTaskKind("script")}>Run a script</button>
+                </div>
+                <Show when={taskKind() === "prompt"}>
+                  <textarea
+                    rows={2}
+                    placeholder="What should Vakyartha do each time this runs?"
+                    value={prompt()}
+                    onInput={(e) => setPrompt(e.currentTarget.value)}
+                  />
+                  <span class="hint">Runs in a separate Git project copy so changes can be reviewed.</span>
+                </Show>
+                <Show when={taskKind() === "script"}>
+                  <label class="watchdog-row">
                   <textarea
                     rows={2}
                     class="watchdog-script"
-                    placeholder="or a watchdog script (shell; empty output = silent tick, zero tokens)…"
-                    disabled={!!prompt().trim()}
+                    placeholder="A short shell command, such as: printf 'All clear\\n'"
                     value={script()}
                     onInput={(e) => setScript(e.currentTarget.value)}
                   />
-                  <span class="hint">prompt and script are exclusive</span>
-                </label>
+                  <span class="hint">Runs without an AI model or Git project.</span>
+                  </label>
+                </Show>
                 <div class="task-add-row">
                   <input
                     class="schedule-input"
@@ -343,7 +360,7 @@ export default function TasksModal() {
           </Show>
 
           <div class="bo-foot" style="margin-top:10px">
-            <span class="hint">runs fire on the gateway server, not this window · cron uses local time · latest worktree kept for review</span>
+            <span class="hint">Runs on the server, even when this window is closed. Times use the workspace time zone.</span>
           </div>
       </Sheet>
     </Show>

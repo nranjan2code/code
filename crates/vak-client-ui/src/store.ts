@@ -766,6 +766,7 @@ export const [editorPath, setEditorPath] = createSignal<string | null>(null);
 export const [sideOpen, setSideOpen] = createSignal(false);
 // Scheduled-tasks manager modal.
 export const [tasksOpen, setTasksOpen] = createSignal(false);
+export const [taskFocusId, setTaskFocusId] = createSignal<string | null>(null);
 // Cross-project recall search (docs/design/29-personal-os.md P1).
 export const [searchOpen, setSearchOpen] = createSignal(false);
 // Inbox page (docs/design/29-personal-os.md P6) + live unread total shared by

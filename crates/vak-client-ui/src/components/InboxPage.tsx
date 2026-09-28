@@ -2,8 +2,9 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
   inboxUnread,
   setInboxUnread,
+  setInboxOpen,
   setTasksOpen,
-  setTranscriptViewId,
+  setTaskFocusId,
   setReplyTarget,
 } from "../store";
 import * as api from "../api";
@@ -28,11 +29,16 @@ const KIND_CLASS: Record<string, string> = {
 };
 
 function kindLabel(kind: string): string {
-  return kind.replace(/_/g, " ").replace(/\b\w/, (c) => c.toUpperCase());
-}
-
-function countLabel(n: number): string {
-  return n > 99 ? "99+" : String(n);
+  return ({
+    task_summary: "Task result",
+    routine_failed: "Task couldn’t run",
+    approval_pending: "Needs your review",
+    approval_denied: "Not approved",
+    budget_alert: "Usage alert",
+    digest: "Digest",
+    heartbeat: "Check-in",
+    proposal_opened: "New suggestion",
+  } as Record<string, string>)[kind] ?? "Update";
 }
 
 /**
@@ -136,9 +142,23 @@ export default function InboxPage() {
 
   const hasVisibleUnread = () => !!(entries() ?? []).some((e) => unreadIds().has(e.id));
 
+  const openConversation = async (entry: InboxEntry) => {
+    if (!entry.session_id) return;
+    await activate(entry.session_id);
+    setReplyTarget({
+      sessionId: entry.session_id,
+      resultId: entry.result_id ?? undefined,
+      label: entry.result_id ? "this result" : "this notification",
+    });
+  };
+
   return (
     <div class="inbox-page">
       <div class="inbox-head">
+        <button type="button" class="btn sm inbox-back" onClick={() => setInboxOpen(false)}>
+          <Icon name="chat" size={14} />
+          Back to chat
+        </button>
         <h2>Inbox</h2>
         <Show when={inboxUnread() > 0}>
           <span class="badge">{inboxUnread()} unread</span>
@@ -166,7 +186,7 @@ export default function InboxPage() {
             title="Mark every loaded notification as read"
             onClick={() => void ackAllVisible()}
           >
-            Mark visible as read
+            Mark all visible as read
           </button>
         </div>
       </div>
@@ -206,7 +226,7 @@ export default function InboxPage() {
                     <button
                       class="inbox-row"
                       aria-expanded={expanded() === entry.id}
-                      aria-label={`${kindLabel(entry.kind)}: ${entry.title}${unreadIds().has(entry.id) ? " (unread)" : ""}`}
+                      aria-label={`View ${kindLabel(entry.kind).toLowerCase()}: ${entry.title}${unreadIds().has(entry.id) ? " (unread)" : ""}`}
                       onClick={() => setExpanded((cur) => (cur === entry.id ? null : entry.id))}
                     >
                       <span class="dot inbox-dot" classList={{ on: unreadIds().has(entry.id) }} aria-hidden="true" />
@@ -223,47 +243,35 @@ export default function InboxPage() {
                         <div class="inbox-links">
                           <Show when={entry.session_id}>
                             <Show when={entry.origin_state === "unavailable"}>
-                              <span class="chip sm" title="The originating conversation is no longer available">
-                                origin unavailable
+                              <span class="inbox-unavailable">
+                                This conversation is no longer available.
                               </span>
                             </Show>
-                            <Show when={entry.kind === "approval_pending"}>
-                              <button
-                                class="btn sm primary"
-                                title="Open the live task and review this decision"
-                                onClick={() => void activate(entry.session_id!)}
-                              >
-                                Review task
+                            <Show when={entry.kind === "approval_pending" && entry.origin_state !== "unavailable"}>
+                              <button class="btn sm primary" onClick={() => void activate(entry.session_id!)}>
+                                Review request
                               </button>
                             </Show>
-                            <button
-                              class="chip sm"
-                              title="Open the read-only transcript"
-                              onClick={() => {
-                                setTranscriptViewId(entry.session_id!);
-                                setReplyTarget({
-                                  sessionId: entry.session_id!,
-                                  resultId: entry.result_id ?? undefined,
-                                  label: entry.result_id ? `result ${entry.result_id.slice(0, 8)}` : "this result",
-                                });
-                              }}
-                            >
-                              session · {entry.session_id!.slice(0, 8)}
-                            </button>
+                            <Show when={entry.kind !== "approval_pending" && entry.origin_state !== "unavailable"}>
+                              <button
+                                class="btn sm"
+                                onClick={() => void openConversation(entry)}
+                              >
+                                {entry.result_id ? "Open result conversation" : "Open conversation"}
+                              </button>
+                            </Show>
                           </Show>
                           <Show when={entry.task_id}>
-                            <button class="chip sm" title="Open scheduled tasks" onClick={() => setTasksOpen(true)}>
-                              task · {entry.task_id!.slice(0, 8)}
+                            <button class="btn sm primary" onClick={() => { setTaskFocusId(entry.task_id!); setTasksOpen(true); }}>
+                              {entry.kind === "routine_failed" ? "Review failed task" : "View task result"}
                             </button>
                           </Show>
-                          <Show when={entry.result_id}>
-                            <button
-                              class="chip sm"
-                              title="Open the conversation containing this result"
-                              onClick={() => entry.session_id && void activate(entry.session_id)}
-                            >
-                              result · {entry.result_id!.slice(0, 8)}
-                            </button>
+                          <Show when={!entry.session_id && !entry.task_id}>
+                            <span class="inbox-no-action">
+                              {entry.kind === "routine_failed" || entry.kind === "approval_pending"
+                                ? "No follow-up action is available here"
+                                : "For your information"}
+                            </span>
                           </Show>
                           <button
                             class="chip sm inbox-ack"
@@ -271,7 +279,7 @@ export default function InboxPage() {
                             title={unreadIds().has(entry.id) ? "Mark as read" : "Already read"}
                             onClick={() => void ack(entry.id)}
                           >
-                            {unreadIds().has(entry.id) ? "Mark as read" : "Read"}
+                            {unreadIds().has(entry.id) ? "Mark as read" : "Marked as read"}
                           </button>
                         </div>
                       </div>

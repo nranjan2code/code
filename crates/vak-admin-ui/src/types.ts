@@ -928,6 +928,7 @@ export interface TaskItem {
   model_pin?: string | null;
   created_at?: string;
   last_run_at?: string | null;
+  last_run_status?: string | null;
   last_session_id?: string | null;
   last_summary?: string | null;
 }

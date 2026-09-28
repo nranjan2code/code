@@ -1503,6 +1503,8 @@ Nothing runs alongside your turns. Add one to keep a record of what Vakyartha do
 function TasksView(props: { ctx: ExtensionsCtx }) {
   const [name, setName] = createSignal("");
   const [prompt, setPrompt] = createSignal("");
+  const [script, setScript] = createSignal("");
+  const [taskKind, setTaskKind] = createSignal<"prompt" | "script">("prompt");
   const [schedule, setSchedule] = createSignal("");
   const [modelPin, setModelPin] = createSignal("");
   const [busy, setBusy] = createSignal(false);
@@ -1510,6 +1512,8 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
   const [editingId, setEditingId] = createSignal("");
   const [editName, setEditName] = createSignal("");
   const [editPrompt, setEditPrompt] = createSignal("");
+  const [editScript, setEditScript] = createSignal("");
+  const [editTaskKind, setEditTaskKind] = createSignal<"prompt" | "script">("prompt");
   const [editSchedule, setEditSchedule] = createSignal("");
   const [editModelPin, setEditModelPin] = createSignal("");
   /// Set only for a task that runs on a plain interval rather than a cron.
@@ -1529,19 +1533,41 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
     }
   };
 
+  const runNow = async (task: TaskItem) => {
+    setBusyId(task.id);
+    try {
+      await api.runTaskNow(task.id);
+      await props.ctx.refetchTasks();
+      pushToast("info", `Started â€˜${task.name}â€™`);
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else {
+        try { await props.ctx.refetchTasks(); } catch { /* Keep the run error visible. */ }
+        const updated = props.ctx.tasks().find((item) => item.id === task.id);
+        pushToast("alert", updated?.last_summary || `${err}`);
+      }
+    } finally {
+      setBusyId("");
+    }
+  };
+
   const createTask = async () => {
-    if (!name().trim() || !prompt().trim() || busy()) return;
+    const taskScript = taskKind() === "script" ? script().trim() : "";
+    const taskPrompt = taskKind() === "prompt" ? prompt().trim() : "";
+    if (!name().trim() || (!taskPrompt && !taskScript) || busy()) return;
     setBusy(true);
     try {
       await api.createTask({
         name: name().trim(),
-        prompt: prompt().trim(),
+        prompt: taskPrompt,
+        script: taskScript || undefined,
         schedule: schedule().trim() || undefined,
         model_pin: modelPin().trim() || undefined,
       });
       pushToast("info", `Scheduled â€˜${name().trim()}â€™`);
       setName("");
       setPrompt("");
+      setScript("");
       setSchedule("");
       setModelPin("");
       await props.ctx.refetchTasks();
@@ -1557,6 +1583,8 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
     // Fields before the id, for the same reason as the hooks editor above.
     setEditName(task.name);
     setEditPrompt(task.prompt ?? "");
+    setEditScript(task.script ?? "");
+    setEditTaskKind(task.script ? "script" : "prompt");
     setEditSchedule(task.schedule ?? "");
     setEditInterval(task.schedule ? null : (task.interval_secs ?? null));
     setEditModelPin(task.model_pin ?? "");
@@ -1565,12 +1593,15 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
 
   const saveEdit = async () => {
     const id = editingId();
-    if (!id || !editName().trim() || !editPrompt().trim() || busyId()) return;
+    const taskScript = editTaskKind() === "script" ? editScript().trim() : "";
+    const taskPrompt = editTaskKind() === "prompt" ? editPrompt().trim() : "";
+    if (!id || !editName().trim() || (!taskPrompt && !taskScript) || busyId()) return;
     setBusyId(id);
     try {
       await api.patchTask(id, {
         name: editName().trim(),
-        prompt: editPrompt().trim(),
+        prompt: taskPrompt,
+        script: taskScript || null,
         schedule: editSchedule().trim() || null,
         model_pin: editModelPin().trim() || null,
       });
@@ -1599,7 +1630,8 @@ function TasksView(props: { ctx: ExtensionsCtx }) {
             <p class="dim">
               Runs Vakyartha starts on its own, with nobody watching. Each one runs under the same
               permission mode as any other turn â€” <strong>{props.ctx.mode()}</strong> â€” so a task
-              that needs an approval simply waits for one.
+              that needs an approval simply waits for one. Prompt tasks need a Git project; script
+              tasks can run without Git.
             </p>
           </div>
         </div>
@@ -1628,6 +1660,7 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
               <tbody>
                 <For each={props.ctx.tasks()}>
                   {(t) => (
+                    <>
                     <tr class="row-static">
                       <td class="bold">{t.name}</td>
                       <td><span class={`chip ${t.script ? "chip-tool" : "chip-mode"}`}>{t.script ? "runs a script" : "asks vak"}</span></td>
@@ -1646,7 +1679,7 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
                           <button
                             class="ghost small"
                             disabled={busyId() === t.id}
-                            onClick={() => void guard(t.id, () => api.runTaskNow(t.id), `Ran â€˜${t.name}â€™`)}
+                            onClick={() => void runNow(t)}
                           >
                             Run now
                           </button>
@@ -1680,6 +1713,15 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
                         </div>
                       </td>
                     </tr>
+                    <Show when={t.last_summary}>
+                      <tr class="row-static task-result-row">
+                        <td colspan={7}>
+                          <span class="dim">{t.last_run_status === "failed" ? "Last run failed" : "Last result"}</span>
+                          <p>{t.last_summary}</p>
+                        </td>
+                      </tr>
+                    </Show>
+                    </>
                   )}
                 </For>
               </tbody>
@@ -1697,7 +1739,16 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
               <button class="ghost small" onClick={() => setEditingId("")}>Cancel</button>
             </div>
             <div class="form-row"><label>Name</label><input value={editName()} onInput={(e) => setEditName(e.currentTarget.value)} /></div>
-            <div class="form-row"><label>What to do</label><textarea rows={3} value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /></div>
+            <div class="form-row">
+              <label>Task type</label>
+              <div class="row-gap">
+                <button class="ghost small task-kind-choice" aria-pressed={editTaskKind() === "prompt"} onClick={() => setEditTaskKind("prompt")}>Ask Vakyartha</button>
+                <button class="ghost small task-kind-choice" aria-pressed={editTaskKind() === "script"} onClick={() => setEditTaskKind("script")}>Run a script</button>
+              </div>
+              <Show when={editTaskKind() === "script"} fallback={<textarea rows={3} placeholder="What should Vakyartha do each time this runs?" value={editPrompt()} onInput={(e) => setEditPrompt(e.currentTarget.value)} /> }>
+                <textarea rows={3} class="mono" aria-label="Script" value={editScript()} onInput={(e) => setEditScript(e.currentTarget.value)} />
+              </Show>
+            </div>
             <Show when={editInterval() != null && !editSchedule().trim()}>
               <p class="dim">
                 This task runs every {describeDuration(editInterval())} at the moment. Leave the
@@ -1706,7 +1757,7 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
             </Show>
             <ScheduleBuilder value={editSchedule()} onChange={setEditSchedule} />
             <div class="form-row"><label>Model</label><input class="mono" placeholder="Workspace default" value={editModelPin()} onInput={(e) => setEditModelPin(e.currentTarget.value)} /></div>
-            <button disabled={busyId() === editingId() || !editName().trim() || !editPrompt().trim()} onClick={() => void saveEdit()}>
+            <button disabled={busyId() === editingId() || !editName().trim() || !(editTaskKind() === "script" ? editScript().trim() : editPrompt().trim())} onClick={() => void saveEdit()}>
               {busyId() === editingId() ? "Savingâ€¦" : "Save changes"}
             </button>
           </div>
@@ -1719,8 +1770,19 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
             <input placeholder="Nightly digest, dependency auditâ€¦" value={name()} onInput={(e) => setName(e.currentTarget.value)} />
           </div>
           <div class="form-row">
-            <label>What to do</label>
-            <textarea rows={3} placeholder="What should Vakyartha do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
+            <label>Task type</label>
+            <div class="row-gap">
+              <button class="ghost small task-kind-choice" aria-pressed={taskKind() === "prompt"} onClick={() => setTaskKind("prompt")}>Ask Vakyartha</button>
+              <button class="ghost small task-kind-choice" aria-pressed={taskKind() === "script"} onClick={() => setTaskKind("script")}>Run a script</button>
+            </div>
+            <Show when={taskKind() === "prompt"}>
+              <textarea rows={3} placeholder="What should Vakyartha do each time this runs?" value={prompt()} onInput={(e) => setPrompt(e.currentTarget.value)} />
+              <p class="dim">Runs in a separate Git project copy so changes can be reviewed.</p>
+            </Show>
+            <Show when={taskKind() === "script"}>
+              <textarea rows={3} class="mono" placeholder="A short shell command, such as: printf 'All clear\\n'" value={script()} onInput={(e) => setScript(e.currentTarget.value)} />
+              <p class="dim">Runs without an AI model or Git project.</p>
+            </Show>
           </div>
           <ScheduleBuilder value={schedule()} onChange={setSchedule} />
           <div class="form-row">
@@ -1728,7 +1790,7 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule â€
             <input class="mono" placeholder="Optional â€” otherwise the workspace default" value={modelPin()} onInput={(e) => setModelPin(e.currentTarget.value)} />
           </div>
           <div class="row-gap" style="margin-top:12px">
-            <button disabled={busy() || !name().trim() || !prompt().trim()} onClick={() => void createTask()}>
+            <button disabled={busy() || !name().trim() || !(taskKind() === "script" ? script().trim() : prompt().trim())} onClick={() => void createTask()}>
               {busy() ? "Schedulingâ€¦" : "Schedule task"}
             </button>
           </div>

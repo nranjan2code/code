@@ -433,6 +433,13 @@ button.ghost:hover:not(:disabled) {
   border-color: var(--border-strong);
   background: var(--surface-hover);
 }
+button.task-kind-choice[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--surface-active);
+}
+.task-result-row td { padding-top: 0; color: var(--text-soft); }
+.task-result-row p { margin: 4px 0 10px; max-width: 72ch; white-space: pre-wrap; overflow-wrap: anywhere; }
 button.small { padding: 4px 8px; font-size: 12px; border-radius: var(--radius-sm); }
 button.danger {
   background: color-mix(in srgb, var(--red) 9%, transparent);
