@@ -33,7 +33,7 @@ if [[ -e "$OUTPUT_DIR" ]]; then
     printf 'Artifacts already exist for %s; deploy or inspect the retained artifact instead of overwriting it.\n' "$GIT_COMMIT" >&2
     exit 1
 fi
-mkdir -p "$ARTIFACT_ROOT"
+mkdir -p "$ARTIFACT_ROOT/$GIT_COMMIT"
 STAGING_DIR="$(mktemp -d "$ARTIFACT_ROOT/.build-$GIT_COMMIT.XXXXXXXX")"
 OUTPUT_STAGE="$STAGING_DIR/output"
 mkdir -p "$OUTPUT_STAGE"
