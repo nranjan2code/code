@@ -178,7 +178,9 @@ rebinding is defended identically inside a container.
 
 ## Security posture
 
-1. Bearer token on every route except `/health` and the client shell.
+1. On an enrolled headless host, `/app` and `/admin` share owner passkey sign-in
+   and revocable browser sessions. The gateway bearer token remains for CLI
+   and bridge clients; it cannot sign in to the browser after enrollment.
 2. Bind to loopback by default. For remote access use a tunnel
    (`ssh -L`, Tailscale/WireGuard) or, deliberately, `--host` /
    `[server] bind` with `trusted_hosts` set and a firewall in front.

@@ -182,6 +182,13 @@ registered passkey. In **Admin → Permissions & Security → Owner sign-in**, o
 recovery codes**. Confirm with the passkey and save the new set; generating it
 invalidates the previous codes.
 
+To end the current browser session, use **App → account menu → Sign out**,
+**App → Settings → Privacy and safety → Your sign-in → Sign out**, or the
+**Admin → Sign out** menu. **Admin → Permissions & Security → Owner sign-in →
+Sign out all browsers** invalidates every active browser session. A service
+restart also invalidates the in-memory sessions; the owner can sign in again
+with a passkey or an unused recovery code.
+
 The script does not print the token or a token-bearing URL. Never send that
 token through chat, logs, screenshots, GitHub, or a public URL query string.
 If a token is exposed, revoke or rotate it through the secure credential
@@ -209,14 +216,42 @@ aws --profile YOUR_PROFILE --region YOUR_REGION ec2 describe-instance-status --i
 ```
 
 `logs` prints the latest gateway journal entries; review before sharing
-them. For Caddy, use `sudo journalctl -u caddy.service` over SSH. For data,
-use `vak backup --help` on the host; the workspace directory alone is not
-a full backup. Copy backups into operator-controlled encrypted storage and
-check restore instructions before relying on them. Monitor billing, EBS
-space, CPU credits, certificate renewal, gateway state, and DNS. Stopping
-the instance stops the web service but does not remove EBS or public IPv4
-charges. An EIP/DNS change requires updating the A record; a hostname
-change also requires Caddy and Admin Web address changes.
+them. For Caddy, use `sudo journalctl -u caddy.service` over SSH. An agent
+must avoid dumping secrets, raw session content, or the private inventory
+into its transcript when investigating an incident.
+
+| Cadence | Check | If it fails |
+|---|---|---|
+| Each use or deployment | `status`, `web-check`, and a real passkey sign-in | Check EC2 state, DNS and TLS, Caddy, then gateway logs; keep port 8901 closed to the internet. |
+| Daily | Instance status checks, gateway and Caddy service state, EBS free space, and AWS billing alerts | Investigate the affected layer before restarting or resizing; record the incident privately. |
+| Weekly | Certificate renewal status, security-group rules, SSH source range, backup freshness, and CPU credits on burstable instances | Correct drift in the owning console or private configuration; document the change. |
+| Each release | Changelog, data baseline, backup, clean local build, managed install, `self verify`, app and model turn | Restore a compatible prior managed release only after diagnosing the failure. |
+
+For a backup, run `vak backup export DESTINATION` on the host from the
+canonical workspace; choose an operator-controlled destination outside the
+live data home. The export includes the registry's durable state, but omits
+the credential store by default. `--include-secrets` copies the encrypted
+credential store **and its local decryption key** on a headless Linux host;
+protect that backup as a live secret. Copy the backup to encrypted storage,
+inspect `manifest.json`, and rehearse `vak backup import SOURCE` in a separate
+environment before relying on it. Never commit either backup to Git. See
+`vak backup --help` for the version's exact options.
+
+Keep an operator note outside the checkout with the current commit, artifact
+hashes, managed prefix, instance and network resource IDs, DNS state, cost
+alarms, last backup and restore check, and rollback revision. Record **paths
+or references**, not secret values. The example inventory contains the
+minimum targeting fields for the script; the note records operational
+history. AWS account ownership and current pricing are verified in the AWS
+console, not inferred from a Free Tier label.
+
+Stopping the instance stops the web service but does not remove EBS or
+public IPv4 charges. An EIP/DNS change requires updating the A record; a
+hostname change also requires Caddy and Admin Web address changes. After
+either change, run `proxy`, restart the gateway when its saved web address
+changes, then `web-check` and sign in again. A hostname change can require
+enrolling a passkey for the new relying-party ID, so preserve access to the
+old address and recovery material until the new origin works.
 
 To retire a host, first take and retain a verified backup, record the
 resource inventory, then explicitly remove the instance, EBS volumes,
