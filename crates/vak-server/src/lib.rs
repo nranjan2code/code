@@ -4824,10 +4824,12 @@ fn admit_or_queue(
     if let Some(taken) = slot.take() {
         return Admission::Started(taken);
     }
-    drop(slot);
     if restricted {
         return Admission::RejectedBusy;
     }
+    // Keep the session lock until the message is queued. The settling run
+    // takes this same lock before draining steering in continue_or_release;
+    // releasing it here would let that drain finish before this push.
     handle.steering.push_steering_message(message);
     Admission::Queued
 }
