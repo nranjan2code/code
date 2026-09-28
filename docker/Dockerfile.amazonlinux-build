@@ -1,0 +1,35 @@
+# Build standalone arm64 Linux binaries against Amazon Linux 2023's glibc.
+# This is an artifact builder only; it contains no AWS credentials and does
+# not contact an AWS account.
+
+# syntax=docker/dockerfile:1.7
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS builder
+
+RUN dnf install -y ca-certificates curl gcc gcc-c++ make perl pkgconf-pkg-config tar gzip \
+    && dnf clean all
+
+ENV PATH="/root/.cargo/bin:${PATH}"
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+    | sh -s -- -y --profile minimal
+
+WORKDIR /src
+COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
+COPY crates ./crates
+COPY scripts/ui_bundle_check.rs ./scripts/ui_bundle_check.rs
+
+ARG VAK_GIT_SHA=unknown
+ENV VAK_GIT_SHA=${VAK_GIT_SHA}
+
+# Keep Cargo's downloads and incremental objects in BuildKit's local cache.
+# The cache never leaves the machine running this build.
+RUN --mount=type=cache,target=/root/.cargo/registry \
+    --mount=type=cache,target=/root/.cargo/git \
+    --mount=type=cache,target=/src/target \
+    CARGO_BUILD_JOBS=1 CARGO_PROFILE_RELEASE_DEBUG=0 \
+      cargo build --locked --release --package vak --package vak-delivery \
+    && install -Dm755 target/release/vak /out/vak \
+    && install -Dm755 target/release/vak-delivery-worker /out/vak-delivery-worker
+
+FROM scratch AS export
+COPY --from=builder /out/vak /vak
+COPY --from=builder /out/vak-delivery-worker /vak-delivery-worker
