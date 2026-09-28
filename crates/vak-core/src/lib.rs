@@ -537,13 +537,13 @@ struct CoreInner {
     mcp_cache: std::sync::Mutex<Option<McpCache>>,
     /// The capability registry and its reconcile loop
     /// (docs/design/41-capability-registry.md). Created on first use and
-    /// shared for the life of the process: it publishes immutable versioned
+    /// shared for this Core's lifetime: it publishes immutable versioned
     /// snapshots that turns bind to, which is what lets a session that has
     /// been alive for weeks pick up a skill added today without a restart
     /// and without being rotated.
     capability_registry: std::sync::OnceLock<Arc<capability::CapabilityRegistry>>,
-    /// Signals the reconcile loop to stop. Held so a dropped Core does not
-    /// leave the loop running against a dead provider.
+    /// Signals the reconcile loop to stop. Dropping the sender also stops
+    /// the loop; its provider holds only a Weak reference to this CoreInner.
     capability_shutdown: std::sync::Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     /// Runtime hook override (desktop/TUI management surface).
     hooks_override: std::sync::Mutex<Option<Vec<vak_config::HookConfig>>>,
@@ -3686,16 +3686,15 @@ impl Core {
     /// it. That is the parallel-representation defect doc 41 exists to
     /// remove, reintroduced one layer down.
     ///
-    /// There is one construction now. `CapabilityProvider::declare` is the
-    /// single description of what exists, and both this and the registry
+    /// There is one construction now. The capability provider declaration is
+    /// the single description of what exists, and both this and the registry
     /// project from it. Note this is the *unresolved* view — anything that
     /// needs probing is described but not yet proven usable — which is why
     /// admission goes through [`Self::admitted_capabilities`] instead and
     /// this remains only the synchronous fallback.
     pub fn capability_descriptors(&self) -> Vec<CapabilityDescriptor> {
-        use crate::capability::registry::CapabilityProvider;
         let mut out: Vec<CapabilityDescriptor> = self
-            .declare()
+            .capability_declarations()
             .into_iter()
             .map(|declaration| capability::Capability {
                 id: declaration.id,

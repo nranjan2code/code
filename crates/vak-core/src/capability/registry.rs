@@ -309,11 +309,14 @@ impl CapabilityRegistry {
                     tokio::time::sleep(DEBOUNCE).await;
                     while hints.try_recv().is_ok() {}
                 }
-                _ = shutdown.changed() => {
-                    if *shutdown.borrow() {
-                        return;
+                changed = shutdown.changed() => {
+                    match changed {
+                        Ok(()) if *shutdown.borrow() => return,
+                        Ok(()) => continue,
+                        // The owner can be dropped without explicitly sending
+                        // `true`; a closed watch channel is shutdown too.
+                        Err(_) => return,
                     }
-                    continue;
                 }
             }
             self.reconcile().await;
@@ -380,6 +383,22 @@ mod tests {
         assert!(registry.reconcile().await.is_none(), "idempotent");
         assert!(!registry.has_pending_changes().await);
         assert_eq!(registry.current().await.epoch, first, "no epoch churn");
+    }
+
+    #[tokio::test]
+    async fn run_stops_when_its_shutdown_sender_is_dropped() {
+        let provider = Fake::new(vec![decl("read", CapabilityKind::Tool)]);
+        let (registry, registry_hints) = CapabilityRegistry::new(provider);
+        let (_hint_tx, hints) = mpsc::unbounded_channel();
+        let (shutdown_tx, shutdown) = tokio::sync::watch::channel(false);
+        let task = tokio::spawn(registry.run(hints, shutdown));
+
+        drop(shutdown_tx);
+        tokio::time::timeout(Duration::from_secs(1), task)
+            .await
+            .expect("registry loop should stop on sender drop")
+            .expect("registry task should not panic");
+        drop(registry_hints);
     }
 
     /// What the MCP pool observes arrives as declared configuration, and a

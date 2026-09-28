@@ -134,6 +134,15 @@ Every pass is idempotent, so a dropped hint costs one tick of latency and
 never costs correctness. This is the property that makes multi-week uptime
 safe, and its absence is what made every defect above permanent.
 
+The registry belongs to one `Core` lifetime. Its provider keeps a `Weak`
+reference to `CoreInner` and reconstructs the original per-turn context only
+for a declaration or upkeep pass. The reconcile task may keep the registry
+alive while it runs, but it cannot keep the Core alive. Dropping the Core
+drops the shutdown sender; the loop exits when it sees either an explicit
+shutdown value or a closed watch channel. The MCP observation task holds the
+registry and only a weak manager reference, and exits when the Core-owned
+manager channels close.
+
 ## Admit: turn-atomic epochs replace rotation
 
 The registry publishes immutable, versioned `CapabilitySet` snapshots. The
@@ -323,4 +332,3 @@ Skills are listed once, in the prompt (name and description); the `skill`
 tool carries only the admitted names as its schema enum and loads a body
 on demand after checking its admitted digest. No skill body is inlined into
 the prompt.
-

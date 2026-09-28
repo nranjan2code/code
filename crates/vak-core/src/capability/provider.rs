@@ -7,7 +7,7 @@
 //! same [`Declaration`] and travel the same loop, so "added, updated,
 //! edited, removed" means one thing for all five.
 
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use async_trait::async_trait;
 use vak_session::types::CapabilityKind;
@@ -16,6 +16,62 @@ use super::domain::{Domain, Serves};
 use super::registry::{CapabilityProvider, CapabilityRegistry, Declaration, Hint};
 use super::snapshot::{CapabilityId, Origin};
 use crate::Core;
+
+/// Capability reconciliation outlives individual turns, but it must not
+/// outlive the Core that supplies its declarations. Keep the turn-specific
+/// context from the Core that first created the registry and upgrade the
+/// shared state only for each pass.
+pub(crate) struct WeakCapabilityProvider {
+    inner: Weak<crate::CoreInner>,
+    context: CapabilityCoreContext,
+}
+
+#[derive(Clone)]
+struct CapabilityCoreContext {
+    task_copy_boundary: bool,
+    new_documents: Arc<Vec<String>>,
+    default_deliver_to: Option<String>,
+    surface: crate::Surface,
+    prompt_role: Option<String>,
+    agent_identity: Option<vak_session::types::AgentIdentity>,
+    conversation_context: Option<vak_session::types::ConversationContext>,
+    prompt_overlays: Arc<Vec<crate::prompts::LayerInput>>,
+    approver_answerable: bool,
+}
+
+impl WeakCapabilityProvider {
+    fn new(core: &Core) -> Self {
+        Self {
+            inner: Arc::downgrade(&core.inner),
+            context: CapabilityCoreContext {
+                task_copy_boundary: core.task_copy_boundary,
+                new_documents: core.new_documents.clone(),
+                default_deliver_to: core.default_deliver_to.clone(),
+                surface: core.surface.clone(),
+                prompt_role: core.prompt_role.clone(),
+                agent_identity: core.agent_identity.clone(),
+                conversation_context: core.conversation_context.clone(),
+                prompt_overlays: core.prompt_overlays.clone(),
+                approver_answerable: core.approver_answerable,
+            },
+        }
+    }
+
+    fn upgrade(&self) -> Option<Core> {
+        Some(Core {
+            inner: self.inner.upgrade()?,
+            task_copy_boundary: self.context.task_copy_boundary,
+            new_documents: self.context.new_documents.clone(),
+            default_deliver_to: self.context.default_deliver_to.clone(),
+            surface: self.context.surface.clone(),
+            prompt_role: self.context.prompt_role.clone(),
+            agent_identity: self.context.agent_identity.clone(),
+            conversation_context: self.context.conversation_context.clone(),
+            prompt_overlays: self.context.prompt_overlays.clone(),
+            approver_answerable: self.context.approver_answerable,
+        })
+    }
+}
 
 /// Whether a call reaches information from outside the machine and the
 /// conversation — the kind an answer should cite — decided from what the
@@ -96,7 +152,7 @@ impl Core {
         if let Some(registry) = self.inner.capability_registry.get() {
             return registry.clone();
         }
-        let provider: Arc<dyn CapabilityProvider> = Arc::new(self.clone());
+        let provider: Arc<dyn CapabilityProvider> = Arc::new(WeakCapabilityProvider::new(self));
         let (registry, hints) = CapabilityRegistry::new(provider);
         // Losing the race is fine: the winner's registry is the one everyone
         // uses, and the loser's is dropped without ever having been started.
@@ -140,8 +196,23 @@ impl Core {
 }
 
 #[async_trait]
-impl CapabilityProvider for Core {
+impl CapabilityProvider for WeakCapabilityProvider {
     fn declare(&self) -> Vec<Declaration> {
+        let Some(core) = self.upgrade() else {
+            return Vec::new();
+        };
+        core.capability_declarations()
+    }
+
+    async fn upkeep(&self) {
+        if let Some(core) = self.upgrade() {
+            core.capability_upkeep().await;
+        }
+    }
+}
+
+impl Core {
+    pub(crate) fn capability_declarations(&self) -> Vec<Declaration> {
         let mut out = Vec::new();
 
         // --- tools -------------------------------------------------------
@@ -297,7 +368,7 @@ impl CapabilityProvider for Core {
         out
     }
 
-    async fn upkeep(&self) {
+    async fn capability_upkeep(&self) {
         // Idle eviction: the pool's only background work, and it only ever
         // releases. A process that stays up for weeks must not hold a
         // subprocess for every server it has ever touched; the next call
@@ -359,7 +430,27 @@ fn origin_from_provenance(provenance: Option<&str>) -> Origin {
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+    use std::time::Duration;
     use vak_intent::Act;
+
+    #[tokio::test]
+    async fn starting_the_registry_does_not_keep_its_core_alive() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+        let weak = Arc::downgrade(&core.inner);
+        let registry = core.capability_registry();
+
+        drop(registry);
+        drop(core);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while weak.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the capability loop must release CoreInner after its owner drops");
+    }
 
     /// The act → domain table lives in the kernel (`vak_intent::engage`);
     /// this crate only parses the names. A second copy of the table here
