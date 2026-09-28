@@ -1,3 +1,8 @@
+## 5.2.4 — 2026-09-28
+
+- Make scheduled tasks easier to create and understand by distinguishing AI tasks from scripts, explaining their Git requirements, and showing the latest result or reason a run could not start.
+- Make Inbox updates easier to act on with plain-language labels, direct links back to conversations and task results, and clearer read controls.
+
 ## 5.2.3 — 2026-09-28
 
 - Recognise the same model at another AI service. A model has a different
