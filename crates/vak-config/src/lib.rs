@@ -2151,6 +2151,60 @@ pub fn persist_bus_settings(
     })
 }
 
+/// The Shared layer owns the HTTP listener's public address. A workspace
+/// cannot change the server process that also serves other workspaces.
+/// Read only that layer so an admin GET can safely seed its matching PUT.
+pub fn global_server_settings() -> Result<ServerSettings, ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Read {
+        path: PathBuf::from("<user-config>"),
+        source: std::io::Error::other("user home is unavailable"),
+    })?;
+    if !path.is_file() {
+        return Ok(ServerSettings::default());
+    }
+    parse_file(&path).map(|(config, _)| config.server)
+}
+
+/// Save the public web address in the Shared layer atomically. The caller
+/// validates URLs and hostnames before writing; this function preserves all
+/// unrelated server fields, including the event bus and terminal policy.
+pub fn persist_global_web_address(
+    public_url: Option<&str>,
+    trusted_hosts: &[String],
+    session_ttl_hours: u64,
+) -> Result<(), ConfigError> {
+    let path = global_path().ok_or_else(|| ConfigError::Write {
+        path: PathBuf::from("<user-config>"),
+        source: std::io::Error::other("user home is unavailable"),
+    })?;
+    update_config_file(&path, |document| {
+        let server = child_table(document, "server", &path)?;
+        match public_url {
+            Some(url) => {
+                server.insert("public_url".into(), toml::Value::String(url.to_owned()));
+            }
+            None => {
+                server.remove("public_url");
+            }
+        }
+        server.insert(
+            "trusted_hosts".into(),
+            toml::Value::Array(
+                trusted_hosts
+                    .iter()
+                    .cloned()
+                    .map(toml::Value::String)
+                    .collect(),
+            ),
+        );
+        server.insert(
+            "session_ttl_hours".into(),
+            toml::Value::Integer(session_ttl_hours as i64),
+        );
+        Ok(())
+    })
+}
+
 /// Persist `[memory]` toggles for the current project without disturbing
 /// unrelated config (docs/design/23-memory.md). Mirrors
 /// [`persist_project_preferences`]'s atomic-write shape exactly.
@@ -3366,6 +3420,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "update",
     "tools",
     "heartbeat",
+    "server",
     "plugins",
     "intent",
     "voice",
@@ -4139,6 +4194,39 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.heartbeat.max_findings.is_some() {
         base.heartbeat.max_findings = over.heartbeat.max_findings;
+    }
+    // Server exposure is privileged at the layer boundary above. Once a
+    // layer is trusted, merge every field so Shared defaults and explicit
+    // workspace overrides follow the same contract on every host.
+    if over.server.bind.is_some() {
+        base.server.bind = over.server.bind;
+    }
+    if over.server.trusted_hosts.is_some() {
+        base.server.trusted_hosts = over.server.trusted_hosts;
+    }
+    if over.server.public_url.is_some() {
+        base.server.public_url = over.server.public_url;
+    }
+    if over.server.session_ttl_hours.is_some() {
+        base.server.session_ttl_hours = over.server.session_ttl_hours;
+    }
+    if over.server.loopback_auto_login.is_some() {
+        base.server.loopback_auto_login = over.server.loopback_auto_login;
+    }
+    if over.server.workspace_roots.is_some() {
+        base.server.workspace_roots = over.server.workspace_roots;
+    }
+    if over.server.web.terminal.is_some() {
+        base.server.web.terminal = over.server.web.terminal;
+    }
+    if over.server.web.terminal_requires_loopback.is_some() {
+        base.server.web.terminal_requires_loopback = over.server.web.terminal_requires_loopback;
+    }
+    if over.server.bus.nats_url.is_some() {
+        base.server.bus.nats_url = over.server.bus.nats_url;
+    }
+    if over.server.bus.workspace_secret_env.is_some() {
+        base.server.bus.workspace_secret_env = over.server.bus.workspace_secret_env;
     }
     for (name, hook) in over.gateway.outbound.webhooks {
         base.gateway.outbound.webhooks.insert(name, hook);

@@ -657,6 +657,20 @@ export interface BusConfig {
   runtime: BusStatus | null;
 }
 
+export interface ServerWebConfig {
+  public_url: string;
+  trusted_hosts: string[];
+  session_ttl_hours: number;
+  active: {
+    public_url: string | null;
+    trusted_hosts: string[];
+    session_ttl_hours: number;
+    bind: string;
+    web_terminal: boolean;
+  };
+  restart_required: boolean;
+}
+
 export interface SandboxEnvironmentRecord {
   record_id: string;
   environment_id: string;

@@ -6,6 +6,7 @@ import type {
   ChannelPolicy,
   BestOfNRun,
   BusConfig,
+  ServerWebConfig,
   ConfigInfo,
   DiscoveredModelsResponse,
   FinOpsStatus,
@@ -267,6 +268,16 @@ export const api = {
 
   busConfig: (): Promise<BusConfig> =>
     fetch("/config/bus").then((r) => handle<BusConfig>(r)),
+
+  serverWebConfig: (): Promise<ServerWebConfig> =>
+    fetch("/config/server").then((r) => handle<ServerWebConfig>(r)),
+
+  putServerWebConfig: (body: { public_url: string; trusted_hosts: string[]; session_ttl_hours: number }): Promise<{ saved: boolean; restart_required: boolean }> =>
+    fetch("/config/server", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    }).then((r) => handle(r)),
 
   putBusConfig: (body: {
     nats_url?: string;

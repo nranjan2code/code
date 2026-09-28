@@ -6008,6 +6008,18 @@ export function Settings() {
   };
 
   const [busData, { refetch: refetchBus }] = createResource(() => api.busConfig());
+  const [serverWeb, { refetch: refetchServerWeb }] = createResource(() => api.serverWebConfig());
+  const [publicUrlInput, setPublicUrlInput] = createSignal("");
+  const [trustedHostsInput, setTrustedHostsInput] = createSignal("");
+  const [sessionHoursInput, setSessionHoursInput] = createSignal("24");
+  const [savingServerWeb, setSavingServerWeb] = createSignal(false);
+  createEffect(() => {
+    const saved = serverWeb();
+    if (!saved) return;
+    setPublicUrlInput(saved.public_url);
+    setTrustedHostsInput(saved.trusted_hosts.join(", "));
+    setSessionHoursInput(String(saved.session_ttl_hours));
+  });
   const [busUrl, setBusUrl] = createSignal("");
   const [busJwt, setBusJwt] = createSignal("");
   const [busNkey, setBusNkey] = createSignal("");
@@ -6125,6 +6137,25 @@ export function Settings() {
       else pushToast("alert", `${err}`);
     } finally {
       setSavingBus(false);
+    }
+  };
+
+  const saveServerWeb = async () => {
+    if (savingServerWeb()) return;
+    setSavingServerWeb(true);
+    try {
+      await api.putServerWebConfig({
+        public_url: publicUrlInput().trim(),
+        trusted_hosts: trustedHostsInput().split(/[\s,]+/).map((host) => host.trim()).filter(Boolean),
+        session_ttl_hours: Number(sessionHoursInput()),
+      });
+      await refetchServerWeb();
+      pushToast("info", "Web address saved. Restart the gateway to apply it.");
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setSavingServerWeb(false);
     }
   };
 
@@ -6683,6 +6714,43 @@ export function Settings() {
         >
           <div class="two-col">
           <div class="stack">
+            <section class="panel">
+              <div class="panel-title-row">
+                <div>
+                  <h2>Web address</h2>
+                  <p class="dim">Set the HTTPS address for this server. DNS and the HTTPS proxy must point to the host running Vakyartha.</p>
+                </div>
+                <Show when={serverWeb()?.restart_required}>
+                  <span class="chip chip-tone-warning">Restart needed</span>
+                </Show>
+              </div>
+              <Show when={serverWeb()} fallback={
+                <div class="error-state" role="alert">
+                  <strong>Web settings unavailable.</strong>
+                  <p>{serverWeb.error ? String(serverWeb.error) : "Loading web settings…"}</p>
+                  <button class="ghost small" type="button" onClick={() => void refetchServerWeb()}>Retry</button>
+                </div>
+              }>
+                <div class="form-row">
+                  <label for="public-web-url">Public HTTPS address</label>
+                  <input id="public-web-url" type="url" placeholder="https://assistant.example.com" value={publicUrlInput()} onInput={(event) => setPublicUrlInput(event.currentTarget.value)} />
+                </div>
+                <div class="form-row">
+                  <label for="public-web-hosts">Accepted hostnames</label>
+                  <input id="public-web-hosts" placeholder="assistant.example.com" value={trustedHostsInput()} onInput={(event) => setTrustedHostsInput(event.currentTarget.value)} />
+                </div>
+                <p class="dim">Use exact names, separated by commas. Include the hostname from the public address.</p>
+                <div class="form-row">
+                  <label for="public-web-session-hours">Sign-in lifetime (hours)</label>
+                  <input id="public-web-session-hours" type="number" min="1" max="168" value={sessionHoursInput()} onInput={(event) => setSessionHoursInput(event.currentTarget.value)} />
+                </div>
+                <div class="actions">
+                  <button class="primary" type="button" disabled={savingServerWeb()} onClick={() => void saveServerWeb()}>{savingServerWeb() ? "Saving…" : "Save web address"}</button>
+                  <Show when={serverWeb()?.restart_required}><a href="#/operations">Restart gateway in Operations</a></Show>
+                </div>
+                <p class="dim">Active address: {serverWeb()?.active.public_url || "local access only"}. The gateway listens on {serverWeb()?.active.bind}.</p>
+              </Show>
+            </section>
             <section class="panel">
               <div class="panel-title-row">
                 <div>

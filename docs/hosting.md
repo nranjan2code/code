@@ -88,6 +88,14 @@ printed only to an interactive terminal; Telegram HTTP errors omit Bot API URLs.
 `vak serve` serves the full workspace client at `/app`. Three ways in,
 in increasing order of how much you are taking on:
 
+For a public hostname, Admin → Model & providers → Infrastructure → Web
+address saves the HTTPS origin, accepted hostnames and sign-in lifetime in
+the Shared config layer. Restart the gateway from Operations to apply the
+new listener policy. The Admin screen reports both saved and active values
+so a pending restart is visible. This setup is independent of the cloud
+provider: DNS and a TLS reverse proxy still point at the host running
+Vakyartha.
+
 **1. Loopback (default).** Nothing to configure.
 
 ```bash

@@ -1014,6 +1014,7 @@ fn router_with_state(state: AppState) -> Router {
                 .put(put_bus_config)
                 .delete(delete_bus_config),
         )
+        .route("/config/server", get(get_server_web_config).put(put_server_web_config))
         // The approval policy: whether an `Ask` raised on an unattended
         // chat surface reaches a human at all. Read-only everywhere until
         // now, which made `vak_core::reach`'s own printed remedy an action
@@ -13914,6 +13915,125 @@ async fn put_provider_key(
 }
 
 // ---- Distributed event bus (vak-bus, docs/design/53) -------------------
+
+/// Public browser address for the one server process. It belongs to the
+/// Shared layer, independently of whichever Agent the admin is viewing.
+/// The listener and auth policy are built at startup, so saving these values
+/// deliberately reports that a service restart is required.
+#[derive(serde::Deserialize)]
+struct ServerWebConfigBody {
+    public_url: Option<String>,
+    trusted_hosts: Vec<String>,
+    session_ttl_hours: u64,
+}
+
+async fn get_server_web_config(State(state): State<AppState>) -> axum::response::Response {
+    let saved = match vak_config::global_server_settings() {
+        Ok(saved) => saved,
+        Err(error) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error.to_string() })),
+            )
+                .into_response();
+        }
+    };
+    let active = &state.core.config().server;
+    let saved_url = saved.public_url.unwrap_or_default();
+    let saved_hosts = saved.trusted_hosts.unwrap_or_default();
+    let saved_ttl = saved.session_ttl_hours.unwrap_or(168);
+    let restart_required = saved_url != active.public_url.clone().unwrap_or_default()
+        || saved_hosts != active.trusted_hosts
+        || saved_ttl != active.session_ttl_hours;
+    Json(serde_json::json!({
+        "public_url": saved_url,
+        "trusted_hosts": saved_hosts,
+        "session_ttl_hours": saved_ttl,
+        "active": {
+            "public_url": active.public_url,
+            "trusted_hosts": active.trusted_hosts,
+            "session_ttl_hours": active.session_ttl_hours,
+            "bind": active.bind,
+            "web_terminal": active.web_terminal,
+        },
+        "restart_required": restart_required,
+    }))
+    .into_response()
+}
+
+async fn put_server_web_config(
+    State(state): State<AppState>,
+    Json(body): Json<ServerWebConfigBody>,
+) -> axum::response::Response {
+    let url = body
+        .public_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty());
+    let hosts: Vec<String> = body
+        .trusted_hosts
+        .iter()
+        .map(|host| host.trim().to_ascii_lowercase())
+        .filter(|host| !host.is_empty())
+        .collect();
+    if body.session_ttl_hours == 0
+        || body.session_ttl_hours > 168
+        || hosts.len() > 16
+        || hosts.iter().any(|host| {
+            host.contains('*')
+                || host.starts_with('-')
+                || host.ends_with('-')
+                || !host
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')
+        })
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Use exact DNS names and a session lifetime from 1 to 168 hours." })),
+        )
+            .into_response();
+    }
+    if let Some(url) = url {
+        let parsed = reqwest::Url::parse(url).ok();
+        let valid = parsed.as_ref().is_some_and(|parsed| {
+            parsed.scheme() == "https"
+                && parsed.username().is_empty()
+                && parsed.password().is_none()
+                && parsed.port().is_none()
+                && parsed.path() == "/"
+                && parsed.query().is_none()
+                && parsed.fragment().is_none()
+                && parsed
+                    .host_str()
+                    .is_some_and(|host| hosts.iter().any(|allowed| allowed == host))
+        });
+        if !valid {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "The public URL must be an HTTPS origin whose hostname is in the trusted hosts list." })),
+            )
+                .into_response();
+        }
+    }
+    if let Err(error) = vak_config::persist_global_web_address(url, &hosts, body.session_ttl_hours)
+    {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response();
+    }
+    state.hub.emit_config_changed("server_web_saved", "web");
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "server_web_saved",
+        "Shared web address changed; gateway restart required",
+        None,
+    );
+    Json(serde_json::json!({ "saved": true, "restart_required": true })).into_response()
+}
 
 #[derive(serde::Deserialize)]
 struct BusConfigBody {
