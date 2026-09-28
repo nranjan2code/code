@@ -14016,7 +14016,9 @@ async fn put_server_web_config(
                 .into_response();
         }
     }
-    if let Err(error) = vak_config::persist_global_web_address(url, &hosts, body.session_ttl_hours)
+    let normalized_url = url.map(|value| value.trim_end_matches('/'));
+    if let Err(error) =
+        vak_config::persist_global_web_address(normalized_url, &hosts, body.session_ttl_hours)
     {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
