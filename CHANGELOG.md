@@ -1,4 +1,4 @@
-## Unreleased
+## 5.2.3 — 2026-09-28
 
 - Recognise the same model at another AI service. A model has a different
   name at each service, so a backup at another service is now used only
@@ -9,6 +9,8 @@
 - Allow and remove other backup models in the admin portal, for every agent
   or for one, instead of by editing the config file. Routing changes apply
   from the next message, without a restart.
+
+## Unreleased
 
 ## 5.2.2 — 2026-09-28
 
