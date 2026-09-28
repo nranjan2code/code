@@ -23,6 +23,11 @@
 
 ## Unreleased
 
+- Price provider-qualified model IDs using their normalized model name when
+  the existing estimate table recognizes it. Add exact per-model input and
+  output price overrides from the FinOps screen for short or otherwise
+  unpriced model IDs; changes apply live to new calls.
+
 ## 5.2.2 — 2026-09-28
 
 - Add a full-screen reading view for PowerPoint decks, with slide navigation,

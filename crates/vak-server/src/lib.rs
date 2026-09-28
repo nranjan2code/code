@@ -1831,6 +1831,7 @@ async fn finops_status(
         .into_iter()
         .map(|(date, usd)| serde_json::json!({ "date": date.to_string(), "usd": usd }))
         .collect();
+    let price_overrides = core.effective_finops().price_overrides;
     let mut alerts = recent_budget_alerts(&shared_home, 10);
     if alerts.is_empty() && q.agent.is_some() && core.sessions_home() != shared_home {
         alerts = recent_budget_alerts(&core.sessions_home(), 10);
@@ -1849,6 +1850,7 @@ async fn finops_status(
         "by_model": rollup(by_model),
         "daily": daily,
         "recent_alerts": alerts,
+        "price_overrides": price_overrides,
     }))
     .into_response()
 }
@@ -1882,6 +1884,15 @@ struct FinopsPatch {
     max_day_usd: Option<Option<f64>>,
     #[serde(default)]
     agent: Option<String>,
+    #[serde(default)]
+    price_override: Option<FinopsPriceOverridePatch>,
+}
+
+#[derive(serde::Deserialize)]
+struct FinopsPriceOverridePatch {
+    model: String,
+    input: f64,
+    output: f64,
 }
 
 /// `PATCH /finops` — set or clear the run/day budget caps, applied live
@@ -1907,9 +1918,68 @@ async fn patch_finops(
             .into_response();
     }
     if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
-        return StatusCode::OK.into_response();
+        if body.price_override.is_none() {
+            return StatusCode::OK.into_response();
+        }
+    }
+    if let Some(price) = &body.price_override {
+        if price.model.trim().is_empty()
+            || price.model.len() > 256
+            || price.model.chars().any(char::is_control)
+            || !price.input.is_finite()
+            || price.input < 0.0
+            || !price.output.is_finite()
+            || price.output < 0.0
+        {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "model id must be non-empty and rates must be non-negative finite values" })),
+            )
+                .into_response();
+        }
+    }
+    if body.price_override.is_some() && (body.max_run_usd.is_some() || body.max_day_usd.is_some()) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "save a model price separately from budget caps" })),
+        )
+            .into_response();
     }
     let core = scoped_core!(&state, None, body.agent.as_deref());
+    if let Some(price) = &body.price_override {
+        if vak_config::persist_project_finops_price(
+            core.cwd(),
+            price.model.trim(),
+            Some(vak_config::PriceEntry {
+                input: price.input,
+                output: price.output,
+            }),
+        )
+        .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        let mut prices = core.effective_finops().price_overrides;
+        prices.insert(
+            price.model.trim().to_string(),
+            vak_config::PriceEntry {
+                input: price.input,
+                output: price.output,
+            },
+        );
+        core.apply_persisted_finops_prices(prices);
+        vak_core::security_events::record(
+            &core.sessions_home(),
+            vak_core::security_events::EventKind::ConfigChange,
+            "finops_price_patched",
+            &format!("model={}", price.model.trim()),
+            None,
+        );
+    }
+    if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
+        state.hub.emit_config_changed("finops_price_patched", "");
+        return StatusCode::OK.into_response();
+    }
     if vak_config::persist_project_finops_caps(core.cwd(), body.max_run_usd, body.max_day_usd)
         .is_err()
     {

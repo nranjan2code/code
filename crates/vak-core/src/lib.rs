@@ -488,6 +488,8 @@ struct CoreInner {
     /// tell "never overridden" from "overridden to no cap" apart.
     finops_max_run_usd_override: std::sync::Mutex<Option<Option<f64>>>,
     finops_max_day_usd_override: std::sync::Mutex<Option<Option<f64>>>,
+    finops_price_overrides_override:
+        std::sync::Mutex<Option<std::collections::BTreeMap<String, vak_config::PriceEntry>>>,
     sandbox_backend_override: std::sync::Mutex<Option<String>>,
     agent_network: Arc<std::sync::Mutex<agent_network::AgentNetworkBroker>>,
     task_sandboxes: TaskSandboxMap,
@@ -1245,6 +1247,7 @@ impl Core {
             plugins_override: std::sync::Mutex::new(None),
             finops_max_run_usd_override: std::sync::Mutex::new(None),
             finops_max_day_usd_override: std::sync::Mutex::new(None),
+            finops_price_overrides_override: std::sync::Mutex::new(None),
             provider_instance: std::sync::Mutex::new(None),
             sessions_home_override: std::sync::Mutex::new(None),
             breaker,
@@ -2528,6 +2531,15 @@ impl Core {
         if let Some(day) = Self::read_override(&self.inner.finops_max_day_usd_override) {
             finops.max_day_usd = day;
         }
+        if let Some(prices) = self
+            .inner
+            .finops_price_overrides_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+        {
+            finops.price_overrides = prices.clone();
+        }
         finops
     }
 
@@ -2603,6 +2615,17 @@ impl Core {
         }
     }
 
+    pub fn apply_persisted_finops_prices(
+        &self,
+        price_overrides: std::collections::BTreeMap<String, vak_config::PriceEntry>,
+    ) {
+        *self
+            .inner
+            .finops_price_overrides_override
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(price_overrides);
+    }
+
     /// Refresh every non-security persisted preference. Permission mode is
     /// returned to the server control plane so it can revoke in-flight
     /// capabilities before applying a changed value.
@@ -2659,6 +2682,7 @@ impl Core {
             Some(config.finops.max_run_usd),
             Some(config.finops.max_day_usd),
         );
+        self.apply_persisted_finops_prices(config.finops.price_overrides.clone());
         self.apply_persisted_work(config.work.clone());
         self.apply_persisted_route_settings(config.route.clone());
         self.apply_persisted_tools(config.tools.web_fetch, config.tools.browse);
@@ -5234,7 +5258,7 @@ impl Core {
         let belief_map = vak_llm::BeliefMap {
             multipliers: self.inner.beliefs.snapshot().multipliers,
         };
-        let finops_cfg = self.inner.config.finops.clone();
+        let finops_cfg = self.effective_finops();
         let home = self.sessions_home();
         let ranked = vak_llm::order_ladder_v2(
             candidates,

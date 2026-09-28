@@ -854,7 +854,7 @@ pub struct FeedResolved {
     pub dedup_window_days: u32,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct PriceEntry {
     pub input: f64,
     pub output: f64,
@@ -2616,6 +2616,35 @@ pub fn persist_project_finops_caps(
     max_day_usd: Option<Option<f64>>,
 ) -> Result<(), ConfigError> {
     persist_finops_caps_at(project_path(cwd), max_run_usd, max_day_usd)
+}
+
+/// Persist one exact model price in the current project's `[finops.price_overrides]`
+/// table. `None` removes the project entry and resumes inheritance.
+pub fn persist_project_finops_price(
+    cwd: &Path,
+    model: &str,
+    price: Option<PriceEntry>,
+) -> Result<(), ConfigError> {
+    let path = project_path(cwd);
+    update_config_file(&path, |document| {
+        let finops = child_table(document, "finops", &path)?;
+        let prices = child_table(finops, "price_overrides", &path)?;
+        match price {
+            Some(entry) => {
+                prices.insert(
+                    model.to_string(),
+                    toml::Value::try_from(entry).map_err(|error| ConfigError::Write {
+                        path: path.clone(),
+                        source: std::io::Error::other(error.to_string()),
+                    })?,
+                );
+            }
+            None => {
+                prices.remove(model);
+            }
+        }
+        Ok(())
+    })
 }
 
 /// A partial update to `[voice]`. `None` leaves a key untouched; for the

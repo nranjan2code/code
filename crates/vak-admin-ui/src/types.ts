@@ -527,6 +527,7 @@ export interface FinOpsStatus {
   by_model: FinOpsRollupEntry[];
   daily: FinOpsDailyPoint[];
   recent_alerts: FinOpsAlertRow[];
+  price_overrides: Record<string, { input: number; output: number }>;
 }
 
 export interface OpsStatus {

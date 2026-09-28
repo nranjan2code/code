@@ -574,7 +574,11 @@ export const api = {
 
   /** Absent = leave alone, `null` = clear the cap, a number = set it. */
   patchFinops: (
-    patch: { max_run_usd?: number | null; max_day_usd?: number | null },
+    patch: {
+      max_run_usd?: number | null;
+      max_day_usd?: number | null;
+      price_override?: { model: string; input: number; output: number };
+    },
     agent?: string,
   ): Promise<void> =>
     fetch("/finops", {

@@ -2648,7 +2648,11 @@ function FinOpsView() {
   );
   const [runCapInput, setRunCapInput] = createSignal("");
   const [dayCapInput, setDayCapInput] = createSignal("");
+  const [priceModelInput, setPriceModelInput] = createSignal("");
+  const [priceInput, setPriceInput] = createSignal("");
+  const [priceOutput, setPriceOutput] = createSignal("");
   const [savingCaps, setSavingCaps] = createSignal(false);
+  const [savingPrice, setSavingPrice] = createSignal(false);
   const [refreshing, setRefreshing] = createSignal(false);
 
   // Background polling every 15s when active tab
@@ -2703,6 +2707,29 @@ function FinOpsView() {
       pushToast("alert", `${err}`);
     } finally {
       setSavingCaps(false);
+    }
+  };
+
+  const savePrice = async () => {
+    const model = priceModelInput().trim();
+    const input = Number(priceInput());
+    const output = Number(priceOutput());
+    if (!model || !Number.isFinite(input) || input < 0 || !Number.isFinite(output) || output < 0) {
+      pushToast("alert", "Enter a model ID and non-negative input and output rates per million tokens.");
+      return;
+    }
+    setSavingPrice(true);
+    try {
+      await api.patchFinops({ price_override: { model, input, output } }, selectedAgentIdOrUndefined());
+      pushToast("info", `Price saved for ${model}`);
+      setPriceModelInput("");
+      setPriceInput("");
+      setPriceOutput("");
+      await refetch();
+    } catch (err) {
+      pushToast("alert", `${err}`);
+    } finally {
+      setSavingPrice(false);
     }
   };
 
@@ -2845,6 +2872,46 @@ function FinOpsView() {
               </Show>
             </section>
           </div>
+
+          <section class="panel" style="margin-bottom:14px">
+            <div class="panel-title-row">
+              <div>
+                <h2>Model prices</h2>
+                <p class="dim">Set exact rates for the model IDs your provider returns. Rates are USD per million tokens and apply to new calls.</p>
+              </div>
+            </div>
+            <div class="form-row">
+              <label>Exact model ID</label>
+              <input class="mono" placeholder="Copy the model ID from your provider settings" value={priceModelInput()} onInput={(e) => setPriceModelInput(e.currentTarget.value)} />
+            </div>
+            <div class="two-col">
+              <div class="form-row">
+                <label>Input USD / 1M tokens</label>
+                <input class="mono" inputmode="decimal" placeholder="0.00" value={priceInput()} onInput={(e) => setPriceInput(e.currentTarget.value)} />
+              </div>
+              <div class="form-row">
+                <label>Output USD / 1M tokens</label>
+                <input class="mono" inputmode="decimal" placeholder="0.00" value={priceOutput()} onInput={(e) => setPriceOutput(e.currentTarget.value)} />
+              </div>
+            </div>
+            <div class="row-gap" style="margin-top:8px; align-items:center">
+              <button disabled={savingPrice()} onClick={() => void savePrice()}>
+                {savingPrice() ? "Saving…" : "Save model price"}
+              </button>
+            </div>
+            <Show when={Object.keys(data()?.price_overrides ?? {}).length > 0}>
+              <div style="overflow-x:auto; margin-top:16px">
+                <table class="table">
+                  <thead><tr><th>exact model ID</th><th>input / 1M</th><th>output / 1M</th></tr></thead>
+                  <tbody>
+                    <For each={Object.entries(data()?.price_overrides ?? {}).sort(([a], [b]) => a.localeCompare(b))}>
+                      {([model, price]) => <tr><td class="mono">{model}</td><td class="mono">${price.input.toFixed(4)}</td><td class="mono">${price.output.toFixed(4)}</td></tr>}
+                    </For>
+                  </tbody>
+                </table>
+              </div>
+            </Show>
+          </section>
 
           {/* Granular Rollup Tables */}
           <div class="two-col" style="margin-bottom:14px">

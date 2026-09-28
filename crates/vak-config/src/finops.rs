@@ -55,7 +55,17 @@ pub fn resolve_usd_per_mtok(
     if let Some(e) = overrides.get(model) {
         return Some((e.input, e.output));
     }
-    usd_per_mtok_heuristic(model)
+    // Provider catalogues often wrap the model's own name in a namespace or
+    // deployment prefix (`openrouter/anthropic/claude-sonnet-4`,
+    // `us.anthropic.claude-sonnet-4-v1:0`). Normalize only those structural
+    // parts before applying the conservative heuristic. Never transfer a
+    // price between provider-specific ids: each service may charge different
+    // rates, so arbitrary/short ids still require an exact override.
+    let identity = vak_llm::model_identity::identity_key(model)?;
+    if let Some(e) = overrides.get(&identity.base) {
+        return Some((e.input, e.output));
+    }
+    usd_per_mtok_heuristic(&identity.base)
 }
 
 /// Estimated USD for a usage record. Cache-creation tokens bill at the
