@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal, onCleanup, onMount } from "solid-js";
 import { api, AuthRequired } from "./api";
+import { headlessAuth } from "./headlessAuth";
 import {
   CHANNEL_MODES, ICONS, Icon, MODES, PageHeader, PathCell, SEC_KINDS, SETUP_STEPS, StatCard,
   chatSurfaces, chatSurfacesError, confirmDestructive, modeLabel, providerLabel, secKindLabel, setChatSurfaces,
@@ -364,22 +365,51 @@ function Login() {
   const [token, setToken] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal("");
+  const [method, setMethod] = createSignal<"bootstrap" | "passkey" | null>(null);
+  const [showRecovery, setShowRecovery] = createSignal(false);
+  const [recoveryCode, setRecoveryCode] = createSignal("");
+  const [recoveryCodes, setRecoveryCodes] = createSignal<string[]>([]);
+  const [recovered, setRecovered] = createSignal(false);
+
+  onMount(() => {
+    void headlessAuth.method().then(value => setMethod(value.method))
+      .catch(() => setError("The sign-in service is unavailable."));
+  });
+
+  const finish = () => {
+    setAuthed(true);
+    connectEvents();
+    navigate("#/overview");
+  };
 
   const submit = async (e: SubmitEvent) => {
     e.preventDefault();
-    if (!token().trim() || busy()) return;
+    if (busy() || !method() || (method() === "bootstrap" && !token().trim())) return;
     setBusy(true);
     setError("");
     try {
-      await api.login(token().trim());
-      setAuthed(true);
-      connectEvents();
-      navigate("#/overview");
+      if (method() === "bootstrap") {
+        setRecoveryCodes(await headlessAuth.enroll(token().trim()));
+      } else if (showRecovery()) {
+        await headlessAuth.recovery(recoveryCode());
+        setRecovered(true);
+      } else {
+        await headlessAuth.passkey();
+        finish();
+      }
+      setToken("");
     } catch (err) {
-      setError(err instanceof AuthRequired || `${err}`.includes("401") ? "That token doesn\u2019t match. Check the one vak serve printed." : `${err}`);
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
+  };
+
+  const replacePasskey = async () => {
+    setBusy(true); setError("");
+    try { await headlessAuth.addPasskey(); finish(); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
   };
 
   return (
@@ -387,23 +417,41 @@ function Login() {
       <form class="login-card" onSubmit={submit}>
         <div class="login-logo"><img src="/admin/assets/brand/songbird-reverse.svg" alt="" /></div>
         <h1>Vakyartha admin</h1>
-        <p class="hint">Paste the token printed by <code>vak serve</code></p>
+        <Show when={recoveryCodes().length > 0}>
+          <p class="hint">Save these recovery codes outside this server. They appear only once.</p>
+          <pre>{recoveryCodes().join("\n")}</pre>
+          <button type="button" onClick={finish}>I saved the codes</button>
+        </Show>
+        <Show when={recovered()}>
+          <p class="hint">The recovery code has been used. Add a new passkey now.</p>
+          <button type="button" disabled={busy()} onClick={() => void replacePasskey()}>Add passkey</button>
+        </Show>
+        <Show when={recoveryCodes().length === 0 && !recovered()}>
+        <p class="hint">{method() === "bootstrap" ? "Set up the owner account with a passkey. Enter the server bootstrap token to begin." : "Sign in with your passkey."}</p>
+        <Show when={method() === "bootstrap" || showRecovery()}>
         <input
           type="password"
-          placeholder="access token"
-          aria-label="Access token"
-          autocomplete="current-password"
+          placeholder={showRecovery() ? "recovery code" : "bootstrap token"}
+          aria-label={showRecovery() ? "Recovery code" : "Bootstrap token"}
+          autocomplete="off"
           autofocus
-          value={token()}
-          onInput={(e) => setToken(e.currentTarget.value)}
+          value={showRecovery() ? recoveryCode() : token()}
+          onInput={(e) => showRecovery() ? setRecoveryCode(e.currentTarget.value) : setToken(e.currentTarget.value)}
           classList={{ shake: !!error() }}
         />
+        </Show>
+        </Show>
         <Show when={error()}>
           <div class="login-error">{error()}</div>
         </Show>
-        <button type="submit" disabled={busy() || !token().trim()}>
-          {busy() ? "Signing in…" : "Sign in"}
-        </button>
+        <Show when={recoveryCodes().length === 0 && !recovered()}>
+          <button type="submit" disabled={busy() || !method() || (method() === "bootstrap" && !token().trim()) || (showRecovery() && !recoveryCode().trim())}>
+            {busy() ? "Signing in…" : method() === "bootstrap" ? "Create owner passkey" : showRecovery() ? "Use recovery code" : "Sign in with passkey"}
+          </button>
+          <Show when={method() === "passkey"}>
+            <button type="button" onClick={() => setShowRecovery(!showRecovery())}>{showRecovery() ? "Use passkey" : "Use a recovery code"}</button>
+          </Show>
+        </Show>
       </form>
     </div>
   );

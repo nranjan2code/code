@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,8 @@ use tokio::sync::RwLock;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RateLimitConfig {
+    /// Peers authorized to assert a client IP through X-Real-IP.
+    pub trusted_proxy_ips: Vec<IpAddr>,
     /// Max requests per window for `POST /gateway/inbound`.
     pub inbound_per_min: u32,
     /// Max requests per window for `POST /sessions`.
@@ -27,6 +30,7 @@ pub struct RateLimitConfig {
 impl Default for RateLimitConfig {
     fn default() -> Self {
         Self {
+            trusted_proxy_ips: Vec::new(),
             inbound_per_min: 30,
             sessions_per_min: 5,
             runs_per_min: 10,
@@ -42,6 +46,7 @@ impl RateLimitConfig {
         match s {
             None => d,
             Some(s) => Self {
+                trusted_proxy_ips: s.trusted_proxy_ips,
                 inbound_per_min: s.inbound_per_min.unwrap_or(d.inbound_per_min),
                 sessions_per_min: s.sessions_per_min.unwrap_or(d.sessions_per_min),
                 runs_per_min: s.runs_per_min.unwrap_or(d.runs_per_min),
@@ -148,6 +153,20 @@ impl RateLimiter {
     }
 }
 
+fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trusted_proxy_ips: &[IpAddr]) -> IpAddr {
+    let peer = peer.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    if trusted_proxy_ips.contains(&peer) {
+        if let Some(ip) = headers
+            .get("x-real-ip")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<IpAddr>().ok())
+        {
+            return ip;
+        }
+    }
+    peer
+}
+
 #[derive(Serialize)]
 struct RateLimitResponse {
     error: String,
@@ -160,25 +179,15 @@ pub async fn rate_limit_layer(
     req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Result<Response, Response> {
-    let ip = req
-        .headers()
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .and_then(|v| v.trim().parse::<IpAddr>().ok())
-        .or_else(|| {
-            req.headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.trim().parse::<IpAddr>().ok())
-        })
-        .or_else(|| {
-            req.extensions()
-                .get::<axum::extract::ConnectInfo<tokio::net::TcpStream>>()
-                .and_then(|ci| ci.0.peer_addr().ok())
-                .map(|addr| addr.ip())
-        })
-        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+    // An arbitrary caller can set X-Forwarded-For/X-Real-IP and otherwise
+    // evade login throttling by changing the header on every request.
+    // A trusted-proxy identity policy may be added separately; the socket
+    // peer is the only authenticated source address here.
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip());
+    let ip = client_ip(req.headers(), peer, &limiter.config.trusted_proxy_ips);
 
     let method = req.method().as_str().to_owned();
     let path = req.uri().path().to_string();
@@ -219,6 +228,20 @@ mod tests {
     fn test_limiter(config: RateLimitConfig) -> RateLimiter {
         let dir = tempfile::tempdir().unwrap();
         RateLimiter::new(config, dir.keep())
+    }
+
+    #[test]
+    fn proxy_client_ip_requires_an_explicit_trusted_peer() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-real-ip", "198.51.100.7".parse().unwrap());
+        let proxy: IpAddr = "127.0.0.1".parse().unwrap();
+        let attacker: IpAddr = "203.0.113.9".parse().unwrap();
+        assert_eq!(client_ip(&headers, Some(attacker), &[proxy]), attacker);
+        assert_eq!(client_ip(&headers, Some(proxy), &[]), proxy);
+        assert_eq!(
+            client_ip(&headers, Some(proxy), &[proxy]),
+            "198.51.100.7".parse::<IpAddr>().unwrap()
+        );
     }
 
     #[tokio::test]

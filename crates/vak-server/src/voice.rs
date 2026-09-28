@@ -605,7 +605,12 @@ pub(crate) async fn voice_socket(
     // An upgrade is a GET, so the router's mutation Origin check does not
     // cover it; a microphone relay that spends provider money must check.
     let origin = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok());
-    if !crate::origin_is_trusted(origin, &state.core.config().server.trusted_hosts) {
+    let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
+    if !crate::origin_is_trusted(
+        origin,
+        host,
+        state.core.config().server.public_url.as_deref(),
+    ) {
         return error_response(StatusCode::FORBIDDEN, "voice session origin is not trusted");
     }
     upgrade.on_upgrade(move |socket| drive(socket, state, query.session_id))

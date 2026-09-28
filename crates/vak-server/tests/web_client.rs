@@ -24,7 +24,12 @@ async fn spawn() -> (SocketAddr, String) {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     (addr, token)
 }
@@ -190,6 +195,10 @@ async fn the_login_cookie_authenticates_subsequent_requests() {
         .to_string();
     assert!(cookie.starts_with("vak_session="));
     assert!(
+        !cookie.contains(&token),
+        "the durable gateway bearer must never be a cookie"
+    );
+    assert!(
         cookie.contains("HttpOnly"),
         "script must not be able to read it"
     );
@@ -210,6 +219,22 @@ async fn the_login_cookie_authenticates_subsequent_requests() {
         .await
         .unwrap();
     assert_eq!(host.status(), reqwest::StatusCode::OK);
+
+    let signed_out = client
+        .post(format!("http://{addr}/auth/logout"))
+        .header(reqwest::header::COOKIE, pair)
+        .header(reqwest::header::ORIGIN, format!("http://{addr}"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(signed_out.status(), reqwest::StatusCode::OK);
+    let revoked = client
+        .get(format!("http://{addr}/host"))
+        .header(reqwest::header::COOKIE, pair)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(revoked.status(), reqwest::StatusCode::UNAUTHORIZED);
 }
 
 /// The old `/admin/login` was REMOVED, not kept alongside `/auth/login`.
@@ -266,10 +291,8 @@ async fn a_cross_origin_mutation_is_refused() {
     assert_eq!(ours.status(), reqwest::StatusCode::OK);
 }
 
-/// A request with no `Origin` at all is not a browser mutation (curl, the
-/// CLI, a bridge), so it is allowed past the origin check — and must then
-/// still satisfy the token check, which is what keeps it from being a way
-/// around anything.
+/// Originless CLI mutations need a bearer. A cookie without Origin is
+/// rejected before dispatch.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_originless_mutation_still_needs_a_token() {
     let (addr, token) = spawn().await;
@@ -281,6 +304,24 @@ async fn an_originless_mutation_still_needs_a_token() {
         .await
         .unwrap();
     assert_eq!(anonymous.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let cookie = login(&client, addr, &token).await;
+    let cookie_only = client
+        .post(format!("http://{addr}/sessions"))
+        .header(reqwest::header::COOKIE, cookie.split(';').next().unwrap())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cookie_only.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let wrong_port = client
+        .post(format!("http://{addr}/sessions"))
+        .header(reqwest::header::COOKIE, cookie.split(';').next().unwrap())
+        .header(reqwest::header::ORIGIN, "http://127.0.0.1:1")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(wrong_port.status(), reqwest::StatusCode::FORBIDDEN);
 
     let authorized = client
         .post(format!("http://{addr}/sessions"))

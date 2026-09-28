@@ -1,5 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createResource, createSignal } from "solid-js";
 import { api } from "./api";
+import { headlessAuth } from "./headlessAuth";
 import { MODES, PageHeader, SEC_KINDS, confirmDestructive, secKindLabel } from "./display";
 import { timeAgo } from "./time";
 import { navigate, pushToast, route, selectedAgentId, selectedAgentIdOrUndefined } from "./store";
@@ -901,6 +902,21 @@ function PrecedenceFlowchartCard() {
 }
 
 export function SecurityCenter(props: { scope: () => ConfigScope }) {
+  const [account, { refetch: refetchAccount }] = createResource(() => headlessAuth.account().catch(() => null));
+  const [accountBusy, setAccountBusy] = createSignal(false);
+  const [accountError, setAccountError] = createSignal("");
+  const addOwnerPasskey = async () => {
+    setAccountBusy(true); setAccountError("");
+    try { await headlessAuth.addPasskey(); await refetchAccount(); pushToast("info", "Passkey added"); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : String(error)); }
+    finally { setAccountBusy(false); }
+  };
+  const signOutEverywhere = async () => {
+    if (!confirmDestructive("Sign out every browser session on this server?")) return;
+    setAccountBusy(true); setAccountError("");
+    try { await headlessAuth.revokeAll(); window.location.reload(); }
+    catch (error) { setAccountError(error instanceof Error ? error.message : String(error)); setAccountBusy(false); }
+  };
   type SecTab = "execution" | "rules" | "approvals" | "audit";
   const [activeTab, setActiveTab] = createSignal<SecTab>("execution");
 
@@ -1002,6 +1018,17 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
         title="Permissions & Security"
         description="Unified authority engine, sandbox telemetry, multi-tier rulebooks, gate forwarding, and append-only forensic audit trail."
       />
+
+      <Show when={account()}>
+        {(owner) => <section class="card">
+          <h2>Owner sign-in</h2>
+          <p>{owner().passkeys} passkey{owner().passkeys === 1 ? "" : "s"} · {owner().recovery_codes_remaining} recovery codes left</p>
+          <p>Passkeys sign you in to this server. Save recovery codes outside Vakyartha.</p>
+          <button type="button" disabled={accountBusy()} onClick={() => void addOwnerPasskey()}>Add passkey</button>
+          <button type="button" disabled={accountBusy()} onClick={() => void signOutEverywhere()}>Sign out all browsers</button>
+          <Show when={accountError()}><p role="alert">{accountError()}</p></Show>
+        </section>}
+      </Show>
 
       {/* Executive Posture Deck */}
       <div class="security-posture-deck">

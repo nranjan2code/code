@@ -113,6 +113,17 @@ impl StateEntry {
 /// source: the enforcement test below drives a workspace and fails on any
 /// file that appears here without a declaration.
 pub const REGISTRY: &[StateEntry] = &[
+    StateEntry {
+        path: "auth",
+        root: Root::Data,
+        owner: "vak-server",
+        schema: Some(1),
+        // Public-key credentials and one-way recovery-code digests.
+        kind: Kind::Config,
+        on_update: OnUpdate::Untouched,
+        on_purge: OnPurge::Remove,
+        in_backup: true,
+    },
     // ---- ledgers: append-only, never rewritten by an update ----
     StateEntry {
         path: "sessions",

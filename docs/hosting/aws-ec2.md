@@ -10,7 +10,8 @@ instance address, or deployment hostname belongs in this repository.
 This path builds Linux ARM64 binaries locally using Docker and runs them on
 Amazon Linux 2023. It does not build on EC2. The backend listens on
 `127.0.0.1:8901`; Caddy is the only public web process on ports 80 and 443.
-Vakyartha's own access-token sign-in protects `/app` and `/admin`.
+Vakyartha's owner passkey sign-in protects `/app` and `/admin` after one-time
+bootstrap with the gateway token.
 An AI agent operating this path should follow the
 [agent runbook](AGENT_RUNBOOK.md) as well as this guide.
 
@@ -145,6 +146,11 @@ checks SHA-512, then installs the Caddy binary, a generated Caddyfile for
 `PUBLIC_HOST`, and a systemd service. Caddy terminates TLS and proxies to
 the loopback backend. It redirects `/` to `/app`. The public hostname is
 generated from the private inventory; no real hostname is tracked in Git.
+The generated proxy overwrites `X-Real-IP` with the client address it sees.
+To rate-limit individual visitors behind this loopback proxy, set
+`gateway.rate_limit.trusted_proxy_ips = ["127.0.0.1"]` in the host's private
+configuration. Trust only the actual proxy socket address; direct public
+access to the backend must remain closed.
 
 In **Admin → Model & providers → Infrastructure → Web address**, set:
 
@@ -161,8 +167,10 @@ is still needed. Check TLS and both browser shells:
 scripts/hosting/aws-ec2.sh "$private_inventory" web-check
 ```
 
-Public browser sign-in requires the pinned gateway token. On the operator's
-Mac, run the following and paste from the clipboard into the sign-in form:
+First-owner enrollment requires the pinned gateway token. On the operator's
+Mac, run the following and paste from the clipboard into the initial setup
+form. Register a passkey on the public HTTPS address and store the recovery
+codes in a password manager. Later visits use the passkey, not the token:
 
 ```bash
 scripts/hosting/aws-ec2.sh "$private_inventory" copy-token

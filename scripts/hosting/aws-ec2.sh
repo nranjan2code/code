@@ -163,7 +163,7 @@ REMOTE
         remote "$ip" '"$HOME/.local/share/vak/local/release/bin/vak" open app --print -C "$HOME/vak-home"' \
             | python3 -c 'import sys, urllib.parse; s=sys.stdin.read().strip(); p=urllib.parse.urlsplit(s); q=urllib.parse.parse_qs(p.query); t=q.get("token",[""])[0]; sys.exit("No pinned gateway token is available") if not t else sys.stdout.write(t)' \
             | pbcopy
-        printf 'Access token copied to clipboard. Paste it into the public sign-in form.\n'
+        printf 'Bootstrap token copied to clipboard. Use it only for first-owner passkey enrollment.\n'
         ;;
     proxy)
         require_host
@@ -182,7 +182,9 @@ REMOTE
 $PUBLIC_HOST {
     encode zstd gzip
     redir / /app 302
-    reverse_proxy 127.0.0.1:8901
+    reverse_proxy 127.0.0.1:8901 {
+        header_up X-Real-IP {remote_host}
+    }
 }
 CADDY
         cp "$ROOT/scripts/hosting/caddy.service" "$temp/caddy.service"

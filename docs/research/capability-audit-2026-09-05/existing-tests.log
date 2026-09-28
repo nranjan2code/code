@@ -1,4 +1,4 @@
-   Compiling vak-core v3.0.0 (/Users/nisheethranjan/Projects/vakcoder/crates/vak-core)
+   Compiling vak-core v3.0.0 (/Users/example/Projects/vakcoder/crates/vak-core)
     Finished `test` profile [unoptimized + debuginfo] target(s) in 0.62s
      Running tests/capability_lifecycle.rs (target/debug/deps/capability_lifecycle-5498be80eb002625)
 

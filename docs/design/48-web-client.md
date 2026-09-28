@@ -285,6 +285,12 @@ finding out later is not a mistake we let someone make quietly.
 
 ### 4.3 Auth for browsers
 
+The token-login flow below records the original browser implementation.
+`78-headless-identity.md` supersedes it for an enrolled headless owner:
+passkeys and one-time recovery codes issue revocable browser sessions;
+`/auth/login` is then closed to browsers. The exact-origin and actual-peer
+checks in doc 78 also supersede the older host-only wording below.
+
 Cookie only. No token in a query string, on any surface, after this lands.
 
 - `POST /auth/login` takes the bearer token, compares with

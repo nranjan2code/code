@@ -488,7 +488,7 @@ unknown scope and an unrestricted one is the whole point of the screen.
 ## Paths and tables at scale
 
 A filesystem path in a table cell is not free text. `word-break: break-all`
-in the Channels workspace column split `/Users/nisheethranjan/Projects/
+in the Channels workspace column split `/Users/example/Projects/
 vakcoder` across three lines mid-word; every row became a different height
 and the column read as damage.
 

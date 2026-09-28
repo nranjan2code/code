@@ -26,9 +26,9 @@ remain more specific overrides.
 ## Install verification performed
 
 The installed 0.11.24 instance was inspected before repair. Its gateway plist
-had `WorkingDirectory=/Users/nisheethranjan/Projects/vakcoder`, while the
+had `WorkingDirectory=/Users/example/Projects/vakcoder`, while the
 persisted desktop project and Telegram binding used
-`/Users/nisheethranjan/vak-home`. That mismatch explains the screenshots: the
+`/Users/example/vak-home`. That mismatch explains the screenshots: the
 admin health card was showing the gateway Core cwd, while an expanded chat
 editor was showing its configured workspace. The generated-unit source and
 gateway startup are now independent of the directory from which sync is run.

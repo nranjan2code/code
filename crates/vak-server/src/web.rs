@@ -11,7 +11,10 @@
 //! same `/sessions/*` contract every other surface does; these are only
 //! the pieces a browser needs that a native shell provided locally.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::extract::State;
@@ -19,6 +22,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 use crate::AppState;
 use crate::admin::SESSION_COOKIE;
@@ -30,6 +34,86 @@ pub(crate) struct LoginBody {
     pub token: String,
 }
 
+/// Browser sessions are separate from the durable gateway bearer. The
+/// cookie holds a random, revocable handle; only its digest is held by the
+/// server. Restarting the server invalidates every browser session.
+#[derive(Clone, Default)]
+pub(crate) struct BrowserSessions(Arc<Mutex<HashMap<[u8; 32], Instant>>>);
+
+impl BrowserSessions {
+    fn digest(token: &str) -> [u8; 32] {
+        Sha256::digest(token.as_bytes()).into()
+    }
+
+    pub(crate) fn issue(&self, lifetime: Duration) -> String {
+        // Two UUIDv7 draws provide more than 128 random bits in total.
+        let token = format!(
+            "vks_{}{}",
+            uuid::Uuid::now_v7().simple(),
+            uuid::Uuid::now_v7().simple()
+        );
+        let expires = Instant::now() + lifetime;
+        let mut sessions = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        sessions.retain(|_, expiry| *expiry > Instant::now());
+        if sessions.len() >= 4096
+            && let Some(oldest) = sessions
+                .iter()
+                .min_by_key(|(_, expiry)| **expiry)
+                .map(|(id, _)| *id)
+        {
+            sessions.remove(&oldest);
+        }
+        sessions.insert(Self::digest(&token), expires);
+        token
+    }
+
+    pub(crate) fn valid(&self, token: &str) -> bool {
+        let key = Self::digest(token);
+        let mut sessions = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match sessions.get(&key).copied() {
+            Some(expiry) if expiry > Instant::now() => true,
+            Some(_) => {
+                sessions.remove(&key);
+                false
+            }
+            None => false,
+        }
+    }
+
+    pub(crate) fn revoke(&self, token: &str) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&Self::digest(token));
+    }
+
+    pub(crate) fn revoke_all(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+    }
+}
+
+pub(crate) fn session_cookie(headers: &header::HeaderMap) -> Option<&str> {
+    headers
+        .get(header::COOKIE)?
+        .to_str()
+        .ok()?
+        .split(';')
+        .find_map(|pair| {
+            pair.trim()
+                .strip_prefix(&format!("{SESSION_COOKIE}="))
+                .map(str::trim)
+        })
+}
+
 /// Cookie attributes for this deployment.
 ///
 /// `Secure` is conditional and must be: a browser silently DISCARDS a
@@ -38,7 +122,7 @@ pub(crate) struct LoginBody {
 /// persist. It is switched on exactly when the operator has told us the
 /// public origin is https (`[server] public_url`), or a terminating proxy
 /// says so on the request itself.
-fn cookie_attributes(state: &AppState, forwarded_proto: Option<&str>) -> String {
+pub(crate) fn cookie_attributes(state: &AppState, forwarded_proto: Option<&str>) -> String {
     let cfg = state.core.config();
     let https = cfg.server.cookie_is_secure() || forwarded_proto == Some("https");
     let max_age = cfg.server.session_ttl_hours.saturating_mul(3600);
@@ -46,14 +130,14 @@ fn cookie_attributes(state: &AppState, forwarded_proto: Option<&str>) -> String 
     format!("HttpOnly; SameSite=Strict; Path=/; Max-Age={max_age}{secure}")
 }
 
-fn forwarded_proto(headers: &header::HeaderMap) -> Option<&str> {
+pub(crate) fn forwarded_proto(headers: &header::HeaderMap) -> Option<&str> {
     headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
         .map(|v| v.split(',').next().unwrap_or(v).trim())
 }
 
-/// Constant-time token check → HttpOnly session cookie.
+/// Constant-time bootstrap token check → revocable HttpOnly session cookie.
 ///
 /// Browsers need this because `EventSource` cannot send an `Authorization`
 /// header, so a cookie is the only channel that covers both `fetch` and
@@ -66,24 +150,35 @@ pub(crate) async fn login(
     Json(body): Json<LoginBody>,
 ) -> Response {
     use subtle::ConstantTimeEq;
+    let _bootstrap_guard = match state.owner_auth.bootstrap_guard() {
+        Ok(None) => {
+            return (
+                StatusCode::GONE,
+                Json(serde_json::json!({"error": "use owner sign-in"})),
+            )
+                .into_response();
+        }
+        Err(_) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(serde_json::json!({"error": "identity store unavailable"})),
+            )
+                .into_response();
+        }
+        Ok(Some(guard)) => guard,
+    };
     let ok: bool = body
         .token
         .as_bytes()
         .ct_eq(state.auth_token.as_bytes())
         .into();
     if !ok {
-        let ip = headers
-            .get("x-forwarded-for")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.split(',').next())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
         vak_core::security_events::record(
             &state.core.sessions_home(),
             vak_core::security_events::EventKind::AuthFailure,
             "login_failed",
             "invalid token on /auth/login",
-            ip,
+            None,
         );
         state.hub.emit_security("AuthFailure", "login_failed");
         return (
@@ -93,17 +188,28 @@ pub(crate) async fn login(
             .into_response();
     }
     let attributes = cookie_attributes(&state, forwarded_proto(&headers));
+    let session = state.browser_sessions.issue(Duration::from_secs(
+        state
+            .core
+            .config()
+            .server
+            .session_ttl_hours
+            .saturating_mul(3600),
+    ));
     (
         [(
             header::SET_COOKIE,
-            format!("{SESSION_COOKIE}={}; {attributes}", body.token),
+            format!("{SESSION_COOKIE}={session}; {attributes}"),
         )],
         Json(serde_json::json!({ "ok": true })),
     )
         .into_response()
 }
 
-pub(crate) async fn logout() -> Response {
+pub(crate) async fn logout(State(state): State<AppState>, headers: header::HeaderMap) -> Response {
+    if let Some(token) = session_cookie(&headers) {
+        state.browser_sessions.revoke(token);
+    }
     (
         [(
             header::SET_COOKIE,
@@ -121,25 +227,10 @@ pub(crate) async fn logout() -> Response {
 /// "server unreachable" (show an error), and a 401 conflates them.
 pub(crate) async fn session_status(
     State(state): State<AppState>,
-    headers: header::HeaderMap,
+    request: axum::extract::Request,
 ) -> Response {
-    use subtle::ConstantTimeEq;
-    let held = headers
-        .get(header::COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|pair| {
-                pair.trim()
-                    .strip_prefix(&format!("{SESSION_COOKIE}="))
-                    .map(str::trim)
-                    .map(String::from)
-            })
-        })
-        .map(|value| {
-            let ok: bool = value.as_bytes().ct_eq(state.auth_token.as_bytes()).into();
-            ok
-        })
-        .unwrap_or(false);
+    let headers = request.headers();
+    let held = session_cookie(&headers).is_some_and(|token| state.browser_sessions.valid(token));
     if held {
         return Json(serde_json::json!({ "authenticated": true })).into_response();
     }
@@ -154,12 +245,22 @@ pub(crate) async fn session_status(
     // an operator says so, and never reachable from a real hostname.
     let cfg = state.core.config();
     let host = headers.get(header::HOST).and_then(|v| v.to_str().ok());
-    if cfg.server.loopback_auto_login && crate::host_is_loopback(host) {
+    if cfg.server.loopback_auto_login
+        && cfg.server.public_url.is_none()
+        && crate::host_is_loopback(host)
+        && request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .is_some_and(|peer| peer.0.ip().is_loopback())
+    {
         let attributes = cookie_attributes(&state, forwarded_proto(&headers));
+        let session = state.browser_sessions.issue(Duration::from_secs(
+            cfg.server.session_ttl_hours.saturating_mul(3600),
+        ));
         return (
             [(
                 header::SET_COOKIE,
-                format!("{SESSION_COOKIE}={}; {attributes}", state.auth_token),
+                format!("{SESSION_COOKIE}={session}; {attributes}"),
             )],
             Json(serde_json::json!({ "authenticated": true, "granted": "loopback" })),
         )

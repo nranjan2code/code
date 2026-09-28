@@ -135,9 +135,12 @@ terminal = false                          # a shell over HTTP is remote code exe
 with 421. Put a TLS-terminating proxy in front (Caddy, nginx) and make
 sure it passes `Host` and sets `X-Forwarded-Proto`.
 
-Sign in with the server's token — the one it prints on startup, or your
-`VAK_GATEWAY_TOKEN`. It is exchanged once for an HttpOnly cookie and is
-never stored in the page.
+On the first public visit, use the server's bootstrap token to enroll an
+owner passkey and save the one-time recovery codes outside Vakyartha. After
+enrollment, `/app` and `/admin` use the same passkey sign-in and revocable
+HttpOnly browser session. The gateway token remains for CLI and bridges; it
+cannot be exchanged for a browser session after owner enrollment. See
+[`78-headless-identity.md`](design/78-headless-identity.md).
 
 ## Docker (the headless Linux image)
 

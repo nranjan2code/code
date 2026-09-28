@@ -12,9 +12,9 @@ Connected machines provide a combined work list, inbox, administration and
 observability. The owner chooses execution location; existing admission,
 permissions, outcome contracts and resource limits govern execution there.
 
-The first connected installation is the developer's Mac plus one AWS host.
-`https://vak.vakyartha.com` is its browser entry point. One designated host
-coordinates connected work; initially this is the always-on AWS host. The Mac
+The first connected installation is the developer's Mac plus one cloud host.
+The operator's configured HTTPS address is its browser entry point. One
+designated host coordinates connected work; initially this is the always-on AWS host. The Mac
 is not a mandatory control plane. Neither login nor cloud availability gates
 ordinary local use. Additional owners, organizations and shared tenancy are
 outside this release.
@@ -227,8 +227,9 @@ distinction in place without hiding the task or reporting stale state as live.
 Enrollment explains this personal-system sharing; excluded/private work stays
 local and is visibly marked as such.
 
-Acceptance scenario: create one task on the Mac and another on AWS. Both appear
-in the same list in desktop and at `vak.vakyartha.com`; either client can inspect,
+Acceptance scenario: create one task on the Mac and another on the cloud host.
+Both appear in the same list in desktop and at the configured HTTPS address;
+either client can inspect,
 steer and cancel either reachable task. Put the Mac to sleep: its synchronized
 history remains readable, live controls report unavailable, and AWS work keeps
 running. Reconnect the Mac: the index and history catch up without duplicates.
@@ -288,7 +289,7 @@ existing inbox for meaningful changes. Missing observations must remain unknown.
 First install: one EC2 host, Caddy, vak and the connected-mode broker supervised
 by systemd, persistent encrypted storage and one managed human IdP. Caddy can
 manage its TLS certificate; a separate ACM certificate is not inherently needed.
-DNS points `vak.vakyartha.com` to the selected stable endpoint. Validate the
+DNS points the operator's chosen hostname to the selected stable endpoint. Validate the
 broker listener's TLS/auth/access policy separately from the web proxy.
 
 Protect the AWS account and domain registrar with MFA and recovery codes. Use

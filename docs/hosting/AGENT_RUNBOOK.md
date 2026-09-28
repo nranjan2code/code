@@ -6,6 +6,7 @@ destroy cloud resources without the user's request.
 
 1. **Inspect first.** Read this guide, `docs/design/28-operations.md`,
    `docs/design/32-release-engineering.md`, `docs/design/48-web-client.md`,
+   `docs/design/78-headless-identity.md`,
    and the current `AGENTS.md` invariants. Check `git status`, existing
    private inventory, AWS caller identity, region, instance state, and
    current deployed version. Read design documents' `Status:` lines.
@@ -30,9 +31,10 @@ destroy cloud resources without the user's request.
    for a public endpoint.
 6. **Observe before declaring success.** Check `status`, `web-check`, the
    active versus saved web address, gateway and Caddy services, and real
-   browser sign-in. HTTP 200 for `/app` only proves the shell is served;
+   browser owner enrollment and passkey sign-in. HTTP 200 for `/app` only proves the shell is served;
    it does not prove the model route or login works. Ask the operator to
-   paste a token copied locally with `copy-token`; never show it in chat.
+   paste a bootstrap token copied locally with `copy-token` during first
+   enrollment; never show it or the recovery codes in chat.
 7. **Update carefully.** Read release notes, preserve a backup and previous
    artifact, build, deploy, check managed manifest and service state, then
    check HTTPS and the app. If an update fails, diagnose the specific

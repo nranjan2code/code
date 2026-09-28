@@ -24,6 +24,8 @@ pub struct SecurityEvent {
 #[serde(rename_all = "snake_case")]
 pub enum EventKind {
     AuthFailure,
+    /// Enrollment, passkey use, recovery, and browser-session revocation.
+    OwnerIdentity,
     RateLimit,
     ChatAllowlist,
     PermissionDenial,

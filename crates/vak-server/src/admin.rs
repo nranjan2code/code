@@ -1783,6 +1783,8 @@ mod tests {
                 token: (*state.auth_token).clone(),
                 home: state.core.sessions_home(),
                 trusted_hosts: Vec::new(),
+                public_url: None,
+                browser_sessions: state.browser_sessions.clone(),
             },
             crate::require_bearer,
         ))
@@ -2005,6 +2007,8 @@ mod tests {
                     token: (*state.auth_token).clone(),
                     home: state.core.sessions_home(),
                     trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: state.browser_sessions.clone(),
                 },
                 crate::require_bearer,
             ));

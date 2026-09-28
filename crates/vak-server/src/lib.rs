@@ -51,6 +51,7 @@ mod admin;
 mod admin_ui;
 mod agent_chats;
 pub mod agents;
+mod auth_identity;
 mod bus;
 mod channels;
 mod client_events;
@@ -232,6 +233,10 @@ pub struct AppState {
     pub(crate) store: Option<vak_store::Store>,
     /// Expected auth token (login endpoint compares against it).
     pub(crate) auth_token: Arc<String>,
+    /// Short-lived, revocable browser handles. The gateway bearer never
+    /// enters a browser cookie on either the app or admin surface.
+    pub(crate) browser_sessions: web::BrowserSessions,
+    pub(crate) owner_auth: auth_identity::OwnerAuth,
     /// Workspace the browser client currently has open, when it has moved
     /// away from the one this process started in (docs/design/48-web-client.md
     /// §5). `None` means "the process's own workspace".
@@ -274,8 +279,15 @@ impl AppState {
                 .filter(|t| !t.trim().is_empty())
                 .or_else(|| vak_config::get_var("VAK_GATEWAY_TOKEN"))
                 .filter(|t| !t.trim().is_empty())
-                .unwrap_or_else(|| format!("vk_{}", uuid::Uuid::now_v7())),
+                .unwrap_or_else(|| {
+                    format!(
+                        "vk_{}{}",
+                        uuid::Uuid::now_v7().simple(),
+                        uuid::Uuid::now_v7().simple()
+                    )
+                }),
         );
+        let owner_auth = auth_identity::OwnerAuth::new(core.shared_data_home());
         AppState {
             core,
             started_at: Instant::now(),
@@ -292,6 +304,8 @@ impl AppState {
             hub,
             store,
             auth_token,
+            browser_sessions: web::BrowserSessions::default(),
+            owner_auth,
             active_core: Arc::new(Mutex::new(None)),
             voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             voice_requests: Arc::new(voice::RequestWindow::new()),
@@ -1108,6 +1122,16 @@ fn router_with_state(state: AppState) -> Router {
         // removed rather than kept alongside: two endpoints against one
         // cookie is two contracts that must agree forever (invariant 30).
         .route("/auth/login", post(web::login))
+        .route("/auth/methods", get(auth_identity::methods))
+        .route("/auth/enroll/start", post(auth_identity::enroll_start))
+        .route("/auth/enroll/finish", post(auth_identity::enroll_finish))
+        .route("/auth/passkey/start", post(auth_identity::passkey_start))
+        .route("/auth/passkey/finish", post(auth_identity::passkey_finish))
+        .route("/auth/recovery", post(auth_identity::recovery))
+        .route("/auth/passkey/add/start", post(auth_identity::add_start))
+        .route("/auth/passkey/add/finish", post(auth_identity::add_finish))
+        .route("/auth/account", get(auth_identity::account))
+        .route("/auth/sessions/revoke-all", post(auth_identity::revoke_all_sessions))
         .route("/auth/logout", post(web::logout))
         .route("/auth/session", get(web::session_status))
         // ---- the workspace client's own host surface --------------------
@@ -2874,10 +2898,13 @@ pub fn secured_router_with_port(core: Core, force_gateway: bool, port: u16) -> (
                 token: token.clone(),
                 home: state.core.sessions_home(),
                 trusted_hosts: state.core.config().server.trusted_hosts.clone(),
+                public_url: state.core.config().server.public_url.clone(),
+                browser_sessions: state.browser_sessions.clone(),
             },
             require_bearer,
         ))
-        .layer(cors);
+        .layer(cors)
+        .layer(axum::middleware::from_fn(security_headers));
     #[cfg(unix)]
     {
         let broker = state.core.agent_network_broker();
@@ -3020,7 +3047,11 @@ pub async fn serve(core: Core, addr: std::net::SocketAddr) -> std::io::Result<()
 /// because that mints and consumes the token internally. Exposed here so
 /// axum stays a dependency of this crate rather than leaking into the CLI.
 pub async fn serve_router(listener: tokio::net::TcpListener, app: Router) -> std::io::Result<()> {
-    axum::serve(listener, app).await
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
 }
 
 pub async fn serve_with(
@@ -3071,7 +3102,11 @@ pub async fn serve_with(
     }
     let (draining_tx, draining_rx) = oneshot::channel();
     let server = std::future::IntoFuture::into_future(
-        axum::serve(listener, app).with_graceful_shutdown(async {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
             eprintln!("\n[shutting down: draining connections]");
             let _ = draining_tx.send(());
@@ -3253,6 +3288,12 @@ fn auth_exempt_path(path: &str) -> bool {
         // than 401 so an unauthenticated client can tell "no session" from
         // "server unreachable".
         || path == "/auth/login"
+        || path == "/auth/methods"
+        || path == "/auth/enroll/start"
+        || path == "/auth/enroll/finish"
+        || path == "/auth/passkey/start"
+        || path == "/auth/passkey/finish"
+        || path == "/auth/recovery"
         || path == "/auth/session"
         // The public site and its build stamp. Every page answers an
         // unauthenticated stranger by design — a blank 401 at `/` told a
@@ -3387,7 +3428,7 @@ fn host_is_loopback(host: Option<&str>) -> bool {
 /// here and still has to satisfy `require_bearer` with a real header
 /// token. That is what keeps curl, the CLI, and the bridges working
 /// without giving a page any new power.
-fn origin_is_trusted(origin: Option<&str>, trusted: &[String]) -> bool {
+fn origin_is_trusted(origin: Option<&str>, host: Option<&str>, public_url: Option<&str>) -> bool {
     let Some(origin) = origin else { return true };
     // The Tauri webview's own origins: the desktop is a first-party client
     // and its scheme is not something an attacker can mint.
@@ -3397,11 +3438,18 @@ fn origin_is_trusted(origin: Option<&str>, trusted: &[String]) -> bool {
     ) {
         return true;
     }
-    let authority = origin
-        .split_once("://")
-        .map(|(_, rest)| rest)
-        .unwrap_or(origin);
-    host_is_trusted(Some(authority), trusted)
+    // Host allowlisting alone is insufficient: a different port or scheme
+    // on the same hostname is a different browser origin.
+    let expected = if host_is_loopback(host) {
+        host.map(|host| format!("http://{host}"))
+    } else {
+        public_url.and_then(|url| {
+            reqwest::Url::parse(url)
+                .ok()
+                .map(|url| url.origin().ascii_serialization())
+        })
+    };
+    expected.as_deref() == Some(origin)
 }
 
 /// What the auth layer needs to know about this deployment's exposure.
@@ -3412,6 +3460,8 @@ pub(crate) struct AuthPolicy {
     /// Non-loopback `Host` names this server answers to (`[server]
     /// trusted_hosts`). Empty on a default install.
     pub(crate) trusted_hosts: Vec<String>,
+    pub(crate) public_url: Option<String>,
+    pub(crate) browser_sessions: web::BrowserSessions,
 }
 
 /// Identity established by the HTTP boundary. Participant grants are kept
@@ -3505,13 +3555,19 @@ pub(crate) async fn require_bearer(
         token,
         home,
         trusted_hosts,
+        public_url,
+        browser_sessions,
     } = policy;
     let host = req
         .headers()
         .get(axum::http::header::HOST)
         .and_then(|value| value.to_str().ok())
         .or_else(|| req.uri().host());
-    let loopback = host_is_loopback(host);
+    let peer_loopback = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .is_some_and(|peer| peer.0.ip().is_loopback());
+    let loopback = host_is_loopback(host) && peer_loopback && public_url.is_none();
     if !host_is_trusted(host, &trusted_hosts) {
         return (
             StatusCode::MISDIRECTED_REQUEST,
@@ -3533,7 +3589,20 @@ pub(crate) async fn require_bearer(
         .headers()
         .get(axum::http::header::ORIGIN)
         .and_then(|v| v.to_str().ok());
-    if mutating && !origin_is_trusted(origin, &trusted_hosts) {
+    let has_bearer_header = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.starts_with("Bearer "));
+    // A browser session must carry an exact first-party Origin for writes.
+    // Header-authenticated CLIs may omit Origin, but a bare cookie may not.
+    if mutating
+        && (!origin_is_trusted(origin, host, public_url.as_deref())
+            || (origin.is_none()
+                && !has_bearer_header
+                && req.headers().contains_key(axum::http::header::COOKIE)
+                && !auth_exempt_path(req.uri().path())))
+    {
         vak_core::security_events::record(
             &home,
             vak_core::security_events::EventKind::AuthFailure,
@@ -3564,7 +3633,7 @@ pub(crate) async fn require_bearer(
     // Browser surfaces authenticate once via /auth/login which sets an
     // HttpOnly cookie; EventSource cannot send Authorization headers, so
     // the cookie is the only workable channel for SSE.
-    let cookie_token = req
+    let cookie_session = req
         .headers()
         .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
@@ -3619,12 +3688,19 @@ pub(crate) async fn require_bearer(
         })
         .flatten();
     let participant_token = header_token.as_deref();
-    let provided = header_token.clone().or(cookie_token).or(query_token);
-    let ok = provided
+    let provided = header_token.clone().or(query_token);
+    let bearer_ok = provided
         .as_deref()
         .map(|p| p.as_bytes().ct_eq(token.as_bytes()).into())
         .unwrap_or(false);
-    if ok {
+    // A browser cookie may authorize a mutation only with an exact
+    // first-party Origin. Originless API clients must use bearer auth.
+    let cookie_allowed = !mutating || origin.is_some();
+    let cookie_ok = cookie_allowed
+        && cookie_session
+            .as_deref()
+            .is_some_and(|session| browser_sessions.valid(session));
+    if bearer_ok || cookie_ok {
         req.extensions_mut()
             .insert(AuthenticatedPrincipal::Operator);
         next.run(req).await
@@ -3672,15 +3748,9 @@ fn unauthorized_response(
         .map(str::trim)
         .filter(|s| !s.is_empty());
     let detail = format!(
-        "path={} provided={}",
+        "path={} credential_present={}",
         req.uri().path(),
-        provided
-            .map(|p| format!(
-                "{}...{}",
-                &p[..4.min(p.len())],
-                &p[p.len().saturating_sub(4)..]
-            ))
-            .unwrap_or_else(|| "<none>".into())
+        provided.is_some()
     );
     vak_core::security_events::record(
         home,
@@ -3766,9 +3836,62 @@ fn health_projection(state: &AppState) -> serde_json::Value {
     })
 }
 
-async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
+async fn health(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+) -> Json<serde_json::Value> {
     refresh_control_plane(&state);
-    Json(health_projection(&state))
+    let report = health_projection(&state);
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    let local = state.core.config().server.public_url.is_none()
+        && host_is_loopback(host)
+        && request
+            .extensions()
+            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+            .is_some_and(|peer| peer.0.ip().is_loopback());
+    let authenticated = request
+        .extensions()
+        .get::<AuthenticatedPrincipal>()
+        .is_some();
+    if !local && !authenticated {
+        // A public load-balancer probe only needs readiness. Paths, model,
+        // permission mode and diagnostics belong behind authenticated APIs.
+        return Json(serde_json::json!({ "status": report["status"] }));
+    }
+    Json(report)
+}
+
+async fn security_headers(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    let https = req
+        .headers()
+        .get("x-forwarded-proto")
+        .is_some_and(|value| value == "https");
+    let auth_path = req.uri().path().starts_with("/auth/");
+    let mut response = next.run(req).await;
+    let headers = response.headers_mut();
+    headers.insert(
+        "x-content-type-options",
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert("x-frame-options", HeaderValue::from_static("DENY"));
+    headers.insert("referrer-policy", HeaderValue::from_static("no-referrer"));
+    if https {
+        headers.insert(
+            "strict-transport-security",
+            HeaderValue::from_static("max-age=31536000"),
+        );
+    }
+    if auth_path {
+        headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -22637,6 +22760,8 @@ mod sandbox_promotion_tests {
                     token: "operator-secret".into(),
                     home: dir.path().into(),
                     trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
                 },
                 require_bearer,
             ));
@@ -22753,6 +22878,8 @@ mod sandbox_promotion_tests {
                     token: "operator-secret".into(),
                     home: core.sessions_home(),
                     trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
                 },
                 require_bearer,
             ));
@@ -22878,6 +23005,8 @@ mod sandbox_promotion_tests {
                     token: "operator-secret".into(),
                     home: core.sessions_home(),
                     trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
                 },
                 require_bearer,
             ));
@@ -23057,6 +23186,8 @@ mod sandbox_promotion_tests {
                     token: "operator-secret".into(),
                     home: core.sessions_home(),
                     trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: web::BrowserSessions::default(),
                 },
                 require_bearer,
             ));

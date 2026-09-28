@@ -51,7 +51,8 @@ Read before changing behaviour in these areas:
   local, crash-only channels, ladder+endurance inference, store-and-forward
   delivery), `53-distributed-bus.md` (`crates/vak-bus`).
 - **Surfaces** — `33-admin-console.md` (admin), `48-web-client.md` (browser and
-  the `[server]` exposure rules),
+  the `[server]` exposure rules), `78-headless-identity.md` (portable owner
+  passkeys, recovery, and browser sessions),
   `55-rich-terminal-surface.md` (`vak term`), `34-channel-onboarding.md`
   (channels, multi-bot identity), `38-voice-personality.md` and
   `49-live-voice.md` (voice), `29-personal-os.md` (the personal-use surface).

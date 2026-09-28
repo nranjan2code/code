@@ -455,6 +455,10 @@ pub struct GatewaySettings {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RateLimitSettings {
+    /// Socket peers allowed to supply X-Real-IP. Configure only for a
+    /// reverse proxy that overwrites that header with its observed peer.
+    #[serde(default)]
+    pub trusted_proxy_ips: Vec<std::net::IpAddr>,
     /// Max requests per window for `POST /gateway/inbound`.
     pub inbound_per_min: Option<u32>,
     /// Max requests per window for `POST /sessions`.

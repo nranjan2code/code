@@ -5,6 +5,7 @@ import { host } from "../host";
 import type { WorkspaceReview } from "../types";
 import DirectoryPicker from "./DirectoryPicker";
 import Icon from "./Icon";
+import { headlessAuth } from "../headlessAuth";
 
 /**
  * Sign in (where that applies), choose a workspace, and decide about it —
@@ -36,12 +37,20 @@ export default function WorkspaceGate() {
   // meaningful answer; the desktop holds its token already.
   const [authed, setAuthed] = createSignal<boolean | null>(host.authenticate ? null : true);
   const [token, setToken] = createSignal("");
+  const [method, setMethod] = createSignal<"bootstrap" | "passkey" | null>(null);
+  const [recoveryCode, setRecoveryCode] = createSignal("");
+  const [showRecovery, setShowRecovery] = createSignal(false);
+  const [recoveryCodes, setRecoveryCodes] = createSignal<string[]>([]);
+  const [recovered, setRecovered] = createSignal(false);
 
   onMount(() => {
     if (!host.sessionStatus) return;
     void host
       .sessionStatus()
-      .then((s) => setAuthed(s.authenticated))
+      .then(async (s) => {
+        setAuthed(s.authenticated);
+        if (!s.authenticated) setMethod((await headlessAuth.method()).method);
+      })
       .catch(() => setAuthed(false));
   });
 
@@ -54,7 +63,7 @@ export default function WorkspaceGate() {
       // authenticates, `authed()` starts `null` (unknown), and polling
       // through that window just fires 401s at a server that is behaving
       // correctly.
-      if (stop || backend().ready || authed() !== true) return;
+      if (stop || backend().ready || authed() !== true || recoveryCodes().length > 0 || recovered()) return;
       await refreshBackend();
     };
     const t = setInterval(() => void tick(), 800);
@@ -76,19 +85,34 @@ export default function WorkspaceGate() {
 
   const signIn = async (event: Event) => {
     event.preventDefault();
-    if (!host.authenticate || !token().trim()) return;
+    if (!host.authenticate || (method() === "bootstrap" && !token().trim())) return;
     setBusy(true);
     setError(null);
     try {
-      await host.authenticate(token().trim());
+      if (method() === "bootstrap") {
+        const codes = await headlessAuth.enroll(token().trim());
+        setRecoveryCodes(codes);
+      } else if (showRecovery()) {
+        await headlessAuth.recovery(recoveryCode());
+        setRecovered(true);
+      } else {
+        await headlessAuth.passkey();
+      }
       setToken(""); // never keep it around after the exchange
       setAuthed(true);
-      await refreshBackend();
+      if (recoveryCodes().length === 0 && !recovered()) await refreshBackend();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
+  };
+
+  const addReplacementPasskey = async () => {
+    setBusy(true); setError(null);
+    try { await headlessAuth.addPasskey(); setRecovered(false); await refreshBackend(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
   };
 
   /** Decide about `dir`, then open it. */
@@ -154,30 +178,53 @@ export default function WorkspaceGate() {
             <form onSubmit={signIn}>
               <h1>Sign in</h1>
               <p class="gate-lead">
-                This server is protected by its access token — the one it printed
-                on startup, or the <code>VAK_GATEWAY_TOKEN</code> in its
-                environment.
+                {method() === "bootstrap"
+                  ? "Set up the owner account with a passkey. Enter the server's one-time bootstrap token to begin."
+                  : "Use your passkey to sign in to this Vakyartha server."}
               </p>
+              <Show when={method() === "bootstrap" || showRecovery()}>
               <input
                 class="gate-token"
                 type="password"
-                autocomplete="current-password"
-                placeholder="Access token"
-                aria-label="Access token"
-                value={token()}
-                onInput={(e) => setToken(e.currentTarget.value)}
+                autocomplete="off"
+                placeholder={showRecovery() ? "Recovery code" : "Bootstrap token"}
+                aria-label={showRecovery() ? "Recovery code" : "Bootstrap token"}
+                value={showRecovery() ? recoveryCode() : token()}
+                onInput={(e) => showRecovery() ? setRecoveryCode(e.currentTarget.value) : setToken(e.currentTarget.value)}
               />
+              </Show>
               <Show when={error()}><div class="gate-err">{error()}</div></Show>
-              <button class="btn primary lg" type="submit" disabled={busy() || !token().trim()}>
-                {busy() ? "Signing in…" : "Sign in"}
+              <button class="btn primary lg" type="submit" disabled={busy() || !method() || (method() === "bootstrap" && !token().trim()) || (showRecovery() && !recoveryCode().trim())}>
+                {busy() ? "Signing in…" : method() === "bootstrap" ? "Create owner passkey" : showRecovery() ? "Use recovery code" : "Sign in with passkey"}
               </button>
+              <Show when={method() === "passkey"}>
+                <button type="button" class="btn" onClick={() => setShowRecovery(!showRecovery())}>
+                  {showRecovery() ? "Use passkey" : "Use a recovery code"}
+                </button>
+              </Show>
               <p class="gate-note">
-                The token is exchanged for a session cookie and never stored in
-                this page. Sessions expire on their own; sign out ends one early.
+                Your passkey stays on your device. This server keeps a revocable browser session.
               </p>
             </form>
           }
         >
+          <Show when={recoveryCodes().length > 0}>
+            <div>
+              <h1>Save your recovery codes</h1>
+              <p class="gate-lead">These appear only once. Store them in a password manager outside this server before continuing.</p>
+              <pre>{recoveryCodes().join("\n")}</pre>
+              <button class="btn primary lg" type="button" onClick={() => { setRecoveryCodes([]); void refreshBackend(); }}>I saved the codes</button>
+            </div>
+          </Show>
+          <Show when={recovered()}>
+            <div>
+              <h1>Replace your passkey</h1>
+              <p class="gate-lead">That recovery code has been used. Add a new passkey now so you can sign in again.</p>
+              <button class="btn primary lg" type="button" disabled={busy()} onClick={() => void addReplacementPasskey()}>Add passkey</button>
+              <Show when={error()}><div class="gate-err">{error()}</div></Show>
+            </div>
+          </Show>
+          <Show when={recoveryCodes().length === 0 && !recovered()}>
           <Show when={review()} fallback={
             <Show when={browsing()} fallback={
               <>
@@ -245,6 +292,7 @@ export default function WorkspaceGate() {
                 </div>
               </>
             )}
+          </Show>
           </Show>
         </Show>
       </div>
