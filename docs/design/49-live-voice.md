@@ -35,16 +35,36 @@ socket utterance — draws on one per-process `RequestWindow` sized by
 `voice.max_requests_per_minute`. `/voice/speak` records a `WorkReceipt` with
 real latency for every provider, success or failure.
 
-**Voice tiers.** The route a chat speaks and listens through is the
-workspace `[voice]` settings narrowed by its bot → chat `VoiceConfig`
-(provider and model pins win where set; a blank pin inherits), the same
-override-or-inherit chain as every other gateway tier (invariant 23).
-`/voice/speak` identifies the chat from the `session_id` it is given — the
-session's gateway binding — so a channel reply uses that chat's route, voice
-and persona without the bridge naming a chat key; the admin console's
-Preview passes its auditioned `voice_override` as the narrowest tier. A bot
-or chat tier is checked when it is written: an unknown provider name is
-refused then, not discovered when a voice note fails.
+**Agent-owned voice route.** Each conversation uses the effective `[voice]`
+settings from the `Core` attached to its admitted session. This is the
+Agent's route and workspace, resolved by the same Agent ownership path as
+desktop, gateway and scheduled work (doc 64); the active Agent selected in a
+client cannot change an already-open conversation. An authorized channel may
+store a narrower `VoiceConfig` for its endpoint, and Admin's audition request
+may pass a temporary `voice_override`. These overlays can select a provider,
+voice or model for that endpoint, but never replace the Agent as conversation
+owner. A missing overlay field inherits the Agent's setting.
+When a Channel changes the provider, the Agent's model IDs are cleared because
+model identifiers are provider-specific; that Channel must choose its own
+discovered transcription and synthesis models.
+
+Voice provider keys are shared account credentials stored through the normal
+provider credential flow in the OS secret service or encrypted fallback. The
+Voice settings page can add, replace and remove the Google Gemini or OpenAI
+key; a key is never returned to the client. Agents may use the shared
+credential without copying it into Agent data. The provider must still be
+selected for the Agent, and its account-discovered transcription and synthesis
+models must be pinned. Settings and Admin populate those choices from the
+connected account's model catalogue, with exact-ID entry retained when
+discovery is unavailable. Model ids are never shipped as a static catalogue.
+
+Every hosted voice call is appended as a `SpeechRecognition` or
+`VoiceSynthesis` work receipt to its session when the call belongs to a live
+conversation. The shared FinOps ledger counts a hosted voice dispatch whose
+provider does not return rated usage as unknown spend; it never fabricates
+token usage or a zero-dollar estimate. Local voice calls are excluded from
+provider spend. Provider-reported speech billing is not currently available
+through these endpoints, so precise voice cost remains unknown.
 
 **Channel voice notes.** Telegram, Discord and Slack bridges only attach the
 audio to `/gateway/inbound`. The gateway transcribes it after allowlist
@@ -463,7 +483,8 @@ discovered partway through it.
   provider, voice, model selects populated by discovery, never a
   hardcoded list — and a **Test voice** round-trip button (the admin
   console's `VoiceConfigEditor` Preview button is the existing idiom to
-  copy).
+  copy). The current page also manages shared provider credentials and
+  account-discovered listening/speaking model selectors.
 - **Errors become toasts**, never `console.error`.
 
 **Desktop (Phase 4, after the secure-context spike):**

@@ -552,8 +552,8 @@ export const api = {
   sameModelSuggestions: (model: string, agent?: string): Promise<SameModelSuggestions> =>
     fetch(withAgent(`/config/route/suggestions?model=${encodeURIComponent(model)}`, agent)).then((r) => handle(r)),
 
-  voiceProviders: (): Promise<VoiceProviderListResponse> =>
-    fetch("/voice/providers").then((r) => handle(r)),
+  voiceProviders: (agent?: string): Promise<VoiceProviderListResponse> =>
+    fetch(withAgent("/voice/providers", agent)).then((r) => handle(r)),
 
   setProviderKey: (provider: string, key: string, scope: ConfigScope, agent?: string): Promise<void> =>
     fetch("/config/key", {

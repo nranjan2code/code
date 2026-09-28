@@ -3501,7 +3501,22 @@ function VoiceConfigEditor(props: {
   subject: "bot" | "chat";
 }) {
   const [previewing, setPreviewing] = createSignal(false);
-  const [voiceProviders] = createResource(() => api.voiceProviders());
+  const [voiceProviders] = createResource(selectedAgentId, (agent) => api.voiceProviders(agent || undefined));
+  const modelProvider = () => props.provider === "gemini" ? "google" : props.provider === "openai" ? "openai" : "";
+  const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
+    () => [modelProvider(), selectedAgentId()] as const,
+    ([provider, agent]) => provider ? api.models(provider, agent || undefined) : Promise.resolve({ provider: "", models: [], capabilities: {} }),
+  );
+  const modelChoices = (operation: "transcription" | "synthesis") => {
+    const models = voiceModels()?.models ?? [];
+    const advertised = voiceModels()?.capabilities?.[operation];
+    if (props.provider === "openai") {
+      return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis" ? /tts/i.test(model) : /transcri|whisper/i.test(model));
+    }
+    return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis"
+      ? /tts/i.test(model)
+      : !/tts|image|embed|embedding/i.test(model));
+  };
   let audioEl: HTMLAudioElement | undefined;
 
   const preview = async () => {
@@ -3545,8 +3560,16 @@ function VoiceConfigEditor(props: {
               Voice discovery unavailable: {String(voiceProviders.error)}. Entering an exact voice id is still possible.
             </div>
           </Show>
+          <Show when={voiceModels.error}>
+            <div class="error-state" role="alert">
+              Model discovery unavailable: {String(voiceModels.error)}. Enter an exact model id or <button type="button" class="ghost small" onClick={() => void refreshVoiceModels()}>retry</button> after adding a key.
+            </div>
+          </Show>
           <Show when={props.setProvider}>
-            <select value={props.provider ?? ""} onChange={(e) => props.setProvider?.(e.currentTarget.value)} aria-label="Voice provider"><option value="">Inherit voice provider</option><For each={voiceProviders()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For></select>
+            <select value={props.provider ?? ""} onChange={(e) => props.setProvider?.(e.currentTarget.value)} aria-label="Voice provider">
+              <option value="">Inherit voice provider</option>
+              <For each={voiceProviders()?.providers ?? []}>{(p) => <option value={p.name}>{p.name}</option>}</For>
+            </select>
           </Show>
           <input
             value={props.voiceName}
@@ -3554,8 +3577,20 @@ function VoiceConfigEditor(props: {
             placeholder="Voice id (provider default if empty)"
             aria-label="Voice identifier"
           />
-          <input value={props.transcriptionModel} onInput={(e) => props.setTranscriptionModel(e.currentTarget.value)} placeholder="Transcription model (inherit if empty)" aria-label="Transcription model" />
-          <input value={props.synthesisModel} onInput={(e) => props.setSynthesisModel(e.currentTarget.value)} placeholder="Synthesis model (inherit if empty)" aria-label="Synthesis model" />
+          <Show when={modelChoices("transcription").length > 0} fallback={<input value={props.transcriptionModel} onInput={(e) => props.setTranscriptionModel(e.currentTarget.value)} placeholder="Transcription model (inherit if empty)" aria-label="Transcription model" />}>
+            <select value={props.transcriptionModel} onChange={(e) => props.setTranscriptionModel(e.currentTarget.value)} aria-label="Transcription model">
+              <option value="">Inherit listening model</option>
+              <Show when={props.transcriptionModel && !modelChoices("transcription").includes(props.transcriptionModel)}><option value={props.transcriptionModel}>{props.transcriptionModel} (saved; unavailable)</option></Show>
+              <For each={modelChoices("transcription")}>{(model) => <option value={model}>{model}</option>}</For>
+            </select>
+          </Show>
+          <Show when={modelChoices("synthesis").length > 0} fallback={<input value={props.synthesisModel} onInput={(e) => props.setSynthesisModel(e.currentTarget.value)} placeholder="Synthesis model (inherit if empty)" aria-label="Synthesis model" />}>
+            <select value={props.synthesisModel} onChange={(e) => props.setSynthesisModel(e.currentTarget.value)} aria-label="Synthesis model">
+              <option value="">Inherit speaking model</option>
+              <Show when={props.synthesisModel && !modelChoices("synthesis").includes(props.synthesisModel)}><option value={props.synthesisModel}>{props.synthesisModel} (saved; unavailable)</option></Show>
+              <For each={modelChoices("synthesis")}>{(model) => <option value={model}>{model}</option>}</For>
+            </select>
+          </Show>
           <button disabled={previewing()} onClick={() => void preview()}>
             {previewing() ? "Playing…" : "Preview"}
           </button>
@@ -6057,6 +6092,23 @@ export function Settings() {
   const [config, { refetch: refetchConfig }] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [providersData, { refetch: refetchProviders }] = createResource(selectedAgentId, () => api.providers(selectedAgentIdOrUndefined()));
+  const [voiceProviders] = createResource(selectedAgentId, (agent) => api.voiceProviders(agent || undefined));
+  const [voiceModels, { refetch: refreshVoiceModels }] = createResource(
+    () => [voiceProviders()?.providers.find((item) => item.name === config()?.voice?.provider)?.name ?? "", selectedAgentId()] as const,
+    ([voiceProvider, agent]) => voiceProvider === "gemini" || voiceProvider === "openai"
+      ? api.models(voiceProvider === "gemini" ? "google" : "openai", agent || undefined)
+      : Promise.resolve({ provider: "", models: [], capabilities: {} }),
+  );
+  const voiceModelChoices = (operation: "transcription" | "synthesis") => {
+    const models = voiceModels()?.models ?? [];
+    const advertised = voiceModels()?.capabilities?.[operation];
+    if (config()?.voice?.provider === "openai") {
+      return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis" ? /tts/i.test(model) : /transcri|whisper/i.test(model));
+    }
+    return models.filter((model) => advertised ? advertised.includes(model) : operation === "synthesis"
+      ? /tts/i.test(model)
+      : !/tts|image|embed|embedding/i.test(model));
+  };
   const [rebuilding, setRebuilding] = createSignal(false);
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
   const [runningDoctor, setRunningDoctor] = createSignal(false);
@@ -6589,7 +6641,7 @@ export function Settings() {
                   </div>
                 </section>
               }>
-              <section class="panel">
+              <section id="provider-credentials" class="panel">
                 <div class="panel-title-row">
                   <div>
                     <h2>{selectedProvider() === "ollama" ? "Local model service" : "Provider key"}</h2>
@@ -6607,6 +6659,7 @@ export function Settings() {
                 <div class="form-row">
                   <label>Provider key</label>
                   <input
+                    id="provider-key-entry"
                     type="password"
                     autocomplete="off"
                     placeholder="sk-… or Bearer token"
@@ -6647,7 +6700,7 @@ export function Settings() {
               <div class="panel-title-row">
                 <div>
                   <h2>Voice & Speech Engine</h2>
-                  <p class="dim">Voice conversation defaults for this scope. Bots and chats inherit these unless overridden.</p>
+                  <p class="dim">Voice route for this Agent. Connected channels can choose a narrower provider and model pair.</p>
                 </div>
                 <span class="chip">{config()?.voice?.source ?? (configScope() === "user" ? "Global" : "Workspace")}</span>
               </div>
@@ -6660,18 +6713,45 @@ export function Settings() {
                       onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_enabled: e.currentTarget.checked }, selectedAgentIdOrUndefined()), e.currentTarget.checked ? "Voice enabled" : "Voice disabled")}
                     /> Enable voice conversations
                   </label>
+                <Show when={voice().provider && voice().provider !== "local"}>
+                    {(() => {
+                      const provider = voice().provider === "gemini" ? "google" : "openai";
+                      const status = voiceProviders()?.providers.find((item) => item.name === voice().provider);
+                      return <div class="row-gap">
+                        <span class={`chip chip-tone-${status?.configured ? "success" : "warning"}`}>{status?.configured ? "Voice key available" : "Voice key needed"}</span>
+                        <button type="button" class="ghost small" onClick={() => {
+                          setConfigScope("project");
+                          setSelectedProvider(provider);
+                          document.getElementById("provider-credentials")?.scrollIntoView({ behavior: "smooth", block: "center" });
+                          window.setTimeout(() => document.getElementById("provider-key-entry")?.focus(), 100);
+                        }}>{status?.configured ? "Change or remove key" : "Add key"}</button>
+                      </div>;
+                    })()}
+                  </Show>
+                  <Show when={voiceModels.error}>
+                    <div class="error-state" role="alert">
+                      Model discovery unavailable: {String(voiceModels.error)}. Enter an exact model id or <button type="button" class="ghost small" onClick={() => void refreshVoiceModels()}>retry</button> after adding a key.
+                    </div>
+                  </Show>
                   <div class="voice-grid-2x2">
                     <div class="form-row">
                       <label for="voice-provider">Provider</label>
-                      <input id="voice-provider" value={voice().provider ?? ""} placeholder="gemini, openai or local (inherit if empty)" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Voice provider saved")} />
+                      <select id="voice-provider" value={voice().provider ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_provider: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Voice provider saved")}>
+                        <option value="">Inherit provider</option>
+                        <For each={voiceProviders()?.providers ?? []}>{(provider) => <option value={provider.name}>{provider.name}</option>}</For>
+                      </select>
                     </div>
                     <div class="form-row">
                       <label for="voice-transcription-model">Transcription model</label>
-                      <input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Transcription model saved")} />
+                      <Show when={voiceModelChoices("transcription").length > 0} fallback={<input id="voice-transcription-model" value={voice().transcription_model ?? ""} placeholder="Model ID from provider account" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Transcription model saved")} />}>
+                        <select id="voice-transcription-model" value={voice().transcription_model ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_transcription_model: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Transcription model saved")}><option value="">Choose discovered model</option><Show when={voice().transcription_model && !voiceModelChoices("transcription").includes(voice().transcription_model!)}><option value={voice().transcription_model!}>{voice().transcription_model} (saved; unavailable)</option></Show><For each={voiceModelChoices("transcription")}>{(model) => <option value={model}>{model}</option>}</For></select>
+                      </Show>
                     </div>
                     <div class="form-row">
                       <label for="voice-synthesis-model">Synthesis model</label>
-                      <input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Provider default" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")} />
+                      <Show when={voiceModelChoices("synthesis").length > 0} fallback={<input id="voice-synthesis-model" value={voice().synthesis_model ?? ""} placeholder="Model ID from provider account" onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value.trim() || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")} />}>
+                        <select id="voice-synthesis-model" value={voice().synthesis_model ?? ""} onChange={(e) => void guard(() => api.patchConfigScope(configScope(), { voice_synthesis_model: e.currentTarget.value || null }, selectedAgentIdOrUndefined()), "Synthesis model saved")}><option value="">Choose discovered model</option><Show when={voice().synthesis_model && !voiceModelChoices("synthesis").includes(voice().synthesis_model!)}><option value={voice().synthesis_model!}>{voice().synthesis_model} (saved; unavailable)</option></Show><For each={voiceModelChoices("synthesis")}>{(model) => <option value={model}>{model}</option>}</For></select>
+                      </Show>
                     </div>
                   </div>
                 </>}

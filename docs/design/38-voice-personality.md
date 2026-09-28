@@ -5,6 +5,11 @@ the full-duplex and provider-neutral replacement is documented in
 now discovered or explicitly configured; this document's historical examples
 must not be treated as a runtime catalogue.
 
+The Agent's `[voice]` configuration owns the conversation route and models
+(docs/design/64-agent-owned-platform.md and docs/design/49-live-voice.md).
+The `VoiceConfig` below is only a narrower channel endpoint override; it does
+not make the Bot the owner of the conversation's voice service or credential.
+
 ## Problem
 
 Every bot/chat already has an inheritance chain for policy, permission

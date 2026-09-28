@@ -35,6 +35,46 @@ pub(crate) struct RequestWindow {
     window: Mutex<(Instant, usize)>,
 }
 
+/// Persist a voice dispatch against the Agent conversation. The hosted
+/// speech endpoints used here do not return rated usage, so FinOps records
+/// the call as unknown spend instead of inventing token counts or a price.
+fn record_voice_dispatch(
+    state: &AppState,
+    core: &vak_core::Core,
+    session_id: &str,
+    receipt: &vak_llm::WorkReceipt,
+) {
+    if let Some(handle) = state.get(session_id) {
+        if let Ok(mut session) = handle.session.lock()
+            && let Some(session) = session.as_mut()
+        {
+            let _ = session.append_receipt(receipt.clone());
+        }
+    }
+    vak_core::routing::EvidenceLedger::new(&core.sessions_home())
+        .record_receipts(std::slice::from_ref(receipt));
+    if receipt.provider != "local" {
+        let source = match receipt.purpose {
+            vak_llm::WorkPurpose::SpeechRecognition => "voice_recognition_usage_unavailable",
+            vak_llm::WorkPurpose::VoiceSynthesis => "voice_synthesis_usage_unavailable",
+            _ => "voice_usage_unavailable",
+        };
+        let _ = vak_core::finops::FinOpsLedger::new(&core.shared_data_home()).append(
+            &vak_core::finops::CostRow {
+                ts: chrono::Utc::now(),
+                model: receipt.model.clone(),
+                provider: receipt.provider.clone(),
+                input_tokens: 0,
+                output_tokens: 0,
+                cache_read_input_tokens: None,
+                usd: None,
+                source: source.into(),
+                session_id: session_id.to_string(),
+            },
+        );
+    }
+}
+
 impl RequestWindow {
     pub(crate) fn new() -> Self {
         Self {
@@ -145,13 +185,15 @@ fn local_engine(var: &str) -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-fn credential(provider: VoiceProvider) -> Result<String, RouteError> {
-    provider
-        .credential_vars()
-        .iter()
-        .find_map(|name| vak_config::get_var(name).filter(|value| !value.trim().is_empty()))
-        .map(|value| value.trim().to_string())
-        .ok_or(RouteError::NoCredential(provider))
+fn credential(core: &vak_core::Core, provider: VoiceProvider) -> Result<String, RouteError> {
+    let provider_id = match provider {
+        VoiceProvider::Gemini => "google",
+        VoiceProvider::OpenAi => "openai",
+        VoiceProvider::Local => return Err(RouteError::NoCredential(provider)),
+    };
+    core.provider_api_key(provider_id)
+        .map(|key| key.trim().to_string())
+        .map_err(|_| RouteError::NoCredential(provider))
 }
 
 /// A hosted provider's model for one operation, from the workspace pin.
@@ -179,6 +221,7 @@ fn openai_config(api_key: String) -> vak_llm::openai::OpenAiConfig {
 /// Transcribe encoded audio through the effective voice route. The one
 /// transcription implementation for every surface.
 pub(crate) async fn transcribe(
+    core: &vak_core::Core,
     settings: &vak_config::VoiceSettings,
     audio: &[u8],
     mime: &str,
@@ -193,14 +236,14 @@ pub(crate) async fn transcribe(
         }
         VoiceProvider::OpenAi => {
             let model = pinned_model(settings.transcription_model.as_ref(), "transcription")?;
-            let key = credential(VoiceProvider::OpenAi)?;
+            let key = credential(core, VoiceProvider::OpenAi)?;
             vak_llm::openai::transcribe(&openai_config(key), audio, mime, &model, cancel)
                 .await
                 .map_err(RouteError::Provider)
         }
         VoiceProvider::Gemini => {
             let model = pinned_model(settings.transcription_model.as_ref(), "transcription")?;
-            let key = credential(VoiceProvider::Gemini)?;
+            let key = credential(core, VoiceProvider::Gemini)?;
             let config = vak_llm::google_live::GoogleLiveConfig::new(key, model);
             vak_llm::google_live::transcribe(&config, audio, mime, cancel)
                 .await
@@ -238,7 +281,10 @@ pub(crate) async fn voice_speak(
     if body.text.trim().is_empty() {
         return error_response(StatusCode::BAD_REQUEST, "text must not be empty");
     }
-    let voice = resolve_speaker(&state, &body);
+    let voice = match resolve_speaker(&state, &body) {
+        Ok(voice) => voice,
+        Err(response) => return response,
+    };
     let settings = voice.settings;
     let provider = match route(&settings) {
         Ok(provider) => provider,
@@ -284,6 +330,7 @@ pub(crate) async fn voice_speak(
     let cancel = CancellationToken::new();
     let started = Instant::now();
     let result = synthesize(
+        &voice.core,
         provider,
         model.as_deref(),
         &body.text,
@@ -319,6 +366,9 @@ pub(crate) async fn voice_speak(
             error.into_response()
         }
     };
+    if let Some(session_id) = body.session_id.as_deref() {
+        record_voice_dispatch(&state, &voice.core, session_id, &receipt);
+    }
     if let Ok(encoded) = serde_json::to_string(&receipt)
         && let Ok(value) = HeaderValue::try_from(encoded)
     {
@@ -328,6 +378,7 @@ pub(crate) async fn voice_speak(
 }
 
 async fn synthesize(
+    core: &vak_core::Core,
     provider: VoiceProvider,
     model: Option<&str>,
     text: &str,
@@ -342,7 +393,7 @@ async fn synthesize(
             .await
             .map_err(RouteError::Local),
         VoiceProvider::OpenAi => {
-            let key = credential(provider)?;
+            let key = credential(core, provider)?;
             let response_format = match format {
                 SpeakFormat::Wav => "wav",
                 SpeakFormat::Pcm16 => "pcm",
@@ -361,7 +412,7 @@ async fn synthesize(
             .map_err(RouteError::Provider)
         }
         VoiceProvider::Gemini => {
-            let key = credential(provider)?;
+            let key = credential(core, provider)?;
             let config =
                 vak_llm::google_live::GoogleLiveConfig::new(key, model.unwrap_or_default());
             vak_llm::google_live::speak(&config, text, persona, voice_name, cancel)
@@ -382,6 +433,13 @@ pub(crate) fn narrowed(
     };
     let pin = |value: &Option<String>| value.clone().filter(|v| !v.trim().is_empty());
     if let Some(provider) = pin(&tier.provider) {
+        if settings.provider.as_deref() != Some(provider.as_str()) {
+            // A model id belongs to one provider catalogue. A Channel that
+            // changes provider must choose its own model pair instead of
+            // accidentally inheriting ids from the Agent's provider.
+            settings.transcription_model = None;
+            settings.synthesis_model = None;
+        }
         settings.provider = Some(provider);
     }
     if let Some(model) = pin(&tier.transcription_model) {
@@ -424,23 +482,30 @@ fn chat_for_session(state: &AppState, session_id: &str) -> Option<String> {
 }
 
 struct Speaker {
+    core: vak_core::Core,
     settings: vak_config::VoiceSettings,
     voice_name: Option<String>,
     persona: Option<String>,
 }
 
-/// Route, voice and persona for a synthesis request, narrowest first: the
-/// auditioned override > the bound chat's bot → chat tiers (and its
-/// workspace) > the conversation's Agent identity > the workspace.
-fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Speaker {
+/// Resolve from the Agent Core attached to the live session, then apply
+/// endpoint and audition overrides. The UI's currently selected Agent is
+/// never used to route an already admitted conversation.
+fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Result<Speaker, Response> {
     let chat = body
         .session_id
         .as_deref()
         .and_then(|id| chat_for_session(state, id));
-    let core = chat
-        .as_deref()
-        .and_then(|key| state.gateway.core_for_entry(&state.core, key).ok())
-        .unwrap_or_else(|| state.core.clone());
+    let core = if let Some(session_id) = body.session_id.as_deref() {
+        crate::resolve_scoped_core(state, Some(session_id), None)?
+    } else if let Some(key) = chat.as_deref() {
+        state
+            .gateway
+            .core_for_entry(&state.core, key)
+            .unwrap_or_else(|_| state.core.clone())
+    } else {
+        state.core.clone()
+    };
     let chat_voice = chat
         .as_deref()
         .and_then(|key| state.gateway.resolve_voice(key));
@@ -487,11 +552,12 @@ fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Speaker {
             format!("{style} {}", agent.personality)
         })
     });
-    Speaker {
+    Ok(Speaker {
+        core,
         settings,
         voice_name,
         persona,
-    }
+    })
 }
 
 /// What the model is told about one channel voice note.
@@ -541,22 +607,84 @@ pub(crate) async fn transcribe_voice_note(
             settings.max_audio_bytes
         ));
     }
-    if let Err(error) = route(&settings) {
-        return VoiceNote::Unheard(error.message());
-    }
+    let provider = match route(&settings) {
+        Ok(provider) => provider,
+        Err(error) => return VoiceNote::Unheard(error.message()),
+    };
+    let model = match provider {
+        VoiceProvider::Local => "local".to_string(),
+        _ => match pinned_model(settings.transcription_model.as_ref(), "transcription") {
+            Ok(model) => model,
+            Err(error) => return VoiceNote::Unheard(error.message()),
+        },
+    };
     if !state.voice_requests.admit(settings.max_requests_per_minute) {
         return VoiceNote::Unheard("this minute's voice request budget is spent".into());
     }
-    match transcribe(&settings, &audio, mime, &CancellationToken::new()).await {
-        Ok(text) if text.is_empty() => VoiceNote::Unheard("no speech was recognized".into()),
-        Ok(text) => VoiceNote::Heard(text),
-        Err(error) => VoiceNote::Unheard(error.message()),
-    }
+    let started = Instant::now();
+    let result = transcribe(core, &settings, &audio, mime, &CancellationToken::new()).await;
+    let mut receipt = vak_llm::WorkReceipt::new(
+        vak_llm::WorkPurpose::SpeechRecognition,
+        provider.as_str(),
+        &model,
+    );
+    let note = match result {
+        Ok(text) if text.is_empty() => {
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                vak_llm::FailureDomain::Model,
+                vak_llm::Settlement::Failed,
+                started.elapsed().as_millis() as u64,
+                None,
+                Some("provider returned an empty transcript".into()),
+            );
+            VoiceNote::Unheard("no speech was recognized".into())
+        }
+        Ok(text) => {
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                vak_llm::FailureDomain::Unknown,
+                vak_llm::Settlement::Ok,
+                started.elapsed().as_millis() as u64,
+                None,
+                None,
+            );
+            VoiceNote::Heard(text)
+        }
+        Err(error) => {
+            let (domain, settlement) = error.receipt_outcome();
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                domain,
+                settlement,
+                started.elapsed().as_millis() as u64,
+                None,
+                Some(error.message()),
+            );
+            VoiceNote::Unheard(error.message())
+        }
+    };
+    let session_id = state
+        .gateway
+        .bindings_snapshot()
+        .into_iter()
+        .find(|(binding_key, _)| binding_key == key)
+        .and_then(|(_, binding)| binding.session_id)
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    record_voice_dispatch(state, core, &session_id, &receipt);
+    note
 }
 
 /// `GET /voice/providers`: the static provider catalogue with credential or
 /// engine readiness. Never includes credential values or model ids.
-pub(crate) async fn voice_providers() -> Json<serde_json::Value> {
+pub(crate) async fn voice_providers(
+    State(state): State<AppState>,
+    Query(query): Query<crate::AgentScopeQuery>,
+) -> Response {
+    let core = match crate::resolve_scoped_core(&state, None, query.agent.as_deref()) {
+        Ok(core) => core,
+        Err(response) => return response,
+    };
     let providers: Vec<_> = VoiceProvider::ALL
         .into_iter()
         .zip(vak_voice::catalogue())
@@ -575,7 +703,13 @@ pub(crate) async fn voice_providers() -> Json<serde_json::Value> {
                 });
                 (listen.configured || speak.configured, Some(readiness))
             } else {
-                (credential(provider).is_ok(), None)
+                let provider_id = match provider {
+                    VoiceProvider::Gemini => "google",
+                    VoiceProvider::OpenAi => "openai",
+                    VoiceProvider::Local => "",
+                };
+                let configured = core.provider_configured(provider_id);
+                (configured, None)
             };
             serde_json::json!({
                 "name": descriptor.name,
@@ -586,7 +720,33 @@ pub(crate) async fn voice_providers() -> Json<serde_json::Value> {
             })
         })
         .collect();
-    Json(serde_json::json!({ "providers": providers }))
+    Json(serde_json::json!({ "providers": providers })).into_response()
+}
+
+/// Operation subsets derived from the live provider catalogue. Model ids
+/// remain account-discovered; this only classifies the provider's declared
+/// naming conventions for the two voice operations.
+pub(crate) fn voice_model_capabilities(provider: &str, models: &[String]) -> serde_json::Value {
+    let transcription: Vec<_> = models
+        .iter()
+        .filter(|model| {
+            if provider == "openai" {
+                let id = model.to_ascii_lowercase();
+                id.contains("transcri") || id.contains("whisper")
+            } else {
+                !model.to_ascii_lowercase().contains("tts")
+                    && !model.to_ascii_lowercase().contains("image")
+                    && !model.to_ascii_lowercase().contains("embed")
+            }
+        })
+        .cloned()
+        .collect();
+    let synthesis: Vec<_> = models
+        .iter()
+        .filter(|model| model.to_ascii_lowercase().contains("tts"))
+        .cloned()
+        .collect();
+    serde_json::json!({ "transcription": transcription, "synthesis": synthesis })
 }
 
 #[derive(Debug, Deserialize)]
@@ -702,17 +862,30 @@ enum Outcome {
     Failed(RouteError),
 }
 
-async fn close_utterance(state: &AppState, pcm: &[u8]) -> Outcome {
+async fn close_utterance(
+    state: &AppState,
+    core: &vak_core::Core,
+    session_id: &str,
+    pcm: &[u8],
+) -> Outcome {
     // Measured here, not trusted from the client: steady room noise that a
     // client detector let through never reaches a provider.
     if !SpeechEvidence::measure(pcm, audio::SOCKET_SAMPLE_RATE_HZ).is_speech() {
         return Outcome::Discarded(DiscardReason::InsufficientSpeech);
     }
     // Re-read per utterance so a settings change applies without reconnecting.
-    let settings = state.core.effective_voice();
-    if let Err(error) = route(&settings) {
-        return Outcome::Failed(error);
-    }
+    let settings = core.effective_voice();
+    let provider = match route(&settings) {
+        Ok(provider) => provider,
+        Err(error) => return Outcome::Failed(error),
+    };
+    let model = match provider {
+        VoiceProvider::Local => "local".to_string(),
+        _ => match pinned_model(settings.transcription_model.as_ref(), "transcription") {
+            Ok(model) => model,
+            Err(error) => return Outcome::Failed(error),
+        },
+    };
     if !state.voice_requests.admit(settings.max_requests_per_minute) {
         return Outcome::Discarded(DiscardReason::RateLimited);
     }
@@ -720,27 +893,63 @@ async fn close_utterance(state: &AppState, pcm: &[u8]) -> Outcome {
         Ok(wav) => wav,
         Err(error) => return Outcome::Failed(RouteError::Local(error)),
     };
-    match transcribe(&settings, &wav, "audio/wav", &CancellationToken::new()).await {
-        Ok(text) if text.is_empty() => Outcome::Discarded(DiscardReason::EmptyTranscript),
-        Ok(text) => Outcome::Transcript(text),
-        Err(error) => Outcome::Failed(error),
+    let started = Instant::now();
+    let result = transcribe(
+        core,
+        &settings,
+        &wav,
+        "audio/wav",
+        &CancellationToken::new(),
+    )
+    .await;
+    let mut receipt = vak_llm::WorkReceipt::new(
+        vak_llm::WorkPurpose::SpeechRecognition,
+        provider.as_str(),
+        &model,
+    );
+    match result {
+        Ok(text) if text.is_empty() => {
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                vak_llm::FailureDomain::Model,
+                vak_llm::Settlement::Failed,
+                started.elapsed().as_millis() as u64,
+                None,
+                Some("provider returned an empty transcript".into()),
+            );
+            record_voice_dispatch(state, core, session_id, &receipt);
+            Outcome::Discarded(DiscardReason::EmptyTranscript)
+        }
+        Ok(text) => {
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                vak_llm::FailureDomain::Unknown,
+                vak_llm::Settlement::Ok,
+                started.elapsed().as_millis() as u64,
+                None,
+                None,
+            );
+            record_voice_dispatch(state, core, session_id, &receipt);
+            Outcome::Transcript(text)
+        }
+        Err(error) => {
+            let (domain, settlement) = error.receipt_outcome();
+            receipt.record(
+                vak_llm::AttemptReason::Initial,
+                domain,
+                settlement,
+                started.elapsed().as_millis() as u64,
+                None,
+                Some(error.message()),
+            );
+            record_voice_dispatch(state, core, session_id, &receipt);
+            Outcome::Failed(error)
+        }
     }
 }
 
 async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
-    let settings = state.core.effective_voice();
-    // Refuse before the client asks for the microphone when no utterance
-    // could be served: disabled, or no usable provider route.
-    if let Err(error) = route(&settings) {
-        send_error(&mut socket, error.message(), "Open Voice settings").await;
-        return;
-    }
-    let handle = state
-        .sessions
-        .lock()
-        .ok()
-        .and_then(|sessions| sessions.get(&session_id).cloned());
-    let Some(handle) = handle else {
+    let Some(handle) = state.get(&session_id) else {
         send_error(
             &mut socket,
             "Voice conversation is unavailable",
@@ -749,6 +958,14 @@ async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
         .await;
         return;
     };
+    let core = handle.core.clone();
+    let settings = core.effective_voice();
+    // Refuse before the client asks for the microphone when no utterance
+    // could be served: disabled, or no usable provider route.
+    if let Err(error) = route(&settings) {
+        send_error(&mut socket, error.message(), "Open Voice settings").await;
+        return;
+    }
     let Some(_lease) = Lease::acquire(&state.voice_active, settings.max_concurrent) else {
         send_error(
             &mut socket,
@@ -843,7 +1060,7 @@ async fn drive(mut socket: WebSocket, state: AppState, session_id: String) {
                                 break;
                             }
                         };
-                        let frame = match close_utterance(&state, &pcm).await {
+                        let frame = match close_utterance(&state, &core, &session_id, &pcm).await {
                             Outcome::Discarded(reason) => ServerControl::Discarded {
                                 utterance_id,
                                 reason,
@@ -987,7 +1204,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chat_tier_narrows_the_workspace_route_and_blanks_inherit() {
+    fn a_channel_provider_change_does_not_inherit_foreign_model_ids() {
         let workspace = vak_config::VoiceSettings {
             enabled: true,
             provider: Some("gemini".into()),
@@ -1004,12 +1221,20 @@ mod tests {
         let effective = narrowed(workspace.clone(), Some(&chat));
         assert_eq!(effective.provider.as_deref(), Some("openai"));
         assert_eq!(effective.synthesis_model.as_deref(), Some("tts-chat"));
-        assert_eq!(
-            effective.transcription_model.as_deref(),
-            Some("stt-workspace")
-        );
+        assert_eq!(effective.transcription_model, None);
         assert!(effective.enabled, "a tier never changes the enable switch");
         assert_eq!(narrowed(workspace.clone(), None), workspace);
+
+        let same_provider = vak_config::VoiceConfig {
+            provider: Some("gemini".into()),
+            ..Default::default()
+        };
+        let inherited = narrowed(workspace, Some(&same_provider));
+        assert_eq!(
+            inherited.transcription_model.as_deref(),
+            Some("stt-workspace")
+        );
+        assert_eq!(inherited.synthesis_model.as_deref(), Some("tts-workspace"));
     }
 
     #[test]

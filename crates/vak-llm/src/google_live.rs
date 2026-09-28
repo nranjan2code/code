@@ -228,7 +228,7 @@ pub async fn speak(
             text.chars().count()
         )));
     }
-    if config.model.ends_with("-tts") {
+    if config.model.to_ascii_lowercase().contains("tts") {
         return speak_batch(config, text, persona, voice_name, cancel).await;
     }
     match tokio::time::timeout(
@@ -245,8 +245,10 @@ pub async fn speak(
     }
 }
 
-/// Generate speech with a discovered Gemini TTS model through generateContent.
-/// The Live socket path is reserved for models that actually support bidi turns.
+/// Generate speech with a discovered Gemini TTS model through the Interactions
+/// API. The Live socket path is reserved for models that actually support bidi
+/// turns. TTS model ids come from account discovery; this branch tests the
+/// advertised capability marker, never a baked-in model catalogue.
 async fn speak_batch(
     config: &GoogleLiveConfig,
     text: &str,
@@ -255,25 +257,11 @@ async fn speak_batch(
     cancel: &CancellationToken,
 ) -> Result<Vec<u8>, LlmError> {
     use base64::Engine as _;
-    let instruction = persona.filter(|p| !p.trim().is_empty());
-    let prompt = match instruction {
-        Some(persona) => format!("{persona}\n\nSay: {text}"),
-        None => text.to_string(),
-    };
     let voice = voice_name
         .filter(|v| !v.trim().is_empty())
         .unwrap_or("Kore");
-    let body = json!({
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
-        }
-    });
-    let url = format!(
-        "https://{LIVE_WS_HOST}/v1beta/models/{}:generateContent",
-        config.model
-    );
+    let body = build_tts_interaction_request(&config.model, text, persona, voice);
+    let url = format!("https://{LIVE_WS_HOST}/v1beta/interactions");
     let response = tokio::select! {
         _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
         result = reqwest::Client::new().post(url).header("x-goog-api-key", &config.api_key).json(&body).send() => result.map_err(|e| LlmError::Network(e.to_string()))?,
@@ -286,17 +274,73 @@ async fn speak_batch(
     if status >= 400 {
         return Err(map_status_error(status, &value.to_string()));
     }
-    let encoded = value
-        .pointer("/candidates/0/content/parts/0/inlineData/data")
-        .and_then(Value::as_str)
+    let (encoded, mime) = interaction_audio(&value)
         .ok_or_else(|| LlmError::Parse("TTS response contained no audio".into()))?;
     let pcm = base64::engine::general_purpose::STANDARD
-        .decode(encoded)
+        .decode(&encoded)
         .map_err(|e| LlmError::Parse(format!("invalid TTS audio: {e}")))?;
     if pcm.is_empty() {
         return Err(LlmError::Parse("TTS response contained empty audio".into()));
     }
-    Ok(wrap_wav(&pcm))
+    if mime
+        .as_deref()
+        .is_some_and(|mime| mime.to_ascii_lowercase().contains("wav"))
+        || pcm.starts_with(b"RIFF")
+    {
+        Ok(pcm)
+    } else {
+        Ok(wrap_wav(&pcm))
+    }
+}
+
+fn build_tts_interaction_request(
+    model: &str,
+    text: &str,
+    persona: Option<&str>,
+    voice: &str,
+) -> Value {
+    let mut annotations = Vec::new();
+    if let Some(style) = persona.filter(|style| !style.trim().is_empty()) {
+        annotations.push(json!({"type": "speech_metadata", "style": style}));
+    }
+    let mut content = json!({"type": "text", "text": text});
+    if !annotations.is_empty() {
+        content["annotations"] = Value::Array(annotations);
+    }
+    json!({
+        "model": model,
+        "input": [{"type": "user_input", "content": [content]}],
+        "response_format": {"type": "audio"},
+        "generation_config": {"speech_config": [{"voice": voice}]},
+    })
+}
+
+fn interaction_audio(value: &Value) -> Option<(String, Option<String>)> {
+    if let Some(data) = value.pointer("/output_audio/data").and_then(Value::as_str) {
+        let mime = value
+            .pointer("/output_audio/mime_type")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        return Some((data.to_string(), mime));
+    }
+    let steps = value.get("steps")?.as_array()?;
+    for step in steps.iter().rev() {
+        if step.get("type").and_then(Value::as_str) != Some("model_output") {
+            continue;
+        }
+        let content = step.get("content")?.as_array()?;
+        for part in content.iter().rev() {
+            if part.get("type").and_then(Value::as_str) == Some("audio") {
+                let data = part.get("data")?.as_str()?.to_string();
+                let mime = part
+                    .get("mime_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                return Some((data, mime));
+            }
+        }
+    }
+    None
 }
 
 async fn speak_inner(
@@ -537,6 +581,44 @@ mod tests {
         let cfg = build_live_config(Some("   "), Some(""));
         assert!(cfg.get("systemInstruction").is_none());
         assert!(cfg.pointer("/generationConfig/speechConfig").is_none());
+    }
+
+    #[test]
+    fn interactions_tts_request_keeps_transcript_verbatim_and_uses_style_metadata() {
+        let body = build_tts_interaction_request(
+            "models/gemini-account-tts-model",
+            "Hello there.",
+            Some("Speak gently"),
+            "Kore",
+        );
+        assert_eq!(body["model"], "models/gemini-account-tts-model");
+        assert_eq!(body["input"][0]["content"][0]["text"], "Hello there.");
+        assert_eq!(
+            body["input"][0]["content"][0]["annotations"][0]["style"],
+            "Speak gently"
+        );
+        assert_eq!(body["response_format"]["type"], "audio");
+        assert_eq!(
+            body["generation_config"]["speech_config"][0]["voice"],
+            "Kore"
+        );
+    }
+
+    #[test]
+    fn interaction_tts_audio_supports_rest_steps_and_sdk_shapes() {
+        let rest = json!({"steps":[{"type":"model_output","content":[
+            {"type":"text","text":"hello"},
+            {"type":"audio","mime_type":"audio/wav","data":"d2F2"}
+        ]}]});
+        assert_eq!(
+            interaction_audio(&rest),
+            Some(("d2F2".into(), Some("audio/wav".into())))
+        );
+        let sdk = json!({"output_audio":{"mime_type":"audio/wav","data":"d2F2"}});
+        assert_eq!(
+            interaction_audio(&sdk),
+            Some(("d2F2".into(), Some("audio/wav".into())))
+        );
     }
 
     #[tokio::test]

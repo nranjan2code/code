@@ -76,8 +76,8 @@ export function isBackendReady(): boolean {
   return auth.mode === "cookie" || !!auth.base;
 }
 
-export function listVoiceProviders(): Promise<VoiceProvidersResponse> {
-  return req<VoiceProvidersResponse>("/voice/providers");
+export function listVoiceProviders(agent?: string): Promise<VoiceProvidersResponse> {
+  return req<VoiceProvidersResponse>(withAgent("/voice/providers", agent));
 }
 
 /** Append `&agent=`/`?agent=` to a URL that may already carry query
@@ -793,31 +793,36 @@ export function providerLabel(list: readonly import("./types").ProviderInfo[] | 
 export interface DiscoveredModels {
   provider: string;
   models: string[];
+  capabilities?: Record<string, string[]>;
   availability?: { model_id: string; invokable: boolean }[];
   availability_error?: string;
 }
 
-export function discoverModels(provider: string): Promise<DiscoveredModels> {
-  return req(`/providers/${encodeURIComponent(provider)}/models`);
+export function discoverModels(provider: string, agent?: string): Promise<DiscoveredModels> {
+  return req(withAgent(`/providers/${encodeURIComponent(provider)}/models`, agent));
 }
 
 export function putProviderKey(
   provider: string,
   key: string,
+  scope: "user" | "workspace" = "user",
+  agent?: string,
 ): Promise<{ provider: string; env_var: string; configured: boolean }> {
   return req("/config/key", {
     method: "PUT",
-    body: JSON.stringify({ provider, key }),
+    body: JSON.stringify({ provider, key, scope, agent }),
   });
 }
 
 /** Revoke a provider key stored on this device. */
 export function removeProviderKey(
   provider: string,
+  scope: "user" | "workspace" = "user",
+  agent?: string,
 ): Promise<{ provider: string; env_var: string; configured: boolean; shadowed_by_env: boolean }> {
   return req("/config/key", {
     method: "DELETE",
-    body: JSON.stringify({ provider }),
+    body: JSON.stringify({ provider, scope, agent }),
   });
 }
 
@@ -1438,11 +1443,17 @@ export function mergePr(
  * path parses JSON, mirroring req()'s error-shape handling. */
 export async function speak(
   text: string,
-  opts?: { voiceName?: string; persona?: string; sessionId?: string },
+  opts?: { voiceName?: string; persona?: string; provider?: string; transcriptionModel?: string; synthesisModel?: string; sessionId?: string },
 ): Promise<Blob> {
   const voice_override =
-    opts?.voiceName || opts?.persona
-      ? { voice_name: opts?.voiceName || undefined, persona: opts?.persona || undefined }
+    opts?.voiceName || opts?.persona || opts?.provider || opts?.transcriptionModel || opts?.synthesisModel
+      ? {
+          voice_name: opts?.voiceName || undefined,
+          persona: opts?.persona || undefined,
+          provider: opts?.provider || undefined,
+          transcription_model: opts?.transcriptionModel || undefined,
+          synthesis_model: opts?.synthesisModel || undefined,
+        }
       : undefined;
   const res = await authFetch("/voice/speak", {
     method: "POST",

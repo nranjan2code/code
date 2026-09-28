@@ -473,6 +473,7 @@ export interface ProviderListResponse {
 export interface DiscoveredModelsResponse {
   provider: string;
   models: string[];
+  capabilities?: Record<string, string[]>;
   availability?: BedrockModelAvailability[];
   availability_error?: string;
   error?: string;

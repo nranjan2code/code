@@ -23,6 +23,7 @@
 
 ## Unreleased
 
+- Make voice setup Agent-owned: save or remove shared Google Gemini and OpenAI keys in Settings, choose models discovered from the connected account in Settings and Admin, and test speech synthesis. Live microphone and channel calls now use their admitted Agent's configuration; endpoint provider changes no longer inherit model IDs from a different provider. Hosted voice calls without provider-rated usage appear as unknown spend in FinOps.
 - Price provider-qualified model IDs using their normalized model name when
   the existing estimate table recognizes it. Add exact per-model input and
   output price overrides from the FinOps screen for short or otherwise

@@ -4288,6 +4288,13 @@ impl Core {
         })
     }
 
+    /// Resolve a provider API key through this Core's Agent/workspace/shared
+    /// secret chain. The returned value is for an in-process provider adapter
+    /// only; surfaces must expose provenance booleans, never the key.
+    pub fn provider_api_key(&self, provider: &str) -> Result<String, CoreError> {
+        self.provider_auth_for(provider).map(|auth| auth.api_key)
+    }
+
     /// Store an MCP credential in the shared user secret file. The MCP config
     /// should contain a `${VAR}` reference, never the credential itself.
     pub fn set_mcp_secret(&self, env_var: &str, key: &str) -> Result<(), CoreError> {

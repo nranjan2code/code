@@ -339,6 +339,17 @@ personal users need not visit Admin for routine setup. The Operations Center pro
 endpoint, Bot, and run provenance from real records; it never manufactures a
 dashboard-only state.
 
+**Voice follows the same ownership rule.** A conversation's Agent `Core`
+provides its provider, discovered transcription model and discovered
+synthesis model. A connected Channel can narrow its voice settings for that
+endpoint, and a preview can supply a temporary audition override. The session
+Core remains authoritative for the Agent and workspace; a client changing its
+currently selected Agent cannot retarget a live voice conversation. Voice
+provider keys are shared account credentials in the canonical credential
+store, not copied into Agent data. Settings and Admin expose the same discovered
+model choices and voice route, while the shared FinOps ledger records hosted
+voice requests with unknown cost when providers return no rated usage.
+
 ## Replacement plan (completed)
 
 1. Inventory every ingress/store and define core records, access predicates,

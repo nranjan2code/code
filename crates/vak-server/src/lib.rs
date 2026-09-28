@@ -330,7 +330,7 @@ impl AppState {
         }
     }
 
-    fn get(&self, id: &str) -> Option<Arc<SessionHandle>> {
+    pub(crate) fn get(&self, id: &str) -> Option<Arc<SessionHandle>> {
         let handle = self
             .sessions
             .lock()
@@ -13942,7 +13942,8 @@ async fn discover_models(
                     Err(e) => Json(serde_json::json!({ "provider": name, "models": models, "availability_error": e.to_string() })).into_response(),
                 }
             } else {
-                Json(serde_json::json!({ "provider": name, "models": models })).into_response()
+                let capabilities = voice::voice_model_capabilities(&name, &models);
+                Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
             }
         }
         Err(e) => {
@@ -20508,6 +20509,7 @@ mod configuration_control_tests {
                 max_run_usd: Some(Some(5.0)),
                 max_day_usd: None,
                 agent: None,
+                price_override: None,
             }),
         )
         .await;
@@ -20529,6 +20531,7 @@ mod configuration_control_tests {
                 max_run_usd: Some(None),
                 max_day_usd: None,
                 agent: None,
+                price_override: None,
             }),
         )
         .await;
@@ -20552,6 +20555,7 @@ mod configuration_control_tests {
                 max_run_usd: Some(Some(-1.0)),
                 max_day_usd: None,
                 agent: None,
+                price_override: None,
             }),
         )
         .await;
