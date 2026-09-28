@@ -1803,12 +1803,12 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule �
 // ---- Extensions section shell ----------------------------------------------
 
 function ExtensionsSection() {
-  const [config] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
+  const [config] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [mcp, mcpActions] = createResource(configScope, (scope) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
   const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope, selectedAgentIdOrUndefined()));
-  const [skills, skillsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.skills(agent));
+  const [skills, skillsActions] = createResource(selectedAgentId, () => api.skills(selectedAgentIdOrUndefined()));
   const [plugins, pluginsActions] = createResource(configScope, (scope) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
-  const [proposals, proposalsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.skillProposals(agent));
+  const [proposals, proposalsActions] = createResource(selectedAgentId, () => api.skillProposals(selectedAgentIdOrUndefined()));
   const [tasks, tasksActions] = createResource(() => api.tasks());
 
   const ctx: ExtensionsCtx = {
@@ -1994,7 +1994,7 @@ function MemoryView() {
     const ledgers = await mapAdminAgents((agent) => api.memory(agent.id));
     return { notes: ledgers.flatMap(({ agent, value }) => value.notes.map((note) => ({ ...note, admin_agent_id: agent.id }))) };
   });
-  const [configData, { refetch: refetchConfig }] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
+  const [configData, { refetch: refetchConfig }] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [scope, setScope] = createSignal<"profile" | "project">("project");
   const [tag, setTag] = createSignal("");
@@ -4963,7 +4963,7 @@ function SetupActions(props: { step: keyof OnboardingState; done: () => void }) 
     () => chosenProvider() || undefined,
     (name: string) => api.models(name, selectedAgentIdOrUndefined()),
   );
-  const [providers, { refetch: refetchProviders }] = createResource(selectedAgentIdOrUndefined, (agent) => api.providers(agent));
+  const [providers, { refetch: refetchProviders }] = createResource(selectedAgentId, () => api.providers(selectedAgentIdOrUndefined()));
 
   const run = async (what: string, f: () => Promise<unknown>) => {
     setBusy(true);
@@ -5553,7 +5553,7 @@ function GatewaySection() {
   );
   const [status, { refetch: refetchStatus }] = createResource(() => api.gatewayStatus());
   const [allowlist, { refetch: refetchAllowlist }] = createResource(() => api.gatewayAllowlist());
-  const [providers] = createResource(selectedAgentIdOrUndefined, (agent) => api.providers(agent));
+  const [providers] = createResource(selectedAgentId, () => api.providers(selectedAgentIdOrUndefined()));
   const [bots, { refetch: refetchBots }] = createResource(() => api.listBots());
 
   const refresh = () => {
@@ -5943,9 +5943,9 @@ function RuleEditor(props: { scope: ConfigScope; onSaved: () => void | Promise<v
 /// how this instance is configured; nothing here is a summary of a screen
 /// that already exists elsewhere.
 export function Settings() {
-  const [config, { refetch: refetchConfig }] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
+  const [config, { refetch: refetchConfig }] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [layer, { refetch: refetchLayer }] = createResource(configScope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
-  const [providersData, { refetch: refetchProviders }] = createResource(selectedAgentIdOrUndefined, (agent) => api.providers(agent));
+  const [providersData, { refetch: refetchProviders }] = createResource(selectedAgentId, () => api.providers(selectedAgentIdOrUndefined()));
   const [rebuilding, setRebuilding] = createSignal(false);
   const [doctorReport, setDoctorReport] = createSignal<string | null>(null);
   const [runningDoctor, setRunningDoctor] = createSignal(false);
@@ -6040,6 +6040,18 @@ export function Settings() {
 
   let discoveryRevision = 0;
   onCleanup(() => { discoveryRevision++; });
+  createEffect(() => {
+    selectedAgentId();
+    discoveryRevision++;
+    setSelectedProvider("");
+    setSelectedModel("");
+    setDiscoveredModels([]);
+    setBedrockAvailability([]);
+    setLoadingModels(false);
+    setModelError("");
+    setProviderKeyInput("");
+    setProbeResult(null);
+  });
   const discover = async (provider: string) => {
     const revision = ++discoveryRevision;
     setLoadingModels(true);
@@ -6080,6 +6092,10 @@ export function Settings() {
   const keyConfigured = createMemo(
     () => providersData()?.providers?.find((p) => p.name === selectedProvider())?.configured ?? false,
   );
+  const keyStoredAtScope = createMemo(() => {
+    const provider = providersData()?.providers?.find((p) => p.name === selectedProvider());
+    return configScope() === "user" ? provider?.key_in_user ?? false : provider?.key_in_project ?? false;
+  });
 
   const guard = async (work: () => Promise<void>, ok: string) => {
     try {
@@ -6417,36 +6433,6 @@ export function Settings() {
               </Show>
             </section>
 
-            <Show
-              when={selectedAgentId() === "global"}
-              fallback={
-                <section class="panel">
-                  <div class="panel-title-row">
-                    <div>
-                      <h2>Provider Credentials</h2>
-                      <p class="dim">
-                        Provider keys are saved in the host’s secure credential store and shared by <strong>✦ {adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}</strong>.
-                      </p>
-                    </div>
-                    <span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
-                      {keyConfigured() ? `saved (${providersData()?.providers?.find((p) => p.name === selectedProvider())?.key_source ?? "configured"})` : "not saved yet"}
-                    </span>
-                  </div>
-                  <div style="margin-top: 14px;">
-                    <button
-                      class="ghost small"
-                      onClick={() => {
-                        setSelectedAgentId("global");
-                        localStorage.setItem("vak_admin_selected_agent", "global");
-                        setConfigScopePersisted("user");
-                      }}
-                    >
-                      🌐 Switch to Global to Manage Keys
-                    </button>
-                  </div>
-                </section>
-              }
-            >
               <Show when={selectedProvider()} fallback={
                 <section class="panel">
                   <div class="panel-title-row">
@@ -6464,7 +6450,7 @@ export function Settings() {
                     <p class="dim">
                       {selectedProvider() === "ollama"
                         ? "Ollama does not require an API key. Set its endpoint in workspace settings if it is not running locally."
-                        : <>Authentication credential for {providerLabel(selectedProvider())}. Written to the selected scope’s secure credential store and never shown again.</>}
+                        : <>Authentication credential for {providerLabel(selectedProvider())}. {configScope() === "user" ? "Saved for every agent" : `Saved for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}`} in the host’s secure credential store and never shown again.</>}
                     </p>
                   </div>
                   <Show when={selectedProvider() !== "ollama"}><span class={`chip chip-tone-${keyConfigured() ? "success" : "warning"}`}>
@@ -6488,7 +6474,7 @@ export function Settings() {
                   <button disabled={savingKey() || !selectedProvider() || !providerKeyInput().trim()} onClick={() => void saveKey()}>
                     {savingKey() ? "Saving…" : "Save key"}
                   </button>
-                  <Show when={keyConfigured()}>
+                  <Show when={keyStoredAtScope()}>
                     <button
                       class="danger small"
                       onClick={() =>
@@ -6507,7 +6493,6 @@ export function Settings() {
                 </div>
               </section>
               </Show>
-            </Show>
             <BackupModels scope={configScope()} agent={selectedAgentIdOrUndefined()} provider={selectedProvider()} model={selectedModel()} />
           </div>
 

@@ -33,6 +33,10 @@ const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement
 (window as any).runChecks = async () => {
   await tick(); const passed: string[] = [];
   const check = (ok: unknown, description: string) => { if (!ok) throw new Error(description); passed.push(description); };
+  check(
+    ['alpha', 'beta', 'bedrock'].every((name) => [...document.querySelector<HTMLSelectElement>('select[aria-label="Provider"]')!.options].some((option) => option.value === name)),
+    'global settings loads the provider catalogue',
+  );
   const panel = () => document.querySelector<HTMLElement>('[data-testid="backup-models"]')!;
   const boxes = () => [...panel().querySelectorAll<HTMLInputElement>('input[type="checkbox"]')];
   check(panel()?.textContent?.includes('one-copy') && panel().textContent?.includes('shared-b'), 'backup panel shows confirmed groups and allowed backups');

@@ -2,7 +2,7 @@ import { For, Match, Show, Switch, createEffect, createMemo, createResource, cre
 import { api } from "./api";
 import { MODES, PageHeader, SEC_KINDS, confirmDestructive, secKindLabel } from "./display";
 import { timeAgo } from "./time";
-import { navigate, pushToast, route, selectedAgentIdOrUndefined } from "./store";
+import { navigate, pushToast, route, selectedAgentId, selectedAgentIdOrUndefined } from "./store";
 import type {
   ConfigInfo,
   ConfigScope,
@@ -917,7 +917,7 @@ export function SecurityCenter(props: { scope: () => ConfigScope }) {
     navigate(`#/security/${tab}`);
   };
 
-  const [config, { refetch: refetchConfig }] = createResource(selectedAgentIdOrUndefined, (agent) => api.config(agent));
+  const [config, { refetch: refetchConfig }] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [layer, { refetch: refetchLayer }] = createResource(props.scope, (scope) => api.configLayer(scope, selectedAgentIdOrUndefined()));
   const [gatewayPolicy, { refetch: refetchPolicy }] = createResource(() => api.gatewayApprovals());
   const [health, { refetch: refetchHealth }] = createResource(() => api.health());

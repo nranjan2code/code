@@ -25,7 +25,8 @@ export const [selectedAgentId, setSelectedAgentId] = createSignal<string>(
 
 /** A concrete Agent as an `?agent=` query value. Aggregate and shared-default
  * views are handled by their endpoint-specific selectors, so neither sentinel
- * may be sent as an Agent id. */
+ * may be sent as an Agent id. Use `selectedAgentId` as a Solid resource source:
+ * `undefined` here is a valid API scope, but it suppresses a resource fetch. */
 export const selectedAgentIdOrUndefined = () => {
   const id = selectedAgentId();
   return id === "global" || id === "all" ? undefined : id;

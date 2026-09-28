@@ -1,7 +1,7 @@
 import { For, Show, createEffect, createMemo, createResource, createSignal } from "solid-js";
 
 import { api } from "./api";
-import { selectedAgentIdOrUndefined } from "./store";
+import { selectedAgentId, selectedAgentIdOrUndefined } from "./store";
 import type {
   ConfigScope,
   PromptBlock,
@@ -195,7 +195,7 @@ export function PromptsSection(props: {
     selectedAgentIdOrUndefined,
     (agent) => api.promptEffective(agent),
   );
-  const [roles, { refetch: refetchRoles }] = createResource(selectedAgentIdOrUndefined, (agent) => api.promptRoles(agent));
+  const [roles, { refetch: refetchRoles }] = createResource(selectedAgentId, () => api.promptRoles(selectedAgentIdOrUndefined()));
 
   const [editing, setEditing] = createSignal<PromptBlock | null>(null);
   const [draft, setDraft] = createSignal("");

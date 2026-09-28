@@ -781,7 +781,7 @@ export function Home() {
   // opened and resolved while an operator sits on Home, not only while
   // someone happens to have Operations open.
   const [ops, opsActions] = createResource(() => api.operations());
-  const [finops, finopsActions] = createResource(selectedAgentIdOrUndefined, (agent) => api.finops(agent));
+  const [finops, finopsActions] = createResource(selectedAgentId, () => api.finops(selectedAgentIdOrUndefined()));
   const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals());
   const [sessions, sessionsActions] = createResource(
     () => ({ ver: sessionsVersion(), agent: selectedAgentId() }),
