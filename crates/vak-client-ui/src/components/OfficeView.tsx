@@ -403,6 +403,8 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
   const chartType = () => props.rows.flatMap((row) => row.labels).find((label) => label.startsWith("chart type: "))?.slice("chart type: ".length) ?? "column";
   const seriesType = (index: number) => props.rows.flatMap((row) => row.labels).find((label) => label.startsWith(`chart series type ${index}: `))?.slice(`chart series type ${index}: `.length) ?? chartType();
   const pieLike = () => chartType() === "pie" || chartType() === "doughnut";
+  const horizontalBar = () => chartType() === "bar" || series().some((_, index) => seriesType(index) === "bar");
+  const doughnut = () => chartType() === "doughnut";
   const headers = () => values()[0] ?? [];
   const series = () => headers().slice(1);
   const points = () => values().slice(1).map((row) => ({
@@ -419,6 +421,29 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
   const minimum = () => Math.min(0, ...allValues());
   const maximum = () => Math.max(1, ...allValues());
   const y = (value: number) => 218 - (value - minimum()) / (maximum() - minimum()) * 174;
+  const scatterX = () => {
+    const all = shownPoints().map((point) => Number(point.label)).filter(Number.isFinite);
+    const min = Math.min(...all);
+    const max = Math.max(...all);
+    const padding = max === min ? Math.max(1, Math.abs(min) * 0.1) : (max - min) * 0.05;
+    return { min: min - padding, max: max + padding };
+  };
+  const scatterPointX = (label: string) => {
+    const bounds = scatterX();
+    const value = Number(label);
+    return 70 + (value - bounds.min) / Math.max(Number.EPSILON, bounds.max - bounds.min) * 540;
+  };
+  const scatterY = () => {
+    const all = shownPoints().flatMap((point) => point.values).filter((value): value is number => value != null);
+    const min = Math.min(...all);
+    const max = Math.max(...all);
+    const padding = max === min ? Math.max(1, Math.abs(min) * 0.1) : (max - min) * 0.05;
+    return { min: min - padding, max: max + padding };
+  };
+  const scatterPointY = (value: number) => {
+    const bounds = scatterY();
+    return 218 - (value - bounds.min) / Math.max(Number.EPSILON, bounds.max - bounds.min) * 174;
+  };
   const baseline = () => y(0);
   const seriesClass = (index: number) => `office-chart-series-${index % 4}`;
   const columnGeometry = () => {
@@ -456,7 +481,7 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
   const summary = () => `${title()}, ${chartType()} chart. ${shownPoints().map((point) => `${point.label}: ${point.values.map((value, index) => value == null ? "" : `${series()[index] ?? "Series"} ${value}`).filter(Boolean).join(", ")}`).join("; ")}`;
   return <figure class="office-unit office-chart" role="listitem" {...props.unitProps(props.anchor)}>
     <figcaption>{title()}<Show when={props.placement}><span class="office-object-position">Placed at {props.placement}</span></Show></figcaption>
-    <Show when={chartType() === "bar"} fallback={
+    <Show when={horizontalBar()} fallback={
       <svg class={`office-chart-svg ${pieLike() ? "pie" : ""}`} viewBox={pieLike() ? "0 0 560 280" : "0 0 640 280"} role="img" aria-label={summary()}>
         <Show when={pieLike()} fallback={<>
           <For each={[0, 1, 2, 3, 4]}>{(tick) => {
@@ -464,7 +489,14 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
             return <g><line x1="64" x2="616" y1={y(value)} y2={y(value)} class="office-chart-gridline"/><text x="58" y={y(value) + 4} text-anchor="end" class="office-chart-axis-label">{Number(value.toPrecision(3))}</text></g>;
           }}</For>
           <line x1="64" x2="616" y1={baseline()} y2={baseline()} class="office-chart-axis"/>
-          <For each={lineGeometry()}>{(line, seriesIndex) => <Show when={["line", "area", "scatter"].includes(seriesType(seriesIndex())) && line.some((point) => point.y != null)}><>
+          <For each={series()}>{(_, seriesIndex) => <Show when={seriesType(seriesIndex()) === "scatter"}>{
+            <For each={shownPoints()}>{(point) => {
+              const value = point.values[seriesIndex()];
+              const x = Number(point.label);
+              return value == null || !Number.isFinite(x) ? null : <circle cx={scatterPointX(point.label)} cy={scatterPointY(value)} r="4" class={seriesClass(seriesIndex())}><title>{`${point.label}: ${series()[seriesIndex()]} ${value}`}</title></circle>;
+            }}</For>
+          }</Show>}</For>
+          <For each={lineGeometry()}>{(line, seriesIndex) => <Show when={["line", "area"].includes(seriesType(seriesIndex())) && line.some((point) => point.y != null)}><>
             <Show when={seriesType(seriesIndex()) !== "scatter"}><polyline points={line.flatMap((point, index) => point.y == null ? [] : [`${70 + (index + 0.5) * (540 / Math.max(1, shownPoints().length))},${point.y}`]).join(" ")} class={`office-chart-line ${seriesClass(seriesIndex())}`}/></Show>
             <For each={line.filter((point) => point.y != null)}>{(point) => <circle cx={point.x} cy={point.y!} r="4" class={seriesClass(seriesIndex())}/>}</For>
           </></Show>}</For>
@@ -472,7 +504,7 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
           <For each={shownPoints()}>{(point, index) => <text x={70 + (index() + 0.5) * (540 / Math.max(1, shownPoints().length))} y="250" text-anchor="middle" class="office-chart-category" aria-label={point.label}>{point.label.length > 12 ? `${point.label.slice(0, 11)}…` : point.label}<title>{point.label}</title></text>}</For>
           <For each={series()}>{(name, index) => <g transform={`translate(${78 + index() * 150} 270)`}><circle r="4" class={seriesClass(index())}/><text x="8" y="4" class="office-chart-legend">{name}</text></g>}</For>
         </>}>
-          <For each={pieSlices()}>{(slice) => <circle cx="152" cy="140" r="76" fill="none" stroke-width="42" stroke-dasharray={`${slice.length} ${slice.remainder}`} stroke-dashoffset={-slice.offset} transform="rotate(-90 152 140)" class={`office-chart-pie-segment ${slice.className}`}><title>{slice.label}: {slice.value}</title></circle>}</For>
+          <For each={pieSlices()}>{(slice) => <circle cx="152" cy="140" r={doughnut() ? "58" : "76"} fill="none" stroke-width={doughnut() ? "32" : "42"} stroke-dasharray={`${slice.length} ${slice.remainder}`} stroke-dashoffset={-slice.offset} transform="rotate(-90 152 140)" class={`office-chart-pie-segment ${slice.className}`}><title>{slice.label}: {slice.value}</title></circle>}</For>
           <For each={pieSlices()}>{(slice, index) => <g transform={`translate(292 ${48 + index() * 28})`}><circle r="5" class={slice.className}/><text x="12" y="4" class="office-chart-legend">{slice.label}: {slice.value}</text></g>}</For>
         </Show>
       </svg>
@@ -481,7 +513,7 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
         <For each={shownPoints()}>{(point) => <div class="office-chart-point">
           <span class="office-chart-label">{point.label}</span>
           <div class="office-chart-series-bars">
-            <For each={point.values}>{(value, index) => <Show when={value != null && seriesType(index()) === "bar"}><div class="office-chart-horizontal-series"><span class="office-chart-value">{series()[index()] ?? ""} {value}</span><span class="office-chart-track"><span class={`office-chart-bar ${seriesClass(index())}`} style={{ width: `${Math.max(2, Math.abs(value!) / Math.max(1, maximum() - minimum()) * 100)}%` }} /></span></div></Show>}</For>
+            <For each={point.values}>{(value, index) => <Show when={value != null && ["column", "bar"].includes(seriesType(index()))}><div class="office-chart-horizontal-series"><span class="office-chart-value">{series()[index()] ?? ""} {value}</span><span class="office-chart-track"><span class={`office-chart-bar ${seriesClass(index())}`} style={{ width: `${Math.max(2, Math.abs(value!) / Math.max(1, maximum() - minimum()) * 100)}%` }} /></span></div></Show>}</For>
           </div>
         </div>}</For>
       </div>
