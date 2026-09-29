@@ -133,6 +133,7 @@ async fn apply(
     });
     let lineage = vak_tools::broker::OfficeLineage {
         origin,
+        planned_ops: vak_ooxml::edit::plan_chart_locations(&ops).map_err(|error| error.message)?,
         ops,
         author: vak_tools::office_apply::tracked_change_author(agent),
         new_file,

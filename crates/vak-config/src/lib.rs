@@ -118,6 +118,10 @@ pub struct FileConfig {
     pub profile: Option<String>,
     pub profiles: std::collections::BTreeMap<String, Profile>,
     pub anthropic_base_url: Option<String>,
+    /// AWS region used by the Bedrock Mantle endpoint (for example
+    /// `ap-south-1`). A server-level VAK_BEDROCK_BASE_URL still takes
+    /// precedence when explicitly configured.
+    pub bedrock_region: Option<String>,
     #[serde(default)]
     pub allow: Vec<String>,
     #[serde(default)]
@@ -1277,6 +1281,7 @@ pub struct Config {
     pub permission_mode: PermissionMode,
     pub approval_mode: ApprovalMode,
     pub anthropic_base_url: Option<String>,
+    pub bedrock_region: String,
     pub allow: Vec<String>,
     pub ask: Vec<String>,
     pub deny: Vec<String>,
@@ -1566,6 +1571,7 @@ impl Default for Config {
             permission_mode: PermissionMode::WorkspaceWrite,
             approval_mode: ApprovalMode::Ask,
             anthropic_base_url: None,
+            bedrock_region: "us-east-1".into(),
             allow: Vec::new(),
             ask: Vec::new(),
             deny: Vec::new(),
@@ -2029,6 +2035,19 @@ pub fn persist_preferences_to(
         approval_mode,
         theme,
     )
+}
+
+/// Persist the Bedrock region for one configuration layer. The region is
+/// configuration, not a credential; provider keys remain in the OS secret
+/// store through `Core::set_provider_key`.
+pub fn persist_bedrock_region(path: PathBuf, region: &str) -> Result<(), ConfigError> {
+    update_config_file(&path, |document| {
+        document.insert(
+            "bedrock_region".into(),
+            toml::Value::String(region.trim().into()),
+        );
+        Ok(())
+    })
 }
 
 fn persist_preferences_at(
@@ -2751,7 +2770,7 @@ pub fn load(cwd: &Path) -> Result<Config, ConfigError> {
 
 /// Keys a PROJECT-level config may not set when its workspace has not been
 /// marked trusted: they grant execution or redirect credentials.
-const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus, feeds";
+const PRIVILEGED_KEYS_NOTICE: &str = "permission_mode, approval_mode, allow, hooks, anthropic_base_url, bedrock_region, mcp.servers, gateway, sandbox, server, update, capabilities, intent.autonomy, intent.escalate=cloud, intent.enabled=false, intent.posture=false, plugins.network_allow, server.bus, feeds";
 
 pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, ConfigError> {
     let mut warnings = Vec::new();
@@ -2779,6 +2798,9 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
             }
             if fc.anthropic_base_url.is_some() {
                 fc.anthropic_base_url = None;
+            }
+            if fc.bedrock_region.is_some() {
+                fc.bedrock_region = None;
             }
             fc.allow.clear();
             fc.hooks.clear();
@@ -2884,6 +2906,9 @@ pub fn load_with_trust(cwd: &Path, trust_project: bool) -> Result<Config, Config
         cfg.approval_mode = mode;
     }
     cfg.anthropic_base_url = merged.anthropic_base_url;
+    if let Some(region) = merged.bedrock_region {
+        cfg.bedrock_region = region;
+    }
     cfg.allow = merged.allow;
     cfg.ask = merged.ask;
     cfg.deny = merged.deny;
@@ -3424,6 +3449,7 @@ const KNOWN_TOP_KEYS: &[&str] = &[
     "profile",
     "profiles",
     "anthropic_base_url",
+    "bedrock_region",
     "allow",
     "ask",
     "deny",
@@ -3893,6 +3919,9 @@ fn merge_into(base: &mut FileConfig, over: FileConfig) {
     }
     if over.anthropic_base_url.is_some() {
         base.anthropic_base_url = over.anthropic_base_url;
+    }
+    if over.bedrock_region.is_some() {
+        base.bedrock_region = over.bedrock_region;
     }
     for r in over.allow {
         if !base.allow.contains(&r) {

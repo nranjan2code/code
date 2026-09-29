@@ -126,6 +126,252 @@ async fn office_apply_edits_through_the_worker_as_the_calling_agent() {
     );
 }
 
+/// Run the real local authoring and extraction tools for each supported
+/// everyday format, then fetch the bytes through the server's raw download
+/// route and prove the package is unchanged. No model or network is used.
+#[tokio::test]
+async fn real_office_drafts_are_downloadable_and_rag_readable() {
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use sha2::Digest as _;
+    use tower::ServiceExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    let home = dir.path().join("home");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::create_dir_all(workspace.join(".vak")).unwrap();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(
+        workspace.join(".vak/config.toml"),
+        "[memory]\nreflection = false\n",
+    )
+    .unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    let core = vak_core::Core::new_with_trust(workspace.clone(), true).unwrap();
+    core.set_sessions_home(home);
+    let worker = PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker"));
+    core.set_tool_worker_exe(worker.clone());
+    let tools = vak_tools::brokered_default_tools(worker);
+    let apply = tools
+        .iter()
+        .find(|tool| tool.name() == "office_apply")
+        .unwrap()
+        .clone();
+    let read = doc_read(tools.clone());
+
+    let cases = [
+        (
+            "daily.docx",
+            json!([
+                {"op":"add_paragraph","text":"Daily notes"},
+                {"op":"add_table","rows":[["Item","Count"],["Apples",3]]},
+                {"op":"add_image","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}
+            ]),
+        ),
+        (
+            "daily.xlsx",
+            json!([
+                {"op":"set_cells","sheet":"Sheet1","cells":{"A1":"Day","B1":"Visitors","A2":"Mon","B2":25,"A3":"Tue","B3":31}},
+                {"op":"add_chart","sheet":"Sheet1","range":"A1:B3","chart_type":"bar","title":"Daily visitors"},
+                {"op":"add_excel_table","sheet":"Sheet1","range":"A1:B3","name":"DailyVisitors"},
+                {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}
+            ]),
+        ),
+        (
+            "daily.pptx",
+            json!([
+                {"op":"add_slide_from_layout","layout":"Title and Content","placeholders":{"title":"Daily summary"},"tables":{"body":[["Metric","Value"],["Visitors",56]]},"notes":"Source data stays in the table."}
+                ,{"op":"add_slide_from_layout","layout":"Title and Content","placeholders":{"title":"Daily averages"},"charts":{"body":{"title":"Visitors by day","chart_type":"bar","categories":["Monday","Tuesday","Wednesday"],"values":[12,18,15]}}}
+                ,{"op":"add_slide_from_layout","layout":"Title and Content","placeholders":{"title":"Status marker"},"images":{"body":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}}
+            ]),
+        ),
+        (
+            "daily.pdf",
+            json!([
+                {"op":"add_paragraph","text":"Daily summary"},
+                {"op":"add_chart","title":"Daily visitors","categories":["Mon","Tue","Wed"],"values":[25,31,28]},
+                {"op":"add_image","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}
+            ]),
+        ),
+    ];
+    let (app, token) = vak_server::secured_router(core);
+    for (index, (name, ops)) in cases.iter().enumerate() {
+        let output = apply
+            .execute(
+                &json!({"path":name,"ops":ops}),
+                &ToolContext::new(workspace.clone()).with_agent_id("vak"),
+            )
+            .await;
+        assert!(!output.is_error, "{name}: {}", output.content);
+        assert!(
+            !workspace.join(name).exists(),
+            "new Office content in {name} must remain a draft until Review accepts it"
+        );
+        let draft = output
+            .content
+            .split("written to ")
+            .nth(1)
+            .unwrap()
+            .split(". ")
+            .next()
+            .unwrap();
+        let draft_path = workspace.join(draft);
+        let original_bytes = std::fs::read(&draft_path).unwrap();
+        assert!(
+            original_bytes.len() > 500,
+            "{name} is a real generated file, not a label or placeholder"
+        );
+
+        let projected = vak_tools::broker::office_project(
+            &PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")),
+            &draft_path,
+            vak_tools::broker::OfficeView::Content { from: 0 },
+        )
+        .await
+        .unwrap();
+        let extracted = read
+            .execute(&json!({"path":draft}), &ToolContext::new(workspace.clone()))
+            .await;
+        assert!(
+            !extracted.is_error,
+            "doc_read {name}: {}",
+            extracted.content
+        );
+        assert!(
+            extracted.content.contains("sha256"),
+            "doc_read returns digest citations for {name}"
+        );
+        match *name {
+            "daily.docx" => {
+                assert!(projected.to_string().contains("Apples"));
+                assert!(extracted.content.contains("Daily notes"));
+                assert!(
+                    projected
+                        .to_string()
+                        .contains("A blue square used as the daily status marker")
+                );
+                assert!(
+                    extracted
+                        .content
+                        .contains("A blue square used as the daily status marker")
+                );
+            }
+            "daily.xlsx" => {
+                assert!(projected.to_string().contains("DailyVisitors/r3"));
+                assert!(projected.to_string().contains("Tue | 31"));
+                assert!(
+                    projected
+                        .to_string()
+                        .contains("A blue square used as the daily status marker")
+                );
+                assert!(
+                    extracted
+                        .content
+                        .contains("A blue square used as the daily status marker")
+                );
+                let native_table = read
+                    .execute(
+                        &json!({"path":draft,"view":"table","section":"DailyVisitors"}),
+                        &ToolContext::new(workspace.clone()),
+                    )
+                    .await;
+                assert!(
+                    !native_table.is_error,
+                    "native Excel table extraction: {}",
+                    native_table.content
+                );
+                assert!(
+                    native_table.content.contains("Tuesday")
+                        || native_table.content.contains("Tue")
+                );
+                let chart_table = read
+                    .execute(
+                        &json!({"path":draft,"view":"table","section":"Daily visitors"}),
+                        &ToolContext::new(workspace.clone()),
+                    )
+                    .await;
+                assert!(
+                    !chart_table.is_error,
+                    "chart table extraction: {}",
+                    chart_table.content
+                );
+                assert!(chart_table.content.contains("chart data; cached values"));
+                assert!(chart_table.content.contains("Mon") && chart_table.content.contains("25"));
+            }
+            "daily.pptx" => {
+                assert!(projected.to_string().contains("Visitors"));
+                assert!(extracted.content.contains("Daily summary"));
+                assert!(projected.to_string().contains("chart data; cached values"));
+                assert!(projected.to_string().contains("Tuesday | 18"));
+                assert!(
+                    projected
+                        .to_string()
+                        .contains("A blue square used as the daily status marker")
+                );
+                assert!(
+                    extracted
+                        .content
+                        .contains("A blue square used as the daily status marker")
+                );
+                let chart_table = read
+                    .execute(
+                        &json!({"path":draft,"view":"table","section":"Visitors by day"}),
+                        &ToolContext::new(workspace.clone()),
+                    )
+                    .await;
+                assert!(
+                    !chart_table.is_error,
+                    "PowerPoint chart table extraction: {}",
+                    chart_table.content
+                );
+                assert!(
+                    chart_table.content.contains("Tuesday") && chart_table.content.contains("18")
+                );
+            }
+            _ => {
+                assert!(projected.to_string().contains("Daily summary"));
+                assert!(extracted.content.contains("Daily summary"));
+                assert!(extracted.content.contains("Daily visitors"));
+                assert!(extracted.content.contains("Tue"));
+                assert!(extracted.content.contains("31"));
+                assert!(
+                    extracted
+                        .content
+                        .contains("A blue square used as the daily status marker")
+                );
+            }
+        }
+
+        // The browser's raw download endpoint reads workspace bytes without
+        // decoding/re-encoding. Accept this local draft into a distinct path
+        // for the accepted-file download route, then compare the response.
+        let accepted_name = format!("download-{index}-{name}");
+        std::fs::copy(&draft_path, workspace.join(&accepted_name)).unwrap();
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri(format!("/fs/file/raw?path={accepted_name}"))
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "download {name}");
+        let downloaded = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            sha2::Sha256::digest(&downloaded).as_slice(),
+            sha2::Sha256::digest(&original_bytes).as_slice(),
+            "download altered the {name} package"
+        );
+    }
+}
+
 /// A revision's task copy holds a new document under its own name; the
 /// runtime tells the worker so, and its Word edits stay clean
 /// (docs/design/72, R7). The list travels with the call, never from the model.

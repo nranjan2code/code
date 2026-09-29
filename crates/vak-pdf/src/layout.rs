@@ -5,6 +5,7 @@
 //! cannot draw is refused by name, never dropped.
 
 use std::collections::HashMap;
+use std::io::Cursor;
 use std::io::Write as _;
 use std::sync::LazyLock;
 
@@ -205,7 +206,83 @@ pub(crate) enum Block {
         rows: Vec<Vec<String>>,
         header: bool,
     },
+    Chart {
+        title: String,
+        categories: Vec<String>,
+        values: Vec<f64>,
+    },
+    Image {
+        data: Vec<u8>,
+        mime_type: String,
+        alt_text: String,
+    },
     PageBreak,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ImageAsset {
+    pub(crate) name: Vec<u8>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) data: Vec<u8>,
+    pub(crate) jpeg: bool,
+}
+
+impl Block {
+    pub(crate) fn validate(self) -> Result<Self, String> {
+        if let Self::Image {
+            data,
+            mime_type,
+            alt_text,
+        } = &self
+        {
+            if alt_text.trim().is_empty() || alt_text.len() > 2048 {
+                return Err("an image needs alternative text from 1 to 2,048 bytes".into());
+            }
+            encode(&format!("Image description: {alt_text}"))?;
+            let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+                .map_err(|_| "image data must be valid base64".to_string())?;
+            if bytes.len() > 1_048_576 {
+                return Err("an image may be at most 1 MiB".into());
+            }
+            match mime_type.as_str() {
+                "image/png" => {
+                    decode_png(&bytes)?;
+                }
+                "image/jpeg" => {
+                    jpeg_dimensions(&bytes)?;
+                }
+                _ => return Err("image type must be image/png or image/jpeg".into()),
+            }
+        }
+        if let Self::Chart {
+            title,
+            categories,
+            values,
+        } = &self
+        {
+            if title.trim().is_empty() {
+                return Err("a chart needs a title".into());
+            }
+            if categories.is_empty() || categories.len() != values.len() || categories.len() > 20 {
+                return Err("a chart needs 1–20 category labels and one value per label".into());
+            }
+            if values
+                .iter()
+                .any(|value| !value.is_finite() || value.abs() > 1.0e12)
+            {
+                return Err("chart values must be finite numbers between -1e12 and 1e12".into());
+            }
+            if categories.iter().any(|category| category.trim().is_empty()) {
+                return Err("chart category labels cannot be empty".into());
+            }
+            encode(title)?;
+            for category in categories {
+                encode(category)?;
+            }
+        }
+        Ok(self)
+    }
 }
 
 /// One page of set content: its content stream and the headings on it,
@@ -214,6 +291,103 @@ pub(crate) enum Block {
 pub(crate) struct Laid {
     pub(crate) content: Vec<u8>,
     pub(crate) headings: Vec<(u8, String, f64)>,
+    pub(crate) images: Vec<ImageAsset>,
+}
+
+fn dimensions_ok(width: u32, height: u32) -> Result<(), String> {
+    if width == 0
+        || height == 0
+        || width > 10_000
+        || height > 10_000
+        || u64::from(width) * u64::from(height) > 40_000_000
+    {
+        return Err("image dimensions must be at most 10,000 by 10,000 and 40 megapixels".into());
+    }
+    Ok(())
+}
+
+fn jpeg_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    if !bytes.starts_with(&[0xff, 0xd8, 0xff]) {
+        return Err("JPEG data has an invalid signature".into());
+    }
+    let mut i = 2;
+    while i + 4 <= bytes.len() {
+        if bytes[i] != 0xff {
+            i += 1;
+            continue;
+        }
+        let marker = bytes[i + 1];
+        i += 2;
+        if marker == 0xd8 || marker == 0xd9 || (0xd0..=0xd7).contains(&marker) {
+            continue;
+        }
+        if i + 2 > bytes.len() {
+            break;
+        }
+        let len = usize::from(u16::from_be_bytes([bytes[i], bytes[i + 1]]));
+        if len < 2 || i + len > bytes.len() {
+            break;
+        }
+        if matches!(marker, 0xc0..=0xc3 | 0xc5..=0xc7 | 0xc9..=0xcb | 0xcd..=0xcf) {
+            if len < 7 {
+                break;
+            }
+            let h = u32::from(u16::from_be_bytes([bytes[i + 3], bytes[i + 4]]));
+            let w = u32::from(u16::from_be_bytes([bytes[i + 5], bytes[i + 6]]));
+            dimensions_ok(w, h)?;
+            return Ok((w, h));
+        }
+        i += len;
+    }
+    Err("JPEG data has no supported frame dimensions".into())
+}
+
+fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err("PNG data has an invalid signature".into());
+    }
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
+    decoder.set_limits(png::Limits {
+        bytes: 16 * 1024 * 1024,
+    });
+    let mut reader = decoder
+        .read_info()
+        .map_err(|e| format!("invalid PNG: {e}"))?;
+    let info = reader.info();
+    let width = info.width;
+    let height = info.height;
+    dimensions_ok(width, height)?;
+    if u64::from(width) * u64::from(height) > 4_000_000 {
+        return Err("PNG must be at most 4 megapixels after decoding".into());
+    }
+    let mut buf = vec![0; reader.output_buffer_size()];
+    let frame = reader
+        .next_frame(&mut buf)
+        .map_err(|e| format!("invalid PNG image data: {e}"))?;
+    buf.truncate(frame.buffer_size());
+    let channels = match frame.color_type {
+        png::ColorType::Rgb => 3,
+        png::ColorType::Rgba => 4,
+        png::ColorType::Grayscale => 1,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Indexed => return Err("indexed PNG could not be expanded".into()),
+    };
+    let mut rgb = Vec::with_capacity((width * height * 3) as usize);
+    for px in buf.chunks_exact(channels) {
+        let (r, g, b, a) = match channels {
+            4 => (px[0], px[1], px[2], px[3]),
+            3 => (px[0], px[1], px[2], 255),
+            2 => (px[0], px[0], px[0], px[1]),
+            _ => (px[0], px[0], px[0], 255),
+        };
+        for c in [r, g, b] {
+            rgb.push(
+                ((u16::from(c) * u16::from(a) + 255u16 * (255u16 - u16::from(a))) / 255) as u8,
+            );
+        }
+    }
+    Ok((width, height, rgb))
 }
 
 struct Pager {
@@ -416,9 +590,169 @@ pub(crate) fn lay_out(blocks: &[Block], size: [f64; 2]) -> Result<Vec<Laid>, Str
                 table(&mut pager, rows, *header, content_width)?;
                 pager.y -= 8.0;
             }
+            Block::Chart {
+                title,
+                categories,
+                values,
+            } => {
+                let title = encode(title)?;
+                let labels: Vec<Vec<u8>> = categories
+                    .iter()
+                    .map(|item| encode(item))
+                    .collect::<Result<_, _>>()?;
+                chart(&mut pager, &title, &labels, values, content_width)?;
+                let mut rows = vec![vec!["Category".to_string(), "Value".to_string()]];
+                rows.extend(
+                    categories
+                        .iter()
+                        .zip(values)
+                        .map(|(category, value)| vec![category.clone(), value.to_string()]),
+                );
+                pager.y -= 5.0;
+                table(&mut pager, &rows, true, content_width)?;
+                pager.y -= 12.0;
+            }
+            Block::Image {
+                data,
+                mime_type,
+                alt_text,
+            } => {
+                let encoded =
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+                        .map_err(|_| "image data must be valid base64".to_string())?;
+                let (width, height, raw, jpeg) = if mime_type == "image/jpeg" {
+                    let (w, h) = jpeg_dimensions(&encoded)?;
+                    (w, h, encoded, true)
+                } else {
+                    let (w, h, pixels) = decode_png(&encoded)?;
+                    (w, h, pixels, false)
+                };
+                let max_w = content_width.min(420.0);
+                let max_h = 300.0;
+                let scale = (max_w / f64::from(width))
+                    .min(max_h / f64::from(height))
+                    .min(1.0);
+                let draw_w = f64::from(width) * scale;
+                let draw_h = f64::from(height) * scale;
+                let caption = encode(&format!("Image description: {alt_text}"))?;
+                let caption_lines = wrap(Face::Regular, 9.0, &caption, content_width);
+                pager.need(draw_h + 12.0 + caption_lines.len() as f64 * 12.0);
+                let x = (pager.size[0] - draw_w) / 2.0;
+                let y = pager.y - draw_h;
+                let page = pager.page();
+                let name = format!("Im{}", page.images.len() + 1).into_bytes();
+                page.content.extend_from_slice(
+                    format!(
+                        "q {} 0 0 {} {} {} cm /{} Do Q\n",
+                        real(draw_w),
+                        real(draw_h),
+                        real(x),
+                        real(y),
+                        String::from_utf8_lossy(&name)
+                    )
+                    .as_bytes(),
+                );
+                page.images.push(ImageAsset {
+                    name,
+                    width,
+                    height,
+                    data: raw,
+                    jpeg,
+                });
+                pager.y = y - 12.0;
+                for line in caption_lines {
+                    pager.text(Face::Regular, 9.0, MARGIN, pager.y - 9.0, &line, None);
+                    pager.y -= 12.0;
+                }
+                pager.y -= 8.0;
+            }
         }
     }
     Ok(pager.pages)
+}
+
+fn chart(
+    pager: &mut Pager,
+    title: &[u8],
+    categories: &[Vec<u8>],
+    values: &[f64],
+    width: f64,
+) -> Result<(), String> {
+    const TITLE_SIZE: f64 = 12.0;
+    const LABEL_SIZE: f64 = 9.0;
+    const LEADING: f64 = 13.0;
+    if self::width(Face::Bold, title, TITLE_SIZE) > width {
+        return Err("chart title is too long to fit on one line; shorten it".into());
+    }
+    let row_lines: Vec<Vec<Vec<u8>>> = categories
+        .iter()
+        .map(|label| wrap(Face::Regular, LABEL_SIZE, label, 112.0))
+        .collect();
+    let height = 34.0
+        + row_lines
+            .iter()
+            .map(|lines| lines.len().max(1) as f64 * LEADING + 3.0)
+            .sum::<f64>()
+        + 4.0;
+    if height > pager.size[1] - 2.0 * MARGIN {
+        return Err("chart labels are too long to fit on one page; shorten them".into());
+    }
+    pager.need(height);
+    let top = pager.y;
+    pager.text(
+        Face::Bold,
+        TITLE_SIZE,
+        MARGIN,
+        top - TITLE_SIZE,
+        title,
+        None,
+    );
+    let label_width = 120.0;
+    let value_width = 84.0;
+    let bar_width = (width - label_width - value_width - 8.0).max(60.0);
+    let max_value = values.iter().copied().fold(0.0f64, f64::max).max(0.0);
+    let min_value = values.iter().copied().fold(0.0f64, f64::min).min(0.0);
+    let span = (max_value - min_value).max(1.0);
+    let zero_x = MARGIN + label_width + bar_width * (0.0 - min_value) / span;
+    let mut y = top - 34.0;
+    for (row_labels, value) in row_lines.iter().zip(values) {
+        let row_height = row_labels.len().max(1) as f64 * LEADING;
+        for (index, line) in row_labels.iter().enumerate() {
+            pager.text(
+                Face::Regular,
+                LABEL_SIZE,
+                MARGIN,
+                y - LABEL_SIZE - index as f64 * LEADING,
+                line,
+                None,
+            );
+        }
+        let x_value = MARGIN + label_width + bar_width * (value - min_value) / span;
+        let left = zero_x.min(x_value);
+        let bar = (x_value - zero_x).abs().max(1.0);
+        let baseline = y - row_height + 2.0;
+        let content = &mut pager.page().content;
+        let _ = writeln!(
+            content,
+            "0.18 0.34 0.68 rg {} {} {} 9 re f 0 g",
+            real(left),
+            real(baseline),
+            real(bar)
+        );
+        let rendered = format!("{value}");
+        let encoded = encode(&rendered)?;
+        pager.text(
+            Face::Regular,
+            LABEL_SIZE,
+            MARGIN + label_width + bar_width + 8.0,
+            y - LABEL_SIZE,
+            &encoded,
+            None,
+        );
+        y -= row_height + 3.0;
+    }
+    pager.y = y - 4.0;
+    Ok(())
 }
 
 fn table(

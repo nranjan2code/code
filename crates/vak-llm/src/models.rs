@@ -72,11 +72,54 @@ pub async fn bedrock_model_availability(
         .load()
         .await;
     let client = aws_sdk_bedrock::Client::new(&config);
+    // Mantle's `/models` IDs are not always the same as the control-plane
+    // foundation model IDs (for example, Qwen's Mantle ID omits `-v1:0`).
+    // Resolve aliases against AWS's live catalogue instead of baking model
+    // identifiers into Vak.
+    let foundation_models =
+        client
+            .list_foundation_models()
+            .send()
+            .await
+            .map_err(|e| LlmError::Api {
+                status: 403,
+                message: e.to_string(),
+            })?;
     let mut out = Vec::with_capacity(model_ids.len());
     for model_id in model_ids {
+        let requested_key = bedrock_model_label_key(model_id);
+        let mut matching_ids = foundation_models
+            .model_summaries()
+            .iter()
+            .filter(|summary| {
+                summary.model_id() == model_id
+                    || summary
+                        .model_name()
+                        .is_some_and(|name| bedrock_model_label_key(name) == requested_key)
+            })
+            .map(|summary| summary.model_id().to_owned())
+            .collect::<Vec<_>>();
+        matching_ids.sort();
+        matching_ids.dedup();
+        let [availability_id] = matching_ids.as_slice() else {
+            out.push(BedrockModelAvailability {
+                model_id: model_id.clone(),
+                agreement_status: None,
+                agreement_error: Some(if matching_ids.is_empty() {
+                    "Model ID was not found in the AWS foundation model catalogue".into()
+                } else {
+                    "Model ID matches more than one AWS foundation model".into()
+                }),
+                authorization_status: None,
+                entitlement_status: None,
+                region_status: None,
+                invokable: false,
+            });
+            continue;
+        };
         let response = client
             .get_foundation_model_availability()
-            .model_id(model_id)
+            .model_id(availability_id.as_str())
             .send()
             .await
             .map_err(|e| LlmError::Api {
@@ -93,7 +136,9 @@ pub async fn bedrock_model_availability(
         let entitlement_status = Some(response.entitlement_availability().as_str().to_owned());
         let region_status = Some(response.region_availability().as_str().to_owned());
         out.push(BedrockModelAvailability {
-            model_id: response.model_id().to_owned(),
+            // Return the ID used by Mantle and the Vak route; the AWS control
+            // plane ID is an implementation detail of the availability check.
+            model_id: model_id.clone(),
             agreement_error,
             invokable: agreement_status.as_deref() == Some("AVAILABLE")
                 && authorization_status.as_deref() == Some("AUTHORIZED")
@@ -112,6 +157,27 @@ pub async fn bedrock_model_availability(
         cache.insert(cache_key, (std::time::Instant::now(), out.clone()));
     }
     Ok(out)
+}
+
+/// Make a conservative, punctuation-insensitive key for joining a Mantle
+/// model ID to AWS's display name. Mantle IDs start with a provider prefix;
+/// AWS display names do not. We only accept a unique match.
+fn bedrock_model_label_key(value: &str) -> String {
+    let label = value
+        .split_once('.')
+        .filter(|(provider, _)| {
+            !provider.is_empty()
+                && provider == &provider.to_ascii_lowercase()
+                && provider
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        })
+        .map_or(value, |(_, model)| model);
+    label
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -577,6 +643,18 @@ fn collect_data_ids(json: serde_json::Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bedrock_mantle_ids_match_live_aws_display_names() {
+        assert_eq!(
+            bedrock_model_label_key("qwen.qwen3-235b-a22b-2507"),
+            bedrock_model_label_key("Qwen3 235B A22B 2507")
+        );
+        assert_eq!(
+            bedrock_model_label_key("zai.glm-4.7-flash"),
+            bedrock_model_label_key("GLM 4.7 Flash")
+        );
+    }
 
     #[test]
     fn openai_shape_yields_ids() {

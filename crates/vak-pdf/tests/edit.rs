@@ -77,6 +77,60 @@ fn a_new_pdf_is_set_from_its_ops() {
 }
 
 #[test]
+fn a_pdf_chart_is_vector_and_keeps_searchable_source_rows() {
+    let applied = apply(
+        None,
+        r#"[
+            {"op":"set_title","title":"Daily visitors"},
+            {"op":"add_paragraph","text":"Daily visitors","style":"Title"},
+            {"op":"add_chart","title":"Visitors by day","categories":["Monday","Tuesday","Wednesday"],"values":[12,18,15]}
+        ]"#,
+    );
+    let text = applied.document.lines().join("\n");
+    for value in [
+        "Visitors by day",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Visitors",
+        "18",
+    ] {
+        assert!(
+            text.contains(value),
+            "{value} missing from extracted PDF text:\n{text}"
+        );
+    }
+    assert!(
+        applied.bytes.windows(2).any(|bytes| bytes == b"re"),
+        "vector rectangle operator missing"
+    );
+}
+
+#[test]
+fn a_pdf_png_is_embedded_and_its_alt_text_is_searchable() {
+    let applied = apply(
+        None,
+        r#"[{"op":"add_image","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}]"#,
+    );
+    assert_eq!(applied.document.pages[0].images, 1);
+    assert!(
+        applied
+            .document
+            .lines()
+            .join(" ")
+            .contains("Image description: A blue square used as the daily status marker")
+    );
+    assert!(applied.bytes.windows(8).any(|window| window == b"/XObject"));
+    assert!(applied.bytes.windows(6).any(|window| window == b"/Image"));
+}
+
+#[test]
+fn a_pdf_image_rejects_mismatched_bytes_and_missing_alt_text() {
+    assert!(error(None, r#"[{"op":"add_image","image":{"mime_type":"image/png","data":"bm90IGEgcG5n","alt_text":"ordinary words"}}]"#).contains("PNG data has an invalid signature"));
+    assert!(error(None, r#"[{"op":"add_image","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":" "}}]"#).contains("needs alternative text"));
+}
+
+#[test]
 fn lines_are_rewritten_deleted_commented_and_highlighted_in_place() {
     let source = fixtures::report();
     let applied = apply(
@@ -243,6 +297,13 @@ fn bad_ops_fail_with_a_reason_and_write_nothing() {
             r#"[{"op": "add_paragraph", "text": "x", "after": "page:1"}]"#
         )
         .contains("leave out after")
+    );
+    assert!(
+        error(
+            None,
+            r#"[{"op":"add_chart","title":"Visitors","categories":["Mon"],"values":[1e99]}]"#
+        )
+        .contains("between -1e12 and 1e12")
     );
     assert!(
         error(

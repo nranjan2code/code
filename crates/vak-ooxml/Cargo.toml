@@ -6,6 +6,8 @@ license.workspace = true
 description = "Bounded, lossless Open XML package reader and writer (docs/design/72-openxml-documents.md)"
 
 [dependencies]
+base64 = { workspace = true }
+chrono = { workspace = true }
 quick-xml = { workspace = true }
 serde = { workspace = true }
 zip = { workspace = true }

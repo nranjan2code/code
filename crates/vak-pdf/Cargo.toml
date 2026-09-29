@@ -6,7 +6,9 @@ license.workspace = true
 description = "Bounded, read-only PDF parser with security inspection (docs/design/77-pdf-documents.md)"
 
 [dependencies]
+base64 = { workspace = true }
 flate2 = { workspace = true }
+png = "0.17"
 serde = { workspace = true }
 
 [features]

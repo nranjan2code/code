@@ -7742,6 +7742,8 @@ dependencies = [
 name = "vak-ooxml"
 version = "5.2.8"
 dependencies = [
+ "base64 0.22.1",
+ "chrono",
  "quick-xml",
  "serde",
  "serde_json",
@@ -7764,7 +7766,9 @@ dependencies = [
 name = "vak-pdf"
 version = "5.2.8"
 dependencies = [
+ "base64 0.22.1",
  "flate2",
+ "png 0.17.16",
  "serde",
  "serde_json",
  "vak-pdf",

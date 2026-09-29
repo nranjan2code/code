@@ -1,6 +1,6 @@
 # 77 — PDF documents: reader, writer, review and shared drafts
 
-Status: **shipped 2026-09-27.** The reader, the writer, Review with choices, shared drafts, the verifier, the inbox, citations and the CLI. What is not built is listed under "Deferred until asked" with the reason.
+Status: **shipped 2026-09-29.** The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped.
 
 ## Owner direction
 
@@ -12,7 +12,7 @@ A PDF is the document people most often send an Agent. Before this, a PDF that a
 
 ## Decisions
 
-- **D1 — our own engine.** `crates/vak-pdf` is written from ISO 32000-2 with no PDF library beneath it and no other vak crate as a dependency, so it can be tested and fuzzed alone. Its one outside dependency is `flate2` for zlib, pinned and already in the tree through `zip`. The old verifier moved onto it and `lopdf` left the workspace (invariant 30).
+- **D1 — our own engine.** `crates/vak-pdf` is written from ISO 32000-2 with no PDF library beneath it and no other vak crate as a dependency, so it can be tested and fuzzed alone. Its outside dependencies are `flate2` for zlib and `png` for bounded authoring decode; JPEG image bytes use the standard DCT stream and are not decoded. The old verifier moved onto it and `lopdf` left the workspace (invariant 30).
 - **D2 — worker only.** Every call site runs the engine inside the broker worker (invariant 14): `doc_read` and `office_apply` are worker tools, and review, narrowing, projection, apply and verification are worker tasks. A defect in the engine on some input is caught and reported as a damaged file, never a crash of the worker.
 - **D3 — one loop, not a second one.** A PDF goes through the Office loop's own surfaces: `office_apply` takes a `.pdf` path, the candidate review, narrowing and projection endpoints dispatch on the file's kind, shared drafts hold PDF ops, and `vak office` reads, applies, compares and verifies PDFs. The review, change-list and projection shapes are the Office ones, so one client view draws both.
 - **D4 — bounded.** `vak_pdf::Limits` caps the file (128 MiB), the object count, each decoded stream (64 MiB) and the whole document's decoding (512 MiB, counted as bytes produced), pages read (2,000), lines per page, line length, form nesting, bookmarks and annotations; nesting depths and reference chains are bounded, and cycles are visited once.
@@ -24,10 +24,11 @@ A PDF is the document people most often send an Agent. Before this, a PDF that a
 - **D10 — what an edit may be.** A replaced line is drawn in Helvetica, at the old text's size and place, with the page's own text state put back after it; the old text operations become moves of the same length, so the rest of the page does not shift. Hidden text may be deleted, never rewritten as visible text. A line drawn inside a form XObject is refused, since an edit of the page cannot reach it. New content is set on new A4 pages (the new-document size Word uses) in the styles a new Word document offers, in the standard Helvetica faces with their real widths, so nothing is embedded; text a WinAnsi Helvetica cannot draw is refused by name, never dropped.
 - **D11 — detection by bytes.** `doc_read` routes a file named `.pdf`, or any file that starts `%PDF-`, to the reader; a file named `.pdf` that is not one fails with that reason.
 - **D12 — refusal over half-reading.** An encrypted PDF is refused whole, even one that opens without a password: decryption is not implemented.
+- **D13 — images remain ordinary and extractable.** New PNG and JPEG images are embedded as PDF image XObjects. A visible, searchable `Image description:` caption carries the required alternative text into `doc_read` and RAG projections; image pixels are not OCR-read. Inputs are bounded before decode and nonstandard image types are refused.
 
 ## The op set
 
-The ops a Word document shares keep Word's names and fields: `replace_paragraph_text` and `delete_paragraph` act on one line, `add_paragraph` and `add_table` set new content (after a page, `after: page:3`, or at the end), and `set_title` sets the title. A PDF adds `add_page_break`, `add_comment` and `highlight` on a line (authored by the runtime's Agent id, never a name the model supplies), `fill_field` (text, choice, check box and radio fields; the viewer redraws them), and `rotate_page`, `delete_page` and `move_page`. A new PDF takes only the ops that need no anchor.
+The ops a Word document shares keep Word's names and fields: `replace_paragraph_text` and `delete_paragraph` act on one line, `add_paragraph`, `add_table`, and `add_image` set new content (after a page, `after: page:3`, or at the end), and `set_title` sets the title. PDF image descriptions are printed as searchable captions. A PDF adds `add_chart`, `add_page_break`, `add_comment` and `highlight` on a line (authored by the runtime's Agent id, never a name the model supplies), `fill_field` (text, choice, check box and radio fields; the viewer redraws them), and `rotate_page`, `delete_page` and `move_page`. A new PDF takes only the ops that need no anchor.
 
 ## Review, choices and shared drafts
 
@@ -37,7 +38,7 @@ A shared draft of a PDF holds each revision's steps. PDF anchors are positions, 
 
 ## Layers
 
-- L0: `crates/vak-pdf/src/lexer.rs` (tokens, objects, content operations with byte spans, inline images skipped), `crates/vak-pdf/src/object.rs`, `crates/vak-pdf/src/filter.rs` (Flate, LZW, ASCIIHex, ASCII85, RunLength, PNG and TIFF predictors; image codecs never decoded), and `crates/vak-pdf/src/file.rs` (header, classic tables and cross-reference streams through `/Prev`, hybrid files, object streams, a rebuild by scanning).
+- L0: `crates/vak-pdf/src/lexer.rs` (tokens, objects, content operations with byte spans, inline images skipped), `crates/vak-pdf/src/object.rs`, `crates/vak-pdf/src/filter.rs` (Flate, LZW, ASCIIHex, ASCII85, RunLength, PNG and TIFF predictors; bounded PNG authoring decode), and `crates/vak-pdf/src/file.rs` (header, classic tables and cross-reference streams through `/Prev`, hybrid files, object streams, a rebuild by scanning).
 - L1: `crates/vak-pdf/src/text.rs`, `crates/vak-pdf/src/font.rs` and `crates/vak-pdf/src/content.rs` (encodings, ToUnicode CMaps, fonts, and the interpreter, which also records where each line is and which operations drew it).
 - L2: `crates/vak-pdf/src/read.rs` (the anchored read projection, outline, information and inspection) and `crates/vak-pdf/src/projection.rs` (the page-by-page units a client draws).
 - L3: `crates/vak-pdf/src/edit.rs` (the op engine), with `crates/vak-pdf/src/write.rs` (the clean whole-file writer) and `crates/vak-pdf/src/layout.rs` (setting new content, with bookmarks for headings).
@@ -59,6 +60,7 @@ A shared draft of a PDF holds each revision's steps. PDF anchors are positions, 
 
 - **Encrypted files.** RC4 and AES need primitives the tree does not carry; they are refused with the reason.
 - **Scans.** A page with images and no text layer is named as likely a scan; there is no OCR, and a deleted line removes text, not an image of text.
+- **Reading image pixels.** Added images have an extractable alternative-text caption. Existing image contents are not OCR'd or otherwise understood.
 - **Layout.** Text keeps content-stream order; multi-column reading order and tables as grids are not reconstructed.
 - **Fonts.** A Type0 font with neither a ToUnicode map nor a Unicode CMap, and a symbol font with no `/Differences`, give no way to turn glyphs into letters. Writing uses the standard Helvetica faces, so only WinAnsi (Latin) text can be written, and a replaced line may not match the document's own font.
 - **Deeper edits.** Lines inside form XObjects, true redaction of images, bookmarks for content added to an existing PDF, and page operations on a document with more pages than were read.

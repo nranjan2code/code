@@ -7,10 +7,11 @@
 //! mounts document markup; everything it draws is text with anchors and
 //! labels (O6).
 
+use chrono::{Duration, NaiveDate};
 use serde::Serialize;
 
 use crate::package::{Conformance, Package, Vocabulary};
-use crate::read::{Document, Unit};
+use crate::read::{CellStyle, Document, SheetGeometry, TableStyleRange, Unit, UnitKind};
 use crate::{Error, Limits};
 
 /// A page's default size, well inside the worker protocol's limit even
@@ -37,6 +38,16 @@ pub struct Projection {
     /// Where the next page starts; absent on the last page.
     pub next: Option<usize>,
     pub units: Vec<Unit>,
+    /// Visual-only XLSX formatting for cells on this page. Kept separate from
+    /// each unit's readable values so extraction and RAG stay content-first.
+    pub cell_styles: std::collections::HashMap<String, CellStyle>,
+    /// Native Excel table boundaries and banding hints for the sheet grid.
+    pub table_styles: Vec<TableStyleRange>,
+    /// Formatted cell text for the Canvas. Raw values remain in `units` for
+    /// extraction, citations, and RAG.
+    pub display_values: std::collections::HashMap<String, String>,
+    /// Bounded visual sizing metadata for rows and columns on this page's sheets.
+    pub sheet_geometry: SheetGeometry,
     /// What this reader does not show yet, so an omission is never read as
     /// absence.
     pub not_read: Vec<&'static str>,
@@ -73,6 +84,95 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
             unit.clone()
         });
     }
+    let visible_cells: std::collections::HashSet<String> = units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::SheetRow)
+        .flat_map(|unit| {
+            let sheet = unit.anchor.rsplit_once('!').map(|(sheet, _)| sheet);
+            unit.cells
+                .iter()
+                .filter_map(move |(cell, _)| sheet.map(|sheet| format!("{sheet}!{cell}")))
+        })
+        .collect();
+    let cell_styles = document
+        .cell_styles
+        .iter()
+        .filter_map(|(address, style)| {
+            visible_cells
+                .contains(address)
+                .then(|| (address.clone(), style.clone()))
+        })
+        .collect();
+    let visible_sheets: std::collections::HashSet<String> = units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::SheetRow)
+        .filter_map(|unit| {
+            unit.anchor
+                .rsplit_once('!')
+                .map(|(sheet, _)| sheet.to_string())
+        })
+        .collect();
+    let table_styles = document
+        .table_styles
+        .iter()
+        .filter(|style| visible_sheets.contains(style.sheet_anchor.trim_end_matches('!')))
+        .cloned()
+        .collect();
+    let display_values = units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::SheetRow)
+        .flat_map(|unit| {
+            let sheet = unit.anchor.rsplit_once('!').map(|(sheet, _)| sheet);
+            unit.cells.iter().filter_map(move |(cell, value)| {
+                let address = format!("{}!{cell}", sheet?);
+                let format = document
+                    .cell_styles
+                    .get(&address)?
+                    .number_format
+                    .as_deref()?;
+                let shown = format_excel_number(value, format)?;
+                (shown != *value).then_some((address, shown))
+            })
+        })
+        .collect();
+    let sheet_geometry = SheetGeometry {
+        default_column_widths: document
+            .sheet_geometry
+            .default_column_widths
+            .iter()
+            .filter(|(sheet, _)| visible_sheets.contains(*sheet))
+            .map(|(sheet, width)| (sheet.clone(), *width))
+            .collect(),
+        default_row_heights: document
+            .sheet_geometry
+            .default_row_heights
+            .iter()
+            .filter(|(sheet, _)| visible_sheets.contains(*sheet))
+            .map(|(sheet, height)| (sheet.clone(), *height))
+            .collect(),
+        column_widths: document
+            .sheet_geometry
+            .column_widths
+            .iter()
+            .filter(|(key, _)| {
+                visible_sheets
+                    .iter()
+                    .any(|sheet| key.starts_with(&format!("{sheet}!")))
+            })
+            .map(|(key, width)| (key.clone(), *width))
+            .collect(),
+        row_heights: document
+            .sheet_geometry
+            .row_heights
+            .iter()
+            .filter(|(key, _)| {
+                visible_sheets
+                    .iter()
+                    .any(|sheet| key.starts_with(&format!("{sheet}!")))
+            })
+            .map(|(key, height)| (key.clone(), *height))
+            .collect(),
+    };
     Projection {
         vocabulary: inspection.format.vocabulary,
         kind: inspection.format.vocabulary.label(),
@@ -98,7 +198,102 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
         from,
         next,
         units,
+        cell_styles,
+        table_styles,
+        display_values,
+        sheet_geometry,
         not_read: document.not_read.clone(),
+    }
+}
+
+fn format_excel_number(raw: &str, format: &str) -> Option<String> {
+    let value = raw.parse::<f64>().ok()?;
+    if format.contains('%') {
+        let decimals = format
+            .split_once('.')
+            .map(|(_, tail)| {
+                tail.chars()
+                    .take_while(|ch| *ch == '0' || *ch == '#')
+                    .count()
+            })
+            .unwrap_or(0);
+        return Some(format!("{:.*}%", decimals.min(8), value * 100.0));
+    }
+    if format.contains('y') || format.contains('d') || format.contains('m') {
+        let days = value.floor() as i64;
+        let date =
+            NaiveDate::from_ymd_opt(1899, 12, 30)?.checked_add_signed(Duration::days(days))?;
+        let fmt = if format.contains("yyyy") {
+            "%Y-%m-%d"
+        } else if format.contains("mmm") {
+            "%d-%b-%y"
+        } else if format.contains("m/d") || format.contains("mm/dd") {
+            "%-m/%-d/%y"
+        } else {
+            "%-m/%-d/%y"
+        };
+        return Some(date.format(fmt).to_string());
+    }
+    if format == "General" || format == "@" || format.contains('E') || format.contains('/') {
+        return None;
+    }
+    let decimals = format
+        .split_once('.')
+        .map(|(_, tail)| {
+            tail.chars()
+                .take_while(|ch| *ch == '0' || *ch == '#')
+                .count()
+        })
+        .unwrap_or(0)
+        .min(8);
+    let grouping = format.contains(',');
+    let symbol = format
+        .chars()
+        .find(|ch| !ch.is_ascii_alphanumeric() && !"#0?,.;()_- ".contains(*ch));
+    let negative = value < 0.0;
+    let absolute = format!("{:.*}", decimals, value.abs());
+    let (whole, fraction) = absolute.split_once('.').unwrap_or((&absolute, ""));
+    let grouped = if grouping {
+        let mut out = String::new();
+        for (index, ch) in whole.chars().rev().enumerate() {
+            if index > 0 && index % 3 == 0 {
+                out.push(',');
+            }
+            out.push(ch);
+        }
+        out.chars().rev().collect::<String>()
+    } else {
+        whole.to_string()
+    };
+    let number = if decimals == 0 {
+        grouped
+    } else {
+        format!("{grouped}.{fraction}")
+    };
+    let currency = symbol.map(|ch| format!("{ch}{number}")).unwrap_or(number);
+    Some(if negative {
+        format!("-{currency}")
+    } else {
+        currency
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_excel_number;
+
+    #[test]
+    fn formats_common_excel_values_for_canvas() {
+        assert_eq!(format_excel_number("0.25", "0%"), Some("25%".into()));
+        assert_eq!(
+            format_excel_number("1234.5", "#,##0.00"),
+            Some("1,234.50".into())
+        );
+        assert_eq!(
+            format_excel_number("45292", "m/d/yy"),
+            Some("1/1/24".into())
+        );
+        assert_eq!(format_excel_number("1234.5", "General"), None);
     }
 }
 

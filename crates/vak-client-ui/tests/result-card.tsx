@@ -39,6 +39,9 @@ const timeline: OutputTimeline = { schema_version: 2, session_id: sid, diagnosti
   user("t4", "Write the notes as a document.", ago(50)),
   answer("t4", "I saved the notes.", ago(50)),
   file("t4", "f4", "notes.docx", "notes.docx", ago(50), { state: "in_folder" }),
+  file("t4", "f4x", "budget.xlsx", "budget.xlsx", ago(49), { state: "in_folder" }),
+  file("t4", "f4y", "brief.pptx", "brief.pptx", ago(48), { state: "in_folder" }),
+  file("t4", "f4z", "handout.pdf", "handout.pdf", ago(47), { state: "in_folder" }),
   user("t5", "Export both lists.", ago(1)),
   answer("t5", "Both lists are ready for review.", ago(1)),
   file("t5", "f5a", "guests.csv", ".vak/scratch/vak/exec-5/guests.csv", ago(1), { state: "draft", version: 1 }, "exec-5"),
@@ -69,7 +72,7 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   await sleep(1200);
   const passed: string[] = [];
   const cards = [...document.querySelectorAll<HTMLElement>(".result-card")];
-  passed.push(assert(cards.length === 6, `six file cards (${cards.length})`));
+  passed.push(assert(cards.length === 9, `nine file cards (${cards.length})`));
   passed.push(assert(card("isolated-review.html").innerText.includes("Draft, version 2, waiting for your review"), "the draft says its version and that it waits for review"));
   passed.push(assert(card("isolated-review.html").innerText.includes("your folder hasn't changed yet"), "the draft says the folder has not changed"));
   const primaries = [...document.querySelectorAll(".result-card .btn.primary")];
@@ -79,6 +82,9 @@ const assert = (condition: unknown, message: string) => { if (!condition) throw 
   passed.push(assert(card("isolated-review.html").querySelector("iframe")?.getAttribute("sandbox") === "allow-scripts", "the preview frame is sandboxed"));
   passed.push(assert(card("chart.svg").innerText.includes("Accepted, version 3") && card("chart.svg").querySelector("img"), "an accepted image shows its picture and status"));
   passed.push(assert(card("notes.docx").innerText.includes("Saved in your folder") && !card("notes.docx").innerText.includes("Review changes"), "a file saved straight to the folder has no review"));
+  passed.push(assert(card("budget.xlsx").querySelector(".result-card-file-icon.sheet")?.getAttribute("aria-hidden") === "true", "a spreadsheet gets a compact sheet icon"));
+  passed.push(assert(card("brief.pptx").querySelector(".result-card-file-icon.slides"), "a presentation gets a slide icon"));
+  passed.push(assert(card("handout.pdf").querySelector(".result-card-file-icon.pdf"), "a PDF gets a PDF icon"));
   passed.push(assert(!/\d\s*(bytes|KB|MB)\b/.test(document.body.innerText), "no size shows in everyday view"));
   passed.push(assert(card("isolated-review.html").innerText.includes("Ask for changes"), "a single file's card carries Ask for changes"));
   const multi = card("guests.csv").closest(".primary-result")!;

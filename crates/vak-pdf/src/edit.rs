@@ -95,6 +95,21 @@ pub enum PdfOp {
         #[serde(default)]
         header: Option<bool>,
     },
+    /// A simple vector bar chart with a text title and labeled values.
+    /// The writer includes the source rows as a searchable table beneath
+    /// the vector chart; charts themselves are drawings in PDF.
+    AddChart {
+        title: String,
+        categories: Vec<String>,
+        values: Vec<f64>,
+        #[serde(default)]
+        after: Option<String>,
+    },
+    AddImage {
+        image: PdfImage,
+        #[serde(default)]
+        after: Option<String>,
+    },
     AddPageBreak {
         #[serde(default)]
         after: Option<String>,
@@ -132,6 +147,14 @@ pub enum PdfOp {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PdfImage {
+    pub mime_type: String,
+    pub data: String,
+    pub alt_text: String,
+}
+
 fn shorten(text: &str) -> String {
     let text = text.trim();
     if text.chars().count() <= 60 {
@@ -148,6 +171,8 @@ impl PdfOp {
             PdfOp::DeleteParagraph { .. } => "delete_paragraph",
             PdfOp::AddParagraph { .. } => "add_paragraph",
             PdfOp::AddTable { .. } => "add_table",
+            PdfOp::AddChart { .. } => "add_chart",
+            PdfOp::AddImage { .. } => "add_image",
             PdfOp::AddPageBreak { .. } => "add_page_break",
             PdfOp::SetTitle { .. } => "set_title",
             PdfOp::AddComment { .. } => "add_comment",
@@ -168,6 +193,8 @@ impl PdfOp {
             PdfOp::DeleteParagraph { anchor } => format!("Delete {anchor}"),
             PdfOp::AddParagraph { text, .. } => format!("Add “{}”", shorten(text)),
             PdfOp::AddTable { rows, .. } => format!("Add a table of {} rows", rows.len()),
+            PdfOp::AddChart { title, .. } => format!("Add chart “{}”", shorten(title)),
+            PdfOp::AddImage { image, .. } => format!("Add image: {}", shorten(&image.alt_text)),
             PdfOp::AddPageBreak { .. } => "Start a new page".into(),
             PdfOp::SetTitle { title } => format!("Set the title to “{}”", shorten(title)),
             PdfOp::AddComment { anchor, text } => {
@@ -205,6 +232,8 @@ impl PdfOp {
             }
             PdfOp::AddParagraph { after, .. }
             | PdfOp::AddTable { after, .. }
+            | PdfOp::AddChart { after, .. }
+            | PdfOp::AddImage { after, .. }
             | PdfOp::AddPageBreak { after } => {
                 vec![format!(
                     "new pages after {}",
@@ -220,6 +249,8 @@ impl PdfOp {
         match self {
             PdfOp::AddParagraph { after, .. }
             | PdfOp::AddTable { after, .. }
+            | PdfOp::AddChart { after, .. }
+            | PdfOp::AddImage { after, .. }
             | PdfOp::AddPageBreak { after } => Some(after.as_deref()),
             _ => None,
         }
@@ -248,6 +279,28 @@ impl PdfOp {
                     .collect(),
                 header: header.unwrap_or(true),
             })),
+            PdfOp::AddChart {
+                title,
+                categories,
+                values,
+                ..
+            } => Some(
+                Block::Chart {
+                    title: title.clone(),
+                    categories: categories.clone(),
+                    values: values.clone(),
+                }
+                .validate()
+                .map_err(|message| message),
+            ),
+            PdfOp::AddImage { image, .. } => Some(
+                Block::Image {
+                    data: image.data.as_bytes().to_vec(),
+                    mime_type: image.mime_type.clone(),
+                    alt_text: image.alt_text.clone(),
+                }
+                .validate(),
+            ),
             PdfOp::AddPageBreak { .. } => Some(Ok(Block::PageBreak)),
             _ => None,
         }
@@ -478,17 +531,50 @@ fn add_pages(
     laid: &[layout::Laid],
     parent: u32,
     size: [f64; 2],
-    resources: u32,
+    fonts: Option<&Dict>,
 ) -> (Vec<u32>, Vec<PlacedHeading>) {
     let mut pages = Vec::new();
     let mut headings = Vec::new();
     for page in laid {
         let content = objects.add_stream(Dict::default(), &page.content);
+        let mut resource_dict = Dict::default();
+        if let Some(fonts) = fonts {
+            resource_dict
+                .0
+                .push((b"Font".to_vec(), Object::Dict(fonts.clone())));
+        }
+        if !page.images.is_empty() {
+            let mut xobjects = Dict::default();
+            for image in &page.images {
+                let mut dict = Dict(vec![
+                    (b"Type".to_vec(), name(b"XObject")),
+                    (b"Subtype".to_vec(), name(b"Image")),
+                    (b"Width".to_vec(), Object::Int(image.width as i64)),
+                    (b"Height".to_vec(), Object::Int(image.height as i64)),
+                    (b"ColorSpace".to_vec(), name(b"DeviceRGB")),
+                    (b"BitsPerComponent".to_vec(), Object::Int(8)),
+                ]);
+                if image.jpeg {
+                    dict.0.push((b"Filter".to_vec(), name(b"DCTDecode")));
+                }
+                let object = if image.jpeg {
+                    objects.add_encoded_stream(dict, &image.data)
+                } else {
+                    objects.add_stream(dict, &image.data)
+                };
+                xobjects
+                    .0
+                    .push((image.name.clone(), Object::Ref(object, 0)));
+            }
+            resource_dict
+                .0
+                .push((b"XObject".to_vec(), Object::Dict(xobjects)));
+        }
         let number = objects.add(Object::Dict(Dict(vec![
             (b"Type".to_vec(), name(b"Page")),
             (b"Parent".to_vec(), Object::Ref(parent, 0)),
             (b"MediaBox".to_vec(), numbers(&[0.0, 0.0, size[0], size[1]])),
-            (b"Resources".to_vec(), Object::Ref(resources, 0)),
+            (b"Resources".to_vec(), Object::Dict(resource_dict)),
             (b"Contents".to_vec(), Object::Ref(content, 0)),
         ])));
         for (level, title, top) in &page.headings {
@@ -540,12 +626,8 @@ fn create(ops: &[PdfOp], context: &EditContext, limits: Limits) -> Result<Applie
     let laid = layout::lay_out(&blocks, layout::A4).or_else(|message| fail(None, message))?;
     let mut objects = Objects::new(&[]);
     let fonts = add_fonts(&mut objects);
-    let resources = objects.add(Object::Dict(Dict(vec![(
-        b"Font".to_vec(),
-        Object::Dict(fonts),
-    )])));
     let tree = objects.add(Object::Null);
-    let (pages, headings) = add_pages(&mut objects, &laid, tree, layout::A4, resources);
+    let (pages, headings) = add_pages(&mut objects, &laid, tree, layout::A4, Some(&fonts));
     objects.set(
         tree,
         Object::Dict(Dict(vec![
@@ -644,7 +726,16 @@ fn check_text(block: &Block) -> Result<(), String> {
             .iter()
             .flatten()
             .try_for_each(|cell| layout::encode(cell).map(|_| ())),
+        Block::Chart {
+            title, categories, ..
+        } => {
+            layout::encode(title)?;
+            categories
+                .iter()
+                .try_for_each(|label| layout::encode(label).map(|_| ()))
+        }
         Block::PageBreak => Ok(()),
+        Block::Image { .. } => Ok(()),
     }
 }
 
@@ -665,33 +756,48 @@ fn confirm_blocks(
         .join(" ");
     let squashed: String = text.split_whitespace().collect();
     for block in blocks {
-        let expected = match block {
-            Block::Paragraph { text, .. } => text.clone(),
+        let expected: Vec<String> = match block {
+            Block::Paragraph { text, .. } => vec![text.clone()],
             Block::Table { rows, .. } => rows
                 .first()
                 .and_then(|row| row.first())
                 .cloned()
-                .unwrap_or_default(),
+                .map_or_else(Vec::new, |cell| vec![cell]),
+            Block::Chart {
+                title,
+                categories,
+                values,
+            } => std::iter::once(title.clone())
+                .chain(
+                    categories
+                        .iter()
+                        .zip(values)
+                        .map(|(category, value)| format!("{category} {value}")),
+                )
+                .collect(),
             Block::PageBreak => continue,
+            Block::Image { alt_text, .. } => vec![format!("Image description: {alt_text}")],
         };
-        let expected: String = expected
-            .split_whitespace()
-            .take(4)
-            .collect::<String>()
-            .replace(['\u{2192}'], "->");
-        let expected: String = expected
-            .chars()
-            .filter(|character| character.is_ascii_alphanumeric())
-            .collect();
         let found: String = squashed
             .chars()
             .filter(|character| character.is_ascii_alphanumeric())
             .collect();
-        if !expected.is_empty() && !found.contains(&expected) {
-            return fail(
-                None,
-                "the written PDF did not read back with the new content; nothing was written",
-            );
+        for expected in expected {
+            let expected: String = expected
+                .split_whitespace()
+                .take(8)
+                .collect::<String>()
+                .replace(['\u{2192}'], "->");
+            let expected: String = expected
+                .chars()
+                .filter(|character| character.is_ascii_alphanumeric())
+                .collect();
+            if !expected.is_empty() && !found.contains(&expected) {
+                return fail(
+                    None,
+                    "the written PDF did not read back with the new content; nothing was written",
+                );
+            }
         }
     }
     Ok(())
@@ -1015,11 +1121,7 @@ fn edit(
     let fonts = if flows.is_empty() {
         None
     } else {
-        let fonts = add_fonts(&mut objects);
-        Some(objects.add(Object::Dict(Dict(vec![(
-            b"Font".to_vec(),
-            Object::Dict(fonts),
-        )]))))
+        Some(add_fonts(&mut objects))
     };
     let tree = match base
         .file
@@ -1041,7 +1143,7 @@ fn edit(
             None => base.details.last().map_or(layout::A4, page_size),
         };
         let laid = layout::lay_out(blocks, size).or_else(|message| fail(None, message))?;
-        let (pages, _) = add_pages(&mut objects, &laid, tree, size, fonts.unwrap_or(0));
+        let (pages, _) = add_pages(&mut objects, &laid, tree, size, fonts.as_ref());
         let slots: Vec<Slot> = pages.into_iter().map(Slot::New).collect();
         let position = match after {
             Some(page) => match order.iter().position(|slot| *slot == Slot::Base(*page)) {

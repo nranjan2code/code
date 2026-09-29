@@ -11,7 +11,7 @@ use crate::broker::{OfficeLineage, OfficeOrigin, OfficeView};
 use crate::office_apply::{sha256_hex, write_atomically};
 
 /// The ops a PDF takes, as the tool names them.
-pub(crate) const OPS: &str = "replace_paragraph_text, delete_paragraph, add_paragraph, add_table, add_page_break, set_title, add_comment, highlight, fill_field, rotate_page, delete_page and move_page";
+pub(crate) const OPS: &str = "replace_paragraph_text, delete_paragraph, add_paragraph, add_table, add_image, add_chart, add_page_break, set_title, add_comment, highlight, fill_field, rotate_page, delete_page and move_page";
 
 pub(crate) fn context(author: &str) -> vak_pdf::edit::EditContext {
     vak_pdf::edit::EditContext {
@@ -389,6 +389,7 @@ mod tests {
                 base_digest: sha256_hex(&vak_pdf::fixtures::report())[..16].to_string(),
             },
             ops: Vec::new(),
+            planned_ops: Vec::new(),
             pdf: vec![ops],
             author: "vak".into(),
             new_file: false,

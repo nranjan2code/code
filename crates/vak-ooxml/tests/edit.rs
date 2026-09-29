@@ -407,6 +407,9 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
             layout: "title and content".into(),
             after: Some("slide:256".into()),
             placeholders,
+            tables: BTreeMap::new(),
+            charts: BTreeMap::new(),
+            images: BTreeMap::new(),
             notes: None,
         }],
     )
@@ -446,6 +449,9 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
             layout: "Blank".into(),
             after: None,
             placeholders: BTreeMap::new(),
+            tables: BTreeMap::new(),
+            charts: BTreeMap::new(),
+            images: BTreeMap::new(),
             notes: None,
         }],
     )
@@ -460,6 +466,9 @@ fn a_slide_from_a_template_layout_fills_its_placeholders() {
             layout: "Title Slide".into(),
             after: None,
             placeholders: BTreeMap::from([("body".to_string(), TextValue::One("x".into()))]),
+            tables: BTreeMap::new(),
+            charts: BTreeMap::new(),
+            images: BTreeMap::new(),
             notes: None,
         }],
     )
@@ -777,6 +786,9 @@ fn several_slide_list_ops_in_one_call_are_checked_against_the_order_they_leave()
         layout: "Title Slide".into(),
         after: None,
         placeholders: BTreeMap::from([("title".to_string(), TextValue::One(title.into()))]),
+        tables: BTreeMap::new(),
+        charts: BTreeMap::new(),
+        images: BTreeMap::new(),
         notes: None,
     };
     let applied = apply(

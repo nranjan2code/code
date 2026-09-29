@@ -699,6 +699,85 @@ pub(super) fn add_paragraph<R: Read + Seek>(
     })
 }
 
+pub(super) fn add_image<R: Read + Seek>(
+    work: &mut Work<'_, R>,
+    context: &EditContext,
+    image: &super::SlideImage,
+    after: Option<&str>,
+) -> Result<Outcome, EditError> {
+    if work.strict() {
+        return fail("adding an image to a Strict document is not supported yet");
+    }
+    let (image_bytes, pixel_width, pixel_height) = super::deck::validate_image(image)?;
+    let doc = load(work)?;
+    let (at, _) = insertion_point(&doc, after)?;
+    if let Some(anchor) = after
+        && inside(&doc, find(&doc, anchor)?, "tbl")
+    {
+        return fail(format!(
+            "{anchor} is inside a table; name a paragraph outside any table, or leave out after to add the image at the end"
+        ));
+    }
+    let extension = if image.mime_type == "image/png" {
+        ".png"
+    } else {
+        ".jpg"
+    };
+    let media = super::free_part_name(work, "word/media/image", extension);
+    work.put(&media, image_bytes);
+    work.set_override(&media, &image.mime_type)?;
+    let relationship = work.add_relationship(
+        &doc.part,
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image",
+        &media,
+    )?;
+
+    let text_width_emu = i64::from(text_width(&doc)) * 635;
+    let max_height_emu = 6 * 914_400_i64;
+    let scale = (text_width_emu as f64 / f64::from(pixel_width))
+        .min(max_height_emu as f64 / f64::from(pixel_height));
+    let width = (f64::from(pixel_width) * scale).round() as i64;
+    let height = (f64::from(pixel_height) * scale).round() as i64;
+    let w = doc.w.clone();
+    let picture_id = doc
+        .tree
+        .descendants(0, "docPr")
+        .filter_map(|node| doc.tree.nodes[node].element.attr("id")?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
+    let drawing = format!(
+        r#"<{w}drawing><wp:inline xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" distT="0" distB="0" distL="0" distR="0"><wp:extent cx="{width}" cy="{height}"/><wp:docPr id="{picture_id}" name="Image {picture_id}" descr="{}"/><wp:cNvGraphicFramePr><a:graphicFrameLocks xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" noChangeAspect="1"/></wp:cNvGraphicFramePr><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="{picture_id}" name="Image {picture_id}" descr="{}"/><pic:cNvPicPr><a:picLocks noChangeAspect="1"/></pic:cNvPicPr></pic:nvPicPr><pic:blipFill><a:blip xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:embed="{relationship}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="{width}" cy="{height}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></{w}drawing>"#,
+        escape_attr(&image.alt_text),
+        escape_attr(&image.alt_text),
+    );
+    let paragraph_id = new_para_ids(&doc, 1).remove(0);
+    let contents = if context.tracked {
+        format!(
+            "<{w}ins{}><{w}r>{drawing}</{w}r></{w}ins>",
+            revision(&doc, next_revision_id(&doc), context)
+        )
+    } else {
+        format!("<{w}r>{drawing}</{w}r>")
+    };
+    let paragraph =
+        format!(r#"<{w}p xmlns:w14="{W14}" w14:paraId="{paragraph_id}">{contents}</{w}p>"#);
+    let mut splice = Splice::default();
+    splice.insert(at, paragraph);
+    work.put(&doc.part, splice.apply(&doc.bytes, &doc.part)?);
+    Ok(Outcome {
+        summary: format!("image@{picture_id} added with alternative text"),
+        expect: vec![
+            Expect::UnitContains {
+                anchor: format!("image@{picture_id}"),
+                needles: vec![image.alt_text.trim().to_string()],
+            },
+            Expect::ParagraphDelta(1),
+        ],
+        created: vec![format!("image@{picture_id}")],
+    })
+}
+
 /// The width text runs across in the document's last section, in twips.
 fn text_width(doc: &Doc) -> u32 {
     let tree = &doc.tree;

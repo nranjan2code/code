@@ -1164,11 +1164,40 @@ export async function narrowSandboxCandidateOffice(sessionId: string, candidateI
  *  sheet row's cells as [address, shown value]. */
 export type OfficeUnit = {
   anchor: string;
-  kind: "heading" | "paragraph" | "table_row" | "comment" | "sheet_row" | "defined_name" | "slide" | "shape" | "notes" | "page";
+  kind: "heading" | "paragraph" | "table_row" | "comment" | "sheet_row" | "defined_name" | "slide" | "shape" | "notes" | "page" | "image";
   level: number;
   text: string;
   labels: string[];
   cells?: [string, string][];
+  /** Word/PowerPoint table row cells, preserving cell text and anchors. */
+  row_cells?: [string, string][][];
+};
+
+export type OfficeMediaPreview = {
+  alt_text: string;
+  object_id: string;
+  mime_type: "image/png" | "image/jpeg";
+  data_url: string;
+  cell?: string;
+  end_cell?: string;
+  width_px?: number;
+  height_px?: number;
+};
+
+export type OfficeCellStyle = {
+  fill_color?: string;
+  font_color?: string;
+  bold: boolean;
+  italic: boolean;
+  number_format?: string;
+};
+
+export type OfficeTableStyleRange = {
+  sheet_anchor: string;
+  range: string;
+  style_name: string | null;
+  show_row_stripes: boolean;
+  show_column_stripes: boolean;
 };
 
 export type OfficeOutlineEntry = { anchor: string; title: string; level: number; first_unit: number; units: number };
@@ -1191,6 +1220,14 @@ export type OfficeProjection = {
   from: number;
   next: number | null;
   units: OfficeUnit[];
+  /** Bounded previews returned by the document worker for the Canvas. */
+  media?: OfficeMediaPreview[];
+  /** Presentation-only cell styles; excluded from the RAG extraction view. */
+  cell_styles?: Record<string, OfficeCellStyle>;
+  table_styles?: OfficeTableStyleRange[];
+  /** Canvas-formatted values; `units` retains the stored values for RAG. */
+  display_values?: Record<string, string>;
+  sheet_geometry?: { default_column_widths: Record<string, number>; default_row_heights: Record<string, number>; column_widths: Record<string, number>; row_heights: Record<string, number> };
   not_read: string[];
   /** The unit a cited anchor named, when the page was asked for `at` one. */
   focus?: string;

@@ -30,11 +30,11 @@ use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
 static DESCRIPTION: LazyLock<String> = LazyLock::new(|| {
     format!(
         "Create, or propose edits to, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace does not change until then. \
-         To create a new file from scratch, give path (a new .docx, .xlsx or .pptx name) and ops, and leave out source and base_digest. A new Word document offers the styles {styles}; add content with add_paragraph and add_table. A new workbook has one empty sheet, {sheet}; use rename_sheet, set_cells, format_cells and set_column_widths. A new deck has the layouts {layouts}; add slides with add_slide_from_layout, with notes if wanted. \
+         To create a new file from scratch, give path (a new .docx, .xlsx or .pptx name) and ops, and leave out source and base_digest. A new Word document offers the styles {styles}; add content with add_paragraph, add_table and add_image. A new workbook has one empty sheet, {sheet}; use rename_sheet, set_cells, format_cells, set_column_widths and add_chart. Charts use a two-column range with a heading row; Excel recalculates formulas when opened. A chart without a cell is placed below its data, moved right or down when needed to keep it clear of images and other new charts. Set cell when the person names a specific chart anchor. Plan image cells and chart cells together because different anchors can still overlap when the objects have width and height. A new deck has the layouts {layouts}; add slides with add_slide_from_layout, with notes, native tables, charts or PNG/JPEG images in a layout placeholder if wanted. PowerPoint charts use standard Open XML chart parts and include cached values for extraction. Images require descriptive alt_text and carry at most 1 MiB of base64 data. \
          To create a file from a template in the workspace, set source to the template, base_digest to its sha256, and path to the new file. \
          To edit a file, read it with doc_read first and pass the sha256 it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, a table cell's paragraph as its row shows it, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits to an existing file become tracked changes; a new file is written clean. \
          Text is plain: Markdown is not interpreted, so headings and lists come from styles. Excel calculates formulas when the file is opened. To keep editing a draft, pass the draft as source with its sha256. Macros are never added or run. A Visio drawing cannot be created or edited: say so, and never build one with a command or script. \
-         A PDF works the same way, created from scratch in the same styles or edited after a doc_read, whose anchors are page:3 and page:3/line:12: replace_paragraph_text and delete_paragraph act on one line (a replaced line is drawn in Helvetica), add_comment and highlight mark a line, fill_field sets a form field, rotate_page, delete_page and move_page rearrange pages, and add_paragraph, add_table and add_page_break set new content on new pages after a page (after: page:3) or at the end. Only Latin text can be written into a PDF.",
+         A PDF works the same way, created from scratch in the same styles or edited after a doc_read, whose anchors are page:3 and page:3/line:12: replace_paragraph_text and delete_paragraph act on one line (a replaced line is drawn in Helvetica), add_comment and highlight mark a line, fill_field sets a form field, rotate_page, delete_page and move_page rearrange pages, and add_paragraph, add_table, add_chart and add_page_break set new content on new pages after a page (after: page:3) or at the end. A PDF chart is drawn as vector bars and automatically includes its category and value table as searchable text. Only Latin text can be written into a PDF.",
         styles = vak_ooxml::blank::DOCUMENT_STYLES.join(", "),
         sheet = vak_ooxml::blank::WORKBOOK_SHEET,
         layouts = vak_ooxml::blank::DECK_LAYOUTS
@@ -122,6 +122,9 @@ impl Tool for OfficeApplyTool {
             return ToolOutput::error("missing required parameter: ops");
         };
         let pdf = vak_pdf::is_pdf_path(path);
+        if let Some(error) = validate_chart_shapes(raw_ops, pdf) {
+            return ToolOutput::error(error);
+        }
         let (ops, pdf_ops): (Vec<vak_ooxml::edit::OfficeOp>, Vec<vak_pdf::edit::PdfOp>) = if pdf {
             match serde_json::from_value(raw_ops.clone()) {
                 Ok(ops) => (Vec::new(), ops),
@@ -293,6 +296,30 @@ impl Tool for OfficeApplyTool {
     }
 }
 
+fn validate_chart_shapes(ops: &Value, pdf: bool) -> Option<String> {
+    let ops = ops.as_array()?;
+    for (index, op) in ops.iter().enumerate() {
+        if op.get("op").and_then(Value::as_str) != Some("add_chart") {
+            continue;
+        }
+        let has_pdf = op.get("categories").is_some() || op.get("values").is_some();
+        let has_excel = op.get("sheet").is_some()
+            || op.get("range").is_some()
+            || op.get("chart_type").is_some();
+        if pdf && (!has_pdf || has_excel) {
+            return Some(format!(
+                "arguments.ops[{index}] for a PDF chart needs categories and values and cannot use sheet, range or chart_type"
+            ));
+        }
+        if !pdf && (!has_excel || has_pdf || op.get("after").is_some()) {
+            return Some(format!(
+                "arguments.ops[{index}] for an Excel chart needs sheet, range and chart_type and cannot use categories, values or after"
+            ));
+        }
+    }
+    None
+}
+
 /// The refusal a text tool gives for an Office file or a PDF: a package is
 /// a ZIP of XML parts and a PDF a binary object graph, so a text read shows
 /// nothing useful and a text edit or write can only fail or destroy one.
@@ -406,6 +433,18 @@ fn op_schemas() -> Value {
             "Word: add a table spanning the page width"
         ),
         op(
+            "add_image",
+            serde_json::json!({ "image": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false }, "after": anchor("paragraph anchor to add the inline image after; omit to add at the end") }),
+            &["image"],
+            "Word: add an inline PNG/JPEG with required alternative text. PDF: add a PNG/JPEG to a new page with a searchable alternative-text caption. Image pixels are not OCR-read by doc_read."
+        ),
+        op(
+            "add_chart",
+            serde_json::json!({ "title": text, "categories": { "type": "array", "items": { "type": "string" }, "description": "PDF only: one short label per value; 1–20 labels" }, "values": { "type": "array", "items": { "type": "number" }, "description": "PDF only: finite numeric values, one per category" }, "sheet": { "type": "string", "description": "Excel only: sheet containing the source data" }, "range": { "type": "string", "description": "Excel only: two columns with a header row and 2–1,000 data rows" }, "chart_type": { "type": "string", "enum": ["bar", "line", "pie"], "description": "Excel only: native chart type" }, "cell": { "type": "string", "description": "Excel only: exact top-left anchor cell, e.g. D2. Omit to place below the source data. Choose a cell outside the source range." }, "after": anchor("PDF only: page anchor, e.g. page:3; omit to add at the end") }),
+            &["title"],
+            "PDF: give categories and values for a vector bar chart with a searchable source table. Excel: give sheet, range and chart_type for a native chart; optionally place it at an exact cell with cell"
+        ),
+        op(
             "delete_paragraph",
             serde_json::json!({ "anchor": anchor("paragraph anchor; in a PDF, a line, e.g. page:3/line:12") }),
             &["anchor"],
@@ -448,10 +487,22 @@ fn op_schemas() -> Value {
             "Excel: set column widths"
         ),
         op(
+            "add_excel_table",
+            serde_json::json!({ "sheet": { "type": "string" }, "range": { "type": "string", "description": "a header row and at least one data row, e.g. A1:C20" }, "name": { "type": "string", "description": "optional unique Excel table name; defaults to a generated name" } }),
+            &["sheet", "range"],
+            "Excel: turn a header and data range into a native, filterable SpreadsheetML table; rows remain available to doc_read and RAG"
+        ),
+        op(
+            "add_excel_image",
+            serde_json::json!({ "sheet": { "type": "string" }, "cell": { "type": "string", "description": "top-left cell for the image, e.g. D2" }, "image": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false } }),
+            &["sheet", "cell", "image"],
+            "Excel: embed a bounded PNG/JPEG picture at a cell with required searchable alternative text"
+        ),
+        op(
             "add_slide_from_layout",
-            serde_json::json!({ "layout": { "type": "string", "description": "layout name, e.g. Title and Content" }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}; a Title Slide has title and subtitle, Two Content has idx:1 and idx:2" }, "notes": { "type": "string", "description": "speaker notes for the slide" } }),
+            serde_json::json!({ "layout": { "type": "string", "description": "layout name, e.g. Title and Content" }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}; a Title Slide has title and subtitle, Two Content has idx:1 and idx:2" }, "tables": { "type": "object", "description": "placeholder to native table rows, e.g. {\"body\": [[\"Region\", \"Sales\"], [\"North\", 120]]}; uses the layout placeholder's position and size; do not also fill that placeholder with text", "additionalProperties": { "type": "array", "items": { "type": "array", "items": { "oneOf": [{"type":"string"},{"type":"number"},{"type":"boolean"}] } } } }, "charts": { "type": "object", "description": "placeholder to native chart; for example {\"body\": {\"title\": \"Daily visitors\", \"chart_type\": \"bar\", \"categories\": [\"Mon\", \"Tue\"], \"values\": [25, 31]}}; standard Open XML chart, and category/value data stays extractable; do not also fill the placeholder with text or a table", "additionalProperties": { "type": "object", "properties": { "title": { "type": "string" }, "chart_type": { "type": "string", "enum": ["bar", "line", "pie"] }, "categories": { "type": "array", "items": { "type": "string" } }, "values": { "type": "array", "items": { "type": "number" } } }, "required": ["title", "chart_type", "categories", "values"], "additionalProperties": false } }, "images": { "type": "object", "description": "placeholder to a PNG/JPEG image, e.g. {\"body\": {\"mime_type\": \"image/png\", \"data\": \"<base64>\", \"alt_text\": \"Blue line chart showing weekly growth\"}}; at most 1 MiB decoded; uses placeholder bounds; do not also fill that placeholder with text, a table or a chart", "additionalProperties": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false } }, "notes": { "type": "string", "description": "speaker notes for the slide" } }),
             &["layout"],
-            "PowerPoint: add a slide from one of the deck's layouts"
+            "PowerPoint: add a slide from one of the deck's layouts, with text placeholders, native tables, native charts or embedded images with alternative text"
         ),
         op(
             "set_placeholder_text",
@@ -556,7 +607,9 @@ pub(crate) fn apply_checked(
                 .map_err(|error| format!("nothing was written: {error}"))?;
             vak_ooxml::edit::check_renumbering(ops, context)
                 .map_err(|error| format!("nothing was written: {error}"))?;
-            let applied = vak_ooxml::edit::apply(&bytes, ops, context, limits, Some(target))
+            let planned = vak_ooxml::edit::plan_chart_locations(ops)
+                .map_err(|error| format!("nothing was written: {}", error.message))?;
+            let applied = vak_ooxml::edit::apply(&bytes, &planned, context, limits, Some(target))
                 .map_err(|error| format!("nothing was written: {error}"))?;
             return Ok((bytes, applied));
         }
@@ -576,7 +629,9 @@ pub(crate) fn apply_checked(
     }
     vak_ooxml::edit::check_renumbering(ops, context)
         .map_err(|error| format!("nothing was written: {error}"))?;
-    let applied = vak_ooxml::edit::apply(&bytes, ops, context, limits, Some(target))
+    let planned = vak_ooxml::edit::plan_chart_locations(ops)
+        .map_err(|error| format!("nothing was written: {}", error.message))?;
+    let applied = vak_ooxml::edit::apply(&bytes, &planned, context, limits, Some(target))
         .map_err(|error| format!("nothing was written: {error}"))?;
     Ok((bytes, applied))
 }
@@ -800,6 +855,24 @@ mod tests {
         crate::validate_input(&schema, &call(valid.clone())).unwrap();
         let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_value(valid).unwrap();
         assert_eq!(ops.len(), 17, "every op the engine has, in the schema");
+
+        for chart in [
+            serde_json::json!({"op":"add_chart","sheet":"Daily","range":"A1:B4","chart_type":"bar","title":"Daily average"}),
+            serde_json::json!({"op":"add_chart","categories":["Mon","Tue"],"values":[4.0,5.0],"title":"Daily average"}),
+        ] {
+            crate::validate_input(&schema, &call(serde_json::json!([chart])))
+                .expect("Excel and PDF chart variants share a valid public schema");
+        }
+        assert!(validate_chart_shapes(
+            &serde_json::json!([{"op":"add_chart","sheet":"Daily","range":"A1:B4","chart_type":"bar","title":"Daily average"}]),
+            false
+        )
+        .is_none());
+        assert!(validate_chart_shapes(
+            &serde_json::json!([{"op":"add_chart","categories":["Mon"],"values":[4.0],"title":"Daily average"}]),
+            true
+        )
+        .is_none());
 
         // The call a model made live: no `op`, and `after` as a boolean.
         let error = crate::validate_input(

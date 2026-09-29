@@ -442,6 +442,7 @@ struct CoreInner {
     /// `vak setup`) is picked up without waiting for pool eviction/restart.
     route_fingerprint: std::sync::Mutex<u64>,
     max_turns_override: std::sync::Mutex<Option<usize>>,
+    bedrock_region_override: std::sync::Mutex<Option<String>>,
     max_turns_runtime_pinned: std::sync::atomic::AtomicBool,
     evidence_max_age_override: std::sync::Mutex<Option<i64>>,
     mode_override: std::sync::Mutex<Option<vak_config::PermissionMode>>,
@@ -1222,6 +1223,7 @@ impl Core {
             route: std::sync::Mutex::new(route),
             route_fingerprint: std::sync::Mutex::new(route_fingerprint),
             max_turns_override: std::sync::Mutex::new(None),
+            bedrock_region_override: std::sync::Mutex::new(None),
             max_turns_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             evidence_max_age_override: std::sync::Mutex::new(None),
             mode_override: std::sync::Mutex::new(None),
@@ -1302,6 +1304,23 @@ impl Core {
 
     pub fn config(&self) -> &vak_config::Config {
         &self.inner.config
+    }
+
+    /// Current Bedrock region, including a live persisted preference refresh.
+    pub fn effective_bedrock_region(&self) -> String {
+        if let Some(url) = vak_config::get_var("VAK_BEDROCK_BASE_URL") {
+            if let Some(region) = url.split('.').nth(1) {
+                return region.to_owned();
+            }
+        }
+        Self::read_override(&self.inner.bedrock_region_override)
+            .unwrap_or_else(|| self.inner.config.bedrock_region.clone())
+    }
+
+    /// Whether a server endpoint override takes precedence over the saved
+    /// region selector. The URL itself is deliberately not exposed to clients.
+    pub fn bedrock_endpoint_is_environment_override(&self) -> bool {
+        vak_config::get_var("VAK_BEDROCK_BASE_URL").is_some()
     }
 
     pub fn effective_work(&self) -> vak_config::WorkResolved {
@@ -2648,6 +2667,10 @@ impl Core {
         Self::write_override(
             &self.inner.evidence_max_age_override,
             Some(config.intent.evidence_max_age_secs),
+        );
+        Self::write_override(
+            &self.inner.bedrock_region_override,
+            Some(config.bedrock_region.clone()),
         );
         if !self
             .inner
@@ -4027,8 +4050,12 @@ impl Core {
             }
             "bedrock" => {
                 let api_key = required_key("AWS_BEARER_TOKEN_BEDROCK", "bedrock")?;
-                let base_url = vak_config::get_var("VAK_BEDROCK_BASE_URL")
-                    .or_else(|| Some("https://bedrock-mantle.us-east-1.api.aws/v1".into()));
+                let base_url = vak_config::get_var("VAK_BEDROCK_BASE_URL").or_else(|| {
+                    Some(format!(
+                        "https://bedrock-mantle.{}.api.aws/v1",
+                        self.effective_bedrock_region()
+                    ))
+                });
                 Ok(ProviderAuth {
                     credential_id: Some(vak_llm::credential_id(
                         base_url.as_deref().unwrap_or_default(),
@@ -8044,6 +8071,27 @@ mod channel_mcp_network_tests {
             Some("https://bedrock-mantle.us-east-1.api.aws/v1")
         );
         assert!(Core::provider_known("bedrock"));
+    }
+
+    #[test]
+    fn saved_bedrock_region_changes_the_live_mantle_endpoint() {
+        vak_config::paths::isolate_home_for_tests();
+        vak_config::set_override("AWS_BEARER_TOKEN_BEDROCK", "bedrock-test-key");
+        let directory = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(directory.path().to_path_buf(), true).unwrap();
+        vak_config::persist_bedrock_region(
+            vak_config::project_path(directory.path()),
+            "ap-south-1",
+        )
+        .unwrap();
+        core.refresh_persisted_preferences().unwrap();
+        let auth = core.provider_auth_for("bedrock").unwrap();
+        vak_config::clear_override("AWS_BEARER_TOKEN_BEDROCK");
+
+        assert_eq!(
+            auth.base_url.as_deref(),
+            Some("https://bedrock-mantle.ap-south-1.api.aws/v1")
+        );
     }
 
     /// Every provider the registry can dispatch to has a name for people,

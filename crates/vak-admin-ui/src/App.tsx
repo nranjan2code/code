@@ -6190,6 +6190,8 @@ export function Settings() {
 
   const [selectedProvider, setSelectedProvider] = createSignal("");
   const [selectedModel, setSelectedModel] = createSignal("");
+  const [bedrockRegionInput, setBedrockRegionInput] = createSignal("us-east-1");
+  const [savingBedrockRegion, setSavingBedrockRegion] = createSignal(false);
   const [discoveredModels, setDiscoveredModels] = createSignal<string[]>([]);
   const [bedrockAvailability, setBedrockAvailability] = createSignal<import("./types").BedrockModelAvailability[]>([]);
   const [loadingModels, setLoadingModels] = createSignal(false);
@@ -6284,6 +6286,7 @@ export function Settings() {
       initializedLayer = selectedLayer;
       setSelectedProvider(selectedLayer.provider || (scope === "project" ? c.provider : ""));
       setSelectedModel(selectedLayer.model || (scope === "project" ? c.model : ""));
+      setBedrockRegionInput(selectedLayer.bedrock_region || c.bedrock_region || "us-east-1");
       setMaxTurnsInput(String(selectedLayer.max_turns ?? (scope === "project" ? c.max_turns : "")));
     }
   });
@@ -6427,6 +6430,26 @@ export function Settings() {
     }
   };
 
+  const saveBedrockRegion = async () => {
+    const region = bedrockRegionInput().trim();
+    if (!/^[a-z]{2,3}(?:-[a-z0-9]+)+-[0-9]+$/.test(region) || savingBedrockRegion()) {
+      pushToast("alert", "Enter a valid AWS region, such as ap-south-1.");
+      return;
+    }
+    setSavingBedrockRegion(true);
+    try {
+      await api.patchConfigScope(configScope(), { bedrock_region: region }, selectedAgentIdOrUndefined());
+      await Promise.all([refetchConfig(), refetchLayer()]);
+      await discover("bedrock");
+      pushToast("info", `Bedrock region saved as ${region}; model list refreshed`);
+    } catch (err) {
+      if (err instanceof AuthRequired) setAuthed(false);
+      else pushToast("alert", `${err}`);
+    } finally {
+      setSavingBedrockRegion(false);
+    }
+  };
+
   const rebuild = async () => {
     setRebuilding(true);
     try {
@@ -6554,6 +6577,39 @@ export function Settings() {
                     </For>
                   </select>
                 </div>
+
+                <Show when={selectedProvider() === "bedrock"}>
+                  <div class="form-row">
+                    <label for="bedrock-region">Amazon Bedrock region</label>
+                    <div style="display:flex; flex-direction:column; gap:8px; width:100%">
+                      <input
+                        id="bedrock-region"
+                        class="mono"
+                        aria-label="Amazon Bedrock region"
+                        placeholder="ap-south-1"
+                        value={bedrockRegionInput()}
+                        disabled={savingBedrockRegion() || config()?.bedrock_region_source === "server environment"}
+                        onInput={(e) => setBedrockRegionInput(e.currentTarget.value)}
+                      />
+                      <p class="dim" style="margin:0">
+                        Used for model discovery, access checks and requests. Mumbai is <code>ap-south-1</code>; N. Virginia is <code>us-east-1</code>.
+                      </p>
+                      <Show when={config()?.bedrock_region_source === "server environment"}>
+                        <p class="dim" role="status" style="margin:0">
+                          <strong>Server setting takes priority.</strong> <code>VAK_BEDROCK_BASE_URL</code> overrides this saved region. Change that server setting to use the selector.
+                        </p>
+                      </Show>
+                      <button
+                        type="button"
+                        class="ghost small"
+                        disabled={savingBedrockRegion() || loadingModels() || config()?.bedrock_region_source === "server environment" || !bedrockRegionInput().trim()}
+                        onClick={() => void saveBedrockRegion()}
+                      >
+                        {savingBedrockRegion() ? "Saving region…" : `Save region and refresh models`}
+                      </button>
+                    </div>
+                  </div>
+                </Show>
 
                 <div class="form-row">
                   <label>Model</label>
@@ -6719,10 +6775,12 @@ export function Settings() {
               <section id="provider-credentials" class="panel">
                 <div class="panel-title-row">
                   <div>
-                    <h2>{selectedProvider() === "ollama" ? "Local model service" : "Provider key"}</h2>
+                    <h2>{selectedProvider() === "ollama" ? "Local model service" : selectedProvider() === "bedrock" ? "Bedrock API key" : "Provider key"}</h2>
                     <p class="dim">
                       {selectedProvider() === "ollama"
                         ? "Ollama does not require an API key. Set its endpoint in workspace settings if it is not running locally."
+                        : selectedProvider() === "bedrock"
+                        ? <>Enter an Amazon Bedrock API key. Vak stores it in the host’s secure credential store; the server’s AWS credentials are used separately to check model permissions.</>
                         : <>Authentication credential for {providerLabel(selectedProvider())}. {configScope() === "user" ? "Saved for every agent" : `Saved for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}`} in the host’s secure credential store and never shown again.</>}
                     </p>
                   </div>
@@ -6732,12 +6790,12 @@ export function Settings() {
                 </div>
                 <Show when={selectedProvider() !== "ollama"}>
                 <div class="form-row">
-                  <label>Provider key</label>
+                  <label>{selectedProvider() === "bedrock" ? "Amazon Bedrock API key" : "Provider key"}</label>
                   <input
                     id="provider-key-entry"
                     type="password"
                     autocomplete="off"
-                    placeholder="sk-… or Bearer token"
+                    placeholder={selectedProvider() === "bedrock" ? "Paste Bedrock API key" : "sk-… or Bearer token"}
                     value={providerKeyInput()}
                     onInput={(e) => setProviderKeyInput(e.currentTarget.value)}
                   />

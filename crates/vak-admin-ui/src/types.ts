@@ -210,6 +210,8 @@ export interface ConfigInfo {
   voice?: { enabled: boolean; provider?: string | null; transcription_model?: string | null; synthesis_model?: string | null; max_session_secs: number; max_concurrent: number; max_audio_bytes: number; source?: string; quota?: { session_seconds: number; concurrent_sessions: number; inbound_audio_bytes: number; scope: string; source?: string } };
   provider: string;
   model: string;
+  bedrock_region?: string;
+  bedrock_region_source?: "saved settings" | "server environment";
   provider_source?: string;
   model_source?: string;
   route_revision?: string;
@@ -800,6 +802,7 @@ export interface ConfigLayer {
   path: string;
   provider?: string | null;
   model?: string | null;
+  bedrock_region?: string | null;
   max_tokens?: number | null;
   max_turns?: number | null;
   permission_mode?: string | null;

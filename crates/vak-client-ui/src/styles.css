@@ -3075,6 +3075,12 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
   border-radius: var(--radius-sm);
   background: var(--surface-hover);
 }
+.result-card-preview-wrap { position: relative; grid-area: preview; align-self: start; }
+.result-card-preview-wrap .result-card-preview { grid-area: auto; }
+.result-card-file-icon { position: absolute; right: 7px; bottom: 7px; display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--accent); background: var(--surface); box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 12%, transparent); }
+.result-card-file-icon.sheet { color: var(--green); }
+.result-card-file-icon.slides { color: var(--yellow); }
+.result-card-file-icon.pdf { color: var(--red); }
 .result-card-page { width: var(--result-page-w); height: var(--result-page-h); overflow: hidden; border-radius: 6px; background: var(--page); box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 12%, transparent); }
 .result-card-page iframe {
   display: block;
@@ -3106,6 +3112,12 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
  * preview, and the actions on their own row. */
 @container (max-width: 520px) {
   .result-card { --result-page-w: 96px; --result-page-h: 72px; --result-page-scale: 0.09375; grid-template-areas: "preview text" "actions actions"; gap: var(--space-1) var(--space-3); padding: var(--space-3); }
+}
+@container (min-width: 720px) {
+  .result-card { --result-page-w: 112px; --result-page-h: 84px; --result-page-scale: 0.109375; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "preview text actions"; align-items: center; gap: var(--space-3); padding: 12px; }
+  .result-card-preview { width: calc(var(--result-page-w) + 2 * var(--space-2)); height: calc(var(--result-page-h) + 2 * var(--space-2)); }
+  .result-card-actions { align-self: center; justify-content: flex-end; padding-top: 0; }
+  .result-card-actions .btn { min-height: 34px; padding: 0 11px; }
 }
 .artifact-canvas-result {
   flex: none;
@@ -6017,6 +6029,23 @@ code.ic[data-previewable="true"]:hover {
 .office-unit .office-unit-heading { font-size: var(--fs-reading); font-weight: 600; }
 .office-unit-comment { margin-left: var(--space-5); border-left: 3px solid var(--border-strong); border-radius: 0 8px 8px 0; background: var(--surface-raised); }
 .office-unit-table_row p { font-family: var(--mono); font-size: var(--fs-meta); }
+.office-chart { width: min(100%, 820px); margin: 10px auto; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.office-chart figcaption { margin-bottom: 12px; color: var(--text); font-size: var(--fs-section); font-weight: 600; }
+.office-chart-bars { display: grid; gap: 10px; max-width: 720px; }
+.office-chart-point { display: grid; grid-template-columns: 44px minmax(48px, 1fr) minmax(80px, 28%); align-items: center; gap: 10px; min-height: 24px; }
+.office-chart-value { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
+.office-chart-track { display: block; height: 14px; overflow: hidden; border-radius: 999px; background: var(--surface-raised); }
+.office-chart-bar { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
+.office-chart-label { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.office-chart-more { color: var(--muted); }
+.office-chart-source { margin-top: 12px; }
+.office-chart-source summary { width: fit-content; color: var(--accent); cursor: pointer; }
+.office-object-position { display: block; margin-top: 3px; color: var(--muted); font-size: var(--fs-meta); font-weight: 400; }
+.office-image { width: min(100%, 420px); margin: 8px auto; padding: 10px; border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
+.office-image img { display: block; max-width: 100%; max-height: 280px; margin: auto; object-fit: contain; }
+.office-image figcaption { margin-top: 8px; color: var(--text-soft); font-size: var(--fs-control); }
+.office-image figcaption p { margin-top: 3px; }
+.office-image-unavailable { display: grid; min-height: 72px; place-items: center; color: var(--muted); background: var(--surface-raised); }
 .office-unit-anchor { display: none; margin-top: 2px; color: var(--muted); font-family: var(--mono); font-size: var(--fs-caption); }
 .office-unit:hover .office-unit-anchor, .office-unit[aria-current="true"] .office-unit-anchor, .office-unit:focus-visible .office-unit-anchor { display: block; }
 .office-unit-kind { display: block; color: var(--muted); font-size: var(--fs-caption); font-weight: 600; }
@@ -6025,6 +6054,10 @@ code.ic[data-previewable="true"]:hover {
 .office-label-stale, .office-label-external { border-color: color-mix(in srgb, var(--yellow) 45%, var(--border-soft)); color: var(--text); }
 .office-label-sensitivity { border-color: var(--border-strong); color: var(--text); }
 .office-slide { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; padding: var(--space-2); border: 1px solid var(--border-soft); border-radius: 10px; background: var(--surface); }
+.office-deck-canvas .office-slide { position: relative; display: block; width: 960px; min-height: 576px; overflow: auto; }
+.office-slide-object { position: absolute; overflow: auto; }
+.office-slide-object > .office-unit, .office-slide-object > .office-unit-table, .office-slide-object > .office-chart, .office-slide-object > .office-image { box-sizing: border-box; width: 100%; height: 100%; min-height: 0; margin: 0; overflow: auto; }
+.office-slide-object > .office-image img { width: 100%; height: calc(100% - 38px); max-height: none; object-fit: contain; }
 .office-presentation-active { position: fixed; inset: 0; z-index: 10000; width: 100vw; height: 100dvh; padding: 0; background: var(--bg); color: var(--text); }
 .office-presentation { min-height: 0; flex: 1; display: flex; flex-direction: column; color: var(--text); background: var(--bg); }
 .office-presentation > header, .office-presentation > footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; color: var(--text-soft); font-size: var(--fs-control); }
@@ -6049,14 +6082,22 @@ code.ic[data-previewable="true"]:hover {
 .office-formula-value { color: var(--text-soft); }
 .office-grid-scroll { min-height: 0; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px; }
 .office-workbook .office-grid-scroll { flex: 1; }
+.office-sheet-canvas { position: relative; display: inline-block; min-width: max(100%, 1000px); min-height: 720px; }
+.office-sheet-object { position: absolute; z-index: 2; }
+.office-sheet-object > .office-chart { width: 100%; height: 100%; box-sizing: border-box; margin: 0; }
+.office-sheet-object > .office-image { position: relative; width: 100%; height: 100%; margin: 0; }
+.office-sheet-object > .office-image img { width: 100%; height: 100%; max-height: 100%; object-fit: contain; }
+.office-image-position-badge { position: absolute; top: 6px; left: 6px; padding: 2px 6px; border: 1px solid var(--border-soft); border-radius: 999px; color: var(--text); background: var(--surface); font-size: var(--fs-caption); }
 .office-grid, .office-table { border-collapse: collapse; font-size: var(--fs-meta); }
 .office-grid th, .office-grid td, .office-table th, .office-table td { padding: var(--space-1) var(--space-2); border: 1px solid var(--border-soft); text-align: left; white-space: nowrap; }
 .office-grid thead th, .office-grid tbody th { position: sticky; background: var(--surface-raised); color: var(--muted); font-weight: 600; }
 .office-grid thead th { top: 0; z-index: 1; }
 .office-grid tbody th { left: 0; }
-.office-grid td { min-width: 64px; cursor: default; }
+.office-grid td { min-width: 96px; cursor: default; }
 .office-grid td[tabindex="0"] { cursor: pointer; }
 .office-grid td.formula { font-style: italic; }
+.office-grid td.office-table-header { background: color-mix(in srgb, var(--accent) 30%, var(--surface)); color: var(--text); font-weight: 700; }
+.office-grid td.office-table-row-band, .office-grid td.office-table-column-band { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
 .office-grid td.stale { background: color-mix(in srgb, var(--yellow) 10%, transparent); }
 .office-grid td.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
 .office-grid td:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

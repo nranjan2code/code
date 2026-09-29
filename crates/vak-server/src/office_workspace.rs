@@ -662,6 +662,12 @@ async fn create_revision(
             Edits::Office(ops) => ops.clone(),
             Edits::Pdf(_) => Vec::new(),
         },
+        planned_ops: match &edits {
+            Edits::Office(ops) => {
+                vak_ooxml::edit::plan_chart_locations(ops).unwrap_or_else(|_| ops.clone())
+            }
+            Edits::Pdf(_) => Vec::new(),
+        },
         author: actor_name.clone(),
         new_file: false,
         pdf: match &edits {
@@ -843,6 +849,8 @@ fn pdf_conflict(
                     | P::MovePage { .. }
                     | P::AddParagraph { .. }
                     | P::AddTable { .. }
+                    | P::AddImage { .. }
+                    | P::AddChart { .. }
                     | P::AddPageBreak { .. }
             )
         })
@@ -895,12 +903,15 @@ fn op_keys(ops: &[vak_ooxml::edit::OfficeOp]) -> Vec<String> {
             | O::SetNotes { anchor, .. }
             | O::DeleteSlide { anchor }
             | O::MoveSlide { anchor, .. } => keys.push(format!("a:{anchor}")),
-            O::AddParagraph { after, .. } | O::AddTable { after, .. } => keys.push(match after {
+            O::AddParagraph { after, .. }
+            | O::AddTable { after, .. }
+            | O::AddImage { after, .. } => keys.push(match after {
                 Some(anchor) => format!("a:{anchor}"),
                 None => "doc:end".into(),
             }),
             O::SetCells { sheet, cells } => {
-                keys.extend(cells.keys().map(|cell| format!("c:{sheet}!{cell}")))
+                keys.extend(cells.keys().map(|cell| format!("c:{sheet}!{cell}")));
+                keys.push(format!("s:{sheet}:table-range"));
             }
             O::AppendRows { sheet, .. } => keys.push(format!("s:{sheet}:rows")),
             O::AddSheet { name: sheet } => keys.push(format!("s:{sheet}:create")),
@@ -908,9 +919,18 @@ fn op_keys(ops: &[vak_ooxml::edit::OfficeOp]) -> Vec<String> {
             O::RenameSheet { sheet, name } => {
                 keys.push(format!("s:{sheet}:create"));
                 keys.push(format!("s:{name}:create"));
+                keys.push(format!("s:{sheet}:charts"));
+                keys.push(format!("s:{sheet}:table-range"));
+                keys.push(format!("s:{name}:charts"));
+                keys.push(format!("s:{name}:table-range"));
             }
             O::FormatCells { sheet, .. } => keys.push(format!("s:{sheet}:format")),
             O::SetColumnWidths { sheet, .. } => keys.push(format!("s:{sheet}:columns")),
+            // A chart reads a source range and adds drawing/package parts. Treat every
+            // chart mutation on this sheet as conflicting with cell edits there.
+            O::AddChart { sheet, .. } => keys.push(format!("s:{sheet}:charts")),
+            O::AddExcelTable { sheet, .. } => keys.push(format!("s:{sheet}:table-range")),
+            O::AddExcelImage { sheet, .. } => keys.push(format!("s:{sheet}:charts")),
             O::AddSlideFromLayout { .. } => keys.push("deck:slides".into()),
             O::SetTitle { .. } => keys.push("meta:title".into()),
         }

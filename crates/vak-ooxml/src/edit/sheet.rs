@@ -3,7 +3,7 @@
 //! reports every cached formula value as stale until then.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{Read, Seek};
+use std::io::{Cursor, Read, Seek};
 
 use super::{CellValue, EditError, Expect, Outcome, Work, fail, free_part_name};
 use crate::read::column_name;
@@ -15,6 +15,18 @@ const R: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relations
 const R_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships";
 const WORKSHEET_TYPE: &str =
     "application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml";
+const DRAWING_TYPE: &str = "application/vnd.openxmlformats-officedocument.drawing+xml";
+const CHART_TYPE: &str = "application/vnd.openxmlformats-officedocument.drawingml.chart+xml";
+const R_DRAWING: &str =
+    "http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing";
+const R_CHART: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart";
+const R_TABLE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/table";
+const R_IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const TABLE_TYPE: &str = "application/vnd.openxmlformats-officedocument.spreadsheetml.table+xml";
+const DRAWING_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing";
+const CHART_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";
+const A_NS: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
+const R_NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const MAX_ROW: u32 = 1_048_576;
 const MAX_COLUMN: u32 = 16_384;
 
@@ -1545,6 +1557,765 @@ pub(super) fn set_column_widths<R2: Read + Seek>(
         }],
         created: Vec::new(),
     })
+}
+
+pub(super) fn add_chart<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet: &str,
+    range: &str,
+    chart_type: &str,
+    title: &str,
+    cell: Option<&str>,
+) -> Result<Outcome, EditError> {
+    if work.strict() {
+        return fail("adding charts to a Strict workbook is not supported yet");
+    }
+    let chart_type = chart_type.trim().to_ascii_lowercase();
+    if !matches!(chart_type.as_str(), "bar" | "line" | "pie") {
+        return fail("chart_type must be bar, line or pie");
+    }
+    if title.trim().is_empty() || title.chars().count() > 200 {
+        return fail("chart title must have 1–200 characters");
+    }
+    let (first, last) = chart_range(range)?;
+    if last.0 != first.0 + 1 || last.1 < first.1 + 2 || last.1 - first.1 > 1000 {
+        return fail("add_chart needs exactly two columns, a header row and 2–1,000 data rows");
+    }
+    let (sheet_part, sheet_name) = sheet_part(work, sheet)?;
+    let (chart_column, chart_row) = match cell {
+        Some(cell) => address(cell)?,
+        None => (first.0, last.1.saturating_add(1)),
+    };
+    if (cell.is_some() || chart_column >= first.0)
+        && chart_column <= last.0
+        && chart_row >= first.1
+        && chart_row <= last.1
+    {
+        return fail(format!(
+            "chart placement {}{} is inside source range {range}; choose a cell outside the data so it stays visible",
+            column_name(chart_column),
+            chart_row
+        ));
+    }
+    let snapshot = work.snapshot()?;
+    let document = crate::read::read(Cursor::new(snapshot), *work.limits())?;
+    let section = document
+        .section(&format!("{sheet_name}!"))
+        .ok_or_else(|| EditError {
+            op: None,
+            message: format!("sheet {sheet_name:?} is missing from the workbook projection"),
+        })?;
+    let mut values = BTreeMap::new();
+    for unit in &document.units[section.units.clone()] {
+        for (address, value) in &unit.cells {
+            values.insert(address.to_ascii_uppercase(), value.clone());
+        }
+    }
+    let category_col = column_name(first.0);
+    let value_col = column_name(last.0);
+    let series_name = values
+        .get(&format!("{value_col}{}", first.1))
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .ok_or_else(|| EditError {
+            op: None,
+            message: format!("{value_col}{} needs a series heading", first.1),
+        })?;
+    let mut categories = Vec::new();
+    let mut numbers = Vec::new();
+    for row in first.1 + 1..=last.1 {
+        let category = values
+            .get(&format!("{category_col}{row}"))
+            .filter(|value| !value.trim().is_empty())
+            .cloned()
+            .ok_or_else(|| EditError {
+                op: None,
+                message: format!("{category_col}{row} needs a category label"),
+            })?;
+        let raw = values
+            .get(&format!("{value_col}{row}"))
+            .ok_or_else(|| EditError {
+                op: None,
+                message: format!("{value_col}{row} needs a numeric value"),
+            })?;
+        let (raw, stale) = cached_cell(raw);
+        let number = raw
+            .parse::<f64>()
+            .ok()
+            .filter(|number| number.is_finite())
+            .ok_or_else(|| EditError {
+                op: None,
+                message: format!("{value_col}{row} is not a readable number: {raw:?}"),
+            })?;
+        categories.push(category);
+        numbers.push((number, stale));
+    }
+    let stale_cache = numbers.iter().any(|(_, stale)| *stale);
+    if stale_cache {
+        return fail(
+            "the source range has stale formula results; open and save the workbook in a spreadsheet app before charting it so the chart and RAG cache agree",
+        );
+    }
+    let numbers: Vec<f64> = numbers.into_iter().map(|(number, _)| number).collect();
+    let chart_part = free_part_name(work, "xl/charts/chart", ".xml");
+    let chart_name = chart_part.rsplit('/').next().unwrap_or("chart1.xml");
+    let chart_id = chart_name
+        .trim_start_matches("chart")
+        .trim_end_matches(".xml")
+        .parse::<u32>()
+        .unwrap_or(1);
+    let chart_rel;
+    let drawing_part = match work.related(&sheet_part, "drawing")? {
+        Some(part) => part,
+        None => free_part_name(work, "xl/drawings/drawing", ".xml"),
+    };
+    let chart_xml = native_chart_xml(
+        &chart_type,
+        title.trim(),
+        &sheet_name,
+        first,
+        last,
+        &series_name,
+        &categories,
+        &numbers,
+        chart_id,
+    );
+    work.put(&chart_part, chart_xml.into_bytes());
+    work.set_override(&chart_part, CHART_TYPE)?;
+    chart_rel = work.add_relationship(&drawing_part, R_CHART, &chart_part)?;
+
+    let anchor = chart_anchor(
+        &chart_rel,
+        usize::try_from(chart_column.saturating_sub(1)).unwrap_or(0),
+        usize::try_from(chart_row.saturating_sub(1)).unwrap_or(0),
+    );
+    if work.exists(&drawing_part) {
+        let bytes = work.get(&drawing_part)?;
+        let tree = Tree::parse(&bytes, &drawing_part, work.limits())?;
+        let mut splice = Splice::default();
+        splice.insert(tree.root().inner.end, anchor);
+        work.put(&drawing_part, splice.apply(&bytes, &drawing_part)?);
+    } else {
+        work.put(
+            &drawing_part,
+            format!(
+                r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="{DRAWING_NS}" xmlns:a="{A_NS}" xmlns:c="{CHART_NS}" xmlns:r="{R_NS}">{anchor}</xdr:wsDr>"#
+            )
+            .into_bytes(),
+        );
+        work.set_override(&drawing_part, DRAWING_TYPE)?;
+        let drawing_rel = work.add_relationship(&sheet_part, R_DRAWING, &drawing_part)?;
+        let sheet_bytes = work.get(&sheet_part)?;
+        let tree = Tree::parse(&sheet_bytes, &sheet_part, work.limits())?;
+        let r = tree.prefix_for(R_NS).unwrap_or_else(|| "r:".into());
+        let drawing_tag = format!("<{r}drawing {r}id=\"{drawing_rel}\"/>");
+        let late = [
+            "legacyDrawing",
+            "legacyDrawingHF",
+            "picture",
+            "oleObjects",
+            "controls",
+            "webPublishItems",
+            "tableParts",
+            "extLst",
+        ];
+        let before = late
+            .iter()
+            .flat_map(|name| tree.children(0, name))
+            .min_by_key(|node| tree.nodes[*node].span.start);
+        let position = before
+            .map(|node| tree.nodes[node].span.start)
+            .unwrap_or(tree.root().inner.end);
+        let mut splice = Splice::default();
+        splice.insert(position, drawing_tag);
+        work.put(&sheet_part, splice.apply(&sheet_bytes, &sheet_part)?);
+    }
+    let chart_anchor = format!(
+        "chart:{chart_name}@{}{}",
+        column_name(chart_column),
+        chart_row
+    );
+    let table_anchor = format!("chart:{chart_name}");
+    let rows = std::iter::once(vec!["Category".to_string(), series_name])
+        .chain(
+            categories
+                .iter()
+                .zip(numbers.iter())
+                .map(|(category, number)| vec![category.clone(), number.to_string()]),
+        )
+        .collect();
+    Ok(Outcome {
+        summary: format!(
+            "{chart_type} chart added to {sheet_name} from {range} at {}{}",
+            column_name(chart_column),
+            chart_row
+        ),
+        expect: vec![Expect::Table {
+            anchor: table_anchor,
+            rows,
+        }],
+        created: vec![chart_anchor],
+    })
+}
+
+/// Choose a chart anchor below its data, moving down before moving sideways
+/// when images or earlier charts in the same edit would cover its 6.67 by
+/// 4-inch drawing area. Images use a conservative 2 by 1.5-inch footprint.
+pub(super) fn chart_cell_avoiding_objects(
+    range: &str,
+    image_cells: &[String],
+    chart_cells: &[String],
+) -> Result<String, EditError> {
+    let (first, last) = chart_range(range)?;
+    let base = (first.0, last.1.saturating_add(1));
+    // The default worksheet grid is 64 px wide by 20 px high. DrawingML
+    // extents are stored in EMUs (96 dpi), so map the actual drawing bounds
+    // onto that grid instead of assuming a fixed cell count.
+    let drawing_columns = emu_cells(6_096_000, 64 * 9_525);
+    let drawing_rows = emu_cells(3_657_600, 20 * 9_525);
+    let image_columns = emu_cells(1_828_800, 64 * 9_525);
+    let image_rows = emu_cells(1_371_600, 20 * 9_525);
+    let images = image_cells
+        .iter()
+        .filter_map(|cell| address(cell).ok())
+        .collect::<Vec<_>>();
+    let charts = chart_cells
+        .iter()
+        .filter_map(|cell| address(cell).ok())
+        .collect::<Vec<_>>();
+    let overlaps = |column: u32, row: u32| {
+        images.iter().any(|(image_column, image_row)| {
+            let image_left = image_column.saturating_sub(1);
+            let chart_left = column.saturating_sub(1);
+            let image_top = image_row.saturating_sub(1);
+            let chart_top = row.saturating_sub(1);
+            chart_left < image_left.saturating_add(image_columns)
+                && image_left < chart_left.saturating_add(drawing_columns)
+                && chart_top < image_top.saturating_add(image_rows)
+                && image_top < chart_top.saturating_add(drawing_rows)
+        }) || charts.iter().any(|(chart_column, chart_row)| {
+            let first_left = chart_column.saturating_sub(1);
+            let second_left = column.saturating_sub(1);
+            let first_top = chart_row.saturating_sub(1);
+            let second_top = row.saturating_sub(1);
+            second_left < first_left.saturating_add(drawing_columns)
+                && first_left < second_left.saturating_add(drawing_columns)
+                && second_top < first_top.saturating_add(drawing_rows)
+                && first_top < second_top.saturating_add(drawing_rows)
+        })
+    };
+    for distance in 0..256u32 {
+        // Keep the chart near its source data and in the visible worksheet
+        // area. Moving down is the least surprising way to clear a nearby
+        // image; searching sideways can put a wide chart beyond the viewport.
+        let down = base.1.saturating_add(distance);
+        if down <= 1_048_576 && !overlaps(base.0, down) {
+            return Ok(format!("{}{}", column_name(base.0), down));
+        }
+        if distance > 0 {
+            let right = base.0.saturating_add(distance);
+            if right <= 16_384 && !overlaps(right, base.1) {
+                return Ok(format!("{}{}", column_name(right), base.1));
+            }
+            let left = base.0.saturating_sub(distance);
+            if left > 0 && !overlaps(left, base.1) {
+                return Ok(format!("{}{}", column_name(left), base.1));
+            }
+        }
+    }
+    fail("could not find a clear default chart position; specify a cell outside the other drawings")
+}
+
+fn emu_cells(extent: u64, cell_extent: u64) -> u32 {
+    extent
+        .saturating_add(cell_extent.saturating_sub(1))
+        .checked_div(cell_extent.max(1))
+        .unwrap_or(1)
+        .max(1)
+        .min(u64::from(u32::MAX)) as u32
+}
+
+/// Adds a native, filterable SpreadsheetML table over an existing cell range.
+pub(super) fn add_excel_table<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet: &str,
+    range: &str,
+    requested_name: Option<&str>,
+) -> Result<Outcome, EditError> {
+    if work.strict() {
+        return fail("adding native tables to a Strict workbook is not supported yet");
+    }
+    let (first, last) = chart_range(range)?;
+    let columns = last.0 - first.0 + 1;
+    let data_rows = last.1 - first.1;
+    if !(1..=64).contains(&columns) || !(1..=10_000).contains(&data_rows) {
+        return fail("add_excel_table needs 1–64 columns, a header row and 1–10,000 data rows");
+    }
+    let (sheet_part, sheet_name) = sheet_part(work, sheet)?;
+    let snapshot = work.snapshot()?;
+    let document = crate::read::read(Cursor::new(snapshot), *work.limits())?;
+    let section = document
+        .section(&format!("{}!", quote_sheet(&sheet_name)))
+        .ok_or_else(|| EditError {
+            op: None,
+            message: format!("sheet {sheet_name:?} is missing"),
+        })?;
+    let cells: BTreeMap<String, String> = document.units[section.units.clone()]
+        .iter()
+        .flat_map(|unit| unit.cells.iter().cloned())
+        .collect();
+    let mut headers = Vec::with_capacity(columns as usize);
+    for column in first.0..=last.0 {
+        let address = format!("{}{ }", column_name(column), first.1).replace(' ', "");
+        let header = cells.get(&address).map(|value| value.trim()).unwrap_or("");
+        if header.is_empty() || header.chars().count() > 255 {
+            return fail(format!(
+                "{address} needs a non-empty table header of at most 255 characters"
+            ));
+        }
+        if headers
+            .iter()
+            .any(|seen: &String| seen.eq_ignore_ascii_case(header))
+        {
+            return fail(format!(
+                "table headers must be unique; {header:?} appears more than once"
+            ));
+        }
+        headers.push(header.to_string());
+    }
+
+    let existing_relations = work.relationships(&sheet_part)?;
+    let mut used_names = BTreeSet::new();
+    let mut next_id = 1u32;
+    let mut occupied = Vec::new();
+    for relation in existing_relations
+        .iter()
+        .filter(|relation| !relation.external && relation.short_kind() == "table")
+    {
+        if let Some(name) = table_attribute(work, &relation.target, "displayName")? {
+            used_names.insert(name.to_ascii_lowercase());
+        }
+        if let Some(id) =
+            table_attribute(work, &relation.target, "id")?.and_then(|id| id.parse::<u32>().ok())
+        {
+            next_id = next_id.max(id.saturating_add(1));
+        }
+        if let Some(reference) = table_attribute(work, &relation.target, "ref")? {
+            occupied.push(reference);
+        }
+    }
+    for existing in occupied {
+        if ranges_overlap(range, &existing)? {
+            return fail(format!(
+                "range {range} overlaps an existing Excel table ({existing})"
+            ));
+        }
+    }
+    let name = if let Some(name) = requested_name {
+        let trimmed = name.trim();
+        if !valid_table_name(trimmed) {
+            return fail(
+                "table name must start with a letter or underscore and contain only letters, digits, underscores or periods",
+            );
+        }
+        trimmed.to_string()
+    } else {
+        let mut number = next_id;
+        loop {
+            let candidate = format!("VakTable{number}");
+            if !used_names.contains(&candidate.to_ascii_lowercase()) {
+                break candidate;
+            }
+            number += 1;
+        }
+    };
+    if used_names.contains(&name.to_ascii_lowercase()) {
+        return fail(format!("Excel table name {name:?} is already in use"));
+    }
+
+    let table_part = free_part_name(work, "xl/tables/table", ".xml");
+    let column_xml = headers
+        .iter()
+        .enumerate()
+        .map(|(i, header)| {
+            format!(
+                r#"<tableColumn id="{}" name="{}"/>"#,
+                i + 1,
+                escape_attr(header)
+            )
+        })
+        .collect::<String>();
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="{next_id}" name="{}" displayName="{}" ref="{}" totalsRowShown="0"><autoFilter ref="{}"/><tableColumns count="{}">{column_xml}</tableColumns><tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/></table>"#,
+        escape_attr(&name),
+        escape_attr(&name),
+        range,
+        range,
+        headers.len()
+    );
+    work.put(&table_part, xml.into_bytes());
+    work.set_override(&table_part, TABLE_TYPE)?;
+    let relationship_id = work.add_relationship(&sheet_part, R_TABLE, &table_part)?;
+    let sheet_bytes = work.get(&sheet_part)?;
+    let tree = Tree::parse(&sheet_bytes, &sheet_part, work.limits())?;
+    let s = prefix(&tree)?;
+    let mut splice = Splice::default();
+    if let Some(parts) = tree.children(0, "tableParts").next() {
+        let node = &tree.nodes[parts];
+        let count = node
+            .element
+            .attr("count")
+            .and_then(|count| count.parse::<usize>().ok())
+            .unwrap_or(0)
+            + 1;
+        let relationship_prefix = tree.prefix_for(R).unwrap_or_else(|| "r:".into());
+        let inner = if node.is_empty_element() {
+            String::new()
+        } else {
+            String::from_utf8_lossy(&sheet_bytes[node.inner.clone()]).into_owned()
+        };
+        splice.replace(node.span.clone(), format!(r#"<{s}tableParts count="{count}">{inner}<{s}tablePart {relationship_prefix}id="{relationship_id}"/></{s}tableParts>"#));
+    } else {
+        let relationship_prefix = tree.prefix_for(R).unwrap_or_else(|| "r:".into());
+        let late = ["extLst"];
+        let before = late
+            .iter()
+            .flat_map(|name| tree.children(0, name))
+            .min_by_key(|node| tree.nodes[*node].span.start);
+        let position = before
+            .map(|node| tree.nodes[node].span.start)
+            .unwrap_or(tree.root().inner.end);
+        splice.insert(position, format!(r#"<{s}tableParts count="1"><{s}tablePart {relationship_prefix}id="{relationship_id}"/></{s}tableParts>"#));
+    }
+    work.put(&sheet_part, splice.apply(&sheet_bytes, &sheet_part)?);
+    let table_rows = (first.1..=last.1)
+        .map(|row| {
+            (first.0..=last.0)
+                .map(|column| {
+                    cells
+                        .get(&format!("{}{}", column_name(column), row))
+                        .cloned()
+                        .unwrap_or_default()
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    Ok(Outcome {
+        summary: format!("native Excel table {name} added to {sheet_name}!{range}"),
+        expect: vec![Expect::Table {
+            anchor: name.clone(),
+            rows: table_rows,
+        }],
+        created: vec![name],
+    })
+}
+
+fn table_attribute<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    part: &str,
+    attribute: &str,
+) -> Result<Option<String>, EditError> {
+    let bytes = work.get(part)?;
+    let tree = Tree::parse(&bytes, part, work.limits())?;
+    Ok(tree
+        .nodes
+        .first()
+        .and_then(|root| root.element.attr(attribute))
+        .map(str::to_string))
+}
+
+fn valid_table_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && (name.as_bytes()[0].is_ascii_alphabetic() || name.starts_with('_'))
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'.')
+        && !name.parse::<u32>().is_ok()
+        && !matches!(name.to_ascii_uppercase().as_str(), "R" | "C")
+        && address(name).is_err()
+}
+
+fn ranges_overlap(left: &str, right: &str) -> Result<bool, EditError> {
+    let (a, b) = chart_range(left)?;
+    let (c, d) = chart_range(right)?;
+    Ok(a.0 <= d.0 && c.0 <= b.0 && a.1 <= d.1 && c.1 <= b.1)
+}
+
+/// Embeds a PNG/JPEG as a cell-anchored SpreadsheetDrawing picture.
+pub(super) fn add_excel_image<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet: &str,
+    cell: &str,
+    image: &super::SlideImage,
+) -> Result<Outcome, EditError> {
+    if work.strict() {
+        return fail("adding images to a Strict workbook is not supported yet");
+    }
+    let (column, row) = address(cell)?;
+    let (sheet_part, sheet_name) = sheet_part(work, sheet)?;
+    let (image_bytes, width, height) = super::deck::validate_image(image)?;
+    let extension = if image.mime_type == "image/png" {
+        ".png"
+    } else {
+        ".jpg"
+    };
+    let media_part = free_part_name(work, "xl/media/image", extension);
+    work.put(&media_part, image_bytes);
+    work.set_override(&media_part, &image.mime_type)?;
+
+    let drawing_part = match work.related(&sheet_part, "drawing")? {
+        Some(part) => part,
+        None => free_part_name(work, "xl/drawings/drawing", ".xml"),
+    };
+    let drawing_relationship = work.add_relationship(&drawing_part, R_IMAGE, &media_part)?;
+    let (picture_id, anchor) = {
+        let bytes = if work.exists(&drawing_part) {
+            work.get(&drawing_part)?
+        } else {
+            Vec::new()
+        };
+        if bytes.is_empty() {
+            (
+                2usize,
+                excel_picture_anchor(
+                    2,
+                    column,
+                    row,
+                    width,
+                    height,
+                    image,
+                    &drawing_relationship,
+                    "r:",
+                ),
+            )
+        } else {
+            let tree = Tree::parse(&bytes, &drawing_part, work.limits())?;
+            let prefix = tree.prefix_for(R).unwrap_or_else(|| "r:".into());
+            let id = tree
+                .descendants(0, "cNvPr")
+                .filter_map(|node| {
+                    tree.nodes[node]
+                        .element
+                        .attr("id")
+                        .and_then(|id| id.parse::<usize>().ok())
+                })
+                .max()
+                .unwrap_or(1)
+                + 1;
+            (
+                id,
+                excel_picture_anchor(
+                    id,
+                    column,
+                    row,
+                    width,
+                    height,
+                    image,
+                    &drawing_relationship,
+                    &prefix,
+                ),
+            )
+        }
+    };
+    if work.exists(&drawing_part) {
+        let bytes = work.get(&drawing_part)?;
+        let tree = Tree::parse(&bytes, &drawing_part, work.limits())?;
+        let mut splice = Splice::default();
+        splice.insert(tree.root().inner.end, anchor);
+        work.put(&drawing_part, splice.apply(&bytes, &drawing_part)?);
+    } else {
+        work.put(
+            &drawing_part,
+            format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="{DRAWING_NS}" xmlns:a="{A_NS}" xmlns:r="{R_NS}">{anchor}</xdr:wsDr>"#).into_bytes(),
+        );
+        work.set_override(&drawing_part, DRAWING_TYPE)?;
+        let drawing_rel = work.add_relationship(&sheet_part, R_DRAWING, &drawing_part)?;
+        let sheet_bytes = work.get(&sheet_part)?;
+        let tree = Tree::parse(&sheet_bytes, &sheet_part, work.limits())?;
+        let r = tree.prefix_for(R).unwrap_or_else(|| "r:".into());
+        let drawing_tag = format!(r#"<{s}drawing {r}id="{drawing_rel}"/>"#, s = prefix(&tree)?);
+        let late = [
+            "legacyDrawing",
+            "legacyDrawingHF",
+            "picture",
+            "oleObjects",
+            "controls",
+            "webPublishItems",
+            "tableParts",
+            "extLst",
+        ];
+        let before = late
+            .iter()
+            .flat_map(|name| tree.children(0, name))
+            .min_by_key(|node| tree.nodes[*node].span.start);
+        let position = before
+            .map(|node| tree.nodes[node].span.start)
+            .unwrap_or(tree.root().inner.end);
+        let mut splice = Splice::default();
+        splice.insert(position, drawing_tag);
+        work.put(&sheet_part, splice.apply(&sheet_bytes, &sheet_part)?);
+    }
+    let anchor = format!("{}!image@{picture_id}", quote_sheet(&sheet_name));
+    Ok(Outcome {
+        summary: format!("image added to {sheet_name}!{cell}"),
+        expect: vec![Expect::UnitContains {
+            anchor: anchor.clone(),
+            needles: vec![image.alt_text.clone()],
+        }],
+        created: vec![anchor],
+    })
+}
+
+fn excel_picture_anchor(
+    id: usize,
+    column: u32,
+    row: u32,
+    width: u32,
+    height: u32,
+    image: &super::SlideImage,
+    relationship: &str,
+    relationship_prefix: &str,
+) -> String {
+    const MAX_WIDTH: f64 = 1_828_800.0;
+    const MAX_HEIGHT: f64 = 1_371_600.0;
+    // Normalize the source image into the bounded 2 by 1.5 inch box while
+    // preserving its aspect ratio. Small icons are intentionally enlarged to
+    // this readable size; large images are reduced to fit.
+    let scale = (MAX_WIDTH / f64::from(width)).min(MAX_HEIGHT / f64::from(height));
+    let cx = (f64::from(width) * scale).round() as u64;
+    let cy = (f64::from(height) * scale).round() as u64;
+    format!(
+        r#"<xdr:oneCellAnchor><xdr:from><xdr:col>{}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="{cx}" cy="{cy}"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="{id}" name="Image {id}" descr="{}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip {relationship_prefix}embed="{relationship}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>"#,
+        column - 1,
+        row - 1,
+        escape_attr(&image.alt_text)
+    )
+}
+
+fn chart_range(range: &str) -> Result<((u32, u32), (u32, u32)), EditError> {
+    let mut parts = range.split(':');
+    let first = parts.next().unwrap_or_default();
+    let last = parts.next().unwrap_or(first);
+    if parts.next().is_some() {
+        return fail(format!("{range:?} is not a cell range like A1:B5"));
+    }
+    let first = address(first)?;
+    let last = address(last)?;
+    Ok((
+        (first.0.min(last.0), first.1.min(last.1)),
+        (first.0.max(last.0), first.1.max(last.1)),
+    ))
+}
+
+fn cached_cell(value: &str) -> (&str, bool) {
+    let Some(start) = value.find("[cached: ") else {
+        return (value, false);
+    };
+    let cached_start = start + "[cached: ".len();
+    let rest = &value[cached_start..];
+    let end = rest.find([',', ']']).unwrap_or(rest.len());
+    (
+        rest[..end].trim(),
+        rest.contains("stale until recalculated"),
+    )
+}
+
+fn native_chart_xml(
+    kind: &str,
+    title: &str,
+    sheet: &str,
+    first: (u32, u32),
+    last: (u32, u32),
+    series: &str,
+    categories: &[String],
+    values: &[f64],
+    chart_id: u32,
+) -> String {
+    let category_col = column_name(first.0);
+    let value_col = column_name(last.0);
+    let category_formula = format!(
+        "{}!${category_col}${}:${category_col}${}",
+        quote_sheet(sheet),
+        first.1 + 1,
+        last.1
+    );
+    let value_formula = format!(
+        "{}!${value_col}${}:${value_col}${}",
+        quote_sheet(sheet),
+        first.1 + 1,
+        last.1
+    );
+    let category_cache: String = categories
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            format!(
+                r#"<c:pt idx="{index}"><c:v>{}</c:v></c:pt>"#,
+                escape_text(value)
+            )
+        })
+        .collect();
+    let value_cache: String = values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| format!(r#"<c:pt idx="{index}"><c:v>{value}</c:v></c:pt>"#))
+        .collect();
+    let series_name = escape_text(series);
+    let title = escape_text(title);
+    let series = format!(
+        r#"<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>{}!${}${}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>{series_name}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{category_formula}</c:f><c:strCache><c:ptCount val="{}"/>{category_cache}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{value_formula}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{value_cache}</c:numCache></c:numRef></c:val></c:ser>"#,
+        quote_sheet(sheet),
+        value_col,
+        first.1,
+        categories.len(),
+        values.len()
+    );
+    let axis = if kind == "pie" {
+        format!(
+            r#"<c:pieChart><c:varyColors val="1"/>{series}<c:dLbls><c:showLegendKey val="0"/><c:showVal val="1"/><c:showCatName val="1"/><c:showSerName val="0"/></c:dLbls><c:firstSliceAng val="0"/></c:pieChart>"#
+        )
+    } else {
+        let plot = if kind == "line" {
+            "lineChart"
+        } else {
+            "barChart"
+        };
+        let style = if kind == "line" {
+            format!(
+                r#"<c:{plot}><c:grouping val="standard"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>{}!${}${}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>{series_name}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{category_formula}</c:f><c:strCache><c:ptCount val="{}"/>{category_cache}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{value_formula}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{value_cache}</c:numCache></c:numRef></c:val><c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker></c:ser><c:marker val="1"/><c:smooth val="0"/><c:axId val="{}"/><c:axId val="{}"/></c:{plot}>"#,
+                quote_sheet(sheet),
+                value_col,
+                first.1,
+                categories.len(),
+                values.len(),
+                100000 + chart_id * 2,
+                100001 + chart_id * 2
+            )
+        } else {
+            format!(
+                r#"<c:{plot}><c:barDir val="col"/><c:grouping val="clustered"/><c:varyColors val="0"/>{series}<c:gapWidth val="150"/><c:overlap val="0"/><c:axId val="{}"/><c:axId val="{}"/></c:{plot}>"#,
+                100000 + chart_id * 2,
+                100001 + chart_id * 2
+            )
+        };
+        format!(
+            r#"{style}<c:catAx><c:axId val="{}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="b"/><c:tickLblPos val="nextTo"/><c:crossAx val="{}"/><c:crosses val="autoZero"/><c:auto val="1"/><c:lblAlgn val="ctr"/><c:lblOffset val="100"/></c:catAx><c:valAx><c:axId val="{}"/><c:scaling><c:orientation val="minMax"/></c:scaling><c:delete val="0"/><c:axPos val="l"/><c:majorGridlines/><c:numFmt formatCode="General" sourceLinked="1"/><c:tickLblPos val="nextTo"/><c:crossAx val="{}"/><c:crosses val="autoZero"/><c:crossBetween val="between"/></c:valAx>"#,
+            100000 + chart_id * 2,
+            100001 + chart_id * 2,
+            100001 + chart_id * 2,
+            100000 + chart_id * 2
+        )
+    };
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><c:chartSpace xmlns:c="{CHART_NS}" xmlns:a="{A_NS}" xmlns:r="{R_NS}"><c:date1904 val="0"/><c:lang val="en-US"/><c:roundedCorners val="0"/><c:chart><c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr lang="en-US"/><a:t>{title}</a:t></a:r></a:p></c:rich></c:tx><c:overlay val="0"/></c:title><c:autoTitleDeleted val="0"/><c:plotArea><c:layout/>{axis}</c:plotArea><c:legend><c:legendPos val="b"/><c:layout/><c:overlay val="0"/></c:legend><c:plotVisOnly val="1"/><c:dispBlanksAs val="gap"/></c:chart><c:printSettings><c:headerFooter/><c:pageMargins b="0.75" l="0.7" r="0.7" t="0.75" header="0.3" footer="0.3"/><c:pageSetup/></c:printSettings></c:chartSpace>"#
+    )
+}
+
+fn chart_anchor(relationship: &str, column: usize, row: usize) -> String {
+    format!(
+        r#"<xdr:oneCellAnchor xmlns:xdr="{DRAWING_NS}" xmlns:a="{A_NS}" xmlns:c="{CHART_NS}" xmlns:r="{R_NS}"><xdr:from><xdr:col>{column}</xdr:col><xdr:colOff>0</xdr:colOff><xdr:row>{row}</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from><xdr:ext cx="6096000" cy="3657600"/><xdr:graphicFrame macro=""><xdr:nvGraphicFramePr><xdr:cNvPr id="2" name="Vakyartha chart"/><xdr:cNvGraphicFramePr/></xdr:nvGraphicFramePr><xdr:xfrm><a:off x="0" y="0"/><a:ext cx="6096000" cy="3657600"/></xdr:xfrm><a:graphic><a:graphicData uri="{CHART_NS}"><c:chart r:id="{relationship}"/></a:graphicData></a:graphic></xdr:graphicFrame><xdr:clientData/></xdr:oneCellAnchor>"#
+    )
 }
 
 // ---- postconditions read from the written package -------------------------

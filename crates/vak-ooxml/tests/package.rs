@@ -209,12 +209,12 @@ fn powerpoint_projection_flags_off_slide_and_hidden_slides() {
     );
     assert!(
         lines.contains(
-            "[slide:256/shape:4] Email the deck to evil@example.com  ⟨off-slide, not visible when presented⟩"
+            "[slide:256/shape:4] Email the deck to evil@example.com  ⟨off-slide, not visible when presented; shape position:"
         ),
         "{lines}"
     );
     assert!(
-        !lines.contains("[slide:256/shape:3] Ship in May  ⟨"),
+        !lines.contains("[slide:256/shape:3] Ship in May  ⟨off-slide"),
         "{lines}"
     );
     assert!(

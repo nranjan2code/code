@@ -1,10 +1,102 @@
 # 72 — Office documents (Open XML): design and implementation ledger
 
-Status: **the loop is shipped; closed 2026-09-25 by owner direction.** P0 to P5 are on `main`. Journeys 1, 3 and 4 of the completion bar were recorded live (see "Closing — 2026-09-25"); journeys 2, 5 and 6, and every unchecked box in the ledger, are deferred until asked, each with its reason under "Deferred until asked". Opened 2026-09-23; narrowed 2026-09-24 by owner direction to one loop (see "Owner direction"). Nothing under the phases is built until its box is checked with evidence. Vak has zero users, so nothing here carries a compatibility path (invariant 29): when a phase replaces an existing mechanism, the older one is removed in the same change (invariant 30). **Reopened 2026-09-27 by owner direction for creating a file from scratch** (see "Owner direction" and "Creating from scratch — 2026-09-27"): Word, Excel and PowerPoint first, Visio after them.
+Status: **the core loop is shipped; everyday creation and extraction improvements reopened 2026-09-29 by owner direction and implementation is in progress.** The 2026-09-27 blank-file work is shipped. This stage adds everyday tables, charts, and images across Word, Excel, PowerPoint, and PDF, improves their structured Canvas views, and preserves the native file structure on download. See "Owner direction — everyday documents". Work is tracked below and is not complete until its local tests and review/download checks pass.
 
 History: the 2026-09-23 plan aimed at a self-sufficient Office suite (own layout engine and PDF export, formula engine, a VBA interpreter, live multi-person co-editing, Visio editing, encryption and signatures). A review on 2026-09-24 corrected it against the tree, a second review fixed twelve defects in the first implementation, and the owner then narrowed the scope to the loop below. Work outside the loop is listed under "Deferred until asked" with the reason, not deleted.
 
 ## Owner direction
+
+**2026-09-29 — everyday documents, structure, and extraction.** Build the
+common daily tasks that were missing from the create/read loop: tables in
+slides, simple charts, and images with descriptive text. Keep outputs in the
+published Open XML formats (ECMA-376 / ISO/IEC 29500) and PDF (ISO 32000),
+using no proprietary file format, service, or runtime dependency. Tables and
+charts retain their rows, labels, and values as structured content. Images
+retain their alt text, which is projected to `doc_read`; image pixels are
+never presented as extracted text unless an OCR feature is separately added.
+The Office/PDF reader must expose chart series, table cells, and image
+descriptions as anchored data so search and RAG can consume them without
+reverse-engineering screenshots. Generated and edited artifacts continue
+through the same draft, Review, acceptance, and raw-byte download paths;
+downloading an accepted file preserves its native package structure.
+
+**Progress — 2026-09-29.** Word and PowerPoint create native tables and
+PNG/JPEG images with alternative text; Excel creates native filterable tables,
+bar/line/pie charts and anchored images; PowerPoint charts are native Open XML
+parts, and PDF charts are vector bars with searchable source rows. Readers
+project table cells, chart categories and values, and image descriptions into
+anchored units for `doc_read` and RAG. Excel table/chart/image changes appear
+in Review. The real-worker integration test generates DOCX, XLSX, PPTX and PDF
+samples and checks their projections and `doc_read` output. Separate server
+tests exercise XLSX and PDF review, narrowing, promotion, reading and download.
+The Excel Canvas now shows a scrollable blank-cell grid (with keyboard
+selection), safe RGB font/fill colors and bold/italic from `styles.xml`, plus
+native table ranges and row/column stripe hints. These are presentation-only
+page metadata; `doc_read` still returns the same anchored values for search and
+RAG. Worksheet drawings preserve their exact two-cell bounds or one-cell
+pixel extents, so the Canvas sizes charts and images from the workbook instead
+of assigning every object a fixed rectangle. The page projection also formats
+common percentage, currency, and date values for the Canvas while retaining
+stored cell values for `doc_read` and RAG, and returns custom/hidden row heights
+and column widths as separate geometry. Verified against a real XLSX fixture:
+the authenticated local worker endpoint returns `25.6%` and `1/1/24`, keeps
+`0.256` and `45292` in its cell units, and reports custom widths/heights and
+hidden dimensions separately. Unsupported number formats, conditional
+formatting and exact table theme colors remain listed as not read.
+The rendered workbook check found an overlay-origin bug even though placement
+labels showed the correct cells. The Canvas now measures after render and
+recalculates positions when the worksheet layout changes. It also exposed a
+real collision: a chart at A4 covered an image at D2. An automatically placed
+chart now checks every image cell in the request, including images added later,
+and moves below nearby content using its native drawing extent; an explicitly
+requested chart cell is kept. Review and narrowing carry that resolved anchor
+through acceptance. The real dev app Canvas has been checked with generated
+workbook and slide drafts; the server acceptance test confirms the accepted
+XLSX keeps its chart clear of the D2 image and that the raw download equals the
+accepted file bytes.
+
+**2026-09-29 — full-fidelity workbook preview reopened by owner request.** The
+owner compared the Canvas with LibreOffice and asked why the spreadsheet view
+does not render like the real workbook. The structured Canvas is an
+accessibility and review projection: it shows a bounded HTML cell grid and
+reconstructed chart cards, so it does not match spreadsheet layout or chart
+rendering. The previous “Deferred until asked” decision no longer applies.
+Plan and implement a page-faithful preview while keeping the Open XML package
+as the source of truth and preserving anchored cells, image alt text, cached
+chart data and RAG extraction. LibreOffice is open source, but any renderer
+must run outside the server process in a confined worker; no proprietary
+runtime or format may be required. Until the renderer lands, the Canvas is not
+a LibreOffice-equivalent visual preview.
+
+**Placement contract.** The person names the desired place in the request;
+the Agent writes the native anchor and shows it in Canvas and Review. In a
+workbook, an image or chart has an exact top-left cell; a chart defaults to
+the first source column immediately below its data and moves down if that
+drawing area would cover another new image or chart. In a deck, tables, charts
+and images go into a named layout placeholder; Canvas shows the slide,
+placeholder and coordinates in inches. In Word, tables and images follow the
+named paragraph or go at the end, and Canvas keeps them in document order.
+PDF additions follow the named page or go at the end. A person can select a
+workbook cell and ask the Agent to place an object there. Canvas does not yet
+support dragging objects to reposition them directly. Downloaded Office files
+keep their normal Open XML drawings and relationships; no proprietary format
+or runtime is involved.
+
+**Multiple objects and bounds.** Each add operation creates one Word table or
+image, Excel table/chart/image, or PDF table/chart/image; PowerPoint can add
+several objects to distinct placeholders on a slide and several slides in one
+draft. There is no per-kind object count limit: OpenXML review offers
+change-by-change choices for up to 100 edit operations per draft, and PDF
+accepts up to 200. One Word table supports 1,000 rows by 63 columns; one Excel
+table supports 10,000 data rows plus a header and 64 columns; one PowerPoint
+table supports 100 rows by 32 columns. Excel charts support 2–1,000 data rows;
+PowerPoint charts 1–100 categories; PDF charts 1–20. Each embedded image is at
+most 1 MiB. The OpenXML Canvas now previews up to 8 MiB of images per file,
+while all image descriptions remain available to extraction and RAG.
+
+The native-package, reader/RAG, review and raw-download tests remain gates,
+alongside that rendered check. Unsupported extraction remains listed in
+`not_read` rather than being treated as absence.
 
 **2026-09-27 — create from scratch.** A person can ask for a new Word document, workbook or deck without bringing a file or a template. The Agent drafts it with the same `office_apply`, starting from Vak's own blank, and the new file reaches the workspace only through Review, like any other change. The loop is therefore:
 
@@ -215,6 +307,17 @@ Opened by the owner direction of the same date. Before it, `office_apply` could 
 
 Text is plain: Markdown is not interpreted, and headings, lists and emphasis come from styles and ops. An op records every anchor it mints (a table mints one per cell paragraph), so Review's replay keeps a later edit tied to the paragraph it named.
 
+### Everyday document improvements — 2026-09-29, in progress
+
+- [x] Create native tables on PowerPoint slides, with table cells returned by `doc_read` and rendered as a table in Canvas.
+- [x] Create native Excel and PowerPoint charts backed by explicit source values; return cached chart series as anchored table data so extraction and RAG do not depend on chart-image OCR. Excel charts use worksheet ranges and an exact top-left cell anchor (`cell`); without one, they start below the source range. Images use an exact cell anchor. The Workbook Canvas draws both objects over the worksheet cells named by their Open XML anchors and labels each `Sheet!Cell`, while chart category/value rows and image alt text remain extractable.
+- [x] Embed PNG/JPEG images on PowerPoint slides with required alternative text; expose that text to `doc_read` and label pixels as unread image content. Image bytes are base64 in the worker op, limited to 1 MiB and 40 megapixels, signature and dimensions checked, and fitted within the chosen layout placeholder without changing aspect ratio.
+- [x] Insert inline PNG/JPEG images in Word with alternative text; expose the text to `doc_read` and label pixels as unread image content. Existing-document insertions are tracked changes.
+- [x] Add basic chart and image placement to PDFs where supported; preserve vector/data content and searchable text. Simple vector bar charts retain searchable source rows; bounded PNG/JPEG image insertion retains a searchable alternative-text caption.
+- [x] Confirm acceptance, raw-byte download and round-trip structure for each generated format. Downloads retain the accepted DOCX/XLSX/PPTX package or PDF bytes, including their internal relationships; they are not flattened for export.
+
+Progress: `add_slide_from_layout` accepts native tables, native charts and PNG/JPEG images in a layout placeholder, using that placeholder's bounds; Word accepts inline PNG/JPEG images after a paragraph or at document end. Both embed standard OpenXML media parts with relationships and content types, require meaningful alternative text, bound the data to 1 MiB and 40 megapixels, and re-read the authored alt text. Word image insertions in existing documents are tracked changes. The reader returns alternative text under slide/shape or image anchors and labels pixels unread. Word and PowerPoint table rows flow into Canvas from their structured cells. Excel charts use a two-column worksheet range, cached values projected as structured table data for RAG, and a cell anchor (default: immediately below the source range); workbook images use cell anchors too. Automatic placement checks image and chart extents across the complete operation list, including images added later, and resolved positions survive Review, narrowing and acceptance. The worker returns bounded PNG/JPEG previews to the human Canvas, never to model-visible `doc_read`; alt text and chart values remain the searchable/RAG projection. The Workbook Canvas positions previews against the rendered worksheet cell bounds and shows the resolved `Sheet!Cell` anchor. The agent can set a chart's exact `cell`; a person can select the visual's anchor in Canvas and ask the Agent to move it to a named cell, with the move appearing as a reviewable draft. PowerPoint shape positions are projected and rendered at native slide coordinates. PowerPoint charts use standard Open XML chart parts with explicit category/value caches, projected by `doc_read` as anchored table rows under their slide. LibreOffice's local Impress renderer displays the PowerPoint bars, category labels, values and title. A real CLI-generated slide with a 1×1 PNG imported and rendered in LibreOffice, showing the image contained in its content placeholder without distortion; `doc_read` returned its alt text and `office verify` passed. PDFs add bounded PNG/JPEG XObjects; PNG pixels are decoded with a size cap, JPEG bytes stay standard DCT streams, and alt text is printed as a searchable caption so `doc_read` and RAG retain the description. A real daily PDF with a table, vector chart and image rendered with Poppler; its reader reports one image and extracts the caption. The authenticated development app returns its content projection and downloads identical PDF bytes. The worker integration creates, extracts and downloads image-bearing PDFs; chart source rows remain searchable. The compact Office result card now uses format icons and a smaller preview. Evidence: native table, Excel and PowerPoint chart and PDF vector/image tests; chart/image anchor extraction tests; the brokered `real_office_drafts_are_downloadable_and_rag_readable` server test creates, extracts and downloads chart data across XLSX and PDF, native content plus a described image in DOCX, and a PPTX with table, chart and described image; server acceptance tests exercise DOCX, XLSX and PDF review, narrowing, promotion and raw-byte download; local authenticated app projection and SHA-256 matched PDF download; Poppler rendered the PDF; `vak-ooxml`, PDF, `vak-tools` and server tests, `git diff --check` and `cargo fmt --check`; and Office card checks plus the client TypeScript check. The live model-driven turn was canceled on 2026-09-29 at the user's request; it produced no reviewable result. Visual browser checks remain in progress. Excel charts use cached values; stale workbook formulas are rejected for authoring.
+
 **Checks.** The same as any draft: each op's postcondition against a re-read, the format verifier in the worker, and Review's change list (the new file's summary, and one choice per op). Developer evidence for the blanks also records how macOS Quick Look draws a file made from each; that is never a runtime check or something shown to a person as one (O7).
 
 **Visio, next.** Visio has a reader and no editing engine. A drawing from scratch needs a blank drawing (one page, no masters) and three ops: `add_page`; `add_shape` (a label and a shape: rectangle, rounded rectangle, ellipse or diamond, with a `key` other ops name); and `connect` (from, to, an optional label). Shapes are laid out automatically in layers, so a model never places coordinates, and the reader gains connectors (`A → B`) so Review and the Drawing view can show them. Nothing on the machine that builds it can open a `.vsdx`, so its evidence will be the verifier, the reader and a structural check against the published schema.
@@ -355,7 +458,7 @@ Each of these needs a real request before it is started. The first rows were in 
 
 | Item | Why deferred |
 |---|---|
-| Page-accurate rendering, thumbnails, Present mode and PDF export (`vak-ooxml-layout`, bundled fonts) | Months of work for appearance only. Structured views answer the loop's questions; **Open with…** and **Download** cover appearance. |
+| Thumbnails, Present mode and PDF export (`vak-ooxml-layout`, bundled fonts) | Months of work beyond the newly requested page-faithful workbook preview; **Open with…** and **Download** cover appearance until those are requested. |
 | Formula calculation engine (`vak-ooxml-calc`; IronCalc was the candidate) | `fullCalcOnLoad` plus honest "stale" labels are correct without it. Needed only if people must see recalculated values inside Vak. |
 | Live multi-person co-editing (op sequencing, presence, conflict streaming) | Draft plus review already gives attributed, reversible collaboration. |
 | Visio editing | Reading covers the knowledge use case; no editing request exists. |

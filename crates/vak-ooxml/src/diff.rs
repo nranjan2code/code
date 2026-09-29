@@ -83,7 +83,11 @@ pub fn diff(before: Option<&Document>, after: &Document) -> Diff {
         return finish(changes);
     };
     match after.inspection.format.vocabulary {
-        Vocabulary::Excel => cells(before, after, &mut changes),
+        Vocabulary::Excel => {
+            cells(before, after, &mut changes);
+            excel_objects(before, after, &mut changes);
+            excel_images(before, after, &mut changes);
+        }
         Vocabulary::PowerPoint => {
             slide_order(before, after, &mut changes);
             units(before, after, &mut changes, |unit| {
@@ -94,6 +98,95 @@ pub fn diff(before: Option<&Document>, after: &Document) -> Diff {
         _ => units(before, after, &mut changes, |_| true),
     }
     finish(changes)
+}
+
+fn excel_images(before: &Document, after: &Document, changes: &mut Vec<Change>) {
+    fn image_units(document: &Document) -> HashMap<String, &Unit> {
+        document
+            .units
+            .iter()
+            .filter(|unit| unit.kind == UnitKind::Image)
+            .map(|unit| (unit.anchor.clone(), unit))
+            .collect::<HashMap<_, _>>()
+    }
+    let old = image_units(before);
+    let new = image_units(after);
+    for (anchor, image) in &new {
+        match old.get(anchor) {
+            None => changes.push(Change {
+                section: "Images".into(),
+                anchor: anchor.clone(),
+                kind: ChangeKind::Added,
+                before: None,
+                after: Some(image.text.clone()),
+            }),
+            Some(previous) if previous.text != image.text => changes.push(Change {
+                section: "Images".into(),
+                anchor: anchor.clone(),
+                kind: ChangeKind::Changed,
+                before: Some(previous.text.clone()),
+                after: Some(image.text.clone()),
+            }),
+            _ => {}
+        }
+    }
+    for (anchor, image) in &old {
+        if !new.contains_key(anchor) {
+            changes.push(Change {
+                section: "Images".into(),
+                anchor: (*anchor).to_string(),
+                kind: ChangeKind::Removed,
+                before: Some(image.text.clone()),
+                after: None,
+            });
+        }
+    }
+}
+
+/// Excel charts and structured tables are package objects in their own
+/// right. Their source cell values are diffed separately; this adds the
+/// object creation/removal/title changes that a cell-only diff cannot show.
+fn excel_objects(before: &Document, after: &Document, changes: &mut Vec<Change>) {
+    fn objects(document: &Document) -> BTreeMap<String, &crate::read::Table> {
+        document
+            .tables
+            .iter()
+            .filter(|table| !table.anchor.ends_with('!'))
+            .map(|table| (table.anchor.clone(), table))
+            .collect()
+    }
+    let old = objects(before);
+    let new = objects(after);
+    for (anchor, table) in &new {
+        match old.get(anchor) {
+            None => changes.push(Change {
+                section: table.title.clone(),
+                anchor: anchor.clone(),
+                kind: ChangeKind::Added,
+                before: None,
+                after: Some(format!("{} with {} row(s)", table.title, table.rows.len())),
+            }),
+            Some(previous) if previous.title != table.title => changes.push(Change {
+                section: table.title.clone(),
+                anchor: anchor.clone(),
+                kind: ChangeKind::Changed,
+                before: Some(previous.title.clone()),
+                after: Some(table.title.clone()),
+            }),
+            _ => {}
+        }
+    }
+    for (anchor, table) in &old {
+        if !new.contains_key(anchor) {
+            changes.push(Change {
+                section: table.title.clone(),
+                anchor: (*anchor).to_string(),
+                kind: ChangeKind::Removed,
+                before: Some(table.title.clone()),
+                after: None,
+            });
+        }
+    }
 }
 
 /// `1 heading`, `2 headings`: a reader's stat with its count. Stat names

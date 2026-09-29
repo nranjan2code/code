@@ -11901,6 +11901,8 @@ fn office_lineage(
                 let from_blank = origin == vak_tools::broker::OfficeOrigin::Blank;
                 return Ok(vak_tools::broker::OfficeLineage {
                     origin,
+                    planned_ops: vak_ooxml::edit::plan_chart_locations(&ops)
+                        .map_err(|error| error.message)?,
                     ops,
                     author: vak_tools::office_apply::tracked_change_author(
                         agent.as_deref().unwrap_or("vak"),
@@ -14788,6 +14790,8 @@ async fn get_config(
     Json(serde_json::json!({
         "provider": route.provider,
         "model": route.model,
+        "bedrock_region": core.effective_bedrock_region(),
+        "bedrock_region_source": if core.bedrock_endpoint_is_environment_override() { "server environment" } else { "saved settings" },
         "provider_source": route.provider_source,
         "model_source": route.model_source,
         "route_revision": route.revision,
@@ -14890,6 +14894,7 @@ fn config_layer_response(
         "path": path,
         "provider": layer.provider,
         "model": layer.model,
+        "bedrock_region": layer.bedrock_region,
         "max_tokens": layer.max_tokens,
         "max_turns": layer.max_turns,
         "permission_mode": layer.permission_mode.map(|mode| format!("{mode:?}")),
@@ -15120,6 +15125,7 @@ async fn agent_network_receive(
 struct ConfigPatch {
     provider: Option<String>,
     model: Option<String>,
+    bedrock_region: Option<String>,
     max_turns: Option<usize>,
     permission_mode: Option<String>,
     approval_mode: Option<String>,
@@ -15192,6 +15198,26 @@ struct ConfigPatch {
     route_fallback_models: Option<Vec<String>>,
     #[serde(default)]
     agent: Option<String>,
+}
+
+fn valid_bedrock_region(region: &str) -> bool {
+    let region = region.trim();
+    let Some((prefix, number)) = region.rsplit_once('-') else {
+        return false;
+    };
+    let mut parts = prefix.split('-');
+    let first = parts.next().unwrap_or_default();
+    region.len() <= 32
+        && region.len() >= 6
+        && number.parse::<u8>().is_ok()
+        && (first.len() == 2 || first.len() == 3)
+        && parts.all(|part| {
+            !part.is_empty()
+                && part
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+        })
+        && first.bytes().all(|b| b.is_ascii_lowercase())
 }
 
 type RouteBackups = (Option<Vec<Vec<vak_llm::ModelRef>>>, Option<Vec<String>>);
@@ -15369,6 +15395,10 @@ async fn patch_config_scope(
             .as_deref()
             .is_some_and(|value| value.trim().is_empty())
         || body
+            .bedrock_region
+            .as_deref()
+            .is_some_and(|value| !valid_bedrock_region(value))
+        || body
             .max_turns
             .is_some_and(|value| !(1..=1000).contains(&value))
         || body
@@ -15526,6 +15556,29 @@ async fn patch_config_scope(
         Vec::new()
     };
     let mut changes = Vec::new();
+    if let Some(region) = body.bedrock_region.as_deref() {
+        if !global && !core.project_config_trusted() {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(serde_json::json!({"error":"Bedrock region can only be saved in trusted workspace settings or shared settings"})),
+            )
+                .into_response();
+        }
+        let path = if global {
+            vak_config::global_path()
+        } else {
+            Some(vak_config::project_path(core.cwd()))
+        };
+        let Some(path) = path else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        if vak_config::persist_bedrock_region(path, region).is_err()
+            || core.refresh_persisted_preferences().is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        changes.push(format!("bedrock_region={region}"));
+    }
     if let (Some(provider), Some(model)) = (provider, model) {
         let effective = vak_config::load_with_trust(core.cwd(), core.project_config_trusted());
         let Ok(effective) = effective else {
@@ -20005,6 +20058,16 @@ mod scheduler_pure_tests {
 mod configuration_control_tests {
     use super::*;
 
+    #[test]
+    fn bedrock_region_setting_accepts_region_codes_not_urls() {
+        assert!(valid_bedrock_region("ap-south-1"));
+        assert!(valid_bedrock_region("us-gov-west-1"));
+        assert!(!valid_bedrock_region(
+            "https://bedrock-mantle.ap-south-1.api.aws/v1"
+        ));
+        assert!(!valid_bedrock_region("ap-south-1.evil.example"));
+    }
+
     fn control_state(dir: &std::path::Path) -> AppState {
         vak_config::paths::isolate_home_for_tests();
         let core = Core::new(dir.to_path_buf()).unwrap();
@@ -21339,6 +21402,173 @@ mod sandbox_promotion_tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_structured_workbook_is_reviewed_narrowed_accepted_and_downloaded() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let state = AppState::new(core);
+        pin_test_tool_worker(&state.core);
+        let worker = state.core.tool_worker_exe();
+        let tool = vak_tools::brokered_default_tools(worker.clone())
+            .into_iter()
+            .find(|tool| tool.name() == "office_apply")
+            .unwrap();
+        let args = serde_json::json!({
+            "path": "daily.xlsx",
+            "ops": [
+                {"op":"set_cells","sheet":"Sheet1","cells":{"A1":"Day","B1":"Visitors","A2":"Monday","B2":25,"A3":"Tuesday","B3":31}},
+                {"op":"add_excel_table","sheet":"Sheet1","range":"A1:B3","name":"DailyVisitors"},
+                {"op":"add_chart","sheet":"Sheet1","range":"A1:B3","chart_type":"bar","title":"Daily visitors"},
+                {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}
+            ]
+        });
+        let (sink, _events) = vak_tools::SandboxEventSink::new_with_id("exec-structured".into());
+        let output = tool
+            .execute(
+                &args,
+                &vak_tools::ToolContext::new(dir.path().to_path_buf()).with_sandbox_sink(sink),
+            )
+            .await;
+        assert!(!output.is_error, "{}", output.content);
+        let target = dir.path().join("daily.xlsx");
+        assert!(
+            !target.exists(),
+            "the workbook remains a draft until acceptance"
+        );
+        let scratch = ".vak/scratch/vak/exec-structured";
+        seed_office_calls(
+            &state.core,
+            "session-structured",
+            &[("exec-structured", args)],
+        );
+        append_session_sandbox_event(
+            &state.core.sessions_home(),
+            "session-structured",
+            &AgentEvent::Sandbox(vak_tools::SandboxEvent::ExecutionStarted {
+                execution_id: "exec-structured".into(),
+                owner_session_id: Some("session-structured".into()),
+                tool: "office_apply".into(),
+                code_preview: "{}".into(),
+                language: "json".into(),
+                scratch_dir: scratch.into(),
+            }),
+        );
+        let response = export_sandbox_candidate(
+            State(state.clone()),
+            Path("session-structured".into()),
+            Json(SandboxCandidateBody {
+                execution_id: "exec-structured".into(),
+                source: scratch.into(),
+                destination: ".".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(candidate) = record else {
+            panic!("candidate response")
+        };
+        assert_eq!(candidate.draft_checks[0].status, "passed");
+        let candidate_id = candidate.candidate.candidate_id.clone();
+        let response = read_sandbox_candidate_office_review(
+            State(state.clone()),
+            Path(("session-structured".into(), candidate_id.clone())),
+            axum::extract::Query(FileQuery {
+                path: "daily.xlsx".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let review = body_json(response).await;
+        assert!(review.to_string().contains("Sheet1!A10"), "{review}");
+        assert!(review.to_string().contains("Sheet1!D2"), "{review}");
+        let choices = review["choices"].as_array().expect("Office choices");
+        let labels = choices
+            .iter()
+            .map(|choice| choice["label"].as_str().unwrap().to_ascii_lowercase())
+            .collect::<Vec<_>>();
+        assert!(
+            labels.iter().any(|label| label.contains("table")),
+            "{labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label.contains("chart")),
+            "{labels:?}"
+        );
+        assert!(
+            labels.iter().any(|label| label.contains("image")),
+            "{labels:?}"
+        );
+        let keep = choices
+            .iter()
+            .map(|choice| choice["id"].as_str().unwrap().to_string())
+            .collect();
+        let response = narrow_sandbox_candidate_office(
+            State(state.clone()),
+            Path(("session-structured".into(), candidate_id)),
+            Json(OfficeNarrowBody {
+                path: "daily.xlsx".into(),
+                keep,
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let record: vak_sandbox::DurableRecord =
+            serde_json::from_value(body_json(response).await).unwrap();
+        let vak_sandbox::DurableRecord::Candidate(narrowed) = record else {
+            panic!("narrowed candidate response")
+        };
+        assert_eq!(narrowed.draft_checks[0].status, "passed");
+        let response = promote_sandbox_candidate(
+            State(state.clone()),
+            Path("session-structured".into()),
+            Json(SandboxPromotionBody {
+                candidate_id: narrowed.candidate.candidate_id,
+                files: vec!["daily.xlsx".into()],
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let projected = vak_tools::broker::office_project(
+            &worker,
+            &target,
+            vak_tools::broker::OfficeView::Content { from: 0 },
+        )
+        .await
+        .unwrap()
+        .to_string();
+        for expected in [
+            "structured tables",
+            "charts",
+            "images with alternative text",
+            "chart position: Sheet1!A10",
+            "image position: Sheet1!D2",
+            "Monday",
+            "25",
+            "A blue square used as the daily status marker",
+        ] {
+            assert!(
+                projected.contains(expected),
+                "missing {expected:?}: {projected}"
+            );
+        }
+        let response = read_file_raw(
+            State(state),
+            axum::extract::Query(FileQuery {
+                path: "daily.xlsx".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let downloaded = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(downloaded.as_ref(), tokio::fs::read(target).await.unwrap());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_pdf_draft_is_reviewed_narrowed_and_accepted_through_promotion() {
         vak_config::paths::isolate_home_for_tests();
         let dir = tempfile::tempdir().unwrap();
@@ -21368,7 +21598,9 @@ mod sandbox_promotion_tests {
             "ops": [
                 {"op": "replace_paragraph_text", "anchor": "page:1/line:2", "text": "Revenue grew 15%"},
                 {"op": "add_comment", "anchor": "page:1/line:1", "text": "Checked against the ledger"},
-                {"op": "set_title", "title": "Q3 Report, revised"}
+                {"op": "set_title", "title": "Q3 Report, revised"},
+                {"op": "add_chart", "title": "Daily visitors", "categories": ["Mon", "Tue"], "values": [25, 31]},
+                {"op": "add_image", "image": {"mime_type": "image/png", "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==", "alt_text": "A blue square used as the daily status marker"}}
             ]
         });
         let (sink, _events) = vak_tools::SandboxEventSink::new_with_id("exec-1".into());
@@ -21441,22 +21673,36 @@ mod sandbox_promotion_tests {
             .iter()
             .map(|choice| choice["label"].as_str().unwrap())
             .collect();
-        assert_eq!(
-            labels,
-            [
-                "Rewrite page:1/line:2 as “Revenue grew 15%”",
-                "Comment on page:1/line:1: “Checked against the ledger”",
-                "Set the title to “Q3 Report, revised”"
-            ],
-            "{review}"
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.to_ascii_lowercase().contains("chart")),
+            "{labels:?}"
         );
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.to_ascii_lowercase().contains("image")),
+            "{labels:?}"
+        );
+        let keep = review["choices"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|choice| {
+                let label = choice["label"].as_str().unwrap().to_ascii_lowercase();
+                label.contains("chart") || label.contains("image")
+            })
+            .map(|choice| choice["id"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>();
+        assert_eq!(keep.len(), 2, "{labels:?}");
 
         let response = narrow_sandbox_candidate_office(
             State(state.clone()),
             Path(("session-1".into(), candidate_id.clone())),
             Json(OfficeNarrowBody {
                 path: "report.pdf".into(),
-                keep: vec!["1".into()],
+                keep,
             }),
         )
         .await;
@@ -21484,14 +21730,34 @@ mod sandbox_promotion_tests {
         .unwrap();
         let text = document.lines().join("\n");
         assert!(
-            text.contains("Checked against the ledger  ⟨comment by Vakyartha⟩"),
+            text.contains("Daily visitors") && text.contains("Mon") && text.contains("31"),
             "{text}"
+        );
+        assert!(
+            text.contains("A blue square used as the daily status marker"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("Checked against the ledger"),
+            "left-out comment must not be accepted: {text}"
         );
         assert!(
             text.contains("Revenue grew 12%"),
             "the left-out rewrite is not applied: {text}"
         );
         assert_eq!(document.title(), Some("Q3 Report"));
+        let response = read_file_raw(
+            State(state.clone()),
+            axum::extract::Query(FileQuery {
+                path: "report.pdf".into(),
+            }),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let downloaded = axum::body::to_bytes(response.into_body(), 16 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(downloaded.as_ref(), tokio::fs::read(&report).await.unwrap());
 
         let response = read_office_projection(
             State(state.clone()),

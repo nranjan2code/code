@@ -809,6 +809,8 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     return at > Date.UTC(2000, 0, 1) ? `made ${relAgo(props.item.timestamp)}` : "";
   };
   const details = () => [file.facts() ? officeFactsLine(file.facts()!) : fileKind(artifact.name, artifact.media_type), made(), words()?.folder].filter(Boolean).join(" · ");
+  const kind = () => fileKind(artifact.name, artifact.media_type);
+  const fileIcon = () => kind() === "Spreadsheet" ? "sheet" as const : kind() === "Presentation" ? "slides" as const : kind() === "PDF" ? "pdf" as const : "file" as const;
   const askForChanges = () => {
     const resultId = props.resultId;
     if (!resultId) return;
@@ -817,7 +819,10 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
   };
   return (
     <article class="result-card" aria-label={artifact.name}>
-      <ResultPreview item={props.item} sessionId={props.sessionId} />
+      <div class="result-card-preview-wrap">
+        <ResultPreview item={props.item} sessionId={props.sessionId} />
+        <span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={20} /></span>
+      </div>
       <div class="result-card-text">
         <Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>
         <h3 class="result-card-name">{artifact.name}</h3>

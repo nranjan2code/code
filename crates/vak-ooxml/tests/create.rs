@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use vak_ooxml::blank::{DECK_LAYOUTS, DOCUMENT_STYLES, WORKBOOK_SHEET, blank};
-use vak_ooxml::edit::{self, CellValue, EditContext, OfficeOp, TextValue};
+use vak_ooxml::edit::{self, CellValue, EditContext, OfficeOp, SlideChart, SlideImage, TextValue};
 use vak_ooxml::read::{self, UnitKind};
 use vak_ooxml::{Format, FormatKind, Limits, Package, Vocabulary, fixtures, review};
 
@@ -434,6 +434,330 @@ fn a_workbook_is_built_from_scratch_with_names_formats_and_widths() {
 }
 
 #[test]
+fn a_workbook_chart_keeps_its_source_data_and_cached_labels() {
+    let cells = BTreeMap::from([
+        ("A1".into(), text("Month")),
+        ("B1".into(), text("Sales")),
+        ("A2".into(), text("Jan")),
+        ("B2".into(), CellValue::Number(120.0)),
+        ("A3".into(), text("Feb")),
+        ("B3".into(), CellValue::Number(145.0)),
+        ("A4".into(), text("Mar")),
+        ("B4".into(), CellValue::Number(132.0)),
+    ]);
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::SetCells {
+                sheet: "Sheet1".into(),
+                cells,
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B4".into(),
+                chart_type: "bar".into(),
+                title: "Monthly sales".into(),
+                cell: Some("F2".into()),
+            },
+        ],
+    )
+    .unwrap();
+    let chart = applied
+        .document
+        .tables
+        .iter()
+        .find(|table| table.anchor == "chart:chart1.xml")
+        .unwrap();
+    assert_eq!(chart.title, "Monthly sales");
+    assert!(
+        chart
+            .labels
+            .iter()
+            .any(|label| label == "chart position: Sheet1!F2"),
+        "labels: {:?}; drawing: {}",
+        chart.labels,
+        part(&applied.bytes, "xl/drawings/drawing1.xml")
+    );
+    assert_eq!(
+        chart.rows,
+        vec![
+            vec!["Category", "Sales"],
+            vec!["Jan", "120"],
+            vec!["Feb", "145"],
+            vec!["Mar", "132"],
+        ]
+    );
+    let extracted = vak_ooxml::read::read(
+        std::io::Cursor::new(applied.bytes.clone()),
+        vak_ooxml::Limits::default(),
+    )
+    .unwrap();
+    let chart_rows: Vec<_> = extracted
+        .units
+        .iter()
+        .filter(|unit| unit.anchor.starts_with("chart:chart1.xml/r"))
+        .map(|unit| unit.text.as_str())
+        .collect();
+    assert_eq!(
+        chart_rows,
+        ["Category | Sales", "Jan | 120", "Feb | 145", "Mar | 132"]
+    );
+    let chart_xml = part(&applied.bytes, "xl/charts/chart1.xml");
+    assert!(
+        chart_xml.contains("A1:B4") == false,
+        "chart stores separate category/value references"
+    );
+    assert!(chart_xml.contains("Sheet1!$A$2:$A$4"), "{chart_xml}");
+    assert!(chart_xml.contains("Sheet1!$B$2:$B$4"), "{chart_xml}");
+    let worksheet = part(&applied.bytes, "xl/worksheets/sheet1.xml");
+    assert!(
+        worksheet.contains("<drawing ") || worksheet.contains(":drawing "),
+        "{worksheet}"
+    );
+    assert!(
+        part(&applied.bytes, "xl/worksheets/_rels/sheet1.xml.rels")
+            .contains("drawings/drawing1.xml")
+    );
+    assert!(
+        part(&applied.bytes, "xl/drawings/_rels/drawing1.xml.rels").contains("charts/chart1.xml")
+    );
+    let drawing = part(&applied.bytes, "xl/drawings/drawing1.xml");
+    assert!(drawing.contains("<xdr:col>5</xdr:col>"), "{drawing}");
+    assert!(drawing.contains("<xdr:row>1</xdr:row>"), "{drawing}");
+}
+
+#[test]
+fn a_workbook_can_create_a_native_filterable_table_and_read_its_rows() {
+    let cells = BTreeMap::from([
+        ("A1".into(), text("Day")),
+        ("B1".into(), text("Visitors")),
+        ("A2".into(), text("Monday")),
+        ("B2".into(), CellValue::Number(25.0)),
+        ("A3".into(), text("Tuesday")),
+        ("B3".into(), CellValue::Number(31.0)),
+    ]);
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::SetCells {
+                sheet: "Sheet1".into(),
+                cells,
+            },
+            OfficeOp::AddExcelTable {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                name: Some("DailyVisitors".into()),
+            },
+        ],
+    )
+    .unwrap();
+    let table = applied
+        .document
+        .tables
+        .iter()
+        .find(|table| table.anchor == "DailyVisitors")
+        .unwrap();
+    assert_eq!(
+        table.rows,
+        vec![
+            vec!["Day", "Visitors"],
+            vec!["Monday", "25"],
+            vec!["Tuesday", "31"]
+        ]
+    );
+    assert_eq!(
+        applied.document.table_styles,
+        vec![read::TableStyleRange {
+            sheet_anchor: "Sheet1!".into(),
+            range: "A1:B3".into(),
+            style_name: Some("TableStyleMedium2".into()),
+            show_row_stripes: true,
+            show_column_stripes: false,
+        }]
+    );
+    assert_eq!(
+        vak_ooxml::projection::project(&applied.document, 0, vak_ooxml::projection::PAGE_BYTES)
+            .table_styles,
+        applied.document.table_styles
+    );
+    assert!(
+        applied
+            .document
+            .units
+            .iter()
+            .any(|unit| unit.anchor == "DailyVisitors/r3" && unit.text == "Tuesday | 31")
+    );
+    let table_xml = part(&applied.bytes, "xl/tables/table1.xml");
+    assert!(table_xml.contains("displayName=\"DailyVisitors\""));
+    assert!(table_xml.contains("TableStyleMedium2"));
+    let sheet_xml = part(&applied.bytes, "xl/worksheets/sheet1.xml");
+    assert!(sheet_xml.contains("tableParts count=\"1\""));
+    assert!(
+        part(&applied.bytes, "xl/worksheets/_rels/sheet1.xml.rels").contains("relationships/table")
+    );
+}
+
+#[test]
+fn a_workbook_image_preview_keeps_its_excel_cell_anchor() {
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image: SlideImage {
+                    mime_type: "image/png".into(),
+                    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+                    alt_text: "Daily trend marker".into(),
+                },
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "G2".into(),
+                image: SlideImage {
+                mime_type: "image/png".into(),
+                data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+                    alt_text: "Second daily marker".into(),
+                },
+            },
+        ],
+    )
+    .unwrap();
+    let unit = applied
+        .document
+        .units
+        .iter()
+        .find(|unit| unit.kind == UnitKind::Image)
+        .unwrap();
+    assert_eq!(unit.text, "Daily trend marker");
+    assert!(
+        unit.labels
+            .iter()
+            .any(|label| label == "image position: Sheet1!D2")
+    );
+    let previews = read::image_previews(Cursor::new(applied.bytes), Limits::default()).unwrap();
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].cell.as_deref(), Some("D2"));
+    assert_eq!(previews[0].alt_text, "Daily trend marker");
+    assert!(previews[0].data_url.starts_with("data:image/png;base64,"));
+    assert_eq!(previews[1].cell.as_deref(), Some("G2"));
+    assert_eq!(previews[1].alt_text, "Second daily marker");
+}
+
+#[test]
+fn a_workbook_chart_defaults_to_the_first_row_below_its_source_range() {
+    let cells = BTreeMap::from([
+        ("A1".into(), text("Day")),
+        ("B1".into(), text("Visitors")),
+        ("A2".into(), text("Monday")),
+        ("B2".into(), CellValue::Number(25.0)),
+        ("A3".into(), text("Tuesday")),
+        ("B3".into(), CellValue::Number(31.0)),
+    ]);
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::SetCells {
+                sheet: "Sheet1".into(),
+                cells,
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Daily visitors".into(),
+                cell: None,
+            },
+        ],
+    )
+    .unwrap();
+    let chart = applied
+        .document
+        .tables
+        .iter()
+        .find(|table| table.anchor == "chart:chart1.xml")
+        .unwrap();
+    assert!(
+        chart
+            .labels
+            .iter()
+            .any(|label| label == "chart position: Sheet1!A4")
+    );
+}
+
+#[test]
+fn default_chart_avoids_a_later_anchored_image() {
+    let cells = BTreeMap::from([
+        ("A1".into(), text("Day")),
+        ("B1".into(), text("Visitors")),
+        ("A2".into(), text("Monday")),
+        ("B2".into(), CellValue::Number(25.0)),
+        ("A3".into(), text("Tuesday")),
+        ("B3".into(), CellValue::Number(31.0)),
+    ]);
+    let ops = vec![
+            OfficeOp::SetCells {
+                sheet: "Sheet1".into(),
+                cells,
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Daily visitors".into(),
+                cell: None,
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image: SlideImage {
+                    mime_type: "image/png".into(),
+                    data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+                    alt_text: "Daily marker".into(),
+                },
+            },
+        ];
+    let blank = blank(format("xlsx")).unwrap();
+    let applied = edit::apply(&blank, &ops, &clean(), Limits::default(), None).unwrap();
+    let chart = applied
+        .document
+        .tables
+        .iter()
+        .find(|table| table.anchor == "chart:chart1.xml")
+        .unwrap();
+    assert!(
+        chart
+            .labels
+            .iter()
+            .any(|label| label == "chart position: Sheet1!A10"),
+        "the default chart stays below its data and clear of the D2 image: {:?}",
+        chart.labels
+    );
+    assert!(
+        applied
+            .document
+            .lines()
+            .join("\n")
+            .contains("image position: Sheet1!D2")
+    );
+    let choices = review::choices(
+        &blank,
+        &ops,
+        &clean(),
+        Limits::default(),
+        None,
+        &applied.document,
+    )
+    .unwrap();
+    assert!(
+        choices
+            .iter()
+            .any(|choice| choice.label.contains("at Sheet1!A10")),
+        "Review names the actual collision-free chart cell: {choices:?}"
+    );
+}
+
+#[test]
 fn a_sheet_is_not_renamed_while_anything_names_it() {
     let error = create(
         "xlsx",
@@ -481,6 +805,9 @@ fn a_deck_is_built_from_the_blanks_layouts_with_speaker_notes() {
                 .iter()
                 .map(|(key, value)| (key.to_string(), value.clone()))
                 .collect(),
+            tables: BTreeMap::new(),
+            charts: BTreeMap::new(),
+            images: BTreeMap::new(),
             notes: notes.map(str::to_string),
         }
     };
@@ -551,6 +878,16 @@ fn a_deck_is_built_from_the_blanks_layouts_with_speaker_notes() {
         "{text}"
     );
     assert!(text.contains("Ship v1 ¶ Sign ten customers"), "{text}");
+    assert!(
+        document.units.iter().any(|unit| {
+            unit.text.contains("Ship v1")
+                && unit
+                    .labels
+                    .iter()
+                    .any(|label| label.starts_with("shape position: Slide 2:"))
+        }),
+        "text shapes retain their placeholder position for the deck Canvas"
+    );
     // A text placeholder keeps its type; a content placeholder has none.
     assert!(
         part(&applied.bytes, "ppt/slides/slide3.xml").contains(r#"<p:ph type="body" idx="1"/>"#)
@@ -590,6 +927,216 @@ fn a_deck_is_built_from_the_blanks_layouts_with_speaker_notes() {
 }
 
 #[test]
+fn a_deck_can_create_a_native_table_in_a_layout_placeholder() {
+    let applied = create(
+        "pptx",
+        vec![OfficeOp::AddSlideFromLayout {
+            layout: "Title and Content".into(),
+            after: None,
+            placeholders: BTreeMap::from([("title".into(), TextValue::One("Weekly sales".into()))]),
+            tables: BTreeMap::from([(
+                "body".into(),
+                vec![
+                    vec![text("Region"), text("Sales")],
+                    vec![text("North"), CellValue::Number(120.0)],
+                    vec![text("South"), CellValue::Number(95.0)],
+                ],
+            )]),
+            charts: BTreeMap::new(),
+            images: BTreeMap::new(),
+            notes: None,
+        }],
+    )
+    .unwrap();
+    let table = applied.document.tables.first().unwrap();
+    assert!(table.title.starts_with("Slide 1 · "), "{}", table.title);
+    assert_eq!(
+        table.rows,
+        vec![
+            vec!["Region", "Sales"],
+            vec!["North", "120"],
+            vec!["South", "95"],
+        ]
+    );
+    assert!(part(&applied.bytes, "ppt/slides/slide1.xml").contains("<a:tbl>"));
+}
+
+#[test]
+fn a_deck_can_create_a_native_chart_with_rag_readable_cached_values() {
+    let applied = create(
+        "pptx",
+        vec![OfficeOp::AddSlideFromLayout {
+            layout: "Title and Content".into(),
+            after: None,
+            placeholders: BTreeMap::from([(
+                "title".into(),
+                TextValue::One("Daily average".into()),
+            )]),
+            tables: BTreeMap::new(),
+            charts: BTreeMap::from([(
+                "body".into(),
+                SlideChart {
+                    title: "Visitors by day".into(),
+                    chart_type: "bar".into(),
+                    categories: vec!["Mon".into(), "Tue".into(), "Wed".into()],
+                    values: vec![25.0, 31.0, 28.0],
+                },
+            )]),
+            images: BTreeMap::new(),
+            notes: None,
+        }],
+    )
+    .unwrap();
+    let table = applied
+        .document
+        .tables
+        .iter()
+        .find(|table| {
+            table
+                .rows
+                .iter()
+                .any(|row| row.first().is_some_and(|cell| cell == "Tue"))
+        })
+        .expect("chart cache is projected as a table for extraction and RAG");
+    assert_eq!(table.anchor, "slide:256/chart:chart1.xml");
+    assert_eq!(table.rows[0], vec!["Category", "Series 1"]);
+    assert_eq!(table.rows[2], vec!["Tue", "31"]);
+    assert!(
+        table
+            .labels
+            .iter()
+            .any(|label| label.starts_with("chart position: Slide 1:")),
+        "chart location is preserved for the slide Canvas: {:?}",
+        table.labels
+    );
+    assert!(
+        applied.document.units.iter().any(|unit| {
+            unit.anchor == "slide:256/chart:chart1.xml/r3" && unit.text == "Tue | 31"
+        })
+    );
+    let slide = part(&applied.bytes, "ppt/slides/slide1.xml");
+    assert!(slide.contains("<p:graphicFrame>"), "{slide}");
+    let rels = part(&applied.bytes, "ppt/slides/_rels/slide1.xml.rels");
+    assert!(rels.contains("../charts/chart1.xml"), "{rels}");
+    let chart = part(&applied.bytes, "ppt/charts/chart1.xml");
+    assert!(chart.contains("Visitors by day"), "{chart}");
+    assert!(chart.contains("<c:v>Tue</c:v>"), "{chart}");
+    assert!(chart.contains("<c:v>31</c:v>"), "{chart}");
+    assert!(
+        part(&applied.bytes, "[Content_Types].xml")
+            .contains("application/vnd.openxmlformats-officedocument.drawingml.chart+xml")
+    );
+}
+
+#[test]
+fn a_deck_can_embed_a_png_with_searchable_alternative_text() {
+    let image = SlideImage {
+        mime_type: "image/png".into(),
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+        alt_text: "A blue square used as the daily status marker".into(),
+    };
+    let applied = create(
+        "pptx",
+        vec![OfficeOp::AddSlideFromLayout {
+            layout: "Title and Content".into(),
+            after: None,
+            placeholders: BTreeMap::from([("title".into(), TextValue::One("Daily status".into()))]),
+            tables: BTreeMap::new(),
+            charts: BTreeMap::new(),
+            images: BTreeMap::from([("body".into(), image)]),
+            notes: None,
+        }],
+    )
+    .unwrap();
+    assert!(
+        applied
+            .document
+            .lines()
+            .join("\n")
+            .contains("A blue square used as the daily status marker")
+    );
+    assert!(applied.document.units.iter().any(|unit| {
+        unit.kind == UnitKind::Image
+            && unit
+                .labels
+                .iter()
+                .any(|label| label.starts_with("image position: Slide 1:"))
+    }));
+    assert!(
+        part(&applied.bytes, "ppt/slides/slide1.xml")
+            .contains("descr=\"A blue square used as the daily status marker\"")
+    );
+    let mut package = Package::open(Cursor::new(applied.bytes), Limits::default()).unwrap();
+    let media = package.read_part("ppt/media/image1.png").unwrap();
+    assert!(media.starts_with(b"\x89PNG\r\n\x1a\n"));
+}
+
+#[test]
+fn a_word_document_can_embed_a_png_with_searchable_alternative_text() {
+    let applied = create(
+        "docx",
+        vec![OfficeOp::AddImage {
+            image: SlideImage {
+                mime_type: "image/png".into(),
+                data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+                alt_text: "A blue square used as the daily status marker".into(),
+            },
+            after: None,
+        }],
+    )
+    .unwrap();
+    assert!(
+        applied
+            .document
+            .lines()
+            .join("\n")
+            .contains("A blue square used as the daily status marker")
+    );
+    assert!(applied.document.units.iter().any(|unit| {
+        unit.kind == UnitKind::Image
+            && unit
+                .labels
+                .iter()
+                .any(|label| label.starts_with("image position: inline with p:"))
+    }));
+    let mut package = Package::open(Cursor::new(applied.bytes), Limits::default()).unwrap();
+    assert!(
+        package
+            .read_part("word/media/image1.png")
+            .unwrap()
+            .starts_with(b"\x89PNG\r\n\x1a\n")
+    );
+}
+
+#[test]
+fn a_word_image_is_one_review_choice() {
+    let source = blank(format("docx")).unwrap();
+    let ops = vec![OfficeOp::AddImage {
+        image: SlideImage {
+            mime_type: "image/png".into(),
+            data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+            alt_text: "A blue square used as the daily status marker".into(),
+        },
+        after: None,
+    }];
+    let full = edit::apply(&source, &ops, &clean(), Limits::default(), None).unwrap();
+    let choices = review::choices(
+        &source,
+        &ops,
+        &clean(),
+        Limits::default(),
+        None,
+        &full.document,
+    )
+    .unwrap();
+    assert_eq!(choices.len(), 1);
+    assert_eq!(
+        choices[0].label,
+        "New image: A blue square used as the daily status marker"
+    );
+}
+
+#[test]
 fn a_template_name_makes_a_template_from_the_blank() {
     for (extension, kind) in [
         ("dotx", FormatKind::Template),
@@ -602,6 +1149,9 @@ fn a_template_name_makes_a_template_from_the_blank() {
                 layout: "Title Slide".into(),
                 after: None,
                 placeholders: BTreeMap::new(),
+                tables: BTreeMap::new(),
+                charts: BTreeMap::new(),
+                images: BTreeMap::new(),
                 notes: None,
             },
         };

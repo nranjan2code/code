@@ -115,6 +115,10 @@ impl OfficeOrigin {
 pub struct OfficeLineage {
     pub origin: OfficeOrigin,
     pub ops: Vec<vak_ooxml::edit::OfficeOp>,
+    /// Resolved workbook object anchors, kept with the replay lineage so a
+    /// later review or narrowing pass cannot choose different placements.
+    #[serde(default)]
+    pub planned_ops: Vec<vak_ooxml::edit::OfficeOp>,
     pub author: String,
     /// The draft is a new document (its file did not exist when the chain
     /// was made, or it started from the blank), so Word edits were written
@@ -868,6 +872,14 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
     let sha256 = crate::office_apply::sha256_hex(&bytes);
     let mut body = match view {
         OfficeView::Content { .. } | OfficeView::At { .. } | OfficeView::Facts => {
+            let previews = if matches!(&view, OfficeView::Content { .. } | OfficeView::At { .. }) {
+                match vak_ooxml::read::image_previews(std::io::Cursor::new(bytes.clone()), limits) {
+                    Ok(previews) => previews,
+                    Err(_) => Vec::new(),
+                }
+            } else {
+                Vec::new()
+            };
             let document = vak_ooxml::read::read(std::io::Cursor::new(bytes), limits)
                 .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
             let focus = match &view {
@@ -892,6 +904,23 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
                 from,
                 vak_ooxml::projection::PAGE_BYTES,
             ));
+            if let Ok(page) = &mut page {
+                let visible_alt_text: std::collections::HashSet<String> = page["units"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|unit| unit["kind"] == "image")
+                    .filter_map(|unit| unit["text"].as_str().map(str::to_string))
+                    .collect();
+                let media: Vec<_> = previews
+                    .into_iter()
+                    .filter(|preview| visible_alt_text.contains(&preview.alt_text))
+                    .collect();
+                if !media.is_empty() {
+                    page["media"] =
+                        serde_json::to_value(media).map_err(|error| error.to_string())?;
+                }
+            }
             if let (Ok(page), Some(index)) = (&mut page, focus) {
                 page["focus"] = Value::String(document.units[index].anchor.clone());
             }
@@ -1010,9 +1039,14 @@ fn office_narrow_in_worker(
     }
     let source = lineage_source(lineage, target_of(out))?;
     let draft = read_document(draft)?;
+    // Recompute placement from the persisted request ops here. Review labels
+    // describe that same plan; storing it in lineage would make it depend on
+    // which replay stage happened to run first.
+    let planned_ops =
+        vak_ooxml::edit::plan_chart_locations(&lineage.ops).map_err(|error| error.message)?;
     let applied = vak_ooxml::review::narrow(
         &source,
-        &lineage.ops,
+        &planned_ops,
         keep,
         &lineage_context(lineage),
         vak_ooxml::Limits::default(),

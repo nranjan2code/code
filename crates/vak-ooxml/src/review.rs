@@ -56,12 +56,13 @@ pub fn choices(
             ops.len()
         ));
     }
+    let planned_ops = edit::plan_chart_locations(ops).map_err(|error| error.message)?;
     let mut previous = read::read(Cursor::new(source.to_vec()), limits)
         .map_err(|error| format!("the file the draft was made from does not read: {error}"))?;
     let mut state = source.to_vec();
     let mut created = Vec::with_capacity(ops.len());
     let mut changes = Vec::with_capacity(ops.len());
-    for (index, op) in ops.iter().enumerate() {
+    for (index, op) in planned_ops.iter().enumerate() {
         let applied = edit::apply(&state, std::slice::from_ref(op), context, limits, target)
             .map_err(|error| {
                 format!(
@@ -89,7 +90,7 @@ pub fn choices(
     }
     let mut choices: Vec<Choice> = Vec::new();
     let mut op_of: Vec<usize> = Vec::new();
-    for (index, (op, op_changes)) in ops.iter().zip(changes).enumerate() {
+    for (index, (op, op_changes)) in planned_ops.iter().zip(changes).enumerate() {
         match split_cells(op, &op_changes) {
             Some(cells) => {
                 for (cell, cell_changes) in cells {
@@ -170,7 +171,11 @@ pub fn narrow(
             }
         }
     }
-    let kept: Vec<(usize, OfficeOp)> = ops
+    // Placement is planned against the complete draft before choices are
+    // narrowed. Keep those resolved anchors when replaying selected ops so
+    // review, the narrowed candidate and the accepted file agree exactly.
+    let planned_ops = edit::plan_chart_locations(ops)?;
+    let kept: Vec<(usize, OfficeOp)> = planned_ops
         .iter()
         .enumerate()
         .filter_map(|(index, op)| {
@@ -350,6 +355,7 @@ fn references(op: &OfficeOp) -> Vec<&str> {
         }
         OfficeOp::AddParagraph { after, .. }
         | OfficeOp::AddTable { after, .. }
+        | OfficeOp::AddImage { after, .. }
         | OfficeOp::AddSlideFromLayout { after, .. } => after.as_deref().into_iter().collect(),
         OfficeOp::SetCells { .. }
         | OfficeOp::AppendRows { .. }
@@ -357,6 +363,9 @@ fn references(op: &OfficeOp) -> Vec<&str> {
         | OfficeOp::RenameSheet { .. }
         | OfficeOp::FormatCells { .. }
         | OfficeOp::SetColumnWidths { .. }
+        | OfficeOp::AddChart { .. }
+        | OfficeOp::AddExcelTable { .. }
+        | OfficeOp::AddExcelImage { .. }
         | OfficeOp::SetTitle { .. } => Vec::new(),
     }
 }
@@ -389,6 +398,9 @@ fn remap(mut op: OfficeOp, minted: &HashMap<String, String>) -> OfficeOp {
         }
         | OfficeOp::AddTable {
             after: Some(after), ..
+        }
+        | OfficeOp::AddImage {
+            after: Some(after), ..
         } => swap(after),
         _ => {}
     }
@@ -411,6 +423,10 @@ fn label(op: &OfficeOp, cell: Option<&str>) -> String {
                 if columns == 1 { "column" } else { "columns" }
             )
         }
+        OfficeOp::AddImage { image, after } => match after {
+            Some(after) => format!("New image after {after}: {}", preview(&image.alt_text)),
+            None => format!("New image: {}", preview(&image.alt_text)),
+        },
         OfficeOp::DeleteParagraph { anchor } => format!("Delete paragraph {anchor}"),
         OfficeOp::SetCells { sheet, cells } => match cell {
             Some(cell) => format!("Set {sheet}!{cell}"),
@@ -431,6 +447,44 @@ fn label(op: &OfficeOp, cell: Option<&str>) -> String {
             "Set the width of column(s) {} on {sheet}",
             widths.keys().cloned().collect::<Vec<_>>().join(", ")
         ),
+        OfficeOp::AddChart {
+            sheet,
+            range,
+            chart_type,
+            title,
+            cell,
+        } => {
+            let default_cell = || {
+                let end = range
+                    .rsplit_once(':')
+                    .map_or(range.as_str(), |(_, end)| end);
+                let end = end.rsplit_once('!').map_or(end, |(_, cell)| cell);
+                let column: String = end
+                    .trim_start_matches('$')
+                    .chars()
+                    .take_while(char::is_ascii_alphabetic)
+                    .collect();
+                let row = end
+                    .trim_start_matches('$')
+                    .trim_start_matches(|character: char| character.is_ascii_alphabetic())
+                    .trim_start_matches('$')
+                    .parse::<u32>()
+                    .unwrap_or(0)
+                    .saturating_add(1);
+                format!("{}{row}", if column.is_empty() { "A" } else { &column })
+            };
+            format!(
+                "Add {chart_type} chart {title:?} from {sheet}!{range} at {sheet}!{}",
+                cell.clone().unwrap_or_else(default_cell)
+            )
+        }
+        OfficeOp::AddExcelTable { sheet, range, name } => format!(
+            "Add Excel table {} on {sheet}!{range}",
+            name.as_deref().unwrap_or("(generated name)")
+        ),
+        OfficeOp::AddExcelImage { sheet, cell, image } => {
+            format!("Add image on {sheet}!{cell}: {}", preview(&image.alt_text))
+        }
         OfficeOp::AddSlideFromLayout { layout, .. } => {
             format!("New slide from layout {layout:?}")
         }

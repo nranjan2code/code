@@ -56,6 +56,24 @@ pub enum TextValue {
     One(String),
 }
 
+/// One native PowerPoint chart backed by standard cached series values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SlideChart {
+    pub title: String,
+    pub chart_type: String,
+    pub categories: Vec<String>,
+    pub values: Vec<f64>,
+}
+
+/// An embedded PowerPoint picture. The bounded base64 payload crosses the
+/// worker protocol with its description; the package stores decoded bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SlideImage {
+    pub mime_type: String,
+    pub data: String,
+    pub alt_text: String,
+}
+
 impl TextValue {
     pub fn lines(&self) -> Vec<String> {
         match self {
@@ -91,6 +109,11 @@ pub enum OfficeOp {
         after: Option<String>,
         #[serde(default)]
         header: Option<bool>,
+    },
+    AddImage {
+        image: SlideImage,
+        #[serde(default)]
+        after: Option<String>,
     },
     DeleteParagraph {
         anchor: String,
@@ -128,12 +151,42 @@ pub enum OfficeOp {
         sheet: String,
         widths: BTreeMap<String, f64>,
     },
+    AddChart {
+        sheet: String,
+        range: String,
+        chart_type: String,
+        title: String,
+        #[serde(default)]
+        cell: Option<String>,
+    },
+    AddExcelTable {
+        sheet: String,
+        range: String,
+        #[serde(default)]
+        name: Option<String>,
+    },
+    AddExcelImage {
+        sheet: String,
+        cell: String,
+        image: SlideImage,
+    },
     AddSlideFromLayout {
         layout: String,
         #[serde(default)]
         after: Option<String>,
         #[serde(default)]
         placeholders: BTreeMap<String, TextValue>,
+        /// Native PowerPoint tables inserted into matching layout placeholders
+        /// (usually `body` or `idx:1`) using that placeholder's own bounds.
+        #[serde(default)]
+        tables: BTreeMap<String, Vec<Vec<CellValue>>>,
+        /// Native charts inserted into matching content placeholders, with
+        /// cached values projected as RAG-readable chart tables.
+        #[serde(default)]
+        charts: BTreeMap<String, SlideChart>,
+        /// PNG/JPEG images embedded as standard media parts with required alt text.
+        #[serde(default)]
+        images: BTreeMap<String, SlideImage>,
         #[serde(default)]
         notes: Option<String>,
     },
@@ -164,6 +217,7 @@ impl OfficeOp {
             OfficeOp::ReplaceParagraphText { .. } => "replace_paragraph_text",
             OfficeOp::AddParagraph { .. } => "add_paragraph",
             OfficeOp::AddTable { .. } => "add_table",
+            OfficeOp::AddImage { .. } => "add_image",
             OfficeOp::DeleteParagraph { .. } => "delete_paragraph",
             OfficeOp::SetCells { .. } => "set_cells",
             OfficeOp::AppendRows { .. } => "append_rows",
@@ -171,6 +225,9 @@ impl OfficeOp {
             OfficeOp::RenameSheet { .. } => "rename_sheet",
             OfficeOp::FormatCells { .. } => "format_cells",
             OfficeOp::SetColumnWidths { .. } => "set_column_widths",
+            OfficeOp::AddChart { .. } => "add_chart",
+            OfficeOp::AddExcelTable { .. } => "add_excel_table",
+            OfficeOp::AddExcelImage { .. } => "add_excel_image",
             OfficeOp::AddSlideFromLayout { .. } => "add_slide_from_layout",
             OfficeOp::SetPlaceholderText { .. } => "set_placeholder_text",
             OfficeOp::SetNotes { .. } => "set_notes",
@@ -185,13 +242,18 @@ impl OfficeOp {
             OfficeOp::ReplaceParagraphText { .. }
             | OfficeOp::AddParagraph { .. }
             | OfficeOp::AddTable { .. }
+            | OfficeOp::AddImage { .. }
             | OfficeOp::DeleteParagraph { .. } => Some(Vocabulary::Word),
             OfficeOp::SetCells { .. }
             | OfficeOp::AppendRows { .. }
             | OfficeOp::AddSheet { .. }
             | OfficeOp::RenameSheet { .. }
             | OfficeOp::FormatCells { .. }
-            | OfficeOp::SetColumnWidths { .. } => Some(Vocabulary::Excel),
+            | OfficeOp::SetColumnWidths { .. }
+            | OfficeOp::AddChart { .. } => Some(Vocabulary::Excel),
+            OfficeOp::AddExcelTable { .. } | OfficeOp::AddExcelImage { .. } => {
+                Some(Vocabulary::Excel)
+            }
             OfficeOp::AddSlideFromLayout { .. }
             | OfficeOp::SetPlaceholderText { .. }
             | OfficeOp::SetNotes { .. }
@@ -300,6 +362,11 @@ pub(crate) enum Expect {
     /// No section has this anchor.
     NoSection(String),
     Title(String),
+    /// A native table is present at the owning shape anchor with these rows.
+    Table {
+        anchor: String,
+        rows: Vec<Vec<String>>,
+    },
     /// Each named cell of the sheet reads back with this formatting.
     CellFormat {
         sheet: String,
@@ -336,7 +403,8 @@ impl Expect {
             Expect::UnitContains { anchor, .. }
             | Expect::UnitDeleted { anchor }
             | Expect::Absent { anchor }
-            | Expect::Paragraph { anchor, .. } => Some(anchor),
+            | Expect::Paragraph { anchor, .. }
+            | Expect::Table { anchor, .. } => Some(anchor),
             _ => None,
         }
     }
@@ -368,6 +436,68 @@ impl Outcome {
 /// becomes a document by changing only its main part's content type. The
 /// vocabulary never changes, and a macro-free file never becomes
 /// macro-enabled or the reverse (O10).
+pub fn plan_chart_locations(ops: &[OfficeOp]) -> Result<Vec<OfficeOp>, EditError> {
+    let mut planned = ops.to_vec();
+    let mut chart_cells_by_sheet: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut explicit_chart_cells_by_sheet: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for op in &planned {
+        if let OfficeOp::AddChart {
+            sheet,
+            cell: Some(cell),
+            ..
+        } = op
+        {
+            explicit_chart_cells_by_sheet
+                .entry(sheet.to_ascii_lowercase())
+                .or_default()
+                .push(cell.clone());
+        }
+    }
+    for index in 0..planned.len() {
+        let (sheet_name, range, explicit) = match &planned[index] {
+            OfficeOp::AddChart {
+                sheet, range, cell, ..
+            } => (sheet.clone(), range.clone(), cell.clone()),
+            _ => continue,
+        };
+        let sheet_key = sheet_name.to_ascii_lowercase();
+        let cell = if let Some(cell) = explicit {
+            cell
+        } else {
+            let images = planned
+                .iter()
+                .filter_map(|candidate| match candidate {
+                    OfficeOp::AddExcelImage { sheet, cell, .. }
+                        if sheet.eq_ignore_ascii_case(&sheet_name) =>
+                    {
+                        Some(cell.clone())
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let mut blockers = explicit_chart_cells_by_sheet
+                .get(&sheet_key)
+                .cloned()
+                .unwrap_or_default();
+            blockers.extend(
+                chart_cells_by_sheet
+                    .get(&sheet_name)
+                    .cloned()
+                    .unwrap_or_default(),
+            );
+            sheet::chart_cell_avoiding_objects(&range, &images, &blockers)?
+        };
+        if let OfficeOp::AddChart { cell: target, .. } = &mut planned[index] {
+            *target = Some(cell.clone());
+        }
+        chart_cells_by_sheet
+            .entry(sheet_key)
+            .or_default()
+            .push(cell);
+    }
+    Ok(planned)
+}
+
 pub fn apply(
     source: &[u8],
     ops: &[OfficeOp],
@@ -411,8 +541,9 @@ pub fn apply(
     } else {
         None
     };
-    let mut outcomes = Vec::with_capacity(ops.len());
-    for (index, op) in ops.iter().enumerate() {
+    let planned_ops = plan_chart_locations(ops)?;
+    let mut outcomes = Vec::with_capacity(planned_ops.len());
+    for (index, op) in planned_ops.iter().enumerate() {
         let tag = |error: EditError| EditError {
             op: Some((index, op.name())),
             message: error.message,
@@ -447,6 +578,9 @@ pub fn apply(
                 after.as_deref(),
                 header.unwrap_or(true),
             ),
+            OfficeOp::AddImage { image, after } => {
+                word::add_image(&mut work, context, image, after.as_deref())
+            }
             OfficeOp::DeleteParagraph { anchor } => {
                 word::delete_paragraph(&mut work, context, anchor)
             }
@@ -477,16 +611,44 @@ pub fn apply(
             OfficeOp::SetColumnWidths { sheet, widths } => {
                 sheet::set_column_widths(&mut work, sheet, widths)
             }
+            OfficeOp::AddChart {
+                sheet,
+                range,
+                chart_type,
+                title,
+                cell,
+            } => {
+                let placement = match cell.as_deref() {
+                    Some(cell) => Some(cell),
+                    None => match ops.get(index) {
+                        Some(OfficeOp::AddChart { cell, .. }) => cell.as_deref(),
+                        _ => None,
+                    },
+                };
+                sheet::add_chart(&mut work, sheet, range, chart_type, title, placement)
+            }
+            OfficeOp::AddExcelTable { sheet, range, name } => {
+                sheet::add_excel_table(&mut work, sheet, range, name.as_deref())
+            }
+            OfficeOp::AddExcelImage { sheet, cell, image } => {
+                sheet::add_excel_image(&mut work, sheet, cell, image)
+            }
             OfficeOp::AddSlideFromLayout {
                 layout,
                 after,
                 placeholders,
+                tables,
+                charts,
+                images,
                 notes,
             } => deck::add_slide_from_layout(
                 &mut work,
                 layout,
                 after.as_deref(),
                 placeholders,
+                tables,
+                charts,
+                images,
                 notes.as_deref(),
             ),
             OfficeOp::SetPlaceholderText { anchor, text } => {
@@ -721,9 +883,9 @@ fn paragraph_references(op: &OfficeOp) -> Vec<&str> {
         OfficeOp::ReplaceParagraphText { anchor, .. } | OfficeOp::DeleteParagraph { anchor } => {
             vec![anchor.as_str()]
         }
-        OfficeOp::AddParagraph { after, .. } | OfficeOp::AddTable { after, .. } => {
-            after.as_deref().into_iter().collect()
-        }
+        OfficeOp::AddParagraph { after, .. }
+        | OfficeOp::AddTable { after, .. }
+        | OfficeOp::AddImage { after, .. } => after.as_deref().into_iter().collect(),
         _ => Vec::new(),
     }
 }
@@ -875,6 +1037,20 @@ fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Res
                 Err(format!("title is {:?}", document.title))
             }
         }
+        Expect::Table { anchor, rows } => {
+            let table = document
+                .tables
+                .iter()
+                .find(|table| table.anchor == *anchor)
+                .ok_or_else(|| format!("table at {anchor} is missing"))?;
+            if table.rows == *rows {
+                Ok(())
+            } else {
+                Err(format!(
+                    "table at {anchor} does not read back with the requested rows"
+                ))
+            }
+        }
         Expect::CellFormat {
             sheet,
             cells,
@@ -1018,6 +1194,13 @@ impl<'a, R: std::io::Read + std::io::Seek> Work<'a, R> {
         self.parts.retain(|existing, _| part_key(existing) != key);
         self.parts
             .insert(name.trim_start_matches('/').to_string(), Some(bytes));
+    }
+
+    pub fn snapshot(&mut self) -> Result<Vec<u8>, EditError> {
+        self.package
+            .rewrite(Cursor::new(Vec::new()), &self.parts)
+            .map(Cursor::into_inner)
+            .map_err(Into::into)
     }
 
     pub fn remove(&mut self, name: &str) {
@@ -1273,6 +1456,92 @@ pub(crate) fn free_part_name<R: std::io::Read + std::io::Seek>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn implicit_chart_clears_a_later_excel_image_below_the_data() {
+        let ops = vec![
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Daily visitors".into(),
+                cell: None,
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image: SlideImage {
+                    mime_type: "image/png".into(),
+                    data: String::new(),
+                    alt_text: "Daily status marker".into(),
+                },
+            },
+        ];
+
+        let planned = plan_chart_locations(&ops).expect("chart placement");
+        assert!(matches!(
+            &planned[0],
+            OfficeOp::AddChart { cell: Some(cell), .. } if cell == "A10"
+        ));
+    }
+
+    #[test]
+    fn explicit_chart_cell_is_preserved_even_with_an_image_nearby() {
+        let ops = vec![
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Daily visitors".into(),
+                cell: Some("J4".into()),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image: SlideImage {
+                    mime_type: "image/png".into(),
+                    data: String::new(),
+                    alt_text: "Daily status marker".into(),
+                },
+            },
+        ];
+
+        let planned = plan_chart_locations(&ops).expect("chart placement");
+        assert!(matches!(
+            &planned[0],
+            OfficeOp::AddChart { cell: Some(cell), .. } if cell == "J4"
+        ));
+    }
+
+    #[test]
+    fn an_implicit_chart_avoids_an_explicit_chart_even_when_it_comes_later() {
+        let ops = vec![
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Automatic".into(),
+                cell: None,
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "line".into(),
+                title: "Human placed".into(),
+                cell: Some("A10".into()),
+            },
+        ];
+
+        let planned = plan_chart_locations(&ops).expect("chart placement");
+        assert!(matches!(
+            &planned[0],
+            OfficeOp::AddChart { cell: Some(cell), .. } if cell == "K4"
+        ));
+        assert!(matches!(
+            &planned[1],
+            OfficeOp::AddChart { cell: Some(cell), .. } if cell == "A10"
+        ));
+    }
 
     #[test]
     fn relative_targets() {

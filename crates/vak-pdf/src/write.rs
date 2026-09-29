@@ -71,6 +71,21 @@ impl<'s> Objects<'s> {
         number
     }
 
+    /// Adds an already encoded stream without changing its filter data.
+    pub(crate) fn add_encoded_stream(&mut self, mut dict: Dict, data: &[u8]) -> u32 {
+        dict.0.retain(|(key, _)| key != b"Length");
+        let number = self.next;
+        self.next += 1;
+        self.entries.insert(
+            number,
+            Entry {
+                object: Object::Stream(crate::object::Stream { dict, data: 0..0 }),
+                data: Some(data.to_vec()),
+            },
+        );
+        number
+    }
+
     pub(crate) fn set(&mut self, number: u32, object: Object) {
         let data = self.entries.remove(&number).and_then(|entry| entry.data);
         self.entries.insert(number, Entry { object, data });

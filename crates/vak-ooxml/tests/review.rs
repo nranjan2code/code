@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 use vak_ooxml::Limits;
 use vak_ooxml::diff::ChangeKind;
-use vak_ooxml::edit::{self, CellValue, EditContext, OfficeOp, TextValue};
+use vak_ooxml::edit::{self, CellValue, EditContext, OfficeOp, SlideImage, TextValue};
 use vak_ooxml::fixtures;
 use vak_ooxml::review::{self, Choice};
 
@@ -140,12 +140,105 @@ fn cells_are_chosen_one_at_a_time_and_a_new_sheet_carries_its_cells() {
 }
 
 #[test]
+fn a_native_excel_table_is_reviewed_and_replayed_as_a_structured_table() {
+    let source =
+        vak_ooxml::blank::blank(vak_ooxml::Format::from_extension("xlsx").unwrap()).unwrap();
+    let ops = vec![
+        OfficeOp::SetCells {
+            sheet: "Sheet1".into(),
+            cells: BTreeMap::from([
+                ("A1".into(), CellValue::Text("Day".into())),
+                ("B1".into(), CellValue::Text("Visitors".into())),
+                ("A2".into(), CellValue::Text("Monday".into())),
+                ("B2".into(), CellValue::Number(25.0)),
+                ("A3".into(), CellValue::Text("Tuesday".into())),
+                ("B3".into(), CellValue::Number(31.0)),
+            ]),
+        },
+        OfficeOp::AddExcelTable {
+            sheet: "Sheet1".into(),
+            range: "A1:B3".into(),
+            name: Some("DailyVisitors".into()),
+        },
+        OfficeOp::AddChart {
+            sheet: "Sheet1".into(),
+            range: "A1:B3".into(),
+            chart_type: "bar".into(),
+            title: "Daily visitors".into(),
+            cell: Some("F2".into()),
+        },
+        OfficeOp::AddExcelImage {
+            sheet: "Sheet1".into(),
+            cell: "D2".into(),
+            image: SlideImage {
+                mime_type: "image/png".into(),
+                data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+                alt_text: "A blue square marker".into(),
+            },
+        },
+    ];
+    let offered = choices(&source, &ops);
+    let table_choice = offered
+        .iter()
+        .find(|choice| choice.label.contains("DailyVisitors"))
+        .unwrap();
+    assert!(
+        table_choice
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Added)
+    );
+    let chart_choice = offered
+        .iter()
+        .find(|choice| choice.label.contains("Daily visitors"))
+        .unwrap();
+    assert!(
+        chart_choice.label.contains("Sheet1!F2"),
+        "{}",
+        chart_choice.label
+    );
+    assert!(
+        chart_choice
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Added)
+    );
+    let image_choice = offered
+        .iter()
+        .find(|choice| choice.label.contains("A blue square marker"))
+        .unwrap();
+    assert!(
+        image_choice
+            .changes
+            .iter()
+            .any(|change| change.kind == ChangeKind::Added)
+    );
+    let keep = offered
+        .iter()
+        .map(|choice| choice.id.as_str())
+        .collect::<Vec<_>>();
+    let narrowed = narrow(&source, &ops, &keep).unwrap();
+    assert!(narrowed.contains("DailyVisitors"), "{narrowed}");
+    assert!(
+        narrowed.contains("Monday")
+            && narrowed.contains("25")
+            && narrowed.contains("Tuesday")
+            && narrowed.contains("31"),
+        "{narrowed}"
+    );
+    assert!(narrowed.contains("A blue square marker"), "{narrowed}");
+}
+
+#[test]
 fn a_kept_edit_to_a_new_slide_still_lands_on_that_slide() {
     let source = fixtures::pptx_template();
     let slide = |title: &str| OfficeOp::AddSlideFromLayout {
         layout: "Title Slide".into(),
         after: None,
         placeholders: BTreeMap::from([("title".to_string(), TextValue::One(title.into()))]),
+        tables: BTreeMap::new(),
+        charts: BTreeMap::new(),
+        images: BTreeMap::new(),
         notes: None,
     };
     let ops = vec![
