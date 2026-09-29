@@ -37,6 +37,45 @@ fn prefix(tree: &Tree) -> Result<String, EditError> {
     }
 }
 
+/// Add a drawing relationship and insert its reference in worksheet order.
+fn add_sheet_drawing<R2: Read + Seek>(
+    work: &mut Work<'_, R2>,
+    sheet_part: &str,
+    drawing_part: &str,
+) -> Result<(), EditError> {
+    let drawing_rel = work.add_relationship(sheet_part, R_DRAWING, drawing_part)?;
+    let sheet_bytes = work.get(sheet_part)?;
+    let tree = Tree::parse(&sheet_bytes, sheet_part, work.limits())?;
+    let s = prefix(&tree)?;
+    // Keep the relationship namespace local to the drawing reference. Some
+    // spreadsheet consumers fail to resolve an r:id inherited from the
+    // worksheet root even though that XML is namespace-equivalent.
+    let drawing_tag = format!(r#"<{s}drawing xmlns:r="{R_NS}" r:id="{drawing_rel}"/>"#);
+    // SpreadsheetML fixes the order of these worksheet children. Drawings
+    // belong after page setup, and before legacy drawings and table parts.
+    let late = [
+        "legacyDrawing",
+        "legacyDrawingHF",
+        "picture",
+        "oleObjects",
+        "controls",
+        "webPublishItems",
+        "tableParts",
+        "extLst",
+    ];
+    let before = late
+        .iter()
+        .flat_map(|name| tree.children(0, name))
+        .min_by_key(|node| tree.nodes[*node].span.start);
+    let position = before
+        .map(|node| tree.nodes[node].span.start)
+        .unwrap_or(tree.root().inner.end);
+    let mut splice = Splice::default();
+    splice.insert(position, drawing_tag);
+    work.put(sheet_part, splice.apply(&sheet_bytes, sheet_part)?);
+    Ok(())
+}
+
 /// `B4` or `$B$4` → (column, row), both 1-based.
 fn address(text: &str) -> Result<(u32, u32), EditError> {
     let cleaned = text.trim().replace('$', "").to_ascii_uppercase();
@@ -1704,31 +1743,7 @@ pub(super) fn add_chart<R2: Read + Seek>(
             .into_bytes(),
         );
         work.set_override(&drawing_part, DRAWING_TYPE)?;
-        let drawing_rel = work.add_relationship(&sheet_part, R_DRAWING, &drawing_part)?;
-        let sheet_bytes = work.get(&sheet_part)?;
-        let tree = Tree::parse(&sheet_bytes, &sheet_part, work.limits())?;
-        let r = tree.prefix_for(R_NS).unwrap_or_else(|| "r:".into());
-        let drawing_tag = format!("<{r}drawing {r}id=\"{drawing_rel}\"/>");
-        let late = [
-            "legacyDrawing",
-            "legacyDrawingHF",
-            "picture",
-            "oleObjects",
-            "controls",
-            "webPublishItems",
-            "tableParts",
-            "extLst",
-        ];
-        let before = late
-            .iter()
-            .flat_map(|name| tree.children(0, name))
-            .min_by_key(|node| tree.nodes[*node].span.start);
-        let position = before
-            .map(|node| tree.nodes[node].span.start)
-            .unwrap_or(tree.root().inner.end);
-        let mut splice = Splice::default();
-        splice.insert(position, drawing_tag);
-        work.put(&sheet_part, splice.apply(&sheet_bytes, &sheet_part)?);
+        add_sheet_drawing(work, &sheet_part, &drawing_part)?;
     }
     let chart_anchor = format!(
         "chart:{chart_name}@{}{}",
@@ -2130,31 +2145,7 @@ pub(super) fn add_excel_image<R2: Read + Seek>(
             format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><xdr:wsDr xmlns:xdr="{DRAWING_NS}" xmlns:a="{A_NS}" xmlns:r="{R_NS}">{anchor}</xdr:wsDr>"#).into_bytes(),
         );
         work.set_override(&drawing_part, DRAWING_TYPE)?;
-        let drawing_rel = work.add_relationship(&sheet_part, R_DRAWING, &drawing_part)?;
-        let sheet_bytes = work.get(&sheet_part)?;
-        let tree = Tree::parse(&sheet_bytes, &sheet_part, work.limits())?;
-        let r = tree.prefix_for(R).unwrap_or_else(|| "r:".into());
-        let drawing_tag = format!(r#"<{s}drawing {r}id="{drawing_rel}"/>"#, s = prefix(&tree)?);
-        let late = [
-            "legacyDrawing",
-            "legacyDrawingHF",
-            "picture",
-            "oleObjects",
-            "controls",
-            "webPublishItems",
-            "tableParts",
-            "extLst",
-        ];
-        let before = late
-            .iter()
-            .flat_map(|name| tree.children(0, name))
-            .min_by_key(|node| tree.nodes[*node].span.start);
-        let position = before
-            .map(|node| tree.nodes[node].span.start)
-            .unwrap_or(tree.root().inner.end);
-        let mut splice = Splice::default();
-        splice.insert(position, drawing_tag);
-        work.put(&sheet_part, splice.apply(&sheet_bytes, &sheet_part)?);
+        add_sheet_drawing(work, &sheet_part, &drawing_part)?;
     }
     let anchor = format!("{}!image@{picture_id}", quote_sheet(&sheet_name));
     Ok(Outcome {

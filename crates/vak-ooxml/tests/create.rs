@@ -760,6 +760,69 @@ fn one_workbook_keeps_multiple_tables_charts_and_images_distinct_and_readable() 
 }
 
 #[test]
+fn workbook_drawing_relationship_is_added_after_table_relationships() {
+    let image = SlideImage {
+        mime_type: "image/png".into(),
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+        alt_text: "Daily marker".into(),
+    };
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::SetCells {
+                sheet: "Sheet1".into(),
+                cells: BTreeMap::from([
+                    ("A1".into(), text("Day")),
+                    ("B1".into(), text("Visitors")),
+                    ("A2".into(), text("Monday")),
+                    ("B2".into(), CellValue::Number(25.0)),
+                    ("A3".into(), text("Tuesday")),
+                    ("B3".into(), CellValue::Number(31.0)),
+                ]),
+            },
+            OfficeOp::AddExcelTable {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                name: Some("DailyVisitors".into()),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image,
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Daily visitors".into(),
+                cell: Some("A10".into()),
+            },
+        ],
+    )
+    .unwrap();
+    let sheet = part(&applied.bytes, "xl/worksheets/sheet1.xml");
+    let relationships = part(&applied.bytes, "xl/worksheets/_rels/sheet1.xml.rels");
+    let drawing_id = relationships
+        .split("<Relationship ")
+        .find(|relation| {
+            relation.contains("/drawing\"") && relation.contains("Target=\"../drawings/")
+        })
+        .and_then(|relation| relation.split("Id=\"").nth(1))
+        .and_then(|value| value.split('"').next())
+        .unwrap();
+    assert!(
+        sheet.contains(&format!("<drawing xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"{drawing_id}\"/>"))
+            || sheet.contains(&format!("<r:drawing r:id=\"{drawing_id}\"/>")),
+        "worksheet must reference the drawing relationship id, not a table id: {sheet} / {relationships}"
+    );
+    let drawing_position = sheet
+        .find(":drawing ")
+        .or_else(|| sheet.find("<drawing "))
+        .unwrap();
+    assert!(drawing_position < sheet.find("<tableParts ").unwrap());
+}
+
+#[test]
 fn a_workbook_chart_defaults_to_the_first_row_below_its_source_range() {
     let cells = BTreeMap::from([
         ("A1".into(), text("Day")),
