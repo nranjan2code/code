@@ -83,6 +83,16 @@ pub struct CellStyle {
     pub italic: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub number_format: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub horizontal_alignment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vertical_alignment: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub wrap_text: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -2028,14 +2038,25 @@ struct SpreadsheetFont {
     italic: bool,
 }
 
+#[derive(Default)]
+struct SpreadsheetCellFormat {
+    font_id: usize,
+    fill_id: usize,
+    number_format_id: u32,
+    horizontal_alignment: Option<String>,
+    vertical_alignment: Option<String>,
+    wrap_text: bool,
+}
+
 fn spreadsheet_styles(bytes: &[u8], part: &str, limits: &Limits) -> Result<Vec<CellStyle>, Error> {
     let mut fonts = Vec::new();
     let mut fills = Vec::new();
-    let mut xfs = Vec::new();
+    let mut xfs: Vec<SpreadsheetCellFormat> = Vec::new();
     let mut custom_formats: HashMap<u32, String> = HashMap::new();
     let mut section = "";
     let mut font: Option<SpreadsheetFont> = None;
     let mut fill: Option<String> = None;
+    let mut cell_format: Option<SpreadsheetCellFormat> = None;
     xml::walk(bytes, part, limits, |event| {
         match event {
             XmlEvent::Open(element) => match element.local() {
@@ -2072,20 +2093,36 @@ fn spreadsheet_styles(bytes: &[u8], part: &str, limits: &Limits) -> Result<Vec<C
                         }
                     }
                 }
-                "xf" if section == "cellXfs" => xfs.push((
-                    element
-                        .attr("fontId")
-                        .and_then(|value| value.parse::<usize>().ok())
-                        .unwrap_or(0),
-                    element
-                        .attr("fillId")
-                        .and_then(|value| value.parse::<usize>().ok())
-                        .unwrap_or(0),
-                    element
-                        .attr("numFmtId")
-                        .and_then(|value| value.parse::<u32>().ok())
-                        .unwrap_or(0),
-                )),
+                "xf" if section == "cellXfs" => {
+                    cell_format = Some(SpreadsheetCellFormat {
+                        font_id: element
+                            .attr("fontId")
+                            .and_then(|value| value.parse::<usize>().ok())
+                            .unwrap_or(0),
+                        fill_id: element
+                            .attr("fillId")
+                            .and_then(|value| value.parse::<usize>().ok())
+                            .unwrap_or(0),
+                        number_format_id: element
+                            .attr("numFmtId")
+                            .and_then(|value| value.parse::<u32>().ok())
+                            .unwrap_or(0),
+                        ..SpreadsheetCellFormat::default()
+                    });
+                }
+                "alignment" if cell_format.is_some() => {
+                    if let Some(format) = cell_format.as_mut() {
+                        format.horizontal_alignment = element
+                            .attr("horizontal")
+                            .and_then(spreadsheet_horizontal_alignment);
+                        format.vertical_alignment = element
+                            .attr("vertical")
+                            .and_then(spreadsheet_vertical_alignment);
+                        format.wrap_text = element.attr("wrapText").is_some_and(|value| {
+                            value == "1" || value.eq_ignore_ascii_case("true")
+                        });
+                    }
+                }
                 "numFmt" => {
                     if let (Some(id), Some(code)) = (
                         element
@@ -2103,6 +2140,9 @@ fn spreadsheet_styles(bytes: &[u8], part: &str, limits: &Limits) -> Result<Vec<C
                     fonts.push(font.take().unwrap_or_default());
                 }
                 "fill" if section == "fills" => fills.push(fill.take()),
+                "xf" if section == "cellXfs" => {
+                    xfs.push(cell_format.take().unwrap_or_default());
+                }
                 "fonts" | "fills" | "cellXfs" => section = "",
                 _ => {}
             },
@@ -2112,20 +2152,38 @@ fn spreadsheet_styles(bytes: &[u8], part: &str, limits: &Limits) -> Result<Vec<C
     })?;
     Ok(xfs
         .into_iter()
-        .map(|(font_id, fill_id, format_id)| {
-            let font = fonts.get(font_id);
+        .map(|format| {
+            let font = fonts.get(format.font_id);
             CellStyle {
-                fill_color: fills.get(fill_id).and_then(Clone::clone),
+                fill_color: fills.get(format.fill_id).and_then(Clone::clone),
                 font_color: font.and_then(|font| font.color.clone()),
                 bold: font.is_some_and(|font| font.bold),
                 italic: font.is_some_and(|font| font.italic),
                 number_format: custom_formats
-                    .get(&format_id)
+                    .get(&format.number_format_id)
                     .cloned()
-                    .or_else(|| builtin_number_format(format_id).map(str::to_string)),
+                    .or_else(|| builtin_number_format(format.number_format_id).map(str::to_string)),
+                horizontal_alignment: format.horizontal_alignment,
+                vertical_alignment: format.vertical_alignment,
+                wrap_text: format.wrap_text,
             }
         })
         .collect())
+}
+
+fn spreadsheet_horizontal_alignment(value: &str) -> Option<String> {
+    match value {
+        "general" | "left" | "center" | "centerContinuous" | "right" | "fill" | "justify"
+        | "distributed" => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn spreadsheet_vertical_alignment(value: &str) -> Option<String> {
+    match value {
+        "top" | "center" | "bottom" | "justify" | "distributed" => Some(value.to_string()),
+        _ => None,
+    }
 }
 
 fn builtin_number_format(id: u32) -> Option<&'static str> {
@@ -2821,7 +2879,7 @@ mod tests {
 
     #[test]
     fn spreadsheet_styles_keep_safe_fill_and_font_emphasis() {
-        let styles = br#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><color rgb="FF112233"/></font><font><b/><i/><color rgb="FF445566"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAABBCC"/></patternFill></fill></fills><cellXfs count="2"><xf fontId="0" fillId="0"/><xf fontId="1" fillId="1"/></cellXfs></styleSheet>"#;
+        let styles = br#"<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><color rgb="FF112233"/></font><font><b/><i/><color rgb="FF445566"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FFAABBCC"/></patternFill></fill></fills><cellXfs count="2"><xf fontId="0" fillId="0"/><xf fontId="1" fillId="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf></cellXfs></styleSheet>"#;
         let styles = spreadsheet_styles(styles, "xl/styles.xml", &Limits::default()).unwrap();
         assert_eq!(styles.len(), 2);
         assert_eq!(styles[0].font_color.as_deref(), Some("#112233"));
@@ -2829,6 +2887,9 @@ mod tests {
         assert_eq!(styles[1].font_color.as_deref(), Some("#445566"));
         assert!(styles[1].bold);
         assert!(styles[1].italic);
+        assert_eq!(styles[1].horizontal_alignment.as_deref(), Some("center"));
+        assert_eq!(styles[1].vertical_alignment.as_deref(), Some("center"));
+        assert!(styles[1].wrap_text);
     }
 
     #[test]
@@ -2861,6 +2922,9 @@ mod tests {
                 bold: true,
                 italic: false,
                 number_format: None,
+                horizontal_alignment: None,
+                vertical_alignment: None,
+                wrap_text: false,
             },
         ];
         let rows = sheet_rows(

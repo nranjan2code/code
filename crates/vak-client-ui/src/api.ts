@@ -1190,6 +1190,9 @@ export type OfficeCellStyle = {
   bold: boolean;
   italic: boolean;
   number_format?: string;
+  horizontal_alignment?: string;
+  vertical_alignment?: string;
+  wrap_text?: boolean;
 };
 
 export type OfficeTableStyleRange = {

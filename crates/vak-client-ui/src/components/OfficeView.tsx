@@ -773,6 +773,17 @@ function WorkbookGrid(props: {
                     const anchor = () => `${current()?.anchor ?? ""}${address}`;
                     const cell = value === undefined ? null : parseCell(value);
                     const shown = cell ? (cell.notCalculated && cell.formula ? cell.formula : cell.shown) : "";
+                    const style = row.styles.get(column);
+                    const horizontalAlignment = style?.horizontal_alignment;
+                    const defaultAlignment = cell && cell.shown.trim() !== "" && Number.isFinite(Number(cell.shown)) ? "right" : "left";
+                    const resolvedAlignment: "left" | "right" | "center" | "justify" | undefined = horizontalAlignment === "centerContinuous" ? "center"
+                      : horizontalAlignment === "distributed" ? "justify"
+                      : horizontalAlignment === "fill" ? "right"
+                      : horizontalAlignment === "left" || horizontalAlignment === "right" || horizontalAlignment === "center" || horizontalAlignment === "justify" ? horizontalAlignment
+                      : defaultAlignment;
+                    const verticalAlignment = style?.vertical_alignment === "center" ? "middle"
+                      : style?.vertical_alignment === "justify" || style?.vertical_alignment === "distributed" ? "middle"
+                      : style?.vertical_alignment;
                     const table = tableForCell(column, row.number);
                     const tableRange = table ? cellRange(table.range) : null;
                     return (
@@ -788,12 +799,13 @@ function WorkbookGrid(props: {
                           "office-table-column-band": Boolean(tableRange && table?.show_column_stripes && (column - tableRange.first.column) % 2 === 0),
                         }}
                         style={{
-                          ...(row.styles.has(column) ? {
-                          "background-color": row.styles.get(column)?.fill_color,
-                          color: row.styles.get(column)?.font_color,
-                          "font-weight": row.styles.get(column)?.bold ? "700" : undefined,
-                          "font-style": row.styles.get(column)?.italic ? "italic" : undefined,
-                        } : {}),
+                          "text-align": resolvedAlignment,
+                          "vertical-align": verticalAlignment,
+                          "white-space": style?.wrap_text ? "pre-wrap" : undefined,
+                          "background-color": style?.fill_color,
+                          color: style?.font_color,
+                          "font-weight": style?.bold ? "700" : undefined,
+                          "font-style": style?.italic ? "italic" : undefined,
                         }}
                         title={cell?.notCalculated ? "Not calculated yet: Excel works this out when it opens the file" : undefined}
                         aria-label={value === undefined ? `${address}, blank` : `${address}: ${shown}`}
