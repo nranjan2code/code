@@ -35,6 +35,8 @@ PAGES = [
      "An AI helper that stays with the work. Everyday plans, useful documents, ongoing commitments and your next idea."),
     ("outcomes.html", "/outcomes", "Examples", "Everyday examples | Vakyartha",
      "Dinner plans, clearer writing, documents, spreadsheets and code. Find a starting point for your own request."),
+    ("capabilities.html", "/capabilities", "Documents", "Work with documents | Vakyartha",
+     "Ask Vakyartha to read, cite, create and edit Office documents and PDFs. Review every proposed change before it reaches your files."),
     ("tour.html", "/tour", "How it works", "How it works | Vakyartha",
      "Start in your own words, return to ongoing work, and see what is ready or waiting for you."),
     ("security.html", "/security", "Your control", "Your control | Vakyartha",
