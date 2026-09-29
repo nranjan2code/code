@@ -92,6 +92,15 @@ fidelity. The live XLSX confirms its image at `Sheet1!D2` and chart at
 `Sheet1!A10`. Result cards now use compact format icons and responsive actions;
 390px viewport checks show no page overflow.
 
+**Progress — 2026-09-29.** Spreadsheet drawing previews preserve OOXML
+`from`/`to` marker offsets in pixels as visual metadata, and the Canvas keys
+measured overlays by drawing identity. Two-cell image bounds account for both
+marker offsets, and multiple drawing objects anchored to one cell no longer
+overwrite each other's measured dimensions. Offsets stay out of searchable
+unit text; image descriptions remain available to `doc_read` and RAG. Verified
+by the drawing-reader fixture for start/end offsets and the client TypeScript
+check. External workbook corpus verification remains pending.
+
 **Placement contract.** The person names the desired place in the request;
 the Agent writes the native anchor and shows it in Canvas and Review. In a
 workbook, an image or chart has an exact top-left cell; a chart defaults to

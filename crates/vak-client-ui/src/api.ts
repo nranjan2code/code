@@ -1179,7 +1179,11 @@ export type OfficeMediaPreview = {
   mime_type: "image/png" | "image/jpeg";
   data_url: string;
   cell?: string;
+  offset_x_px?: number;
+  offset_y_px?: number;
   end_cell?: string;
+  end_offset_x_px?: number;
+  end_offset_y_px?: number;
   width_px?: number;
   height_px?: number;
 };

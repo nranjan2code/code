@@ -708,8 +708,13 @@ function WorkbookGrid(props: {
     ...officeBlocks(props.units).flatMap((block) => block.kind === "chart" ? (() => {
       const labels = block.rows.flatMap((row) => row.labels);
       return [{
+        objectId: block.anchor.match(/chart:([^/]+)$/)?.[1] ? `chart:${block.anchor.match(/chart:([^/]+)$/)?.[1]}` : undefined,
         cell: labels.find((label) => label.startsWith("chart position: "))?.split("!").pop(),
         endCell: labels.find((label) => label.startsWith("chart end cell: "))?.split("!").pop(),
+        offsetX: 0,
+        offsetY: 0,
+        endOffsetX: 0,
+        endOffsetY: 0,
         ...dimensions(labels, "chart"),
       }];
     })() : []),
@@ -721,8 +726,13 @@ function WorkbookGrid(props: {
         ?? candidates.find((entry) => entry.cell && position && entry.cell === position)
         ?? (candidates.length === 1 ? candidates[0] : undefined);
       return {
+        objectId,
         cell: position ?? media?.cell,
         endCell: unit.labels.find((label) => label.startsWith("image end cell: "))?.split("!").pop() ?? media?.end_cell,
+        offsetX: media?.offset_x_px ?? 0,
+        offsetY: media?.offset_y_px ?? 0,
+        endOffsetX: media?.end_offset_x_px ?? 0,
+        endOffsetY: media?.end_offset_y_px ?? 0,
         ...dimensions(unit.labels, "image"),
         widthPx: media?.width_px ?? dimensions(unit.labels, "image").widthPx,
         heightPx: media?.height_px ?? dimensions(unit.labels, "image").heightPx,
@@ -819,17 +829,18 @@ function WorkbookGrid(props: {
     if (!canvas) return;
     const parent = canvas.getBoundingClientRect();
     const measured: Record<string, { left: string; top: string; width: string; height: string }> = {};
-    for (const { cell, endCell, widthPx, heightPx } of objectAnchors()) {
+    for (const { objectId, cell, endCell, offsetX, offsetY, endOffsetX, endOffsetY, widthPx, heightPx } of objectAnchors()) {
       if (!cell) continue;
       const target = canvas.querySelector<HTMLElement>(`[data-cell="${cell.toUpperCase()}"]`);
       if (!target) continue;
       const box = target.getBoundingClientRect();
       const end = endCell ? canvas.querySelector<HTMLElement>(`[data-cell="${endCell.toUpperCase()}"]`)?.getBoundingClientRect() : undefined;
-      measured[cell.toUpperCase()] = {
-        left: `${box.left - parent.left}px`,
-        top: `${box.top - parent.top}px`,
-        width: end ? `${Math.max(48, end.left - box.left)}px` : `${widthPx ?? 640}px`,
-        height: end ? `${Math.max(48, end.top - box.top)}px` : `${heightPx ?? 384}px`,
+      const key = objectId ? (String(objectId).startsWith("chart:") ? String(objectId) : `image:${objectId}`) : cell.toUpperCase();
+      measured[key] = {
+        left: `${box.left - parent.left + offsetX}px`,
+        top: `${box.top - parent.top + offsetY}px`,
+        width: end ? `${Math.max(1, end.left - box.left - endOffsetX - offsetX)}px` : `${widthPx ?? 640}px`,
+        height: end ? `${Math.max(1, end.top - box.top - endOffsetY - offsetY)}px` : `${heightPx ?? 384}px`,
       };
     }
     setObjectPositions((previous) => {
@@ -961,7 +972,8 @@ function WorkbookGrid(props: {
           <For each={chartBlocks()}>{(chart) => {
             const chartLabels = () => chart.rows.flatMap((row) => row.labels);
             const location = () => chartLabels().find((label) => label.startsWith("chart position: "))?.slice("chart position: ".length).split("!").pop() ?? "A1";
-            const size = () => objectPositions()[location().toUpperCase()];
+            const objectId = () => chart.anchor.match(/chart:([^/]+)$/)?.[1];
+            const size = () => objectPositions()[objectId() ? `chart:${objectId()}` : location().toUpperCase()];
             const objectAnchor = () => `${current()?.anchor ?? ""}${location()}`;
             return <div class="office-sheet-object" style={{ left: size()?.left ?? "0px", top: size()?.top ?? "0px", width: size()?.width ?? "640px", height: size()?.height ?? "384px" }}>
               <OfficeChart anchor={chart.anchor} rows={chart.rows} placement={objectAnchor()} unitProps={(anchor) => ({ tabIndex: 0, "aria-current": props.selected === objectAnchor() ? "true" : undefined, "aria-label": `Chart at ${objectAnchor()}`, onClick: () => props.select(props.selected === objectAnchor() ? null : objectAnchor()) })} />
@@ -977,7 +989,8 @@ function WorkbookGrid(props: {
                 ?? (candidates.length === 1 ? candidates[0] : undefined);
             };
             const location = () => unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop() ?? media()?.cell ?? "A1";
-            const size = () => objectPositions()[location().toUpperCase()];
+            const objectId = () => unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+            const size = () => objectPositions()[objectId() ? `image:${objectId()}` : location().toUpperCase()];
             const objectAnchor = () => `${current()?.anchor ?? ""}${location()}`;
             return <div class="office-sheet-object" style={{ left: size()?.left ?? "0px", top: size()?.top ?? "0px", width: size()?.width ?? "190px", height: size()?.height ?? "140px" }}>
               <OfficeImage unit={unit} media={props.media} compact unitProps={() => ({ tabIndex: 0, "aria-current": props.selected === objectAnchor() ? "true" : undefined, "aria-label": `Image at ${objectAnchor()}: ${unit.text}`, onClick: () => props.select(props.selected === objectAnchor() ? null : objectAnchor()) })} />

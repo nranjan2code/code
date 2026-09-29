@@ -127,9 +127,19 @@ pub struct ImagePreview {
     pub data_url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cell: Option<String>,
+    /// Offset in pixels from the top-left worksheet cell marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_x_px: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset_y_px: Option<u32>,
     /// Bottom-right cell boundary for two-cell anchored worksheet images.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_cell: Option<String>,
+    /// Offset in pixels from the bottom-right worksheet cell marker.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_offset_x_px: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_offset_y_px: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub width_px: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -233,7 +243,11 @@ pub fn image_previews<R: Read + Seek>(
                     base64::engine::general_purpose::STANDARD.encode(image)
                 ),
                 cell: reference.cell,
+                offset_x_px: reference.offset_x_px,
+                offset_y_px: reference.offset_y_px,
                 end_cell: reference.end_cell,
+                end_offset_x_px: reference.end_offset_x_px,
+                end_offset_y_px: reference.end_offset_y_px,
                 width_px: reference.width_px,
                 height_px: reference.height_px,
             });
@@ -248,7 +262,11 @@ struct DrawingReference {
     id: String,
     alt_text: String,
     cell: Option<String>,
+    offset_x_px: Option<u32>,
+    offset_y_px: Option<u32>,
     end_cell: Option<String>,
+    end_offset_x_px: Option<u32>,
+    end_offset_y_px: Option<u32>,
     width_px: Option<u32>,
     height_px: Option<u32>,
 }
@@ -266,6 +284,10 @@ fn drawing_references(
     let mut object_id = String::new();
     let mut cell = None;
     let mut end_cell = None;
+    let mut offset_x_px = None;
+    let mut offset_y_px = None;
+    let mut end_offset_x_px = None;
+    let mut end_offset_y_px = None;
     let mut width_px = None;
     let mut height_px = None;
     let mut in_from = false;
@@ -279,6 +301,10 @@ fn drawing_references(
                 "oneCellAnchor" | "twoCellAnchor" => {
                     cell = None;
                     end_cell = None;
+                    offset_x_px = None;
+                    offset_y_px = None;
+                    end_offset_x_px = None;
+                    end_offset_y_px = None;
                     width_px = None;
                     height_px = None;
                     column = None;
@@ -296,8 +322,26 @@ fn drawing_references(
                     column = None;
                     row = None;
                 }
-                "col" if in_from || in_to => coordinate = Some(("col", String::new())),
-                "row" if in_from || in_to => coordinate = Some(("row", String::new())),
+                "col" | "colOff" if in_from || in_to => {
+                    coordinate = Some((
+                        if element.local() == "col" {
+                            "col"
+                        } else {
+                            "colOff"
+                        },
+                        String::new(),
+                    ))
+                }
+                "row" | "rowOff" if in_from || in_to => {
+                    coordinate = Some((
+                        if element.local() == "row" {
+                            "row"
+                        } else {
+                            "rowOff"
+                        },
+                        String::new(),
+                    ))
+                }
                 "ext" => {
                     width_px = element.attr("cx").and_then(emu_to_pixels);
                     height_px = element.attr("cy").and_then(emu_to_pixels);
@@ -321,7 +365,11 @@ fn drawing_references(
                             id: object_id.clone(),
                             alt_text: alt_text.trim().to_string(),
                             cell: cell.clone(),
+                            offset_x_px,
+                            offset_y_px,
                             end_cell: end_cell.clone(),
+                            end_offset_x_px,
+                            end_offset_y_px,
                             width_px,
                             height_px,
                         });
@@ -339,8 +387,34 @@ fn drawing_references(
                 "col" if coordinate.as_ref().is_some_and(|(kind, _)| *kind == "col") => {
                     column = coordinate.take().and_then(|(_, text)| text.parse().ok());
                 }
+                "colOff"
+                    if coordinate
+                        .as_ref()
+                        .is_some_and(|(kind, _)| *kind == "colOff") =>
+                {
+                    let offset = coordinate.take().map(|(_, text)| text);
+                    let pixels = offset.as_deref().and_then(emu_to_pixels);
+                    if in_from {
+                        offset_x_px = pixels;
+                    } else if in_to {
+                        end_offset_x_px = pixels;
+                    }
+                }
                 "row" if coordinate.as_ref().is_some_and(|(kind, _)| *kind == "row") => {
                     row = coordinate.take().and_then(|(_, text)| text.parse().ok());
+                }
+                "rowOff"
+                    if coordinate
+                        .as_ref()
+                        .is_some_and(|(kind, _)| *kind == "rowOff") =>
+                {
+                    let offset = coordinate.take().map(|(_, text)| text);
+                    let pixels = offset.as_deref().and_then(emu_to_pixels);
+                    if in_from {
+                        offset_y_px = pixels;
+                    } else if in_to {
+                        end_offset_y_px = pixels;
+                    }
                 }
                 "from" | "to" => {
                     let address = || {
@@ -2934,12 +3008,16 @@ mod tests {
 
     #[test]
     fn drawing_projection_keeps_two_cell_object_bounds() {
-        let drawing = br#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:twoCellAnchor><xdr:from><xdr:col>6</xdr:col><xdr:row>3</xdr:row></xdr:from><xdr:to><xdr:col>10</xdr:col><xdr:row>14</xdr:row></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="7" name="Photo" descr="Daily status marker"/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></xdr:twoCellAnchor></xdr:wsDr>"#;
+        let drawing = br#"<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><xdr:twoCellAnchor><xdr:from><xdr:col>6</xdr:col><xdr:colOff>9525</xdr:colOff><xdr:row>3</xdr:row><xdr:rowOff>19050</xdr:rowOff></xdr:from><xdr:to><xdr:col>10</xdr:col><xdr:colOff>28575</xdr:colOff><xdr:row>14</xdr:row><xdr:rowOff>38100</xdr:rowOff></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="7" name="Photo" descr="Daily status marker"/></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId1"/></xdr:blipFill></xdr:pic></xdr:twoCellAnchor></xdr:wsDr>"#;
         let references =
             drawing_references(drawing, "xl/drawings/drawing1.xml", &Limits::default()).unwrap();
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].cell.as_deref(), Some("G4"));
         assert_eq!(references[0].end_cell.as_deref(), Some("K15"));
+        assert_eq!(references[0].offset_x_px, Some(1));
+        assert_eq!(references[0].offset_y_px, Some(2));
+        assert_eq!(references[0].end_offset_x_px, Some(3));
+        assert_eq!(references[0].end_offset_y_px, Some(4));
         assert_eq!(references[0].alt_text, "Daily status marker");
     }
 
