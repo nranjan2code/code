@@ -1,4 +1,41 @@
-# Agent instructions: reproduce and evolve the VAK architecture video
+# Agent instructions for Vakyartha videos
+
+This file is the starting point for any AI agent creating, editing, or reproducing a video in this repository. Public-facing videos use **Vakyartha**; `vak` remains the CLI and internal code name. Read the repository's root `AGENTS.md` and `docs/brand/README.md` before changing brand artwork or product claims.
+
+## Find the right production
+
+| Project | Purpose | Editable source | Rendered output |
+|---|---|---|---|
+| `video/ensemble-selfie/` | Eight-character work-to-selfie film | `src/EnsembleSelfie.tsx`, `public/ensemble/` | `out/ensemble-selfie.mp4` |
+| `video/vak-architecture/` | Narrated architecture explainer | `src/`, `docs/video/narration.txt` | See its render scripts below |
+| `video/vak-story/` | Cinematic product story | `src/`, `assetManifest.ts` | Its `out/` directory |
+
+Each production must keep its own source, assets, generation scripts, dependencies, render command, and a README in its project folder. Keep the final file when the user asks to preserve or reuse a video. Never use a one-off shell command as the only source for music, captions, imagery, or scene timing. Record the tool versions and any externally sourced asset origin. Do not put credentials or private material in source, audio, logs, or rendered frames.
+
+## Create or edit a production
+
+1. Read the production's README and inspect its existing source and assets. Check `git status` before editing, and leave unrelated work alone.
+2. Keep one production per `video/<name>/` folder. Put renderable scene code in `src/`, source assets in `public/` or a documented asset directory, generators in `scripts/`, and output in `out/`.
+3. Use approved Vakyartha character and logo assets from `docs/brand/`. Preserve each character's identity. Verify factual product claims against shipped code and current design docs; check each design doc's `Status:` line.
+4. Make the requested change, update any source generation scripts and README, then typecheck. Render a representative still before rendering the full video. Inspect an opening frame, a work or middle frame, and the closing frame. Check the audio when the production includes it.
+5. Give the user the absolute path to the finished video and point to its source folder. State any render or verification limitation clearly.
+
+For a new video, first write a short scene plan in its README: audience, duration, size, frame rate, character/action sequence, audio source, and final shot. Set up a reproducible `npm run render` (or equivalent) before considering the production complete. A video that exists only as an MP4 is not an editable source.
+
+## Eight-character selfie film
+
+The film follows the public website style: white and soft neutral surfaces, indigo, saffron accents, readable system sans type, and original character art. It is silent by design. Run from the repository root:
+
+```sh
+npm --prefix video/ensemble-selfie install
+npm --prefix video/ensemble-selfie run typecheck
+npm --prefix video/ensemble-selfie run preview
+npm --prefix video/ensemble-selfie run render
+```
+
+The scene source controls the individual work moments and final gathering; `src/index.tsx` controls duration and resolution. The dusk wallpaper and eight individual portraits are copied from their canonical `docs/brand/` sources. See `video/ensemble-selfie/README.md` for details. Do not alter the legacy `vak-story` film when editing this separate production.
+
+## Architecture explainer (existing production)
 
 ## Goal
 
