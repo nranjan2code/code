@@ -84,7 +84,18 @@ export default function OfficeView(props: {
     try {
       const page = await api.readOfficeProjection(props.source, from, at);
       if (generation !== request) return;
-      setMeta(page);
+      setMeta((current) => {
+        if (replace || !current) return page;
+        const media = new Map<string, api.OfficeMediaPreview>();
+        for (const preview of [...(current.media ?? []), ...(page.media ?? [])]) {
+          media.set(preview.object_id, preview);
+        }
+        return {
+          ...page,
+          media: [...media.values()],
+          image_object_ids: { ...(current.image_object_ids ?? {}), ...(page.image_object_ids ?? {}) },
+        };
+      });
       setUnits((current) => (replace ? page.units : [...current, ...page.units]));
       if (replace) setWindowStart(page.from);
       setNext(page.next);
@@ -331,12 +342,12 @@ export default function OfficeView(props: {
         <>
           <Show when={info().vocabulary === "excel"} fallback={
             <Show when={info().vocabulary === "power_point"} fallback={
-              <DocumentUnits outline={info().outline} units={units()} media={info().media ?? []} jump={jump} unitProps={unitProps} />
+              <DocumentUnits outline={info().outline} units={units()} media={info().media ?? []} imageObjectIds={info().image_object_ids ?? {}} jump={jump} unitProps={unitProps} />
             }>
-              <DeckUnits outline={info().outline} units={units()} media={info().media ?? []} jump={jump} unitProps={unitProps} />
+              <DeckUnits outline={info().outline} units={units()} media={info().media ?? []} imageObjectIds={info().image_object_ids ?? {}} jump={jump} unitProps={unitProps} />
             </Show>
           }>
-            <WorkbookGrid outline={info().outline} units={units()} media={info().media ?? []} cellStyles={info().cell_styles ?? {}} tableStyles={info().table_styles ?? []} displayValues={info().display_values ?? {}} geometry={info().sheet_geometry ?? { default_column_widths: {}, default_row_heights: {}, column_widths: {}, row_heights: {} }} jump={jump} selected={selected()} select={select} />
+            <WorkbookGrid outline={info().outline} units={units()} media={info().media ?? []} imageObjectIds={info().image_object_ids ?? {}} cellStyles={info().cell_styles ?? {}} tableStyles={info().table_styles ?? []} displayValues={info().display_values ?? {}} geometry={info().sheet_geometry ?? { default_column_widths: {}, default_row_heights: {}, column_widths: {}, row_heights: {} }} jump={jump} selected={selected()} select={select} />
           </Show>
           <div class="office-view-paging">
             <Show when={windowStart() > 0}>
@@ -552,9 +563,9 @@ function DocumentTable(props: { anchor: string; rows: api.OfficeUnit[]; unitProp
   </div>;
 }
 
-function OfficeImage(props: { unit: api.OfficeUnit; media: api.OfficeMediaPreview[]; unitProps: UnitProps; compact?: boolean }) {
+function OfficeImage(props: { unit: api.OfficeUnit; media: api.OfficeMediaPreview[]; imageObjectIds?: Record<string, string>; unitProps: UnitProps; compact?: boolean }) {
   const position = () => props.unit.labels.find((label) => label.startsWith("image position: "))?.slice("image position: ".length);
-  const objectId = () => props.unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+    const objectId = () => props.imageObjectIds?.[props.unit.anchor] ?? props.unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
   const preview = () => {
     const cell = position()?.split("!").pop();
     const candidates = props.media.filter((entry) => entry.alt_text === props.unit.text);
@@ -586,7 +597,7 @@ function OutlineRail(props: { outline: api.OfficeOutlineEntry[]; jump: (entry: a
   );
 }
 
-function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; media: api.OfficeMediaPreview[]; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps }) {
+function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; media: api.OfficeMediaPreview[]; imageObjectIds: Record<string, string>; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps }) {
   const blocks = createMemo(() => officeBlocks(props.units));
   return (
     <div class="office-view-body">
@@ -598,7 +609,7 @@ function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Of
           <DocumentTable anchor={block.anchor} rows={block.rows} placement={block.rows.flatMap((row) => row.labels).find((label) => label.startsWith("table position: "))?.slice("table position: ".length)} unitProps={props.unitProps} />
         ) : (() => {
           const unit = block.unit;
-          if (unit.kind === "image") return <OfficeImage unit={unit} media={props.media} unitProps={props.unitProps} />;
+          if (unit.kind === "image") return <OfficeImage unit={unit} media={props.media} imageObjectIds={props.imageObjectIds} unitProps={props.unitProps} />;
           return <div role="listitem" class={`office-unit office-unit-${unit.kind}`} {...props.unitProps(unit.anchor)}>
             <Show when={unit.kind === "heading" || unit.kind === "page"} fallback={<p><Redline text={unit.text} /></p>}>
               <p class="office-unit-heading" role="heading" aria-level={Math.min(6, Math.max(2, unit.level + 1))}><Redline text={unit.text} /></p>
@@ -615,7 +626,7 @@ function DocumentUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Of
 /** The reader's break between the paragraphs of one shape (vak_ooxml::read::PARAGRAPH_BREAK). */
 const PARAGRAPH_BREAK = " ¶ ";
 
-function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; media: api.OfficeMediaPreview[]; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps }) {
+function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.OfficeUnit[]; media: api.OfficeMediaPreview[]; imageObjectIds: Record<string, string>; jump: (entry: api.OfficeOutlineEntry) => void; unitProps: UnitProps }) {
   const slides = createMemo(() => {
     const groups: { anchor: string; units: api.OfficeUnit[] }[] = [];
     for (const unit of props.units) {
@@ -653,7 +664,7 @@ function DeckUnits(props: { outline: api.OfficeOutlineEntry[]; units: api.Office
                 <DocumentTable anchor={block.anchor} rows={block.rows} placement={position} unitProps={props.unitProps} />
               ) : (() => {
                 const unit = block.unit;
-                if (unit.kind === "image") return <OfficeImage unit={unit} media={props.media} unitProps={props.unitProps} />;
+                if (unit.kind === "image") return <OfficeImage unit={unit} media={props.media} imageObjectIds={props.imageObjectIds} unitProps={props.unitProps} />;
                 return (
                   <div role="listitem" class={`office-unit office-unit-${unit.kind}`} {...props.unitProps(unit.anchor)}>
                     <Show when={unit.kind === "notes"}><span class="office-unit-kind">Speaker notes</span></Show>
@@ -678,6 +689,7 @@ function WorkbookGrid(props: {
   outline: api.OfficeOutlineEntry[];
   units: api.OfficeUnit[];
   media: api.OfficeMediaPreview[];
+  imageObjectIds: Record<string, string>;
   cellStyles: Record<string, api.OfficeCellStyle>;
   tableStyles: api.OfficeTableStyleRange[];
   displayValues: Record<string, string>;
@@ -719,7 +731,7 @@ function WorkbookGrid(props: {
       }];
     })() : []),
     ...props.units.filter((unit) => unit.kind === "image").map((unit) => {
-      const objectId = unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+      const objectId = props.imageObjectIds[unit.anchor] ?? unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
       const position = unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop();
       const candidates = props.media.filter((entry) => entry.alt_text === unit.text);
       const media = props.media.find((entry) => entry.object_id === objectId)
@@ -981,7 +993,7 @@ function WorkbookGrid(props: {
           }}</For>
           <For each={imageUnits()}>{(unit) => {
             const media = () => {
-              const objectId = unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+              const objectId = props.imageObjectIds[unit.anchor] ?? unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
               const position = unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop();
               const candidates = props.media.filter((entry) => entry.alt_text === unit.text);
               return props.media.find((entry) => entry.object_id === objectId)
@@ -989,11 +1001,11 @@ function WorkbookGrid(props: {
                 ?? (candidates.length === 1 ? candidates[0] : undefined);
             };
             const location = () => unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop() ?? media()?.cell ?? "A1";
-            const objectId = () => unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+            const objectId = () => props.imageObjectIds[unit.anchor] ?? unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
             const size = () => objectPositions()[objectId() ? `image:${objectId()}` : location().toUpperCase()];
             const objectAnchor = () => `${current()?.anchor ?? ""}${location()}`;
             return <div class="office-sheet-object" style={{ left: size()?.left ?? "0px", top: size()?.top ?? "0px", width: size()?.width ?? "190px", height: size()?.height ?? "140px" }}>
-              <OfficeImage unit={unit} media={props.media} compact unitProps={() => ({ tabIndex: 0, "aria-current": props.selected === objectAnchor() ? "true" : undefined, "aria-label": `Image at ${objectAnchor()}: ${unit.text}`, onClick: () => props.select(props.selected === objectAnchor() ? null : objectAnchor()) })} />
+              <OfficeImage unit={unit} media={props.media} imageObjectIds={props.imageObjectIds} compact unitProps={() => ({ tabIndex: 0, "aria-current": props.selected === objectAnchor() ? "true" : undefined, "aria-label": `Image at ${objectAnchor()}: ${unit.text}`, onClick: () => props.select(props.selected === objectAnchor() ? null : objectAnchor()) })} />
             </div>;
           }}</For>
           </div>

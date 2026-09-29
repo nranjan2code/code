@@ -693,8 +693,8 @@ fn repeated_image_alt_text_keeps_distinct_object_ids_and_cells() {
         ],
     )
     .unwrap();
-    let units: Vec<_> = applied
-        .document
+    let document = read::read(Cursor::new(applied.bytes.clone()), Limits::default()).unwrap();
+    let units: Vec<_> = document
         .units
         .iter()
         .filter(|unit| unit.kind == UnitKind::Image)
@@ -709,9 +709,14 @@ fn repeated_image_alt_text_keeps_distinct_object_ids_and_cells() {
         .map(|((unit, preview), cell)| (unit, preview, cell))
     {
         assert_eq!(unit.text, "Daily status marker");
-        assert!(
-            unit.anchor
-                .ends_with(&format!("image@{}", preview.object_id))
+        assert!(unit.anchor.contains("!image@"));
+        assert_eq!(
+            unit.anchor.rsplit_once("image@").unwrap().1,
+            preview.object_id.rsplit_once('#').unwrap().1
+        );
+        assert_eq!(
+            document.image_object_ids.get(&unit.anchor),
+            Some(&preview.object_id)
         );
         assert!(
             unit.labels
@@ -719,6 +724,64 @@ fn repeated_image_alt_text_keeps_distinct_object_ids_and_cells() {
                 .any(|label| label == &format!("image position: Sheet1!{cell}"))
         );
         assert_eq!(preview.cell.as_deref(), Some(cell));
+    }
+}
+
+#[test]
+fn worksheet_image_ids_are_unique_across_sheets() {
+    let image = || {
+        SlideImage {
+        mime_type: "image/png".into(),
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+        alt_text: "Status marker".into(),
+    }
+    };
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::AddSheet {
+                name: "Second".into(),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image: image(),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Second".into(),
+                cell: "D2".into(),
+                image: image(),
+            },
+        ],
+    )
+    .unwrap();
+    let document = read::read(Cursor::new(applied.bytes.clone()), Limits::default()).unwrap();
+    let units: Vec<_> = document
+        .units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::Image)
+        .collect();
+    let previews = read::image_previews(Cursor::new(applied.bytes), Limits::default()).unwrap();
+    assert_eq!(units.len(), 2);
+    assert_eq!(previews.len(), 2);
+    assert_ne!(previews[0].object_id, previews[1].object_id);
+    let page = vak_ooxml::projection::project(&document, 0, vak_ooxml::projection::PAGE_BYTES);
+    assert_eq!(page.image_object_ids.len(), 2);
+    for (unit, preview) in units.iter().zip(&previews) {
+        assert_eq!(unit.text, preview.alt_text);
+        assert!(unit.anchor.contains("!image@"));
+        assert_eq!(
+            unit.anchor.rsplit_once("image@").unwrap().1,
+            preview.object_id.rsplit_once('#').unwrap().1
+        );
+        assert_eq!(
+            document.image_object_ids.get(&unit.anchor),
+            Some(&preview.object_id)
+        );
+        assert_eq!(
+            page.image_object_ids.get(&unit.anchor),
+            Some(&preview.object_id)
+        );
     }
 }
 

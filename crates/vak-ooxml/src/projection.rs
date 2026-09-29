@@ -38,6 +38,8 @@ pub struct Projection {
     /// Where the next page starts; absent on the last page.
     pub next: Option<usize>,
     pub units: Vec<Unit>,
+    /// Visual-only package-scoped media IDs for image anchors on this page.
+    pub image_object_ids: std::collections::HashMap<String, String>,
     /// Visual-only XLSX formatting for cells on this page. Kept separate from
     /// each unit's readable values so extraction and RAG stay content-first.
     pub cell_styles: std::collections::HashMap<String, CellStyle>,
@@ -173,6 +175,15 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
             .map(|(key, height)| (key.clone(), *height))
             .collect(),
     };
+    let image_object_ids = units
+        .iter()
+        .filter_map(|unit| {
+            document
+                .image_object_ids
+                .get(&unit.anchor)
+                .map(|id| (unit.anchor.clone(), id.clone()))
+        })
+        .collect();
     Projection {
         vocabulary: inspection.format.vocabulary,
         kind: inspection.format.vocabulary.label(),
@@ -198,6 +209,7 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
         from,
         next,
         units,
+        image_object_ids,
         cell_styles,
         table_styles,
         display_values,

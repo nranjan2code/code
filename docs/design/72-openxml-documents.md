@@ -97,9 +97,12 @@ fidelity. The live XLSX confirms its image at `Sheet1!D2` and chart at
 measured overlays by drawing identity. Two-cell image bounds account for both
 marker offsets, and multiple drawing objects anchored to one cell no longer
 overwrite each other's measured dimensions. Offsets stay out of searchable
-unit text; image descriptions remain available to `doc_read` and RAG. Verified
-by the drawing-reader fixture for start/end offsets and the client TypeScript
-check. External workbook corpus verification remains pending.
+unit text; image descriptions remain available to `doc_read` and RAG. Workbook
+image IDs are scoped to their drawing part in the visual projection while
+public citation/edit anchors stay unchanged, including when two sheets reuse
+the same object ID and cell. Verified by drawing-reader and two-sheet
+projection fixtures and the client TypeScript check. External workbook corpus
+verification remains pending.
 
 **Placement contract.** The person names the desired place in the request;
 the Agent writes the native anchor and shows it in Canvas and Review. In a

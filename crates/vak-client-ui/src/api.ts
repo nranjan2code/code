@@ -1227,6 +1227,8 @@ export type OfficeProjection = {
   from: number;
   next: number | null;
   units: OfficeUnit[];
+  /** Package-scoped visual image IDs keyed by the stable public anchor. */
+  image_object_ids?: Record<string, string>;
   /** Bounded previews returned by the document worker for the Canvas. */
   media?: OfficeMediaPreview[];
   /** Presentation-only cell styles; excluded from the RAG extraction view. */

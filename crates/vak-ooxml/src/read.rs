@@ -158,6 +158,8 @@ pub struct Document {
     pub units: Vec<Unit>,
     pub sections: Vec<Section>,
     pub tables: Vec<Table>,
+    /// Visual-only, package-scoped media identity keyed by public image anchor.
+    pub image_object_ids: HashMap<String, String>,
     #[serde(skip)]
     pub cell_styles: HashMap<String, CellStyle>,
     #[serde(skip)]
@@ -236,7 +238,7 @@ pub fn image_previews<R: Read + Seek>(
             total_bytes += image.len();
             previews.push(ImagePreview {
                 alt_text: reference.alt_text,
-                object_id: reference.id,
+                object_id: drawing_object_id(&part, &reference.id),
                 mime_type: mime.clone(),
                 data_url: format!(
                     "data:{mime};base64,{}",
@@ -454,6 +456,13 @@ fn emu_to_pixels(value: &str) -> Option<u32> {
     u32::try_from(emu.saturating_add(4_762) / 9_525).ok()
 }
 
+/// Drawing object IDs are unique only within their drawing part. Include its
+/// stable part name so two worksheets can both contain object ID `1`.
+fn drawing_object_id(part: &str, id: &str) -> String {
+    let name = part.rsplit('/').next().unwrap_or(part);
+    format!("{name}#{id}")
+}
+
 /// Opens and projects one package.
 pub fn read<R: Read + Seek>(reader: R, limits: Limits) -> Result<Document, Error> {
     let mut package = Package::open(reader, limits)?;
@@ -471,6 +480,7 @@ pub fn project<R: Read + Seek>(package: &mut Package<R>) -> Result<Document, Err
         units: Vec::new(),
         sections: Vec::new(),
         tables: Vec::new(),
+        image_object_ids: HashMap::new(),
         cell_styles: HashMap::new(),
         table_styles: Vec::new(),
         sheet_geometry: SheetGeometry::default(),
@@ -1045,14 +1055,16 @@ fn word<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> Re
                         .filter(|description| !description.is_empty())
                     {
                         image_ordinal += 1;
+                        let object_id = element
+                            .attr("id")
+                            .map(str::to_string)
+                            .unwrap_or_else(|| image_ordinal.to_string());
+                        let anchor = format!("image@{object_id}");
+                        document
+                            .image_object_ids
+                            .insert(anchor.clone(), drawing_object_id(&main, &object_id));
                         units.push(Unit {
-                            anchor: format!(
-                                "image@{}",
-                                element
-                                    .attr("id")
-                                    .map(str::to_string)
-                                    .unwrap_or_else(|| image_ordinal.to_string())
-                            ),
+                            anchor,
                             kind: UnitKind::Image,
                             level: 0,
                             text: description.to_string(),
@@ -1700,6 +1712,11 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
                 match relation.short_kind() {
                     "image" if !reference.alt_text.trim().is_empty() => {
                         image_count += 1;
+                        let image_anchor = format!("{quoted}!image@{}", reference.id);
+                        document.image_object_ids.insert(
+                            image_anchor.clone(),
+                            drawing_object_id(&drawing, &reference.id),
+                        );
                         let mut image_labels =
                             vec!["image alternative text; image content not read".into()];
                         image_labels.push(format!(
@@ -1715,7 +1732,7 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
                             image_labels.push(format!("image size: {width}x{height}px"));
                         }
                         units.push(Unit {
-                            anchor: format!("{quoted}!image@{}", reference.id),
+                            anchor: image_anchor,
                             kind: UnitKind::Image,
                             level: 0,
                             text: reference.alt_text,
@@ -2643,8 +2660,12 @@ fn powerpoint<R: Read + Seek>(
                 });
             }
             if !shape.alternative_text.trim().is_empty() {
+                let image_anchor = format!("{anchor}/shape:{}", shape.id);
+                document
+                    .image_object_ids
+                    .insert(image_anchor.clone(), drawing_object_id(&part, &shape.id));
                 units.push(Unit {
-                    anchor: format!("{anchor}/shape:{}", shape.id),
+                    anchor: image_anchor,
                     kind: UnitKind::Image,
                     level: 0,
                     text: shape.alternative_text.clone(),

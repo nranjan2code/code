@@ -905,18 +905,25 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
                 vak_ooxml::projection::PAGE_BYTES,
             ));
             if let Ok(page) = &mut page {
-                let visible_image_ids: std::collections::HashSet<String> = page["units"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|unit| unit["kind"] == "image")
-                    .filter_map(|unit| {
-                        unit["anchor"]
-                            .as_str()?
-                            .rsplit_once("image@")
-                            .map(|(_, id)| id.to_string())
-                    })
-                    .collect();
+                let mut visible_image_ids: std::collections::HashSet<String> =
+                    page["image_object_ids"]
+                        .as_object()
+                        .into_iter()
+                        .flat_map(|ids| ids.values())
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect();
+                visible_image_ids.extend(
+                    page["units"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|unit| unit["kind"] == "image")
+                        .filter_map(|unit| unit["anchor"].as_str())
+                        .filter_map(|anchor| {
+                            anchor.rsplit_once("image@").map(|(_, id)| id.to_string())
+                        }),
+                );
                 let media: Vec<_> = previews
                     .into_iter()
                     .filter(|preview| visible_image_ids.contains(&preview.object_id))
@@ -1265,6 +1272,65 @@ mod tests {
     use super::*;
     use crate::sandbox::{Sandbox, SandboxMode, Seatbelt};
     use serde_json::json;
+
+    #[test]
+    fn office_worker_projection_keeps_cross_sheet_images_bound_to_their_anchors() {
+        let blank =
+            vak_ooxml::blank::blank(vak_ooxml::Format::from_extension("xlsx").unwrap()).unwrap();
+        let image = json!({
+            "mime_type": "image/png",
+            "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==",
+            "alt_text": "Status marker"
+        });
+        let ops: Vec<vak_ooxml::edit::OfficeOp> = serde_json::from_value(json!([
+            {"op":"add_sheet","name":"Second"},
+            {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":image},
+            {"op":"add_excel_image","sheet":"Second","cell":"D2","image":image}
+        ]))
+        .unwrap();
+        let applied = vak_ooxml::edit::apply(
+            &blank,
+            &ops,
+            &vak_ooxml::edit::EditContext {
+                author: "test".into(),
+                date: "2026-09-29T00:00:00Z".into(),
+                tracked: false,
+            },
+            vak_ooxml::Limits::default(),
+            None,
+        )
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("two-sheets.xlsx");
+        std::fs::write(&path, applied.bytes).unwrap();
+
+        let page: Value = serde_json::from_str(
+            &office_project_in_worker(&path, OfficeView::Content { from: 0 }).unwrap(),
+        )
+        .unwrap();
+        let image_ids = page["image_object_ids"].as_object().unwrap();
+        let media = page["media"].as_array().unwrap();
+        assert_eq!(image_ids.len(), 2, "{page}");
+        assert_eq!(media.len(), 2, "{page}");
+        let projected_ids: std::collections::HashSet<_> =
+            image_ids.values().map(Value::as_str).collect();
+        let media_ids: std::collections::HashSet<_> = media
+            .iter()
+            .map(|preview| preview["object_id"].as_str())
+            .collect();
+        assert_eq!(projected_ids, media_ids, "{page}");
+        let anchors: std::collections::HashSet<_> = image_ids.keys().collect();
+        assert!(
+            anchors
+                .iter()
+                .any(|anchor| anchor.starts_with("Sheet1!image@"))
+        );
+        assert!(
+            anchors
+                .iter()
+                .any(|anchor| anchor.starts_with("Second!image@"))
+        );
+    }
 
     #[test]
     fn no_sandbox_passes_worker_command_through() {
