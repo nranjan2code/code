@@ -57,7 +57,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: Nav
   { id: "appearance", label: "Appearance", icon: "palette", hint: "theme text size motion cards previews", group: "Everyday" },
   { id: "voice", label: "Voice and sound", icon: "mic", hint: "voice speak aloud microphone sound cues chime", group: "Everyday" },
   { id: "notifications", label: "Notifications", icon: "bell", hint: "alerts quiet hours", group: "Everyday" },
-  { id: "connections", label: "Connections", icon: "plug", hint: "tools skills chat bots telegram discord slack mcp hooks plugins", group: "Everyday" },
+  { id: "connections", label: "Capabilities", icon: "grid", hint: "discover skills plugins marketplace connections tools chat bots telegram discord slack mcp hooks", group: "Everyday" },
   { id: "privacy", label: "Privacy and safety", icon: "shield", hint: "permissions access approvals memory remembers archived trash history", group: "Everyday" },
   { id: "models", label: "Models and routing", icon: "layers", hint: "route ladder fallbacks", group: "Advanced" },
   { id: "reliability", label: "Reliability", icon: "timer", hint: "retries timeout circuit breaker", group: "Advanced" },
@@ -624,7 +624,12 @@ export default function Settings() {
   const [plugins, setPlugins] = createSignal<api.InstalledPlugin[]>([]);
   const [inheritedPlugins, setInheritedPlugins] = createSignal<api.InstalledPlugin[]>([]);
   const [pluginSources, setPluginSources] = createSignal<api.MarketplaceSource[]>([]);
+  const [inheritedPluginSources, setInheritedPluginSources] = createSignal<api.MarketplaceSource[]>([]);
   const [marketplaceEntries, setMarketplaceEntries] = createSignal<api.MarketplaceEntry[]>([]);
+  const [marketplaceErrors, setMarketplaceErrors] = createSignal<string[]>([]);
+  const [capabilityView, setCapabilityView] = createSignal<"discover" | "mine" | "manage">("discover");
+  const [discoveryQuery, setDiscoveryQuery] = createSignal("");
+  const [discoveryKind, setDiscoveryKind] = createSignal<"all" | "skills" | "plugins">("all");
   const [marketplaceQuery, setMarketplaceQuery] = createSignal("");
   const [sourcePath, setSourcePath] = createSignal("");
   const [sourceKeyId, setSourceKeyId] = createSignal("");
@@ -637,32 +642,36 @@ export default function Settings() {
   const [hooksDirty, setHooksDirty] = createSignal(false);
   const [hooksSaving, setHooksSaving] = createSignal(false);
   const [capabilityTab, setCapabilityTab] = createSignal<"mcp" | "skills" | "hooks" | "plugins">("mcp");
-  // Automations and add-ons are technical; with details off the tab falls
-  // back to connections rather than showing a page with no tab selected.
-  const shownCapabilityTab = () => {
-    const tab = capabilityTab();
-    return !technicalDetails() && (tab === "hooks" || tab === "plugins") ? "mcp" : tab;
-  };
+  const shownCapabilityTab = () => capabilityTab();
   const visibleSkills = createMemo(() =>
-    scope() === "user" ? skills().filter((skill) => skill.scope === "user") : skills(),
+    scope() === "user" ? skills().filter((skill) => skill.scope === "user") : skills().filter((skill) => !skill.shadowed),
   );
+  const inherits = (kind: "mcp" | "hooks" | "plugins") => scope() === "user" || config()?.capability_inheritance?.[kind] !== false;
+  const discoverableSkills = createMemo(() => visibleSkills().filter((skill) => {
+    const needle = discoveryQuery().trim().toLowerCase();
+    return (discoveryKind() === "all" || discoveryKind() === "skills") && (!needle || `${skill.name} ${skill.description}`.toLowerCase().includes(needle));
+  }));
+  const discoverablePlugins = createMemo(() => marketplaceEntries().filter((entry) => {
+    const needle = discoveryQuery().trim().toLowerCase();
+    return (discoveryKind() === "all" || discoveryKind() === "plugins") && (!needle || `${entry.name} ${entry.description ?? ""} ${entry.source_label}`.toLowerCase().includes(needle));
+  }));
 
   const totalMcpCount = () => {
     const local = Object.keys(mcpServers() ?? {}).length;
-    if (scope() === "user") return local;
+    if (scope() === "user" || !inherits("mcp")) return local;
     const inherited = Object.keys(inheritedMcpServers()).filter((k) => !(k in (mcpServers() ?? {}))).length;
     return local + inherited;
   };
 
   const totalHooksCount = () => {
     const local = hooks().length;
-    if (scope() === "user") return local;
+    if (scope() === "user" || !inherits("hooks")) return local;
     return local + inheritedHooks().length;
   };
 
   const totalPluginsCount = () => {
     const local = plugins().length;
-    if (scope() === "user") return local;
+    if (scope() === "user" || !inherits("plugins")) return local;
     return local + inheritedPlugins().length;
   };
 
@@ -690,11 +699,11 @@ export default function Settings() {
     try {
       if (scope() === "user") {
         const [skillResult, hookResult, pluginResult, sourceResult, catalogResult] = await Promise.all([
-          api.listSkills(),
+          api.listSkills(activeAgentId()),
           api.getGlobalHooks(),
           api.listPlugins("user", activeAgentId()),
           api.listPluginSources("user", activeAgentId()),
-          api.listPluginCatalog(marketplaceQuery(), "user", activeAgentId()),
+          api.listPluginCatalog("", "user", activeAgentId()),
         ]);
         setSkills(skillResult.skills ?? []);
         setHooks(hookResult.hooks ?? []);
@@ -702,16 +711,19 @@ export default function Settings() {
         setPlugins(pluginResult.plugins ?? []);
         setInheritedPlugins([]);
         setPluginSources(sourceResult.sources ?? []);
+        setInheritedPluginSources([]);
         setMarketplaceEntries(catalogResult.entries ?? []);
+        setMarketplaceErrors((catalogResult.errors ?? []).map((item) => item.error));
       } else {
-        const [skillResult, hookResult, globalHookResult, pluginResult, globalPluginResult, sourceResult, catalogResult] = await Promise.all([
-          api.listSkills(),
+        const [skillResult, hookResult, globalHookResult, pluginResult, globalPluginResult, sourceResult, globalSourceResult, catalogResult] = await Promise.all([
+          api.listSkills(activeAgentId()),
           api.getHooks(activeAgentId()),
           api.getGlobalHooks(),
           api.listPlugins("workspace", activeAgentId()),
           api.listPlugins("user", activeAgentId()),
           api.listPluginSources("workspace", activeAgentId()),
-          api.listPluginCatalog(marketplaceQuery(), "workspace", activeAgentId()),
+          api.listPluginSources("user", activeAgentId()),
+          api.listPluginCatalog("", undefined, activeAgentId()),
         ]);
         setSkills(skillResult.skills ?? []);
         setHooks(hookResult.hooks ?? []);
@@ -719,7 +731,9 @@ export default function Settings() {
         setPlugins(pluginResult.plugins ?? []);
         setInheritedPlugins(globalPluginResult.plugins ?? []);
         setPluginSources(sourceResult.sources ?? []);
+        setInheritedPluginSources(globalSourceResult.sources ?? []);
         setMarketplaceEntries(catalogResult.entries ?? []);
+        setMarketplaceErrors((catalogResult.errors ?? []).map((item) => item.error));
       }
       setHooksDirty(false);
     } catch (e) {
@@ -754,6 +768,20 @@ export default function Settings() {
     } catch (e) {
       setNotice({ kind: "error", text: `Plugin install failed: ${e instanceof Error ? e.message : String(e)}` });
     } finally { setPluginBusy(false); }
+  }
+
+  async function installCatalogPlugin(entry: api.MarketplaceEntry, update = false) {
+    if (pluginBusy() || !entry.source_enabled) return;
+    setPluginBusy(true);
+    try {
+      await api.installCatalogPlugin(entry, capabilityScope(), activeAgentId(), update);
+      await refreshCapabilities();
+      setNotice({ kind: "info", text: update ? `${entry.name} update staged disabled. Review its access under Manage before enabling it.` : `${entry.name} installed disabled. Review its access under Manage before enabling it.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not install ${entry.name}: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setPluginBusy(false);
+    }
   }
 
   async function togglePluginNetwork(name: string, on: boolean) {
@@ -792,7 +820,7 @@ export default function Settings() {
     setPluginBusy(true);
     try {
       const signed = sourceKeyId() && sourcePublicKey() && sourceSignature() ? { key_id: sourceKeyId(), public_key: sourcePublicKey(), signature: sourceSignature() } : undefined;
-      await api.registerPluginSource(path, "Desktop catalog", signed, activeAgentId());
+      await api.registerPluginSource(path, "Desktop catalog", capabilityScope(), signed, activeAgentId());
       setSourcePath("");
       setSourceKeyId(""); setSourcePublicKey(""); setSourceSignature("");
       await refreshCapabilities();
@@ -937,6 +965,7 @@ export default function Settings() {
   createEffect(() => {
     if (page() !== "connections") return;
     scope();
+    activeAgentId();
     void refreshMcp();
     void refreshCapabilities();
   });
@@ -1722,14 +1751,40 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "connections"}>
-              <header><h1>Connections</h1><p>{scope() === "user" ? "Tools and chat bots every agent can use." : `Tools and chat bots ${agentName()} can use. Your other agents are not affected.`}</p></header>
+              <header><h1>Capabilities</h1><p>{scope() === "user" ? "Find and manage what every agent can use." : `Find and manage what ${agentName()} can use, including shared capabilities.`}</p></header>
+              <nav class="capability-tabs" aria-label="Capability views">
+                <button classList={{ active: capabilityView() === "discover" }} onClick={() => setCapabilityView("discover")}>Discover</button>
+                <button classList={{ active: capabilityView() === "mine" }} onClick={() => setCapabilityView("mine")}>{scope() === "user" ? "Shared capabilities" : `${agentName()}'s capabilities`}</button>
+                <button classList={{ active: capabilityView() === "manage" }} onClick={() => setCapabilityView("manage")}>Manage</button>
+              </nav>
+              <Show when={capabilityView() === "discover"}>
+                <div class="capability-discover-intro"><strong>Explore what is available</strong><span>Skills already on this device and packages from your registered catalogs appear here. Catalog listings are not installed automatically.</span></div>
+                <div class="capability-discover-search"><Icon name="search" /><input aria-label="Search capabilities" placeholder="Search skills and catalog packages" value={discoveryQuery()} onInput={(event) => setDiscoveryQuery(event.currentTarget.value)} /></div>
+                <div class="capability-discover-filters" role="group" aria-label="Capability type">
+                  <For each={(["all", "skills", "plugins"] as const)}>{(kind) => <button type="button" classList={{ active: discoveryKind() === kind }} onClick={() => setDiscoveryKind(kind)}>{kind === "all" ? "All" : kind === "skills" ? "Skills" : "Packages"}</button>}</For>
+                </div>
+                <Show when={marketplaceErrors().length > 0}><div class="settings-callout" role="status"><Icon name="shield" /><div><strong>Some catalog entries could not be loaded</strong><span>{marketplaceErrors().join(" · ")}</span></div></div></Show>
+                <Show when={discoverableSkills().length + discoverablePlugins().length > 0} fallback={<div class="capability-empty"><span class="capability-empty-icon skills"><Icon name="spark" /></span><strong>{discoveryQuery().trim() ? "No matching capabilities" : "Nothing to discover yet"}</strong><span>{discoveryQuery().trim() ? "Try another search." : "Available skills appear here automatically. You can register a package catalog under Manage."}</span><Show when={!discoveryQuery().trim()}><button class="settings-button" onClick={() => { setCapabilityView("manage"); setCapabilityTab("plugins"); }}>Manage catalogs</button></Show></div>}>
+                  <div class="marketplace-grid">
+                    <For each={discoverableSkills()}>{(skill) => <div class="marketplace-card"><div class="marketplace-card-head"><CapabilityIcon name={skill.name} /><div><strong>{skill.name}</strong><small>Skill · {skill.scope === "user" ? "Shared with every agent" : "This agent"}</small></div></div><p>{skill.description || "No description provided."}</p><div class="settings-actions"><button class="settings-button" onClick={() => { setCapabilityView("mine"); }}>View in my capabilities</button></div></div>}</For>
+                    <For each={discoverablePlugins()}>{(entry) => <div class="marketplace-card"><div class="marketplace-card-head"><CapabilityIcon name={entry.name} /><div><strong>{entry.name}</strong><small>Package · {entry.source_label}{entry.version ? ` · v${entry.version}` : ""}</small></div></div><p>{entry.description || "No description provided."}</p><small>{entry.source_scope === "user" ? "Shared catalog" : "Agent catalog"} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.license ? ` · ${entry.license}` : " · License not declared"}</small><div class="settings-actions"><button class="settings-button" onClick={() => { setCapabilityView("manage"); setCapabilityTab("plugins"); setMarketplaceQuery(entry.name); }}>Details</button><button class="settings-button" disabled={!entry.source_enabled || !entry.license || pluginBusy()} title={!entry.source_enabled ? "Enable this catalog under Manage first" : !entry.license ? "A license must be declared before installation" : "Package changes are staged disabled for review"} onClick={() => void installCatalogPlugin(entry, plugins().some((plugin) => plugin.name === entry.name))}>{plugins().some((plugin) => plugin.name === entry.name) ? "Stage update" : "Install disabled"}</button></div></div>}</For>
+                  </div>
+                </Show>
+              </Show>
+              <Show when={capabilityView() === "mine"}>
+                <p class="settings-hint">{scope() === "user" ? "These shared capabilities are available to every agent unless its own settings narrow access." : `These are ${agentName()}'s capabilities. Agent settings take precedence over shared defaults where the same name is configured.`}</p>
+                <Group title={`Skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><strong>No skills available</strong><span>Skills discovered for this scope will appear here.</span></div>}><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This agent"}</small></span></span><span class="capability-state" classList={{ ready: !skill.shadowed, muted: !!skill.shadowed }}>{skill.shadowed ? "Overridden for this agent" : "Available"}</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.provenance}><small>{skill.provenance}</small></Show><Show when={(skill.path || skill.source) && technicalDetails()}><code>{skill.path || skill.source}</code></Show><button class="settings-button" onClick={async () => { try { await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command." }); } }}>Copy skill command</button></div></details>}</For></div></Show></Group>
+                <Group title={`Connections (${totalMcpCount()})`}><Show when={totalMcpCount() > 0} fallback={<div class="capability-empty"><strong>No connections configured</strong><span>{!inherits("mcp") ? "Shared connections are turned off for this agent. Add one under Manage or change this agent’s inheritance settings." : "Add one under Manage to give this agent more tools."}</span></div>}><div class="capability-list"><For each={Object.keys(mcpServers() ?? {})}>{(name) => <div class="capability-item capability-overview-row"><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state ready">{scope() === "user" ? "Shared" : "This agent"}</span></div>}</For><Show when={scope() === "workspace" && inherits("mcp")}><For each={Object.keys(inheritedMcpServers()).filter((name) => !(name in (mcpServers() ?? {})))}>{(name) => <div class="capability-item capability-overview-row"><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state inherited">Inherited from Shared</span></div>}</For></Show></div></Show></Group>
+                <Group title={`Add-ons (${totalPluginsCount()})`}><Show when={totalPluginsCount() > 0} fallback={<div class="capability-empty"><strong>No add-ons installed</strong><span>{!inherits("plugins") ? "Shared add-ons are turned off for this agent." : "Installed packages will appear here, including shared ones."}</span></div>}><div class="capability-list"><For each={[...plugins().map((plugin) => ({ plugin, inherited: false })), ...(scope() === "workspace" && inherits("plugins") ? inheritedPlugins().map((plugin) => ({ plugin, inherited: true })) : [])]}>{({ plugin, inherited }) => <div class="capability-item capability-overview-row"><CapabilityIcon name={plugin.name} /><strong>{plugin.name}</strong><span class="capability-state" classList={{ ready: plugin.enabled, muted: !plugin.enabled }}>{plugin.enabled ? (inherited ? "Inherited from Shared" : "Enabled") : "Disabled"}</span></div>}</For></div></Show></Group>
+                <Group title={`Automations (${totalHooksCount()})`}><Show when={totalHooksCount() > 0} fallback={<div class="capability-empty"><strong>No lifecycle automations configured</strong><span>{!inherits("hooks") ? "Shared automations are turned off for this agent." : "Hooks added under Manage will appear here."}</span></div>}><div class="capability-list"><For each={[...hooks().map((hook) => ({ hook, inherited: false })), ...(scope() === "workspace" && inherits("hooks") ? inheritedHooks().map((hook) => ({ hook, inherited: true })) : [])]}>{({ hook, inherited }) => <div class="capability-item capability-overview-row"><Icon name="tune" /><strong>{hook.event}{hook.matcher ? ` · ${hook.matcher}` : ""}</strong><span class="capability-state" classList={{ ready: hook.enabled !== false, muted: hook.enabled === false }}>{hook.enabled === false ? "Disabled" : inherited ? "Inherited from Shared" : "Enabled"}</span></div>}</For></div></Show></Group>
+                <button class="settings-button" onClick={() => setCapabilityView("manage")}>Manage these capabilities</button>
+              </Show>
+              <Show when={capabilityView() === "manage"}>
               <nav class="capability-tabs" aria-label="Capability types">
                 <button classList={{ active: shownCapabilityTab() === "mcp" }} onClick={() => setCapabilityTab("mcp")}><Icon name="plug" /><span>Connections</span><em>{totalMcpCount()}</em></button>
                 <button classList={{ active: shownCapabilityTab() === "skills" }} onClick={() => setCapabilityTab("skills")}><Icon name="spark" /><span>Skills</span><em>{visibleSkills().length}</em></button>
-                <Show when={technicalDetails()}>
                   <button classList={{ active: capabilityTab() === "hooks" }} onClick={() => setCapabilityTab("hooks")}><Icon name="tune" /><span>Automations</span><em>{totalHooksCount()}</em></button>
                   <button classList={{ active: capabilityTab() === "plugins" }} onClick={() => setCapabilityTab("plugins")}><Icon name="grid" /><span>Add-ons</span><em>{totalPluginsCount()}</em></button>
-                </Show>
               </nav>
               <Show when={shownCapabilityTab() === "mcp"}>
                 <Group title="Connections"><Show when={mcpServers()} fallback={<Skeleton kind="rows" label="Loading connections" />}>
@@ -1750,7 +1805,7 @@ export default function Settings() {
                           <Icon name="layers" />
                           <div>
                             <strong>Shared connections ({Object.keys(inheritedMcpServers()).length})</strong>
-                            <span>Available from your shared settings.</span>
+                            <span>{inherits("mcp") ? "Available from your shared settings." : "Shared connections are turned off for this agent."}</span>
                           </div>
                         </div>
                         <div class="capability-list">
@@ -1770,7 +1825,7 @@ export default function Settings() {
                                   <div class="inherited-actions">
                                     <Show when={isOverridden()} fallback={
                                       <>
-                                        <span class="capability-state inherited">Shared</span>
+                                        <span class="capability-state inherited">{inherits("mcp") ? "Inherited" : "Not inherited"}</span>
                                         <button class="settings-button" onClick={() => {
                                           updateServer(name, { command: def.command, args: [...def.args], env: { ...def.env }, network: def.network });
                                           setNotice({ kind: "info", text: `Copied ${name} to this agent's connections. You can now change it.` });
@@ -1802,7 +1857,7 @@ export default function Settings() {
                       <Icon name="layers" />
                       <div>
                         <strong>Shared lifecycle hooks ({inheritedHooks().length})</strong>
-                        <span>Inherited from your global settings. These run automatically alongside project-specific hooks.</span>
+                        <span>{inherits("hooks") ? "Inherited from Shared. These run alongside this agent’s hooks." : "Shared automations are turned off for this agent."}</span>
                       </div>
                     </div>
                     <div class="capability-list">
@@ -1815,7 +1870,7 @@ export default function Settings() {
                               <small>Timeout: {hook.timeout_ms ?? 10000}ms · On failure: {hook.failure_mode ?? "open"}</small>
                             </div>
                             <div class="inherited-actions">
-                              <span class="capability-state inherited">{hook.enabled === false ? "Disabled" : "Inherited (Active)"}</span>
+                              <span class="capability-state inherited">{hook.enabled === false ? "Disabled" : inherits("hooks") ? "Inherited (Active)" : "Not inherited"}</span>
                               <button class="settings-button" onClick={() => {
                                 setHooks((current) => [...current, { ...hook }]);
                                 setHooksDirty(true);
@@ -1837,9 +1892,10 @@ export default function Settings() {
                   <div class="mcp-fields"><label>Catalog directory<input class="mono" placeholder="/path/to/catalog" value={sourcePath()} onInput={(e) => setSourcePath(e.currentTarget.value)} /></label><div class="settings-actions"><button class="settings-button" disabled={!sourcePath().trim() || pluginBusy()} onClick={() => void registerPluginSource()}>Register catalog source</button></div></div>
                   <details class="advanced"><summary>Detached Ed25519 evidence (optional)</summary><div class="mcp-fields"><label>Key ID<input class="mono" value={sourceKeyId()} onInput={(e) => setSourceKeyId(e.currentTarget.value)} /></label><label>Public key (base64)<input class="mono" value={sourcePublicKey()} onInput={(e) => setSourcePublicKey(e.currentTarget.value)} /></label><label>Signature (base64)<input class="mono" value={sourceSignature()} onInput={(e) => setSourceSignature(e.currentTarget.value)} /></label></div></details>
                   <Show when={pluginSources().length > 0}><div class="capability-list"><For each={pluginSources()}>{(source) => <div class="capability-item"><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 16)}</code><div class="settings-actions"><button type="button" class="settings-button" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", capabilityScope(), activeAgentId()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Source action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button type="button" class="settings-button danger" disabled={pluginBusy()} onClick={async () => { setPluginBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", capabilityScope(), activeAgentId()); await refreshCapabilities(); } catch (e) { setNotice({ kind: "error", text: `Key action failed: ${e instanceof Error ? e.message : String(e)}` }); } finally { setPluginBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
-                  <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} onChange={() => void refreshCapabilities()} /></label></div>
-                  <Show when={marketplaceEntries().length > 0} fallback={<Show when={marketplaceQuery().trim()}><div class="capability-empty"><span class="capability-empty-icon plugins"><Icon name="grid" /></span><strong>No matching entries</strong><span>Try a different search term, or register a catalog source above.</span></div></Show>}>
-                    <div class="marketplace-grid"><For each={marketplaceEntries()}>{(entry) => (
+                  <Show when={scope() === "workspace" && inheritedPluginSources().length > 0}><div class="inherited-capabilities-group"><div class="inherited-capabilities-head"><Icon name="layers" /><div><strong>Shared catalogs ({inheritedPluginSources().length})</strong><span>Registered for every agent. Change them from Shared defaults.</span></div></div><div class="capability-list"><For each={inheritedPluginSources()}>{(source) => <div class="capability-item capability-overview-row"><CapabilityIcon name={source.label} /><strong>{source.label}</strong><span class="capability-state inherited">{source.enabled ? "Shared · enabled" : "Shared · disabled"}</span></div>}</For></div></div></Show>
+                  <div class="mcp-fields"><label>Search marketplace entries<input value={marketplaceQuery()} placeholder="frontend, testing, release…" onInput={(e) => setMarketplaceQuery(e.currentTarget.value)} /></label></div>
+                  <Show when={marketplaceEntries().filter((entry) => `${entry.name} ${entry.description ?? ""} ${entry.source_label}`.toLowerCase().includes(marketplaceQuery().trim().toLowerCase())).length > 0} fallback={<Show when={marketplaceQuery().trim()}><div class="capability-empty"><span class="capability-empty-icon plugins"><Icon name="grid" /></span><strong>No matching entries</strong><span>Try a different search term, or register a catalog source above.</span></div></Show>}>
+                    <div class="marketplace-grid"><For each={marketplaceEntries().filter((entry) => `${entry.name} ${entry.description ?? ""} ${entry.source_label}`.toLowerCase().includes(marketplaceQuery().trim().toLowerCase()))}>{(entry) => (
                       <div class="marketplace-card">
                         <div class="marketplace-card-head"><CapabilityIcon name={entry.name} /><div><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></div></div>
                         <p>{entry.description || "No description"}</p>
@@ -1857,7 +1913,7 @@ export default function Settings() {
                         <Icon name="layers" />
                         <div>
                           <strong>Shared user plugins ({inheritedPlugins().length})</strong>
-                          <span>Installed globally. Available across all projects.</span>
+                          <span>{inherits("plugins") ? "Installed globally and inherited by this agent." : "Shared add-ons are turned off for this agent."}</span>
                         </div>
                       </div>
                       <div class="capability-list">
@@ -1868,7 +1924,7 @@ export default function Settings() {
                                 <strong>{plugin.name}</strong>
                                 <small>v{plugin.version} · user · {plugin.format}</small>
                               </span>
-                              <span class="capability-state inherited">{plugin.enabled ? "Inherited (Active)" : "Disabled (User)"}</span>
+                              <span class="capability-state inherited">{!inherits("plugins") ? "Not inherited" : plugin.enabled ? "Inherited (Active)" : "Disabled (Shared)"}</span>
                             </summary>
                             <div class="capability-detail">
                               <p>{plugin.description || "No description provided."}</p>
@@ -1889,6 +1945,7 @@ export default function Settings() {
                     in the admin console. */}
                 <Row title="Telegram, Discord and Slack" description="Reach your agents from a chat app. Each bot has its own sign-in and rules, set up in the admin console."><button type="button" class="settings-button" onClick={() => host.openAdmin("#/gateway")}>Open admin console</button></Row>
               </Group>
+              </Show>
             </Show>
 
             <Show when={page() === "prompts"}>

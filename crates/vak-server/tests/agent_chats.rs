@@ -797,6 +797,65 @@ async fn mcp_servers_are_scoped_per_agent() {
 /// one Agent's workspace-scoped plugin store must not touch a different
 /// Agent's, or the default Agent's, own store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn catalog_install_stays_with_the_selected_agent() {
+    let (app, _core, temp) = two_agent_app().await;
+    let catalog = temp.path().join("catalog");
+    let package = catalog.join("brief");
+    std::fs::create_dir_all(package.join("skills/brief")).unwrap();
+    std::fs::write(
+        catalog.join("marketplace.json"),
+        r#"{"name":"local","plugins":[{"name":"brief","source":"./brief","license":"MIT"}]}"#,
+    )
+    .unwrap();
+    std::fs::write(package.join("vak-plugin.json"), r#"{"schema":1,"name":"brief","version":"1.0.0","description":"Brief","license":"MIT","components":{"skills":["skills"]}}"#).unwrap();
+    std::fs::write(
+        package.join("skills/brief/SKILL.md"),
+        "---\nname: brief\ndescription: Prepare a brief.\n---\nPrepare it.\n",
+    )
+    .unwrap();
+
+    let (status, source) = call(
+        &app,
+        "POST",
+        "/plugins/sources",
+        json!({"path": catalog, "label": "Local", "scope": "workspace", "agent": "newsy"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{source}");
+    let id = source["id"].as_str().unwrap();
+    assert_eq!(
+        call(
+            &app,
+            "POST",
+            &format!("/plugins/sources/{id}/enable?scope=workspace&agent=newsy"),
+            json!({})
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let (status, installed) = call(&app, "POST", "/plugins/catalog/install", json!({"source_id": id, "source_scope": "workspace", "name": "brief", "scope": "workspace", "agent": "newsy"})).await;
+    assert_eq!(status, StatusCode::OK, "{installed}");
+    assert_eq!(installed["enabled"], false);
+    let (_, newsy) = call(
+        &app,
+        "GET",
+        "/plugins?scope=workspace&agent=newsy",
+        json!({}),
+    )
+    .await;
+    let (_, other) = call(
+        &app,
+        "GET",
+        "/plugins?scope=workspace&agent=other",
+        json!({}),
+    )
+    .await;
+    assert_eq!(newsy["plugins"].as_array().unwrap().len(), 1);
+    assert!(other["plugins"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn plugin_key_revocation_is_scoped_per_agent() {
     let (app, _core, _temp) = two_agent_app().await;
 

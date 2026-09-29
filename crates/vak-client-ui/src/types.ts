@@ -438,6 +438,7 @@ export interface ConfigSnapshot {
     quality_hints: string[];
   };
   integrations: { mcp_servers: string[]; hooks: number; skills: string[] };
+  capability_inheritance?: { mcp: boolean; hooks: boolean; skills: boolean; commands: boolean; plugins: boolean };
   /// Transports a bot can be created on. A surface is not a credential
   /// slot (AGENTS.md invariant 23) — bot tokens live on bots, and the
   /// admin console reports them.

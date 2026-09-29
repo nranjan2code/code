@@ -222,13 +222,14 @@ export default function Composer(props: { cwd: string }) {
   // project file cache for @mentions (refresh when cwd changes)
   createEffect(() => {
     void props.cwd;
+    const agent = activeAgentId();
     setLookupError("");
     api
       .fsTree(600)
       .then((r) => setFiles(r.files))
       .catch((error) => setLookupError(`Workspace suggestions unavailable: ${error instanceof Error ? error.message : String(error)}`));
     api
-      .listSkills()
+      .listSkills(agent)
       .then((r) => setSkills(r.skills))
       .catch((error) => setLookupError(`Skills unavailable: ${error instanceof Error ? error.message : String(error)}`));
     api

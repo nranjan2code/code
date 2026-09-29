@@ -801,6 +801,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/plugins/keys/{id}/revoke", post(plugin_key_revoke))
         .route("/plugins/keys/{id}/restore", post(plugin_key_restore))
         .route("/plugins/install", post(plugin_install))
+        .route("/plugins/catalog/install", post(plugin_catalog_install))
         .route("/plugins/update", post(plugin_update))
         .route("/plugins/{name}/enable", post(plugin_enable))
         .route("/plugins/{name}/disable", post(plugin_disable))
@@ -9627,6 +9628,18 @@ struct PluginMutation {
 }
 
 #[derive(Debug, serde::Deserialize)]
+struct PluginCatalogInstall {
+    source_id: String,
+    source_scope: InstallScope,
+    name: String,
+    scope: InstallScope,
+    #[serde(default)]
+    update: bool,
+    #[serde(default)]
+    agent: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
 struct PluginSourceMutation {
     path: PathBuf,
     #[serde(default)]
@@ -10468,6 +10481,46 @@ async fn plugin_install(
             scope,
         },
     ))
+}
+
+async fn plugin_catalog_install(
+    State(state): State<AppState>,
+    Json(request): Json<PluginCatalogInstall>,
+) -> axum::response::Response {
+    if request.source_scope == InstallScope::Workspace && request.scope == InstallScope::User {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "an agent catalog cannot install into Shared" })),
+        )
+            .into_response();
+    }
+    let core = scoped_core!(&state, None, request.agent.as_deref());
+    let source_store = plugin_store(&core, request.source_scope);
+    let (catalog_root, entry) =
+        match source_store.enabled_catalog_entry(&request.source_id, &request.name) {
+            Ok(found) => found,
+            Err(error) => return plugin_result(Err::<serde_json::Value, _>(error)),
+        };
+    let target_store = plugin_store(&core, request.scope);
+    let staging = target_store
+        .packages_root()
+        .join("catalog-staging")
+        .join(uuid::Uuid::now_v7().to_string());
+    let result = vak_plugin::materialize_catalog_entry(&catalog_root, &entry, &staging).and_then(
+        |package| {
+            let options = InstallOptions {
+                scope: request.scope,
+                allow_unlicensed: false,
+            };
+            if request.update {
+                target_store.update_local(&package, options)
+            } else {
+                target_store.install_local(&package, options)
+            }
+        },
+    );
+    let _ = std::fs::remove_dir_all(&staging);
+    plugin_result(result)
 }
 
 async fn plugin_update(

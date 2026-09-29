@@ -1003,11 +1003,11 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
   const [catalogQuery, setCatalogQuery] = createSignal("");
   const pluginScope = () => props.ctx.scope() === "user" ? "user" as const : "workspace" as const;
   const [sources, { refetch: refetchSources }] = createResource(
-    pluginScope,
-    (scope) => api.pluginSources(scope, selectedAgentIdOrUndefined()),
+    () => [pluginScope(), selectedAgentId()] as const,
+    ([scope]) => api.pluginSources(scope, selectedAgentIdOrUndefined()),
   );
   const [catalog, { refetch: refetchCatalog }] = createResource(
-    () => [catalogQuery(), pluginScope()] as const,
+    () => [catalogQuery(), pluginScope(), selectedAgentId()] as const,
     ([query, scope]) => api.pluginCatalog(query, scope, selectedAgentIdOrUndefined()),
   );
   const refresh = props.ctx.refetchPlugins;
@@ -1041,6 +1041,19 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       setBusy(false);
     }
   };
+  const installFromCatalog = async (entry: import("./types").MarketplaceEntry, update: boolean) => {
+    if (busy() || !entry.source_enabled || !entry.license) return;
+    setBusy(true);
+    try {
+      await api.pluginCatalogInstall(entry, pluginScope(), selectedAgentIdOrUndefined(), update);
+      await props.ctx.refetchPlugins();
+      pushToast("info", update ? `${entry.name} update staged disabled. Review its capabilities before enabling it.` : `${entry.name} installed disabled. Review its capabilities before enabling it.`);
+    } catch (error) {
+      pushToast("alert", `${error}`);
+    } finally {
+      setBusy(false);
+    }
+  };
   return <section class="stack plugin-stack">
     <div class="panel">
       <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Global" : "Workspace"} until you enable them.</p></div></div>
@@ -1063,7 +1076,7 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope(), selectedAgentIdOrUndefined()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope(), selectedAgentIdOrUndefined()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
       <div class="form-row"><label>Search catalog entries<input value={catalogQuery()} onInput={(e) => setCatalogQuery(e.currentTarget.value)} placeholder="frontend, testing, release…" /></label></div>
       <Show when={(catalog()?.entries ?? []).length > 0} fallback={<p class="dim">No catalog entries match yet. Enable a verified source only after reviewing it.</p>}>
-        <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small></div>}</For></div>
+        <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small><div class="row-gap"><button disabled={busy() || !entry.source_enabled || !entry.license} onClick={() => void installFromCatalog(entry, props.ctx.plugins().some((plugin) => plugin.name === entry.name))}>{props.ctx.plugins().some((plugin) => plugin.name === entry.name) ? "Stage update" : "Install disabled"}</button></div></div>}</For></div>
       </Show>
     </div>
     <Show when={!props.ctx.pluginsLoading()} fallback={<div class="panel"><div class="spin" /></div>}>
@@ -1847,10 +1860,10 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule �
 
 function ExtensionsSection() {
   const [config] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
-  const [mcp, mcpActions] = createResource(configScope, (scope) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
-  const [hooks, hooksActions] = createResource(configScope, (scope) => api.hooks(scope, selectedAgentIdOrUndefined()));
+  const [mcp, mcpActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
+  const [hooks, hooksActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.hooks(scope, selectedAgentIdOrUndefined()));
   const [skills, skillsActions] = createResource(selectedAgentId, () => api.skills(selectedAgentIdOrUndefined()));
-  const [plugins, pluginsActions] = createResource(configScope, (scope) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
+  const [plugins, pluginsActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
   const [proposals, proposalsActions] = createResource(selectedAgentId, () => api.skillProposals(selectedAgentIdOrUndefined()));
   const [tasks, tasksActions] = createResource(() => api.tasks());
 

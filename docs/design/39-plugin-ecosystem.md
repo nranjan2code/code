@@ -277,6 +277,8 @@ Initial control-plane contract:
 GET    /plugins
 POST   /plugins/inspect
 POST   /plugins/install
+GET    /plugins/catalog
+POST   /plugins/catalog/install
 GET    /plugins/{id}
 POST   /plugins/{id}/enable
 POST   /plugins/{id}/disable
@@ -288,6 +290,18 @@ POST   /plugin-sources
 POST   /plugin-sources/{id}/sync
 DELETE /plugin-sources/{id}
 ```
+
+The shared client now has Discover, current-agent inventory, and Manage views
+inside Settings > Capabilities. Discover uses the selected agent's discovered
+skills and registered catalogs; the inventory separates agent configuration
+from inherited Shared configuration and honors that agent's effective
+`inherit_mcp`, `inherit_hooks`, and `inherit_plugins` switches. Catalog
+installation accepts a registered
+source id and entry name, rechecks that the source is enabled, its signature
+has not been revoked, and its digest is unchanged, then installs or stages an
+update disabled in the selected scope. An agent catalog cannot install into
+Shared. The admin console uses the same endpoint and lifecycle controls;
+activation remains a separate review action.
 
 CLI parity:
 

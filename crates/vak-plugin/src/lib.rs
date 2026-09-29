@@ -1742,6 +1742,48 @@ impl PluginStore {
         Ok(self.load_sources()?.sources.into_values().collect())
     }
 
+    /// Resolve a registered catalog entry at install time. A listing is
+    /// advisory; installation rechecks the source, its signature state, and
+    /// the catalog digest before any package bytes are copied.
+    pub fn enabled_catalog_entry(
+        &self,
+        source_id: &str,
+        entry_name: &str,
+    ) -> Result<(PathBuf, CatalogEntry), PluginError> {
+        let registry = self.load_sources()?;
+        let source = registry
+            .sources
+            .get(source_id)
+            .ok_or_else(|| PluginError::NotInstalled(source_id.to_string()))?;
+        if !source.enabled {
+            return Err(PluginError::UnsafePackage(
+                "catalog source is disabled".into(),
+            ));
+        }
+        if let Some(signature) = &source.signature {
+            if !signature.verified
+                || signature.revoked
+                || registry.revoked_keys.contains(&signature.key_id)
+            {
+                return Err(PluginError::UnsafePackage(
+                    "catalog source signature is unavailable or revoked".into(),
+                ));
+            }
+        }
+        let inspection = inspect_catalog(&source.root)?;
+        if inspection.digest != source.catalog_digest {
+            return Err(PluginError::UnsafePackage(
+                "catalog changed since registration".into(),
+            ));
+        }
+        let entry = inspection
+            .entries
+            .into_iter()
+            .find(|entry| entry.name == entry_name)
+            .ok_or_else(|| PluginError::NotInstalled(entry_name.to_string()))?;
+        Ok((source.root.clone(), entry))
+    }
+
     pub fn set_source_enabled(
         &self,
         id: &str,
@@ -2747,6 +2789,35 @@ mod tests {
             .record_invocation(&source.trace_id, "tool", "mcp:plugin.tool.lookup", true)
             .unwrap();
         assert_eq!(store.invocations().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn catalog_install_resolution_requires_enabled_unchanged_source() {
+        let catalog = tempfile::tempdir().unwrap();
+        write(
+            &catalog.path().join("marketplace.json"),
+            r#"{"name":"team","plugins":[{"name":"tool","source":"./tool","license":"MIT"}]}"#,
+        );
+        let home = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(home.path());
+        let source = store
+            .register_catalog_source(catalog.path(), "Team", MarketplaceTrust::ManualReview)
+            .unwrap();
+        assert!(matches!(
+            store.enabled_catalog_entry(&source.id, "tool"),
+            Err(PluginError::UnsafePackage(_))
+        ));
+        store.set_source_enabled(&source.id, true).unwrap();
+        let (_, entry) = store.enabled_catalog_entry(&source.id, "tool").unwrap();
+        assert_eq!(entry.name, "tool");
+        write(
+            &catalog.path().join("marketplace.json"),
+            r#"{"name":"team","plugins":[]}"#,
+        );
+        assert!(matches!(
+            store.enabled_catalog_entry(&source.id, "tool"),
+            Err(PluginError::UnsafePackage(_))
+        ));
     }
 
     #[test]

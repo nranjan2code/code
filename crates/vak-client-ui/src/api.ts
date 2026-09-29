@@ -299,6 +299,7 @@ export interface SkillProposal {
 export interface DiscoveredSkill {
   name: string;
   description: string;
+  path?: string;
   source?: string;
   scope?: string;
   provenance?: string | null;
@@ -952,10 +953,10 @@ export function restoreFromTrash(id: string): Promise<{ restored: string }> {
   return req(`/sessions/${id}/restore`, { method: "POST" });
 }
 
-export function listSkills(): Promise<{
+export function listSkills(agent?: string): Promise<{
   skills: DiscoveredSkill[];
 }> {
-  return req("/skills");
+  return req(withAgent("/skills", agent));
 }
 
 export function listPlugins(scope?: "user" | "workspace", agent?: string): Promise<{ plugins: InstalledPlugin[] }> {
@@ -974,8 +975,8 @@ export function listPluginCatalog(query = "", scope?: "user" | "workspace", agen
   return req(withAgent(`/plugins/catalog${suffix}`, agent));
 }
 
-export function registerPluginSource(path: string, label: string, signature?: { key_id: string; public_key: string; signature: string }, agent?: string): Promise<MarketplaceSource> {
-  return req("/plugins/sources", { method: "POST", body: JSON.stringify({ path, label, trust: "manual-review", agent, ...(signature ?? {}) }) });
+export function registerPluginSource(path: string, label: string, scope: "user" | "workspace", signature?: { key_id: string; public_key: string; signature: string }, agent?: string): Promise<MarketplaceSource> {
+  return req("/plugins/sources", { method: "POST", body: JSON.stringify({ path, label, scope, trust: "manual-review", agent, ...(signature ?? {}) }) });
 }
 
 export function pluginKeyAction(keyId: string, action: "revoke" | "restore", scope: "user" | "workspace", agent?: string): Promise<unknown> {
@@ -988,6 +989,10 @@ export function pluginSourceAction(id: string, action: "enable" | "disable", sco
 
 export function installPlugin(path: string, scope: "workspace" | "user", agent?: string): Promise<InstalledPlugin> {
   return req("/plugins/install", { method: "POST", body: JSON.stringify({ path, scope, agent }) });
+}
+
+export function installCatalogPlugin(entry: MarketplaceEntry, scope: "workspace" | "user", agent?: string, update = false): Promise<InstalledPlugin> {
+  return req("/plugins/catalog/install", { method: "POST", body: JSON.stringify({ source_id: entry.source_id, source_scope: entry.source_scope, name: entry.name, scope, agent, update }) });
 }
 
 export function updatePlugin(path: string, scope: "workspace" | "user", agent?: string): Promise<InstalledPlugin> {

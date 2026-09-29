@@ -683,6 +683,8 @@ export const api = {
     fetch(withAgent(`/plugins/sources/${encodeURIComponent(id)}/${action}?scope=${scope}`, agent), { method: "POST" }).then((r) => handle(r)),
   pluginInstall: (path: string, scope: "workspace" | "user" = "workspace", agent?: string): Promise<PluginItem> =>
     fetch("/plugins/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope, agent }) }).then((r) => handle(r)),
+  pluginCatalogInstall: (entry: MarketplaceEntry, scope: "workspace" | "user", agent?: string, update = false): Promise<PluginItem> =>
+    fetch("/plugins/catalog/install", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ source_id: entry.source_id, source_scope: entry.source_scope, name: entry.name, scope, agent, update }) }).then((r) => handle(r)),
   pluginUpdate: (path: string, scope: "workspace" | "user" = "workspace", agent?: string): Promise<PluginItem> =>
     fetch("/plugins/update", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, scope, agent }) }).then((r) => handle(r)),
   pluginAction: (name: string, action: "enable" | "disable" | "rollback" | "remove", scope: "workspace" | "user", agent?: string): Promise<PluginItem> =>
