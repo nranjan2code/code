@@ -159,6 +159,8 @@ async function copySettingText(value: string, label: string): Promise<void> {
 }
 
 export default function Settings() {
+  // Presentation memos can run during component setup and read this signal.
+  const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [recoveryBusy, setRecoveryBusy] = createSignal(false);
   const rotateRecovery = async () => {
     setRecoveryBusy(true);
@@ -516,7 +518,6 @@ export default function Settings() {
       if (previouslyFocused && document.contains(previouslyFocused)) previouslyFocused.focus({ preventScroll: true });
     });
   });
-  const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [evidenceAgeHours, setEvidenceAgeHours] = createSignal(24);
   const [loading, setLoading] = createSignal(true);
   // Background-service states (docs/design/27-operations.md); polled while
