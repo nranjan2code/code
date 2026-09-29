@@ -554,12 +554,13 @@ function DocumentTable(props: { anchor: string; rows: api.OfficeUnit[]; unitProp
 
 function OfficeImage(props: { unit: api.OfficeUnit; media: api.OfficeMediaPreview[]; unitProps: UnitProps; compact?: boolean }) {
   const position = () => props.unit.labels.find((label) => label.startsWith("image position: "))?.slice("image position: ".length);
+  const objectId = () => props.unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
   const preview = () => {
     const cell = position()?.split("!").pop();
-    const objectId = props.unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
-    return props.media.find((entry) => entry.alt_text === props.unit.text
-      && (!objectId || entry.object_id === objectId)
-      && (!entry.cell || !cell || entry.cell === cell));
+    const candidates = props.media.filter((entry) => entry.alt_text === props.unit.text);
+    return props.media.find((entry) => entry.object_id === objectId())
+      ?? candidates.find((entry) => entry.cell && cell && entry.cell === cell)
+      ?? (candidates.length === 1 ? candidates[0] : undefined);
   };
   return <figure class="office-unit office-image" role="listitem" {...props.unitProps(props.unit.anchor)}>
     <Show when={preview()} fallback={<div class="office-image-unavailable">Image preview unavailable</div>}>
@@ -713,9 +714,14 @@ function WorkbookGrid(props: {
       }];
     })() : []),
     ...props.units.filter((unit) => unit.kind === "image").map((unit) => {
-      const media = props.media.find((entry) => entry.alt_text === unit.text);
+      const objectId = unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+      const position = unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop();
+      const candidates = props.media.filter((entry) => entry.alt_text === unit.text);
+      const media = props.media.find((entry) => entry.object_id === objectId)
+        ?? candidates.find((entry) => entry.cell && position && entry.cell === position)
+        ?? (candidates.length === 1 ? candidates[0] : undefined);
       return {
-        cell: unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop() ?? media?.cell,
+        cell: position ?? media?.cell,
         endCell: unit.labels.find((label) => label.startsWith("image end cell: "))?.split("!").pop() ?? media?.end_cell,
         ...dimensions(unit.labels, "image"),
         widthPx: media?.width_px ?? dimensions(unit.labels, "image").widthPx,
@@ -962,7 +968,14 @@ function WorkbookGrid(props: {
             </div>;
           }}</For>
           <For each={imageUnits()}>{(unit) => {
-            const media = () => props.media.find((entry) => entry.alt_text === unit.text);
+            const media = () => {
+              const objectId = unit.anchor.match(/(?:image@|shape:)([^/]+)$/)?.[1];
+              const position = unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop();
+              const candidates = props.media.filter((entry) => entry.alt_text === unit.text);
+              return props.media.find((entry) => entry.object_id === objectId)
+                ?? candidates.find((entry) => entry.cell && position && entry.cell === position)
+                ?? (candidates.length === 1 ? candidates[0] : undefined);
+            };
             const location = () => unit.labels.find((label) => label.startsWith("image position: "))?.split("!").pop() ?? media()?.cell ?? "A1";
             const size = () => objectPositions()[location().toUpperCase()];
             const objectAnchor = () => `${current()?.anchor ?? ""}${location()}`;

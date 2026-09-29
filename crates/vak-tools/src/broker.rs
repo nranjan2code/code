@@ -905,16 +905,21 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
                 vak_ooxml::projection::PAGE_BYTES,
             ));
             if let Ok(page) = &mut page {
-                let visible_alt_text: std::collections::HashSet<String> = page["units"]
+                let visible_image_ids: std::collections::HashSet<String> = page["units"]
                     .as_array()
                     .into_iter()
                     .flatten()
                     .filter(|unit| unit["kind"] == "image")
-                    .filter_map(|unit| unit["text"].as_str().map(str::to_string))
+                    .filter_map(|unit| {
+                        unit["anchor"]
+                            .as_str()?
+                            .rsplit_once("image@")
+                            .map(|(_, id)| id.to_string())
+                    })
                     .collect();
                 let media: Vec<_> = previews
                     .into_iter()
-                    .filter(|preview| visible_alt_text.contains(&preview.alt_text))
+                    .filter(|preview| visible_image_ids.contains(&preview.object_id))
                     .collect();
                 if !media.is_empty() {
                     page["media"] =

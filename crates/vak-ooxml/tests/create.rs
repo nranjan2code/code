@@ -669,6 +669,60 @@ fn a_workbook_image_preview_keeps_its_excel_cell_anchor() {
 }
 
 #[test]
+fn repeated_image_alt_text_keeps_distinct_object_ids_and_cells() {
+    let image = || {
+        SlideImage {
+        mime_type: "image/png".into(),
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+        alt_text: "Daily status marker".into(),
+    }
+    };
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "D2".into(),
+                image: image(),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "G2".into(),
+                image: image(),
+            },
+        ],
+    )
+    .unwrap();
+    let units: Vec<_> = applied
+        .document
+        .units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::Image)
+        .collect();
+    let previews = read::image_previews(Cursor::new(applied.bytes), Limits::default()).unwrap();
+    assert_eq!(units.len(), 2);
+    assert_eq!(previews.len(), 2);
+    for (unit, preview, cell) in units
+        .iter()
+        .zip(&previews)
+        .zip(["D2", "G2"])
+        .map(|((unit, preview), cell)| (unit, preview, cell))
+    {
+        assert_eq!(unit.text, "Daily status marker");
+        assert!(
+            unit.anchor
+                .ends_with(&format!("image@{}", preview.object_id))
+        );
+        assert!(
+            unit.labels
+                .iter()
+                .any(|label| label == &format!("image position: Sheet1!{cell}"))
+        );
+        assert_eq!(preview.cell.as_deref(), Some(cell));
+    }
+}
+
+#[test]
 fn one_workbook_keeps_multiple_tables_charts_and_images_distinct_and_readable() {
     let cells = BTreeMap::from([
         ("A1".into(), text("Day")),
