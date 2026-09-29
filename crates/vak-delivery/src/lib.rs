@@ -595,6 +595,21 @@ pub struct DeliveryPacket {
 }
 
 impl DeliveryPacket {
+    /// The complete readable answer for a constrained chat surface.
+    ///
+    /// Native presentation items are an enhancement to this text, never a
+    /// replacement for it. Older packets may omit chunks, so use the exact
+    /// source Markdown as the final text fallback.
+    pub fn channel_text_chunks(&self) -> Vec<String> {
+        if !self.chunks.is_empty() {
+            self.chunks.clone()
+        } else if !self.fallback_markdown.is_empty() {
+            vec![self.fallback_markdown.clone()]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Add the turn's emitted semantic cards to the canonical presentation
     /// timeline carried by this delivery packet. Surface adapters consume
     /// these typed items and keep `chunks` as their text fallback.

@@ -82,7 +82,10 @@ the existing approval and permission boundary.
    templates replace lower-precedence ones by ID.
 5. `DeliveryPacket` contains the rendered payload, optional semantic timeline,
    exact Markdown fallback, bounded chunks, block coverage, actions, and
-   diagnostics. Existing fields remain stable for legacy consumers.
+   diagnostics. Constrained chat bridges send its readable text chunks as the
+   complete answer; native cards may add surface formatting but never replace
+   or suppress those chunks. If an older packet has no chunks, bridges use its
+   exact Markdown fallback. Existing fields remain stable for legacy consumers.
 6. `vak-delivery-worker` is a separate line-oriented process. It renders jobs
    but does not own transport credentials, sessions, permissions, or the
    canonical ledger.

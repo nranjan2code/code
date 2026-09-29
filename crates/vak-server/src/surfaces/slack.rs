@@ -281,7 +281,7 @@ impl SlackBridge {
                     let delivery = super::prepared_packet(v.clone(), "slack");
                     let chunks = delivery
                         .as_ref()
-                        .map(|packet| packet.chunks.clone())
+                        .map(vak_delivery::DeliveryPacket::channel_text_chunks)
                         .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
                     GatewayReply {
                         chunks,

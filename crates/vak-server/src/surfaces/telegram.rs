@@ -686,17 +686,12 @@ impl TelegramBridge {
         let rendered = reply.delivery.as_ref().and_then(|packet| {
             let body = serde_json::json!({"delivery": packet});
             super::prepared_packet(body, "telegram").ok().map(|packet| {
-                let cards = packet.structured_cards();
-                if cards.is_empty() {
-                    packet.chunks
-                } else {
-                    let cards = cards.into_iter().cloned().collect::<Vec<_>>();
-                    vak_delivery::telegram::structured_card_chunks(&cards, Some(3900))
-                }
+                let has_surface_chunks = !packet.chunks.is_empty();
+                (packet.channel_text_chunks(), has_surface_chunks)
             })
         });
         let (chunks, parse_html) = match rendered {
-            Some(chunks) if !chunks.is_empty() => (chunks, true),
+            Some((chunks, parse_html)) if !chunks.is_empty() => (chunks, parse_html),
             _ => (vec![reply.text.clone()], false),
         };
         for chunk in chunks {
