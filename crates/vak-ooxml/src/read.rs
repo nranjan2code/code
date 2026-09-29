@@ -5,7 +5,7 @@
 //! and speaker notes are all kept, and each is labelled for what it is so a
 //! prompt injection hidden in a document is visible as hidden content.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{Read, Seek};
 use std::ops::Range;
 
@@ -496,10 +496,15 @@ pub fn project<R: Read + Seek>(package: &mut Package<R>) -> Result<Document, Err
 #[derive(Default)]
 struct ChartSeries {
     name: String,
-    categories: Vec<String>,
-    values: Vec<String>,
+    categories: BTreeMap<usize, String>,
+    values: BTreeMap<usize, String>,
     chart_type: String,
+    next_category: usize,
+    next_value: usize,
+    cache_truncated: bool,
 }
+
+const MAX_CHART_POINTS: usize = 10_000;
 
 /// Projects cached chart values into a table. Keeping the category and
 /// series labels beside the numbers makes chart content available to search
@@ -510,6 +515,7 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     let mut current: Option<ChartSeries> = None;
     let mut field: Option<&'static str> = None;
     let mut in_value = false;
+    let mut point_index: Option<usize> = None;
     let mut title_depth = None;
     let mut title = String::new();
     let mut chart_type = String::new();
@@ -547,10 +553,12 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                     title_depth = Some(stack.len());
                 } else if name == "tx" {
                     field = Some("name");
-                } else if name == "cat" {
+                } else if name == "cat" || name == "xVal" {
                     field = Some("category");
-                } else if name == "val" {
+                } else if name == "val" || name == "yVal" {
                     field = Some("value");
+                } else if name == "pt" {
+                    point_index = element.attr("idx").and_then(|value| value.parse().ok());
                 } else if name == "v" {
                     in_value = true;
                 }
@@ -560,8 +568,24 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                 if let Some(series) = current.as_mut() {
                     match field {
                         Some("name") if series.name.is_empty() => series.name.push_str(&text),
-                        Some("category") => series.categories.push(text),
-                        Some("value") => series.values.push(text),
+                        Some("category") => {
+                            let index = point_index.unwrap_or(series.next_category);
+                            if index < MAX_CHART_POINTS {
+                                series.categories.insert(index, text);
+                                series.next_category = index.saturating_add(1);
+                            } else {
+                                series.cache_truncated = true;
+                            }
+                        }
+                        Some("value") => {
+                            let index = point_index.unwrap_or(series.next_value);
+                            if index < MAX_CHART_POINTS {
+                                series.values.insert(index, text);
+                                series.next_value = index.saturating_add(1);
+                            } else {
+                                series.cache_truncated = true;
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -576,7 +600,10 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                 if local == "v" {
                     in_value = false;
                 }
-                if matches!(local, "tx" | "cat" | "val") {
+                if local == "pt" {
+                    point_index = None;
+                }
+                if matches!(local, "tx" | "cat" | "val" | "xVal" | "yVal") {
                     field = None;
                 }
                 if local == "ser" {
@@ -605,7 +632,14 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     }
     let width = series
         .iter()
-        .map(|series| series.values.len())
+        .map(|series| {
+            series
+                .values
+                .keys()
+                .chain(series.categories.keys())
+                .max()
+                .map_or(0, |index| index.saturating_add(1))
+        })
         .max()
         .unwrap_or(0);
     let mut rows = Vec::with_capacity(width + 1);
@@ -623,7 +657,7 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     for row in 0..width {
         let category = series
             .iter()
-            .find_map(|series| series.categories.get(row))
+            .find_map(|series| series.categories.get(&row))
             .cloned()
             .unwrap_or_else(|| (row + 1).to_string());
         rows.push(
@@ -631,7 +665,7 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                 .chain(
                     series
                         .iter()
-                        .map(|series| series.values.get(row).cloned().unwrap_or_default()),
+                        .map(|series| series.values.get(&row).cloned().unwrap_or_default()),
                 )
                 .collect(),
         );
@@ -648,6 +682,11 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     ];
     if !chart_type.is_empty() {
         labels.push(format!("chart type: {chart_type}"));
+    }
+    if series.iter().any(|series| series.cache_truncated) {
+        labels.push(format!(
+            "chart cache truncated after {MAX_CHART_POINTS} points"
+        ));
     }
     for (index, series) in series.iter().enumerate() {
         labels.push(format!(
@@ -3056,5 +3095,37 @@ mod tests {
                 .iter()
                 .any(|label| label == "chart series type 1: line")
         );
+    }
+
+    #[test]
+    fn chart_cache_point_indices_keep_gaps_aligned_to_categories() {
+        let chart = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:ser><c:tx><c:v>Visits</c:v></c:tx><c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>Mon</c:v></c:pt><c:pt idx="1"><c:v>Tue</c:v></c:pt><c:pt idx="2"><c:v>Wed</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>12</c:v></c:pt><c:pt idx="2"><c:v>18</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let table = chart_table(chart, "xl/charts/chart-gaps.xml", &Limits::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            table.rows,
+            vec![
+                vec!["Category", "Visits"],
+                vec!["Mon", "12"],
+                vec!["Tue", ""],
+                vec!["Wed", "18"],
+            ]
+        );
+    }
+
+    #[test]
+    fn chart_cache_point_indices_are_bounded_and_report_truncation() {
+        let chart = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:ser><c:tx><c:v>Visits</c:v></c:tx><c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>Mon</c:v></c:pt><c:pt idx="10000"><c:v>Far future</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>12</c:v></c:pt><c:pt idx="10000"><c:v>18</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let table = chart_table(chart, "xl/charts/chart-bounded.xml", &Limits::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            table.rows,
+            vec![vec!["Category", "Visits"], vec!["Mon", "12"]]
+        );
+        assert!(table.labels.iter().any(|label| {
+            label == &format!("chart cache truncated after {MAX_CHART_POINTS} points")
+        }));
     }
 }

@@ -71,12 +71,12 @@ does not render like the real workbook. The structured Canvas is an
 accessibility and review projection: it shows a bounded HTML cell grid and
 reconstructed chart cards, so it does not match spreadsheet layout or chart
 rendering. The previous “Deferred until asked” decision no longer applies.
-Plan and implement a page-faithful preview while keeping the Open XML package
-as the source of truth and preserving anchored cells, image alt text, cached
-chart data and RAG extraction. LibreOffice is open source, but any renderer
-must run outside the server process in a confined worker; no proprietary
-runtime or format may be required. Until the renderer lands, the Canvas is not
-a LibreOffice-equivalent visual preview.
+Plan and implement a page-faithful preview in Vakyartha while keeping the Open
+XML package as the source of truth and preserving anchored cells, image alt
+text, cached chart data and RAG extraction. Rendering must use Vakyartha's own
+standards-based code. LibreOffice may be used only as a developer-side test
+oracle; Vakyartha must never launch it or depend on it at runtime. Until the
+native renderer lands, the Canvas is not an Office-equivalent visual preview.
 
 **Progress — 2026-09-29.** Corrected the generic worksheet drawing
 relationship serialization after comparing a real generated XLSX with
@@ -84,7 +84,8 @@ LibreOffice: drawing relationships now declare the relationship namespace at
 the drawing reference, so Excel-compatible readers can resolve charts and
 images even when tables are also present on the sheet. Added a combo-chart
 reader fixture proving each series keeps its own type. Cached series and
-categories remain structured table rows for extraction/RAG; the Canvas
+categories remain structured table rows for extraction/RAG, and cached point
+indices preserve category alignment when a middle point is missing. The Canvas
 reconstructs common chart forms from those values, with a data table available
 alongside the visual. This is still a structured preview, not full Office chart
 fidelity. The live XLSX confirms its image at `Sheet1!D2` and chart at
@@ -133,7 +134,7 @@ The organisation's template stays the better start when the workspace has one; t
 
 Anything that does not serve that loop waits until someone asks for it.
 
-- **Self-sufficient where it matters.** Reading, citing, editing, creating from a template, verifying and reviewing need no Microsoft Office, LibreOffice or other external application (O7). Page-accurate appearance is the one thing Vak does not reproduce: the structured views answer "what is in it and what changed", and **Open with…** or **Download** covers "what does page 4 look like" as a courtesy, never as the answer to a Vak feature.
+- **Self-sufficient where it matters.** Reading, citing, editing, creating from a template, verifying and reviewing need no Microsoft Office, LibreOffice or other external application (O7). Native page-faithful rendering is in progress; **Open with…** or **Download** remains a courtesy and never a runtime requirement.
 - **Changes are always a redline, never a silent overwrite.** Every change lands in a draft, is attributed, and is reviewed before it reaches the file.
 - **Macros are understood, never run.** VBA is read, explained and flagged. An Agent may rewrite what a macro does as a Vak automation, under review. Vak has no VBA runtime and does not plan one.
 - **The headline creation feature is a deck, memo or workbook from the organisation's own template,** filled through its layouts and placeholders, never through free-positioned shapes.
@@ -544,7 +545,7 @@ Each amendment to `AGENTS.md` lands with the phase that enforces it; an invarian
 | R6 | Per-change acceptance | By op replay onto the base, for every editable format. |
 | R7 | Agent edits to existing Word documents | Native tracked changes under the Agent's identity; new documents written clean. |
 | R8 | Where documents are parsed | In the worker only. The browser never unzips a package. |
-| R9 | Rendering | Structured views; page fidelity through **Open with…** / **Download** (2026-09-24). |
+| R9 | Rendering | Structured, standards-based views with page-faithful rendering phased in natively; external office applications are never a runtime dependency (owner clarification, 2026-09-29). **Open with…** / **Download** remain available. |
 | R10 | Inbox writes on read-only channels | Allowed: a received file is the sender's, not an Agent write; the inbox never overwrites (2026-09-24). |
 | D4 | Signature handling on edit | Drop invalid signature parts and record it, announced before acceptance. |
 | D7 | CFB reader | Needed to tell encrypted packages from legacy binaries and to read VBA source for P1 understanding. Evaluate the `cfb` crate, pinned, else write a bounded reader. |

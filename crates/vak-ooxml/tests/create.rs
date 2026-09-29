@@ -503,6 +503,30 @@ fn a_workbook_chart_keeps_its_source_data_and_cached_labels() {
         ["Category | Sales", "Jan | 120", "Feb | 145", "Mar | 132"]
     );
     let chart_xml = part(&applied.bytes, "xl/charts/chart1.xml");
+    let gap_chart_xml = chart_xml.replace("<c:pt idx=\"1\"><c:v>145</c:v></c:pt>", "");
+    assert_ne!(
+        gap_chart_xml, chart_xml,
+        "fixture must remove the indexed middle cache point"
+    );
+    let gap_package = vak_ooxml::fixtures::with_parts(
+        &applied.bytes,
+        &[("xl/charts/chart1.xml", gap_chart_xml.as_bytes())],
+    );
+    let gap_document = vak_ooxml::read::read(
+        std::io::Cursor::new(gap_package),
+        vak_ooxml::Limits::default(),
+    )
+    .unwrap();
+    let gap_rows: Vec<_> = gap_document
+        .units
+        .iter()
+        .filter(|unit| unit.anchor.starts_with("chart:chart1.xml/r"))
+        .map(|unit| unit.text.as_str())
+        .collect();
+    assert_eq!(
+        gap_rows,
+        ["Category | Sales", "Jan | 120", "Feb | ", "Mar | 132"]
+    );
     assert!(
         chart_xml.contains("A1:B4") == false,
         "chart stores separate category/value references"
