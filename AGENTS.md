@@ -89,6 +89,10 @@ Read before changing behaviour in these areas:
   `crates/vak-pdf`, carried by the Office loop's own surfaces: `doc_read`,
   `office_apply`, Review with choices and shared drafts; its deferred list
   says what is not built and why).
+- **Mail and calendar** — `80-mail-and-calendar.md` (proposal only: governed
+  account reads, continuous and scheduled routines, a shared preview and
+  working area, local drafts, Review, committed provider effects, and their
+  security boundaries; no implementation milestone has started).
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and
   `74-lifecycle-and-data-administration.md` (the pending data architecture
