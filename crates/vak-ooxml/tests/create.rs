@@ -645,6 +645,121 @@ fn a_workbook_image_preview_keeps_its_excel_cell_anchor() {
 }
 
 #[test]
+fn one_workbook_keeps_multiple_tables_charts_and_images_distinct_and_readable() {
+    let cells = BTreeMap::from([
+        ("A1".into(), text("Day")),
+        ("B1".into(), text("Visitors")),
+        ("A2".into(), text("Monday")),
+        ("B2".into(), CellValue::Number(25.0)),
+        ("A3".into(), text("Tuesday")),
+        ("B3".into(), CellValue::Number(31.0)),
+        ("D1".into(), text("Day")),
+        ("E1".into(), text("Orders")),
+        ("D2".into(), text("Monday")),
+        ("E2".into(), CellValue::Number(8.0)),
+        ("D3".into(), text("Tuesday")),
+        ("E3".into(), CellValue::Number(12.0)),
+    ]);
+    let image = |alt_text: &str| {
+        SlideImage {
+        mime_type: "image/png".into(),
+        data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==".into(),
+        alt_text: alt_text.into(),
+    }
+    };
+    let applied = create(
+        "xlsx",
+        vec![
+            OfficeOp::SetCells {
+                sheet: "Sheet1".into(),
+                cells,
+            },
+            OfficeOp::AddExcelTable {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                name: Some("DailyVisitors".into()),
+            },
+            OfficeOp::AddExcelTable {
+                sheet: "Sheet1".into(),
+                range: "D1:E3".into(),
+                name: Some("DailyOrders".into()),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "G2".into(),
+                image: image("Visitors marker"),
+            },
+            OfficeOp::AddExcelImage {
+                sheet: "Sheet1".into(),
+                cell: "G8".into(),
+                image: image("Orders marker"),
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "A1:B3".into(),
+                chart_type: "bar".into(),
+                title: "Daily visitors".into(),
+                cell: None,
+            },
+            OfficeOp::AddChart {
+                sheet: "Sheet1".into(),
+                range: "D1:E3".into(),
+                chart_type: "bar".into(),
+                title: "Daily orders".into(),
+                cell: Some("O2".into()),
+            },
+        ],
+    )
+    .unwrap();
+
+    let tables: Vec<_> = applied
+        .document
+        .tables
+        .iter()
+        .filter(|table| table.anchor == "DailyVisitors" || table.anchor == "DailyOrders")
+        .map(|table| table.anchor.as_str())
+        .collect();
+    assert_eq!(tables, ["DailyVisitors", "DailyOrders"]);
+    let charts: Vec<_> = applied
+        .document
+        .tables
+        .iter()
+        .filter(|table| table.anchor.starts_with("chart:"))
+        .collect();
+    assert_eq!(charts.len(), 2);
+    assert_eq!(charts[0].anchor, "chart:chart1.xml");
+    assert_eq!(charts[1].anchor, "chart:chart2.xml");
+    assert!(charts[0].rows.iter().any(|row| row == &["Tuesday", "31"]));
+    assert!(charts[1].rows.iter().any(|row| row == &["Tuesday", "12"]));
+
+    let images: Vec<_> = applied
+        .document
+        .units
+        .iter()
+        .filter(|unit| unit.kind == UnitKind::Image)
+        .map(|unit| unit.text.as_str())
+        .collect();
+    assert_eq!(images, ["Visitors marker", "Orders marker"]);
+    let previews =
+        read::image_previews(Cursor::new(applied.bytes.clone()), Limits::default()).unwrap();
+    assert_eq!(previews.len(), 2);
+    assert_eq!(previews[0].cell.as_deref(), Some("G2"));
+    assert_eq!(previews[0].alt_text, "Visitors marker");
+    assert_eq!(previews[1].cell.as_deref(), Some("G8"));
+    assert_eq!(previews[1].alt_text, "Orders marker");
+
+    let extracted = read::read(Cursor::new(applied.bytes), Limits::default()).unwrap();
+    let chart_rows: Vec<_> = extracted
+        .units
+        .iter()
+        .filter(|unit| unit.anchor.starts_with("chart:"))
+        .map(|unit| unit.text.as_str())
+        .collect();
+    assert!(chart_rows.contains(&"Tuesday | 31"));
+    assert!(chart_rows.contains(&"Tuesday | 12"));
+}
+
+#[test]
 fn a_workbook_chart_defaults_to_the_first_row_below_its_source_range() {
     let cells = BTreeMap::from([
         ("A1".into(), text("Day")),

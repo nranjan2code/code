@@ -646,7 +646,8 @@ function WorkbookGrid(props: {
     // this viewport to their native anchor so their measured overlays land
     // on the correct cell.
     const lastRow = Math.max(byRow.at(-1)?.number ?? 1, maxObjectRow, 32);
-    const expandedRows = Array.from({ length: lastRow }, (_, index) => byRow.find((row) => row.number === index + 1) ?? ({ number: index + 1, anchor: `${current()?.anchor ?? ""}${index + 1}`, labels: [], cells: new Map<number, string>(), styles: stylesByRow.get(index + 1) ?? new Map<number, api.OfficeCellStyle>() }));
+    const populatedRows = new Map(byRow.map((row) => [row.number, row]));
+    const expandedRows = Array.from({ length: lastRow }, (_, index) => populatedRows.get(index + 1) ?? ({ number: index + 1, anchor: `${current()?.anchor ?? ""}${index + 1}`, labels: [], cells: new Map<number, string>(), styles: stylesByRow.get(index + 1) ?? new Map<number, api.OfficeCellStyle>() }));
     return { columns: Array.from({ length: Math.max(maxColumn, maxObjectColumn, 16) }, (_, index) => index + 1), rows: expandedRows };
   });
   const selectedRange = () => {
@@ -670,6 +671,20 @@ function WorkbookGrid(props: {
   const inSelection = (column: number, row: number) => {
     const range = selectedRange();
     return Boolean(range && column >= range.first.column && column <= range.last.column && row >= range.first.row && row <= range.last.row);
+  };
+  const columnWidth = (column: number) => {
+    const sheet = current()?.anchor ?? "";
+    const sheetName = sheet.endsWith("!") ? sheet.slice(0, -1) : sheet;
+    return props.geometry.column_widths[`${sheet}${columnName(column)}`]
+      ?? props.geometry.default_column_widths[sheetName]
+      ?? 64;
+  };
+  const rowHeight = (row: number) => {
+    const sheet = current()?.anchor ?? "";
+    const sheetName = sheet.endsWith("!") ? sheet.slice(0, -1) : sheet;
+    return props.geometry.row_heights[`${sheet}${row}`]
+      ?? props.geometry.default_row_heights[sheetName]
+      ?? 20;
   };
   const measureObjectPositions = () => {
     const canvas = canvasRoot;
@@ -741,12 +756,16 @@ function WorkbookGrid(props: {
       <div class="office-grid-scroll">
         <Show when={grid().rows.length > 0} fallback={<p class="office-view-empty">No cells on this part of the sheet.</p>}>
           <div class="office-sheet-canvas" ref={canvasRoot}><table class="office-grid">
+            <colgroup>
+              <col class="office-grid-row-number" />
+              <For each={grid().columns}>{(column) => <col classList={{ "office-grid-hidden-column": columnWidth(column) === 0 }} style={{ width: `${columnWidth(column)}px` }} />}</For>
+            </colgroup>
             <thead>
               <tr><th scope="col" /><For each={grid().columns}>{(column) => <th scope="col">{columnName(column)}</th>}</For></tr>
             </thead>
             <tbody>
               <For each={grid().rows}>{(row) => (
-                <tr id={unitId(row.anchor)} classList={{ "office-grid-flagged": row.labels.length > 0 }} title={row.labels.join(", ") || undefined} style={{ height: `${props.geometry.row_heights[`${current()?.anchor ?? ""}${row.number}`] ?? props.geometry.default_row_heights[(current()?.anchor ?? "").slice(0, -1)] ?? 20}px` }}>
+                <tr id={unitId(row.anchor)} classList={{ "office-grid-flagged": row.labels.length > 0, "office-grid-hidden-row": rowHeight(row.number) === 0 }} title={row.labels.join(", ") || undefined} style={{ height: `${rowHeight(row.number)}px` }}>
                   <th scope="row">{row.number}</th>
                   <For each={grid().columns}>{(column) => {
                     const value = row.cells.get(column);
@@ -769,8 +788,6 @@ function WorkbookGrid(props: {
                           "office-table-column-band": Boolean(tableRange && table?.show_column_stripes && (column - tableRange.first.column) % 2 === 0),
                         }}
                         style={{
-                          width: `${props.geometry.column_widths[`${current()?.anchor ?? ""}${columnName(column)}`] ?? props.geometry.default_column_widths[(current()?.anchor ?? "").slice(0, -1)] ?? 64}px`,
-                          "min-width": `${props.geometry.column_widths[`${current()?.anchor ?? ""}${columnName(column)}`] ?? props.geometry.default_column_widths[(current()?.anchor ?? "").slice(0, -1)] ?? 64}px`,
                           ...(row.styles.has(column) ? {
                           "background-color": row.styles.get(column)?.fill_color,
                           color: row.styles.get(column)?.font_color,

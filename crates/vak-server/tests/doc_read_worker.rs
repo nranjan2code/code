@@ -172,10 +172,13 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
         (
             "daily.xlsx",
             json!([
-                {"op":"set_cells","sheet":"Sheet1","cells":{"A1":"Day","B1":"Visitors","A2":"Mon","B2":25,"A3":"Tue","B3":31}},
+                {"op":"set_cells","sheet":"Sheet1","cells":{"A1":"Day","B1":"Visitors","A2":"Mon","B2":25,"A3":"Tue","B3":31,"D1":"Day","E1":"Orders","D2":"Mon","E2":8,"D3":"Tue","E3":12}},
                 {"op":"add_chart","sheet":"Sheet1","range":"A1:B3","chart_type":"bar","title":"Daily visitors"},
+                {"op":"add_chart","sheet":"Sheet1","range":"D1:E3","chart_type":"bar","title":"Daily orders","cell":"K10"},
                 {"op":"add_excel_table","sheet":"Sheet1","range":"A1:B3","name":"DailyVisitors"},
-                {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}
+                {"op":"add_excel_table","sheet":"Sheet1","range":"D1:E3","name":"DailyOrders"},
+                {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}},
+                {"op":"add_excel_image","sheet":"Sheet1","cell":"G2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the order status marker"}}
             ]),
         ),
         (
@@ -260,15 +263,29 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
             "daily.xlsx" => {
                 assert!(projected.to_string().contains("DailyVisitors/r3"));
                 assert!(projected.to_string().contains("Tue | 31"));
+                assert!(projected.to_string().contains("DailyOrders/r3"));
+                assert!(projected.to_string().contains("Tue | 12"));
+                assert!(projected.to_string().contains("Daily orders"));
+                assert!(projected.to_string().contains("Sheet1!K10"));
                 assert!(
                     projected
                         .to_string()
                         .contains("A blue square used as the daily status marker")
                 );
                 assert!(
+                    projected
+                        .to_string()
+                        .contains("A blue square used as the order status marker")
+                );
+                assert!(
                     extracted
                         .content
                         .contains("A blue square used as the daily status marker")
+                );
+                assert!(
+                    extracted
+                        .content
+                        .contains("A blue square used as the order status marker")
                 );
                 let native_table = read
                     .execute(
@@ -285,6 +302,21 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                     native_table.content.contains("Tuesday")
                         || native_table.content.contains("Tue")
                 );
+                let second_native_table = read
+                    .execute(
+                        &json!({"path":draft,"view":"table","section":"DailyOrders"}),
+                        &ToolContext::new(workspace.clone()),
+                    )
+                    .await;
+                assert!(
+                    !second_native_table.is_error,
+                    "second native table: {}",
+                    second_native_table.content
+                );
+                assert!(
+                    second_native_table.content.contains("Orders")
+                        && second_native_table.content.contains("12")
+                );
                 let chart_table = read
                     .execute(
                         &json!({"path":draft,"view":"table","section":"Daily visitors"}),
@@ -298,6 +330,21 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
                 );
                 assert!(chart_table.content.contains("chart data; cached values"));
                 assert!(chart_table.content.contains("Mon") && chart_table.content.contains("25"));
+                let second_chart_table = read
+                    .execute(
+                        &json!({"path":draft,"view":"table","section":"Daily orders"}),
+                        &ToolContext::new(workspace.clone()),
+                    )
+                    .await;
+                assert!(
+                    !second_chart_table.is_error,
+                    "second chart extraction: {}",
+                    second_chart_table.content
+                );
+                assert!(
+                    second_chart_table.content.contains("Tue")
+                        && second_chart_table.content.contains("12")
+                );
             }
             "daily.pptx" => {
                 assert!(projected.to_string().contains("Visitors"));

@@ -21417,10 +21417,13 @@ mod sandbox_promotion_tests {
         let args = serde_json::json!({
             "path": "daily.xlsx",
             "ops": [
-                {"op":"set_cells","sheet":"Sheet1","cells":{"A1":"Day","B1":"Visitors","A2":"Monday","B2":25,"A3":"Tuesday","B3":31}},
+                {"op":"set_cells","sheet":"Sheet1","cells":{"A1":"Day","B1":"Visitors","A2":"Monday","B2":25,"A3":"Tuesday","B3":31,"D1":"Day","E1":"Orders","D2":"Monday","E2":8,"D3":"Tuesday","E3":12}},
                 {"op":"add_excel_table","sheet":"Sheet1","range":"A1:B3","name":"DailyVisitors"},
+                {"op":"add_excel_table","sheet":"Sheet1","range":"D1:E3","name":"DailyOrders"},
                 {"op":"add_chart","sheet":"Sheet1","range":"A1:B3","chart_type":"bar","title":"Daily visitors"},
-                {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}}
+                {"op":"add_chart","sheet":"Sheet1","range":"D1:E3","chart_type":"bar","title":"Daily orders","cell":"K10"},
+                {"op":"add_excel_image","sheet":"Sheet1","cell":"D2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the daily status marker"}},
+                {"op":"add_excel_image","sheet":"Sheet1","cell":"G2","image":{"mime_type":"image/png","data":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNQaHjwHwAExAKAc00zmAAAAABJRU5ErkJggg==","alt_text":"A blue square used as the order status marker"}}
             ]
         });
         let (sink, _events) = vak_tools::SandboxEventSink::new_with_id("exec-structured".into());
@@ -21483,7 +21486,9 @@ mod sandbox_promotion_tests {
         assert_eq!(response.status(), StatusCode::OK);
         let review = body_json(response).await;
         assert!(review.to_string().contains("Sheet1!A10"), "{review}");
+        assert!(review.to_string().contains("Sheet1!K10"), "{review}");
         assert!(review.to_string().contains("Sheet1!D2"), "{review}");
+        assert!(review.to_string().contains("Sheet1!G2"), "{review}");
         let choices = review["choices"].as_array().expect("Office choices");
         let labels = choices
             .iter()
@@ -21499,6 +21504,30 @@ mod sandbox_promotion_tests {
         );
         assert!(
             labels.iter().any(|label| label.contains("image")),
+            "{labels:?}"
+        );
+        assert_eq!(
+            labels
+                .iter()
+                .filter(|label| label.contains("table"))
+                .count(),
+            2,
+            "{labels:?}"
+        );
+        assert_eq!(
+            labels
+                .iter()
+                .filter(|label| label.contains("chart"))
+                .count(),
+            2,
+            "{labels:?}"
+        );
+        assert_eq!(
+            labels
+                .iter()
+                .filter(|label| label.contains("image"))
+                .count(),
+            2,
             "{labels:?}"
         );
         let keep = choices
@@ -21544,10 +21573,14 @@ mod sandbox_promotion_tests {
             "charts",
             "images with alternative text",
             "chart position: Sheet1!A10",
+            "chart position: Sheet1!K10",
             "image position: Sheet1!D2",
+            "image position: Sheet1!G2",
+            "DailyOrders/r3",
             "Monday",
             "25",
             "A blue square used as the daily status marker",
+            "A blue square used as the order status marker",
         ] {
             assert!(
                 projected.contains(expected),
