@@ -1,6 +1,6 @@
 # 77 — PDF documents: reader, writer, review and shared drafts
 
-Status: **shipped 2026-09-29.** The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped.
+Status: **shipped 2026-09-29; everyday authoring improvements continue.** The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped. Multi-page authored tables now repeat their header on continuation pages.
 
 ## Owner direction
 
@@ -25,6 +25,12 @@ A PDF is the document people most often send an Agent. Before this, a PDF that a
 - **D11 — detection by bytes.** `doc_read` routes a file named `.pdf`, or any file that starts `%PDF-`, to the reader; a file named `.pdf` that is not one fails with that reason.
 - **D12 — refusal over half-reading.** An encrypted PDF is refused whole, even one that opens without a password: decryption is not implemented.
 - **D13 — images remain ordinary and extractable.** New PNG and JPEG images are embedded as PDF image XObjects. A visible, searchable `Image description:` caption carries the required alternative text into `doc_read` and RAG projections; image pixels are not OCR-read. Inputs are bounded before decode and nonstandard image types are refused.
+
+**Progress — 2026-09-29.** A PDF table that spans pages repeats its header row
+after each automatic page break. The regression test reads the generated PDF
+back, confirms the header occurs on multiple pages, and checks the first and
+last data rows remain searchable. This applies to authored tables and the
+searchable data tables printed below vector charts.
 
 ## The op set
 
@@ -68,4 +74,4 @@ A shared draft of a PDF holds each revision's steps. PDF anchors are positions, 
 
 ## Tests
 
-`crates/vak-pdf/tests/read.rs` and `crates/vak-pdf/tests/edit.rs` (reading, every op, refusals, the diff, choices and narrowing, the projection, cycles, bombs and corruption sweeps) and each module's unit tests; `crates/vak-tools/src/office_pdf.rs` and `crates/vak-tools/src/doc_read.rs`; `crates/vak-sandbox/src/lib.rs`; the server's PDF review, narrowing and promotion test and room merge rules; the inbox note in `crates/vak-server/src/gateway.rs`; and `crates/vak/tests/office_cli.rs`. Written files were also rendered by the macOS PDF engine to check them outside our own reader.
+`crates/vak-pdf/tests/read.rs` and `crates/vak-pdf/tests/edit.rs` (reading, every op, refusals, the diff, choices and narrowing, the projection, cycles, bombs and corruption sweeps, and repeated headers across authored multi-page tables) and each module's unit tests; `crates/vak-tools/src/office_pdf.rs` and `crates/vak-tools/src/doc_read.rs`; `crates/vak-sandbox/src/lib.rs`; the server's PDF review, narrowing and promotion test and room merge rules; the inbox note in `crates/vak-server/src/gateway.rs`; and `crates/vak/tests/office_cli.rs`. Written files were also rendered by the macOS PDF engine to check them outside our own reader.

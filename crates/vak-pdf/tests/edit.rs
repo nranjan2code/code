@@ -77,6 +77,28 @@ fn a_new_pdf_is_set_from_its_ops() {
 }
 
 #[test]
+fn a_pdf_table_repeats_its_header_across_pages_and_keeps_rows_searchable() {
+    let mut rows = vec![vec!["Day".to_string(), "Visitors".to_string()]];
+    rows.extend((1..=80).map(|day| vec![format!("Day {day}"), (day * 10).to_string()]));
+    let applied = apply(
+        None,
+        &serde_json::json!([{"op":"add_table","rows":rows}]).to_string(),
+    );
+    let text = applied.document.lines().join("\n");
+    let headers = text
+        .lines()
+        .filter(|line| line.contains("Day   Visitors"))
+        .count();
+    assert!(applied.document.page_count > 1);
+    assert!(
+        headers > 1,
+        "expected a repeated table header, got {headers}: {text}"
+    );
+    assert!(text.contains("Day 1   10"), "{text}");
+    assert!(text.contains("Day 80   800"), "{text}");
+}
+
+#[test]
 fn a_pdf_chart_is_vector_and_keeps_searchable_source_rows() {
     let applied = apply(
         None,

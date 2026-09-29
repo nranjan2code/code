@@ -290,8 +290,7 @@ impl PdfOp {
                     categories: categories.clone(),
                     values: values.clone(),
                 }
-                .validate()
-                .map_err(|message| message),
+                .validate(),
             ),
             PdfOp::AddImage { image, .. } => Some(
                 Block::Image {

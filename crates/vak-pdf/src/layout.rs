@@ -799,61 +799,121 @@ fn table(
         .iter()
         .map(|width| width / total * content_width)
         .collect();
-    for (index, row) in encoded.iter().enumerate() {
-        let face = if header && index == 0 {
-            Face::Bold
+    let prepared: Vec<(Vec<Vec<Vec<u8>>>, f64)> = encoded
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let face = if header && index == 0 {
+                Face::Bold
+            } else {
+                Face::Regular
+            };
+            let cells: Vec<Vec<Vec<u8>>> = (0..columns)
+                .map(|column| {
+                    let cell = row.get(column).map(Vec::as_slice).unwrap_or_default();
+                    wrap(face, SIZE, cell, widths[column] - 2.0 * PAD)
+                })
+                .collect();
+            let lines = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
+            let height = lines as f64 * LEADING + 2.0 * PAD;
+            (cells, height)
+        })
+        .collect();
+    let header_height = header
+        .then(|| prepared.first().map(|(_, height)| *height))
+        .flatten()
+        .unwrap_or(0.0);
+    let page_content_height = pager.size[1] - 2.0 * MARGIN;
+    for (index, (cells, height)) in prepared.iter().enumerate() {
+        let repeat_height = if header && index > 0 {
+            header_height
         } else {
-            Face::Regular
+            0.0
         };
-        let cells: Vec<Vec<Vec<u8>>> = (0..columns)
-            .map(|column| {
-                let cell = row.get(column).map(Vec::as_slice).unwrap_or_default();
-                wrap(face, SIZE, cell, widths[column] - 2.0 * PAD)
-            })
-            .collect();
-        let lines = cells.iter().map(Vec::len).max().unwrap_or(1).max(1);
-        let height = lines as f64 * LEADING + 2.0 * PAD;
-        pager.need(height);
-        let top = pager.y;
-        let mut x = MARGIN;
-        let page = pager.page();
-        if header && index == 0 {
-            let _ = writeln!(
-                page.content,
-                "0.92 g {} {} {} {} re f 0 g",
-                real(MARGIN),
-                real(top - height),
-                real(content_width),
-                real(height)
+        if height + repeat_height > page_content_height {
+            return Err("a table row and repeated header are too tall to fit on one page".into());
+        }
+        let previous_page_count = pager.pages.len();
+        pager.need(height + repeat_height);
+        if header && index > 0 && pager.pages.len() > previous_page_count {
+            let (header_cells, header_height) = &prepared[0];
+            draw_table_row(
+                pager,
+                header_cells,
+                &widths,
+                *header_height,
+                content_width,
+                true,
             );
         }
-        let _ = writeln!(page.content, "0.6 G 0.5 w");
-        for width in &widths {
-            let _ = writeln!(
-                page.content,
-                "{} {} {} {} re S",
-                real(x),
-                real(top - height),
-                real(*width),
-                real(height)
-            );
-            x += width;
-        }
-        let _ = writeln!(page.content, "0 G");
-        let mut x = MARGIN;
-        for (column, cell) in cells.iter().enumerate() {
-            for (line_index, line) in cell.iter().enumerate() {
-                if line.is_empty() {
-                    continue;
-                }
-                let baseline = top - PAD - SIZE - line_index as f64 * LEADING + 1.5;
-                pager.text(face, SIZE, x + PAD, baseline, line, None);
-            }
-            x += widths[column];
-        }
-        pager.y -= height;
+        draw_table_row(
+            pager,
+            cells,
+            &widths,
+            *height,
+            content_width,
+            header && index == 0,
+        );
     }
     Ok(())
+}
+
+fn draw_table_row(
+    pager: &mut Pager,
+    cells: &[Vec<Vec<u8>>],
+    widths: &[f64],
+    height: f64,
+    content_width: f64,
+    header: bool,
+) {
+    const SIZE: f64 = 10.0;
+    const LEADING: f64 = 13.0;
+    const PAD: f64 = 4.0;
+    let top = pager.y;
+    let mut x = MARGIN;
+    let page = pager.page();
+    if header {
+        let _ = writeln!(
+            page.content,
+            "0.92 g {} {} {} {} re f 0 g",
+            real(MARGIN),
+            real(top - height),
+            real(content_width),
+            real(height)
+        );
+    }
+    let _ = writeln!(page.content, "0.6 G 0.5 w");
+    for width in widths {
+        let _ = writeln!(
+            page.content,
+            "{} {} {} {} re S",
+            real(x),
+            real(top - height),
+            real(*width),
+            real(height)
+        );
+        x += width;
+    }
+    let _ = writeln!(page.content, "0 G");
+    let mut x = MARGIN;
+    for (column, cell) in cells.iter().enumerate() {
+        for (line_index, line) in cell.iter().enumerate() {
+            if line.is_empty() {
+                continue;
+            }
+            let baseline = top - PAD - SIZE - line_index as f64 * LEADING + 1.5;
+            pager.text(
+                if header { Face::Bold } else { Face::Regular },
+                SIZE,
+                x + PAD,
+                baseline,
+                line,
+                None,
+            );
+        }
+        x += widths[column];
+    }
+    pager.y -= height;
 }
 
 #[cfg(test)]
