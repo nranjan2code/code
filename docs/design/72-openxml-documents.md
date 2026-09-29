@@ -104,6 +104,13 @@ the same object ID and cell. Verified by drawing-reader and two-sheet
 projection fixtures and the client TypeScript check. External workbook corpus
 verification remains pending.
 
+**Progress — 2026-09-29.** The workbook Canvas carries native merged-cell
+ranges as visual-only sheet geometry, spans the source cells in the grid, and
+normalizes keyboard navigation to the merged cell's top-left anchor. The
+metadata remains separate from cell units and RAG text, is retained while
+pages load, and is scoped to the visible worksheet. Reader and paged-projection
+fixtures cover merge extraction; browser verification remains pending.
+
 **Placement contract.** The person names the desired place in the request;
 the Agent writes the native anchor and shows it in Canvas and Review. In a
 workbook, an image or chart has an exact top-left cell; a chart defaults to

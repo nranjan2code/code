@@ -1207,6 +1207,8 @@ export type OfficeTableStyleRange = {
   show_column_stripes: boolean;
 };
 
+export type OfficeMergedCellRange = { sheet_anchor: string; range: string };
+
 export type OfficeOutlineEntry = { anchor: string; title: string; level: number; first_unit: number; units: number };
 
 /** One page of what the Canvas draws of an Office file (docs/design/72, P4). */
@@ -1234,9 +1236,10 @@ export type OfficeProjection = {
   /** Presentation-only cell styles; excluded from the RAG extraction view. */
   cell_styles?: Record<string, OfficeCellStyle>;
   table_styles?: OfficeTableStyleRange[];
+  merged_ranges?: OfficeMergedCellRange[];
   /** Canvas-formatted values; `units` retains the stored values for RAG. */
   display_values?: Record<string, string>;
-  sheet_geometry?: { default_column_widths: Record<string, number>; default_row_heights: Record<string, number>; column_widths: Record<string, number>; row_heights: Record<string, number> };
+  sheet_geometry?: { default_column_widths: Record<string, number>; default_row_heights: Record<string, number>; column_widths: Record<string, number>; row_heights: Record<string, number>; merged_ranges: OfficeMergedCellRange[] };
   not_read: string[];
   /** The unit a cited anchor named, when the page was asked for `at` one. */
   focus?: string;

@@ -115,6 +115,15 @@ pub struct SheetGeometry {
     pub column_widths: HashMap<String, u32>,
     /// Pixel heights keyed as `Sheet!1`.
     pub row_heights: HashMap<String, u32>,
+    /// Native worksheet merged-cell ranges keyed by sheet name.
+    pub merged_ranges: Vec<MergedCellRange>,
+}
+
+/// A worksheet's merged range, kept as visual metadata separate from cells.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MergedCellRange {
+    pub sheet_anchor: String,
+    pub range: String,
 }
 
 /// A bounded image preview for the local Office Canvas. This stays in the
@@ -1636,6 +1645,10 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
             .sheet_geometry
             .default_row_heights
             .extend(geometry.default_row_heights);
+        document
+            .sheet_geometry
+            .merged_ranges
+            .extend(geometry.merged_ranges);
         for row in &rows {
             for (column, style) in &row.cell_styles {
                 if style.fill_color.is_some()
@@ -2052,6 +2065,17 @@ fn sheet_geometry(
                                 (height * 4.0 / 3.0).round() as u32
                             },
                         );
+                    }
+                }
+                "mergeCell" => {
+                    if geometry.merged_ranges.len() < 10_000
+                        && let Some(range) = element.attr("ref")
+                        && cell_range(range).is_some()
+                    {
+                        geometry.merged_ranges.push(MergedCellRange {
+                            sheet_anchor: format!("{sheet}!"),
+                            range: range.to_string(),
+                        });
                     }
                 }
                 _ => {}
@@ -3070,7 +3094,7 @@ mod tests {
 
     #[test]
     fn worksheet_geometry_reads_custom_widths_heights_and_hidden_sizes() {
-        let sheet = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetFormatPr defaultColWidth="8.43" defaultRowHeight="15"/><cols><col min="1" max="2" width="18.5" customWidth="1"/><col min="3" max="3" width="9" hidden="1"/></cols><sheetData><row r="1" ht="30" customHeight="1"><c r="A1"><v>1</v></c></row><row r="2" ht="15" hidden="1" /></sheetData></worksheet>"#;
+        let sheet = br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetFormatPr defaultColWidth="8.43" defaultRowHeight="15"/><cols><col min="1" max="2" width="18.5" customWidth="1"/><col min="3" max="3" width="9" hidden="1"/></cols><sheetData><row r="1" ht="30" customHeight="1"><c r="A1"><v>1</v></c></row><row r="2" ht="15" hidden="1" /></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells></worksheet>"#;
         let geometry = sheet_geometry(
             sheet,
             "xl/worksheets/sheet1.xml",
@@ -3085,6 +3109,9 @@ mod tests {
         assert_eq!(geometry.row_heights.get("Sheet1!2"), Some(&0));
         assert_eq!(geometry.default_column_widths.get("Sheet1"), Some(&64));
         assert_eq!(geometry.default_row_heights.get("Sheet1"), Some(&20));
+        assert_eq!(geometry.merged_ranges.len(), 1);
+        assert_eq!(geometry.merged_ranges[0].sheet_anchor, "Sheet1!");
+        assert_eq!(geometry.merged_ranges[0].range, "A1:C1");
     }
 
     #[test]

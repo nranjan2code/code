@@ -89,6 +89,40 @@ fn a_sheet_page_carries_its_cells_and_a_slide_deck_its_outline() {
 }
 
 #[test]
+fn worksheet_merge_ranges_are_canvas_metadata_and_follow_the_visible_sheet() {
+    let bytes = fixtures::with_parts(
+        &fixtures::xlsx(),
+        &[
+            (
+                "xl/worksheets/sheet1.xml",
+                br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Budget</t></is></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells></worksheet>"#,
+            ),
+            (
+                "xl/worksheets/sheet2.xml",
+                br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Hidden</t></is></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:B1"/></mergeCells></worksheet>"#,
+            ),
+        ],
+    );
+    let document = read_bytes(&bytes);
+    let page = projection::project(&document, 0, PAGE_BYTES);
+    assert_eq!(page.sheet_geometry.merged_ranges.len(), 2);
+    assert_eq!(page.sheet_geometry.merged_ranges[0].sheet_anchor, "Budget!");
+    assert_eq!(page.sheet_geometry.merged_ranges[0].range, "A1:C1");
+    assert_eq!(
+        page.sheet_geometry.merged_ranges[1].sheet_anchor,
+        "'Hidden data'!"
+    );
+    assert_eq!(page.sheet_geometry.merged_ranges[1].range, "A1:B1");
+    let hidden_sheet_start = document.sections[1].units.start;
+    let hidden_sheet_page = projection::project(&document, hidden_sheet_start, PAGE_BYTES);
+    assert_eq!(hidden_sheet_page.sheet_geometry.merged_ranges.len(), 1);
+    assert_eq!(
+        hidden_sheet_page.sheet_geometry.merged_ranges[0].sheet_anchor,
+        "'Hidden data'!"
+    );
+}
+
+#[test]
 fn a_unit_larger_than_the_page_is_cut_and_says_so() {
     let long = "Long paragraph text. ".repeat(400);
     let body = fixtures::MINIMAL_WORD_BODY.replace("Hello", &long);

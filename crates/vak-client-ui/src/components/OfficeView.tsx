@@ -90,10 +90,25 @@ export default function OfficeView(props: {
         for (const preview of [...(current.media ?? []), ...(page.media ?? [])]) {
           media.set(preview.object_id, preview);
         }
+        const geometry = page.sheet_geometry ?? current.sheet_geometry;
+        const mergedRanges = new Map<string, api.OfficeMergedCellRange>();
+        for (const range of [...(current.sheet_geometry?.merged_ranges ?? []), ...(page.sheet_geometry?.merged_ranges ?? [])]) {
+          mergedRanges.set(`${range.sheet_anchor}:${range.range}`, range);
+        }
         return {
           ...page,
           media: [...media.values()],
           image_object_ids: { ...(current.image_object_ids ?? {}), ...(page.image_object_ids ?? {}) },
+          cell_styles: { ...(current.cell_styles ?? {}), ...(page.cell_styles ?? {}) },
+          table_styles: [...new Map([...(current.table_styles ?? []), ...(page.table_styles ?? [])].map((style) => [`${style.sheet_anchor}:${style.range}`, style])).values()],
+          display_values: { ...(current.display_values ?? {}), ...(page.display_values ?? {}) },
+          sheet_geometry: geometry ? {
+            default_column_widths: { ...current.sheet_geometry?.default_column_widths, ...page.sheet_geometry?.default_column_widths },
+            default_row_heights: { ...current.sheet_geometry?.default_row_heights, ...page.sheet_geometry?.default_row_heights },
+            column_widths: { ...current.sheet_geometry?.column_widths, ...page.sheet_geometry?.column_widths },
+            row_heights: { ...current.sheet_geometry?.row_heights, ...page.sheet_geometry?.row_heights },
+            merged_ranges: [...mergedRanges.values()],
+          } : undefined,
         };
       });
       setUnits((current) => (replace ? page.units : [...current, ...page.units]));
@@ -347,7 +362,7 @@ export default function OfficeView(props: {
               <DeckUnits outline={info().outline} units={units()} media={info().media ?? []} imageObjectIds={info().image_object_ids ?? {}} jump={jump} unitProps={unitProps} />
             </Show>
           }>
-            <WorkbookGrid outline={info().outline} units={units()} media={info().media ?? []} imageObjectIds={info().image_object_ids ?? {}} cellStyles={info().cell_styles ?? {}} tableStyles={info().table_styles ?? []} displayValues={info().display_values ?? {}} geometry={info().sheet_geometry ?? { default_column_widths: {}, default_row_heights: {}, column_widths: {}, row_heights: {} }} jump={jump} selected={selected()} select={select} />
+            <WorkbookGrid outline={info().outline} units={units()} media={info().media ?? []} imageObjectIds={info().image_object_ids ?? {}} cellStyles={info().cell_styles ?? {}} tableStyles={info().table_styles ?? []} displayValues={info().display_values ?? {}} geometry={info().sheet_geometry ?? { default_column_widths: {}, default_row_heights: {}, column_widths: {}, row_heights: {}, merged_ranges: [] }} jump={jump} selected={selected()} select={select} />
           </Show>
           <div class="office-view-paging">
             <Show when={windowStart() > 0}>
@@ -693,7 +708,7 @@ function WorkbookGrid(props: {
   cellStyles: Record<string, api.OfficeCellStyle>;
   tableStyles: api.OfficeTableStyleRange[];
   displayValues: Record<string, string>;
-  geometry: { default_column_widths: Record<string, number>; default_row_heights: Record<string, number>; column_widths: Record<string, number>; row_heights: Record<string, number> };
+  geometry: { default_column_widths: Record<string, number>; default_row_heights: Record<string, number>; column_widths: Record<string, number>; row_heights: Record<string, number>; merged_ranges: api.OfficeMergedCellRange[] };
   jump: (entry: api.OfficeOutlineEntry) => void;
   selected: string | null;
   select: (anchor: string | null) => void;
@@ -712,6 +727,16 @@ function WorkbookGrid(props: {
     if (!entry) return [] as api.OfficeUnit[];
     return props.units.filter((unit) => unit.kind === "sheet_row" && unit.anchor.startsWith(entry.anchor));
   });
+  const activeMergedRanges = createMemo(() => props.geometry.merged_ranges
+    .filter((merge) => merge.sheet_anchor === current()?.anchor)
+    .map((merge) => cellRange(merge.range))
+    .filter((range): range is NonNullable<typeof range> => Boolean(range)));
+  const mergedRangeAt = (column: number, row: number) => activeMergedRanges()
+    .find((range) => column >= range.first.column && column <= range.last.column && row >= range.first.row && row <= range.last.row) ?? null;
+  const normalizedCellAddress = (column: number, row: number) => {
+    const merge = mergedRangeAt(column, row);
+    return `${columnName(merge?.first.column ?? column)}${merge?.first.row ?? row}`;
+  };
   const dimensions = (labels: string[], kind: "chart" | "image") => {
     const match = labels.find((label) => label.startsWith(`${kind} size: `))?.match(/(\d+)x(\d+)px$/);
     return match ? { widthPx: Number(match[1]), heightPx: Number(match[2]) } : {};
@@ -779,6 +804,9 @@ function WorkbookGrid(props: {
     }
     const objectPoints = objectCells().map(cellAddress).filter((cell): cell is NonNullable<typeof cell> => Boolean(cell));
     const maxObjectColumn = objectPoints.reduce((max, cell) => Math.max(max, cell.column), 1);
+    const mergePoints = activeMergedRanges();
+    const maxMergedColumn = mergePoints.reduce((max, range) => Math.max(max, range.last.column), 1);
+    const maxMergedRow = mergePoints.reduce((max, range) => Math.max(max, range.last.row), 1);
     const objectRows = objectAnchors().flatMap(({ cell, endCell, heightPx }) => {
       const start = cell ? cellAddress(cell) : null;
       const end = endCell ? cellAddress(endCell) : null;
@@ -795,10 +823,10 @@ function WorkbookGrid(props: {
     // when the saved file has only a few used cells. Objects still extend
     // this viewport to their native anchor so their measured overlays land
     // on the correct cell.
-    const lastRow = Math.max(byRow.at(-1)?.number ?? 1, maxObjectRow, 32);
+    const lastRow = Math.max(byRow.at(-1)?.number ?? 1, maxObjectRow, maxMergedRow, 32);
     const populatedRows = new Map(byRow.map((row) => [row.number, row]));
     const expandedRows = Array.from({ length: lastRow }, (_, index) => populatedRows.get(index + 1) ?? ({ number: index + 1, anchor: `${current()?.anchor ?? ""}${index + 1}`, labels: [], cells: new Map<number, string>(), styles: stylesByRow.get(index + 1) ?? new Map<number, api.OfficeCellStyle>() }));
-    return { columns: Array.from({ length: Math.max(maxColumn, maxObjectColumn, 16) }, (_, index) => index + 1), rows: expandedRows };
+    return { columns: Array.from({ length: Math.max(maxColumn, maxObjectColumn, maxMergedColumn, 16) }, (_, index) => index + 1), rows: expandedRows };
   });
   const selectedRange = () => {
     const entry = current();
@@ -937,9 +965,13 @@ function WorkbookGrid(props: {
                       : style?.vertical_alignment;
                     const table = tableForCell(column, row.number);
                     const tableRange = table ? cellRange(table.range) : null;
-                    return (
+                    const mergedRange = mergedRangeAt(column, row.number);
+                    const isMergedContinuation = Boolean(mergedRange && (mergedRange.first.column !== column || mergedRange.first.row !== row.number));
+                    return isMergedContinuation ? null : (
                       <td
                         data-cell={address}
+                        colSpan={mergedRange ? mergedRange.last.column - mergedRange.first.column + 1 : undefined}
+                        rowSpan={mergedRange ? mergedRange.last.row - mergedRange.first.row + 1 : undefined}
                         tabIndex={props.selected === anchor() || (!props.selected && address === "A1") ? 0 : -1}
                         classList={{
                           selected: props.selected === anchor() || inSelection(column, row.number),
@@ -969,7 +1001,7 @@ function WorkbookGrid(props: {
                             event.preventDefault();
                             const nextColumn = Math.max(1, column + (event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0));
                             const nextRow = Math.max(1, row.number + (event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0));
-                            const nextAddress = `${columnName(nextColumn)}${nextRow}`;
+                            const nextAddress = normalizedCellAddress(nextColumn, nextRow);
                             props.select(`${current()?.anchor ?? ""}${nextAddress}`);
                             canvasRoot?.querySelector<HTMLElement>(`[data-cell="${nextAddress}"]`)?.focus();
                           }

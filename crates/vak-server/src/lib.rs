@@ -21820,6 +21820,16 @@ mod sandbox_promotion_tests {
         tokio::fs::write(dir.path().join("q3.docx"), vak_ooxml::fixtures::docx())
             .await
             .unwrap();
+        let merged_workbook = vak_ooxml::fixtures::with_parts(
+            &vak_ooxml::fixtures::xlsx(),
+            &[(
+                "xl/worksheets/sheet1.xml",
+                br#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>Budget</t></is></c></row></sheetData><mergeCells count="1"><mergeCell ref="A1:C1"/></mergeCells></worksheet>"#,
+            )],
+        );
+        tokio::fs::write(dir.path().join("merged.xlsx"), merged_workbook)
+            .await
+            .unwrap();
         tokio::fs::write(dir.path().join("notes.txt"), "plain")
             .await
             .unwrap();
@@ -21881,6 +21891,18 @@ mod sandbox_promotion_tests {
             facts["stats"]
                 .as_array()
                 .is_some_and(|stats| !stats.is_empty())
+        );
+
+        let workbook = read("merged.xlsx", 0, None).await;
+        assert_eq!(workbook.status(), StatusCode::OK);
+        let projection = body_json(workbook).await;
+        assert_eq!(
+            projection["sheet_geometry"]["merged_ranges"][0]["sheet_anchor"],
+            "Budget!"
+        );
+        assert_eq!(
+            projection["sheet_geometry"]["merged_ranges"][0]["range"],
+            "A1:C1"
         );
 
         assert_eq!(

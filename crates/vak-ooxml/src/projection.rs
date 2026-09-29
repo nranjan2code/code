@@ -174,6 +174,13 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
             })
             .map(|(key, height)| (key.clone(), *height))
             .collect(),
+        merged_ranges: document
+            .sheet_geometry
+            .merged_ranges
+            .iter()
+            .filter(|range| visible_sheets.contains(range.sheet_anchor.trim_end_matches('!')))
+            .cloned()
+            .collect(),
     };
     let image_object_ids = units
         .iter()
