@@ -1,3 +1,9 @@
+## 5.2.7 — 2026-09-29
+
+- Organize capabilities in Settings by discovery, agent inventory, and management, with shared inheritance shown alongside agent-specific configuration.
+- Connect catalog discovery to the existing governed plugin lifecycle: validate the registered source, stage installs and updates disabled, and keep agent-scoped packages with the selected agent.
+- Give Admin the same catalog installation path and refresh agent-specific resources when switching agents.
+
 ## 5.2.6 — 2026-09-29
 
 - Fix Settings crashing on web and desktop when presentation styles read their configuration before initialization.
