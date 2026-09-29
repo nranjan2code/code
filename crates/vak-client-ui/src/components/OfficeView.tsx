@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import * as api from "../api";
 import Redline from "./OfficeRedline";
-import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../officeCells";
+import { cellAddress, cellRange, columnName, moveCell, parseCell, parseCellInput } from "../officeCells";
 import { countOf } from "../officeFacts";
 import { technicalDetails } from "../store";
 
@@ -733,10 +733,6 @@ function WorkbookGrid(props: {
     .filter((range): range is NonNullable<typeof range> => Boolean(range)));
   const mergedRangeAt = (column: number, row: number) => activeMergedRanges()
     .find((range) => column >= range.first.column && column <= range.last.column && row >= range.first.row && row <= range.last.row) ?? null;
-  const normalizedCellAddress = (column: number, row: number) => {
-    const merge = mergedRangeAt(column, row);
-    return `${columnName(merge?.first.column ?? column)}${merge?.first.row ?? row}`;
-  };
   const dimensions = (labels: string[], kind: "chart" | "image") => {
     const match = labels.find((label) => label.startsWith(`${kind} size: `))?.match(/(\d+)x(\d+)px$/);
     return match ? { widthPx: Number(match[1]), heightPx: Number(match[2]) } : {};
@@ -999,9 +995,7 @@ function WorkbookGrid(props: {
                             props.select(anchor());
                           } else if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) {
                             event.preventDefault();
-                            const nextColumn = Math.max(1, column + (event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0));
-                            const nextRow = Math.max(1, row.number + (event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0));
-                            const nextAddress = normalizedCellAddress(nextColumn, nextRow);
+                            const nextAddress = moveCell(address, event.key as "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown", activeMergedRanges());
                             props.select(`${current()?.anchor ?? ""}${nextAddress}`);
                             canvasRoot?.querySelector<HTMLElement>(`[data-cell="${nextAddress}"]`)?.focus();
                           }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { cellAddress, cellRange, columnName, parseCell, parseCellInput } from "../src/officeCells.ts";
+import { cellAddress, cellRange, columnName, moveCell, parseCell, parseCellInput } from "../src/officeCells.ts";
 
 assert.deepEqual(parseCell("150"), { shown: "150", formula: null, stale: false, notCalculated: false });
 assert.deepEqual(parseCell("=SUM(B2:B4) [cached: 1950, stale until recalculated]"), { shown: "1950", formula: "=SUM(B2:B4)", stale: true, notCalculated: false });
@@ -22,4 +22,11 @@ assert.deepEqual(cellRange("B2:C5"), { first: { column: 2, row: 2 }, last: { col
 assert.deepEqual(cellRange("C5:B2"), { first: { column: 2, row: 2 }, last: { column: 3, row: 5 } }, "corners in either order");
 assert.deepEqual(cellRange("D7"), { first: { column: 4, row: 7 }, last: { column: 4, row: 7 } });
 assert.equal(cellRange("A2:D"), null);
+const mergedRanges = [cellRange("A1:C1"), cellRange("E2:E4")];
+assert.equal(moveCell("A1", "ArrowRight", mergedRanges), "D1", "right leaves a horizontal merge");
+assert.equal(moveCell("D1", "ArrowRight", mergedRanges), "E1", "ordinary right movement");
+assert.equal(moveCell("D2", "ArrowRight", mergedRanges), "E2", "entering a merge selects its top-left");
+assert.equal(moveCell("E2", "ArrowDown", mergedRanges), "E5", "down leaves a vertical merge");
+assert.equal(moveCell("E5", "ArrowUp", mergedRanges), "E2", "entering from below selects the merge anchor");
+assert.equal(moveCell("E2", "ArrowLeft", mergedRanges), "D2", "left leaves a vertical merge");
 console.log("office-cells: ok");

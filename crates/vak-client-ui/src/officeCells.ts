@@ -65,3 +65,41 @@ export function cellRange(cells: string): { first: { column: number; row: number
     last: { column: Math.max(a.column, b.column), row: Math.max(a.row, b.row) },
   };
 }
+
+/** Move one cell while treating a native merged range as one selectable cell. */
+export function moveCell(
+  address: string,
+  key: "ArrowLeft" | "ArrowRight" | "ArrowUp" | "ArrowDown",
+  mergedRanges: ReturnType<typeof cellRange>[],
+): string {
+  const current = cellAddress(address);
+  if (!current) return address;
+  const columnDelta = key === "ArrowLeft" ? -1 : key === "ArrowRight" ? 1 : 0;
+  const rowDelta = key === "ArrowUp" ? -1 : key === "ArrowDown" ? 1 : 0;
+  let column = Math.max(1, current.column + columnDelta);
+  let row = Math.max(1, current.row + rowDelta);
+  let merge = mergedRanges.find((range) => range
+    && column >= range.first.column && column <= range.last.column
+    && row >= range.first.row && row <= range.last.row);
+  let target = merge
+    ? `${columnName(merge.first.column)}${merge.first.row}`
+    : `${columnName(column)}${row}`;
+
+  // A move from the active merge's top-left back into its own covered cells
+  // must advance past the whole merge or keyboard focus cannot escape it.
+  if (target === `${columnName(current.column)}${current.row}` && merge) {
+    column = columnDelta < 0 ? Math.max(1, merge.first.column - 1)
+      : columnDelta > 0 ? merge.last.column + 1
+      : column;
+    row = rowDelta < 0 ? Math.max(1, merge.first.row - 1)
+      : rowDelta > 0 ? merge.last.row + 1
+      : row;
+    merge = mergedRanges.find((range) => range
+      && column >= range.first.column && column <= range.last.column
+      && row >= range.first.row && row <= range.last.row);
+    target = merge
+      ? `${columnName(merge.first.column)}${merge.first.row}`
+      : `${columnName(column)}${row}`;
+  }
+  return target;
+}

@@ -106,10 +106,13 @@ verification remains pending.
 
 **Progress — 2026-09-29.** The workbook Canvas carries native merged-cell
 ranges as visual-only sheet geometry, spans the source cells in the grid, and
-normalizes keyboard navigation to the merged cell's top-left anchor. The
-metadata remains separate from cell units and RAG text, is retained while
-pages load, and is scoped to the visible worksheet. Reader and paged-projection
-fixtures cover merge extraction; browser verification remains pending.
+normalizes keyboard navigation to the merged cell's top-left anchor. Arrow
+navigation advances past the full merged range when moving out of it, so a
+horizontal or vertical merge cannot trap focus. The metadata remains separate
+from cell units and RAG text, is retained while pages load, and is scoped to
+the visible worksheet. Reader and paged-projection fixtures cover merge
+extraction, and `tests/office-cells.mjs` covers entry, exit and keyboard
+movement; live browser verification remains pending.
 
 **Placement contract.** The person names the desired place in the request;
 the Agent writes the native anchor and shows it in Canvas and Review. In a
