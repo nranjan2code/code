@@ -1,3 +1,8 @@
+## 5.2.8 — 2026-09-29
+
+- Organize each agent's settings into clear sections and put capability controls in the selected agent's settings.
+- Add agent-scoped privacy controls for permissions, approvals, and memory policies, with shared defaults and inheritance identified clearly.
+
 ## 5.2.7 — 2026-09-29
 
 - Organize capabilities in Settings by discovery, agent inventory, and management, with shared inheritance shown alongside agent-specific configuration.
