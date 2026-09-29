@@ -1,3 +1,10 @@
+## 5.2.9 — 2026-09-29
+
+- Enhance Office document viewing and editing: render merged cells with accurate keyboard navigation, support text alignment and wrapping in workbook grids, bind image previews to source anchors, and render common chart variants including scaled scatter charts.
+- Improve PDF document processing: expose aligned table structures to `doc_read`, repeat table headers across pages, and support searchable PDF authoring.
+- Add architectural designs for secure mail & calendar integration and shared multi-agent collaboration.
+- Bundle refreshed web client assets and add branded ensemble video assets.
+
 ## 5.2.8 — 2026-09-29
 
 - Organize each agent's settings into clear sections and put capability controls in the selected agent's settings.
