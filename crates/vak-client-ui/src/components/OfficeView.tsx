@@ -400,22 +400,92 @@ function officeBlocks(units: api.OfficeUnit[]): OfficeBlock[] {
 function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps: UnitProps; placement?: string }) {
   const values = () => props.rows.map((row) => (row.row_cells ?? []).map((cell) => cell.map(([, text]) => text).join(" ")));
   const title = () => props.rows.flatMap((row) => row.labels).find((label) => label.startsWith("chart title: "))?.slice("chart title: ".length) ?? "Chart";
+  const chartType = () => props.rows.flatMap((row) => row.labels).find((label) => label.startsWith("chart type: "))?.slice("chart type: ".length) ?? "column";
+  const seriesType = (index: number) => props.rows.flatMap((row) => row.labels).find((label) => label.startsWith(`chart series type ${index}: `))?.slice(`chart series type ${index}: `.length) ?? chartType();
+  const pieLike = () => chartType() === "pie" || chartType() === "doughnut";
   const headers = () => values()[0] ?? [];
-  const seriesColumn = () => Math.max(1, headers().findIndex((_, index) => index > 0));
-  const points = () => values().slice(1).flatMap((row) => {
-    const value = Number(row[seriesColumn()]);
-    return Number.isFinite(value) ? [{ label: row[0] ?? "", value }] : [];
-  });
-  const maximum = () => Math.max(1, ...points().map((point) => Math.abs(point.value)));
+  const series = () => headers().slice(1);
+  const points = () => values().slice(1).map((row) => ({
+    label: row[0] ?? "",
+    values: series().map((_, index) => {
+      const raw = row[index + 1];
+      if (raw == null || raw.trim() === "") return null;
+      const value = Number(raw);
+      return Number.isFinite(value) ? value : null;
+    }),
+  }));
+  const shownPoints = () => points().slice(0, 16);
+  const allValues = () => shownPoints().flatMap((point) => point.values).filter((value): value is number => value != null);
+  const minimum = () => Math.min(0, ...allValues());
+  const maximum = () => Math.max(1, ...allValues());
+  const y = (value: number) => 218 - (value - minimum()) / (maximum() - minimum()) * 174;
+  const baseline = () => y(0);
+  const seriesClass = (index: number) => `office-chart-series-${index % 4}`;
+  const columnGeometry = () => {
+    const band = 540 / Math.max(1, shownPoints().length);
+    const group = band * 0.72;
+    const barWidth = group / Math.max(1, series().length);
+    return shownPoints().flatMap((point, pointIndex) => point.values.flatMap((value, seriesIndex) => {
+      if (value == null || !["column", "bar"].includes(seriesType(seriesIndex))) return [];
+      const top = Math.min(y(value), baseline());
+      return {
+        x: 70 + pointIndex * band + (band - group) / 2 + seriesIndex * barWidth,
+        y: top,
+        width: Math.max(2, barWidth - 2),
+        height: Math.max(1, Math.abs(baseline() - y(value))),
+        className: seriesClass(seriesIndex),
+      };
+    }));
+  };
+  const lineGeometry = () => series().map((_, seriesIndex) => shownPoints().map((point, pointIndex) => ({
+    x: 70 + (pointIndex + 0.5) * (540 / Math.max(1, shownPoints().length)),
+    y: point.values[seriesIndex] == null ? null : y(point.values[seriesIndex]!),
+  })));
+  const pieSlices = () => {
+    const pieValues = shownPoints().map((point) => Math.max(0, point.values[0] ?? 0));
+    const total = pieValues.reduce((sum, value) => sum + value, 0);
+    const circumference = 2 * Math.PI * 76;
+    let offset = 0;
+    return shownPoints().map((point, index) => {
+      const length = total > 0 ? (pieValues[index] / total) * circumference : 0;
+      const slice = { label: point.label, value: point.values[0] ?? 0, length, offset, remainder: circumference - length, className: seriesClass(index) };
+      offset += length;
+      return slice;
+    });
+  };
+  const summary = () => `${title()}, ${chartType()} chart. ${shownPoints().map((point) => `${point.label}: ${point.values.map((value, index) => value == null ? "" : `${series()[index] ?? "Series"} ${value}`).filter(Boolean).join(", ")}`).join("; ")}`;
   return <figure class="office-unit office-chart" role="listitem" {...props.unitProps(props.anchor)}>
     <figcaption>{title()}<Show when={props.placement}><span class="office-object-position">Placed at {props.placement}</span></Show></figcaption>
-    <div class="office-chart-bars" role="img" aria-label={`${title()}, bar chart. ${points().map((point) => `${point.label}: ${point.value}`).join(", ")}`}>
-      <For each={points().slice(0, 16)}>{(point) => <div class="office-chart-point">
-        <span class="office-chart-value">{point.value}</span>
-        <span class="office-chart-track"><span class="office-chart-bar" style={{ width: `${Math.max(2, Math.abs(point.value) / maximum() * 100)}%` }} /></span>
-        <span class="office-chart-label">{point.label}</span>
-      </div>}</For>
-    </div>
+    <Show when={chartType() === "bar"} fallback={
+      <svg class={`office-chart-svg ${pieLike() ? "pie" : ""}`} viewBox={pieLike() ? "0 0 560 280" : "0 0 640 280"} role="img" aria-label={summary()}>
+        <Show when={pieLike()} fallback={<>
+          <For each={[0, 1, 2, 3, 4]}>{(tick) => {
+            const value = maximum() - ((maximum() - minimum()) * tick / 4);
+            return <g><line x1="64" x2="616" y1={y(value)} y2={y(value)} class="office-chart-gridline"/><text x="58" y={y(value) + 4} text-anchor="end" class="office-chart-axis-label">{Number(value.toPrecision(3))}</text></g>;
+          }}</For>
+          <line x1="64" x2="616" y1={baseline()} y2={baseline()} class="office-chart-axis"/>
+          <For each={lineGeometry()}>{(line, seriesIndex) => <Show when={["line", "area", "scatter"].includes(seriesType(seriesIndex())) && line.some((point) => point.y != null)}><>
+            <Show when={seriesType(seriesIndex()) !== "scatter"}><polyline points={line.flatMap((point, index) => point.y == null ? [] : [`${70 + (index + 0.5) * (540 / Math.max(1, shownPoints().length))},${point.y}`]).join(" ")} class={`office-chart-line ${seriesClass(seriesIndex())}`}/></Show>
+            <For each={line.filter((point) => point.y != null)}>{(point) => <circle cx={point.x} cy={point.y!} r="4" class={seriesClass(seriesIndex())}/>}</For>
+          </></Show>}</For>
+          <For each={columnGeometry()}>{(bar) => <rect x={bar.x} y={bar.y} width={bar.width} height={bar.height} class={bar.className}/>}</For>
+          <For each={shownPoints()}>{(point, index) => <text x={70 + (index() + 0.5) * (540 / Math.max(1, shownPoints().length))} y="250" text-anchor="middle" class="office-chart-category" aria-label={point.label}>{point.label.length > 12 ? `${point.label.slice(0, 11)}…` : point.label}<title>{point.label}</title></text>}</For>
+          <For each={series()}>{(name, index) => <g transform={`translate(${78 + index() * 150} 270)`}><circle r="4" class={seriesClass(index())}/><text x="8" y="4" class="office-chart-legend">{name}</text></g>}</For>
+        </>}>
+          <For each={pieSlices()}>{(slice) => <circle cx="152" cy="140" r="76" fill="none" stroke-width="42" stroke-dasharray={`${slice.length} ${slice.remainder}`} stroke-dashoffset={-slice.offset} transform="rotate(-90 152 140)" class={`office-chart-pie-segment ${slice.className}`}><title>{slice.label}: {slice.value}</title></circle>}</For>
+          <For each={pieSlices()}>{(slice, index) => <g transform={`translate(292 ${48 + index() * 28})`}><circle r="5" class={slice.className}/><text x="12" y="4" class="office-chart-legend">{slice.label}: {slice.value}</text></g>}</For>
+        </Show>
+      </svg>
+    }>
+      <div class="office-chart-bars" role="img" aria-label={summary()}>
+        <For each={shownPoints()}>{(point) => <div class="office-chart-point">
+          <span class="office-chart-label">{point.label}</span>
+          <div class="office-chart-series-bars">
+            <For each={point.values}>{(value, index) => <Show when={value != null && seriesType(index()) === "bar"}><div class="office-chart-horizontal-series"><span class="office-chart-value">{series()[index()] ?? ""} {value}</span><span class="office-chart-track"><span class={`office-chart-bar ${seriesClass(index())}`} style={{ width: `${Math.max(2, Math.abs(value!) / Math.max(1, maximum() - minimum()) * 100)}%` }} /></span></div></Show>}</For>
+          </div>
+        </div>}</For>
+      </div>
+    </Show>
     <Show when={points().length > 16}><p class="office-chart-more">Showing 16 of {points().length} categories.</p></Show>
     <details class="office-chart-source"><summary>Show chart data</summary>
       <div class="office-grid-scroll"><table class="office-table"><tbody><For each={props.rows}>{(row, index) => <tr>{<For each={values()[index()]}>{(cell) => index() === 0 ? <th scope="col">{cell}</th> : <td>{cell}</td>}</For>}</tr>}</For></tbody></table></div>

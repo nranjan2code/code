@@ -3052,15 +3052,15 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
  * scales it into the thumbnail, so the scale is the page width's share. */
 .primary-result-files { display: grid; gap: var(--space-3); padding: var(--space-2) 0 0; container-type: inline-size; }
 .result-card {
-  --result-page-w: 170px;
-  --result-page-h: 112px;
-  --result-page-scale: 0.166015625;
+  --result-page-w: 112px;
+  --result-page-h: 84px;
+  --result-page-scale: 0.109375;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas: "preview text" "preview actions";
   align-content: start;
-  gap: var(--space-1) 18px;
-  padding: 14px;
+  gap: var(--space-1) var(--space-3);
+  padding: 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -3077,7 +3077,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 }
 .result-card-preview-wrap { position: relative; grid-area: preview; align-self: start; }
 .result-card-preview-wrap .result-card-preview { grid-area: auto; }
-.result-card-file-icon { position: absolute; right: 7px; bottom: 7px; display: grid; width: 32px; height: 32px; place-items: center; border: 1px solid var(--border); border-radius: 9px; color: var(--accent); background: var(--surface); box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 12%, transparent); }
+.result-card-file-icon { position: absolute; right: 6px; bottom: 6px; display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--accent); background: var(--surface); box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 12%, transparent); }
 .result-card-file-icon.sheet { color: var(--green); }
 .result-card-file-icon.slides { color: var(--yellow); }
 .result-card-file-icon.pdf { color: var(--red); }
@@ -3095,6 +3095,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .result-card-skeleton { height: 100%; }
 .result-card-skeleton > .skeleton-block { height: 100%; }
 .result-card-kind { display: grid; place-content: center; justify-items: center; gap: 6px; color: var(--muted); font-size: var(--fs-meta); text-align: center; }
+.result-card-preview .result-card-kind span { display: none; }
 .result-card-text { grid-area: text; min-width: 0; }
 .result-card-status { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--muted); font-size: var(--fs-meta); font-weight: 600; }
 .result-card-status.waiting { color: var(--live-ink); }
@@ -3104,20 +3105,22 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .result-card-flags { display: flex; align-items: center; gap: var(--space-1); margin: var(--space-1) 0 0; color: var(--yellow); font-size: var(--fs-meta); }
 .result-card-technical { margin: var(--space-1) 0 0; overflow-wrap: anywhere; color: var(--muted); font-family: var(--mono); font-size: var(--fs-caption); }
 .result-card-problem { margin: var(--space-1) 0 0; color: var(--red); font-size: var(--fs-meta); }
-.result-card-actions { grid-area: actions; display: flex; align-self: end; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding-top: 10px; }
-.result-card-actions .btn { min-height: 36px; padding: 0 14px; font-size: var(--fs-control); }
+.result-card-actions { grid-area: actions; display: flex; align-self: end; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding-top: 6px; }
+.result-card-actions .btn { min-height: 32px; padding: 0 11px; font-size: var(--fs-control); }
 .result-card-link { padding: 0 var(--space-2); color: var(--accent); font-size: var(--fs-control); font-weight: 500; }
 .result-card-link:hover { text-decoration: underline; }
 /* Narrow column (a phone, or the conversation beside Canvas): a smaller
  * preview, and the actions on their own row. */
 @container (max-width: 520px) {
-  .result-card { --result-page-w: 96px; --result-page-h: 72px; --result-page-scale: 0.09375; grid-template-areas: "preview text" "actions actions"; gap: var(--space-1) var(--space-3); padding: var(--space-3); }
+  .result-card { --result-page-w: 80px; --result-page-h: 60px; --result-page-scale: 0.078125; grid-template-areas: "preview text" "actions actions"; gap: var(--space-1) var(--space-3); padding: var(--space-3); }
+  .result-card-actions { align-self: center; padding-top: 2px; }
+  .result-card-made { display: none; }
 }
-@container (min-width: 720px) {
-  .result-card { --result-page-w: 112px; --result-page-h: 84px; --result-page-scale: 0.109375; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "preview text actions"; align-items: center; gap: var(--space-3); padding: 12px; }
+@container (min-width: 600px) {
+  .result-card { --result-page-w: 80px; --result-page-h: 60px; --result-page-scale: 0.078125; grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "preview text actions"; align-items: center; gap: var(--space-3); padding: 10px; }
   .result-card-preview { width: calc(var(--result-page-w) + 2 * var(--space-2)); height: calc(var(--result-page-h) + 2 * var(--space-2)); }
   .result-card-actions { align-self: center; justify-content: flex-end; padding-top: 0; }
-  .result-card-actions .btn { min-height: 34px; padding: 0 11px; }
+  .result-card-actions .btn { min-height: 30px; padding: 0 9px; }
 }
 .artifact-canvas-result {
   flex: none;
@@ -6032,11 +6035,27 @@ code.ic[data-previewable="true"]:hover {
 .office-chart { width: min(100%, 820px); margin: 10px auto; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
 .office-chart figcaption { margin-bottom: 12px; color: var(--text); font-size: var(--fs-section); font-weight: 600; }
 .office-chart-bars { display: grid; gap: 10px; max-width: 720px; }
-.office-chart-point { display: grid; grid-template-columns: 44px minmax(48px, 1fr) minmax(80px, 28%); align-items: center; gap: 10px; min-height: 24px; }
+.office-chart-point { display: grid; grid-template-columns: minmax(72px, 24%) minmax(0, 1fr); align-items: center; gap: 10px; min-height: 24px; }
+.office-chart-series-bars { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.office-chart-horizontal-series { display: grid; grid-template-columns: auto minmax(48px, 1fr); align-items: center; gap: 8px; min-width: 0; }
 .office-chart-value { color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
 .office-chart-track { display: block; height: 14px; overflow: hidden; border-radius: 999px; background: var(--surface-raised); }
 .office-chart-bar { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
 .office-chart-label { overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
+.office-chart-svg { display: block; width: 100%; max-width: 760px; height: auto; overflow: visible; font-family: var(--sans); }
+.office-chart-gridline { stroke: var(--border-soft); stroke-dasharray: 3 4; }
+.office-chart-axis { stroke: var(--border-strong); }
+.office-chart-axis-label, .office-chart-category, .office-chart-legend { fill: var(--muted); font-size: 12px; }
+.office-chart-series-0 { fill: var(--accent); stroke: var(--accent); }
+.office-chart-series-1 { fill: var(--green); stroke: var(--green); }
+.office-chart-series-2 { fill: var(--blue); stroke: var(--blue); }
+.office-chart-series-3 { fill: var(--yellow); stroke: var(--yellow); }
+.office-chart-bar.office-chart-series-0 { background: var(--accent); }
+.office-chart-bar.office-chart-series-1 { background: var(--green); }
+.office-chart-bar.office-chart-series-2 { background: var(--blue); }
+.office-chart-bar.office-chart-series-3 { background: var(--yellow); }
+.office-chart-line { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.office-chart-svg .office-chart-pie-segment { fill: none; stroke-width: 42; }
 .office-chart-more { color: var(--muted); }
 .office-chart-source { margin-top: 12px; }
 .office-chart-source summary { width: fit-content; color: var(--accent); cursor: pointer; }

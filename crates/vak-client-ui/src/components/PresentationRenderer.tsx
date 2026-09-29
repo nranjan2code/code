@@ -808,7 +808,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     const at = Date.parse(props.item.timestamp);
     return at > Date.UTC(2000, 0, 1) ? `made ${relAgo(props.item.timestamp)}` : "";
   };
-  const details = () => [file.facts() ? officeFactsLine(file.facts()!) : fileKind(artifact.name, artifact.media_type), made(), words()?.folder].filter(Boolean).join(" · ");
+  const facts = () => file.facts() ? officeFactsLine(file.facts()!) : fileKind(artifact.name, artifact.media_type);
   const kind = () => fileKind(artifact.name, artifact.media_type);
   const fileIcon = () => kind() === "Spreadsheet" ? "sheet" as const : kind() === "Presentation" ? "slides" as const : kind() === "PDF" ? "pdf" as const : "file" as const;
   const askForChanges = () => {
@@ -826,7 +826,7 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
       <div class="result-card-text">
         <Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>
         <h3 class="result-card-name">{artifact.name}</h3>
-        <p class="result-card-details">{details()}</p>
+        <p class="result-card-details"><span>{facts()}</span><Show when={made()}>{(value) => <span class="result-card-made"> · {value()}</span>}</Show><Show when={!words()?.waiting && words()?.folder}><span> · {words()?.folder}</span></Show></p>
         <Show when={file.flags()}>{(label) => <p class="result-card-flags" title={file.facts()!.flags.join("\n")}><Icon name="warning" size={12} />{label()}</p>}</Show>
         <Show when={technicalDetails() && (artifact.size_bytes != null || artifact.path)}>
           <p class="result-card-technical">{[artifact.size_bytes != null ? formatBytes(artifact.size_bytes) : "", artifact.path ?? ""].filter(Boolean).join(" · ")}</p>

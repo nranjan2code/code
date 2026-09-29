@@ -498,6 +498,7 @@ struct ChartSeries {
     name: String,
     categories: Vec<String>,
     values: Vec<String>,
+    chart_type: String,
 }
 
 /// Projects cached chart values into a table. Keeping the category and
@@ -511,15 +512,37 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     let mut in_value = false;
     let mut title_depth = None;
     let mut title = String::new();
+    let mut chart_type = String::new();
     xml::walk(bytes, part, limits, |event| {
         match event {
             XmlEvent::Open(element) => {
                 let name = element.local().to_string();
-                if name == "ser" {
+                if name == "barChart" {
+                    chart_type = "column".into();
+                } else if name == "lineChart" {
+                    chart_type = "line".into();
+                } else if name == "pieChart" {
+                    chart_type = "pie".into();
+                } else if name == "areaChart" {
+                    chart_type = "area".into();
+                } else if name == "doughnutChart" {
+                    chart_type = "doughnut".into();
+                } else if name == "scatterChart" || name == "bubbleChart" {
+                    chart_type = "scatter".into();
+                } else if name == "barDir" {
+                    if element.attr("val") == Some("bar") {
+                        chart_type = "bar".into();
+                    } else if element.attr("val") == Some("col") {
+                        chart_type = "column".into();
+                    }
+                } else if name == "ser" {
                     if let Some(previous) = current.take() {
                         chart_series.push(previous);
                     }
-                    current = Some(ChartSeries::default());
+                    current = Some(ChartSeries {
+                        chart_type: chart_type.clone(),
+                        ..ChartSeries::default()
+                    });
                 } else if name == "title" && title_depth.is_none() {
                     title_depth = Some(stack.len());
                 } else if name == "tx" {
@@ -619,14 +642,29 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     } else {
         title.trim().to_string()
     };
+    let mut labels = vec![
+        "chart data; cached values".into(),
+        format!("chart title: {chart_title}"),
+    ];
+    if !chart_type.is_empty() {
+        labels.push(format!("chart type: {chart_type}"));
+    }
+    for (index, series) in series.iter().enumerate() {
+        labels.push(format!(
+            "chart series type {}: {}",
+            index,
+            if series.chart_type.is_empty() {
+                "column"
+            } else {
+                &series.chart_type
+            }
+        ));
+    }
     Ok(Some(Table {
         anchor: format!("chart:{file}"),
         title: chart_title.clone(),
         rows,
-        labels: vec![
-            "chart data; cached values".into(),
-            format!("chart title: {chart_title}"),
-        ],
+        labels,
         omitted_columns: 0,
     }))
 }
@@ -2987,7 +3025,36 @@ mod tests {
         );
         assert_eq!(
             table.labels,
-            vec!["chart data; cached values", "chart title: Monthly sales"]
+            vec![
+                "chart data; cached values",
+                "chart title: Monthly sales",
+                "chart type: column",
+                "chart series type 0: column",
+            ]
+        );
+    }
+
+    #[test]
+    fn combo_chart_keeps_each_series_chart_type() {
+        let chart = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Sales</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>Jan</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>10</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:barChart><c:lineChart><c:ser><c:tx><c:strRef><c:strCache><c:pt idx="0"><c:v>Margin</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:strCache><c:pt idx="0"><c:v>Jan</c:v></c:pt></c:strCache></c:strRef></c:cat><c:val><c:numRef><c:numCache><c:pt idx="0"><c:v>2</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser></c:lineChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let table = chart_table(chart, "xl/charts/chart2.xml", &Limits::default())
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            table.rows,
+            vec![vec!["Category", "Sales", "Margin"], vec!["Jan", "10", "2"]]
+        );
+        assert!(
+            table
+                .labels
+                .iter()
+                .any(|label| label == "chart series type 0: column")
+        );
+        assert!(
+            table
+                .labels
+                .iter()
+                .any(|label| label == "chart series type 1: line")
         );
     }
 }

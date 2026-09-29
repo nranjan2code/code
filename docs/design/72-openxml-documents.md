@@ -78,6 +78,19 @@ must run outside the server process in a confined worker; no proprietary
 runtime or format may be required. Until the renderer lands, the Canvas is not
 a LibreOffice-equivalent visual preview.
 
+**Progress — 2026-09-29.** Corrected the generic worksheet drawing
+relationship serialization after comparing a real generated XLSX with
+LibreOffice: drawing relationships now declare the relationship namespace at
+the drawing reference, so Excel-compatible readers can resolve charts and
+images even when tables are also present on the sheet. Added a combo-chart
+reader fixture proving each series keeps its own type. Cached series and
+categories remain structured table rows for extraction/RAG; the Canvas
+reconstructs common chart forms from those values, with a data table available
+alongside the visual. This is still a structured preview, not full Office chart
+fidelity. The live XLSX confirms its image at `Sheet1!D2` and chart at
+`Sheet1!A10`. Result cards now use compact format icons and responsive actions;
+390px viewport checks show no page overflow.
+
 **Placement contract.** The person names the desired place in the request;
 the Agent writes the native anchor and shows it in Canvas and Review. In a
 workbook, an image or chart has an exact top-left cell; a chart defaults to
