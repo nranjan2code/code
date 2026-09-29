@@ -1,6 +1,6 @@
 # 77 — PDF documents: reader, writer, review and shared drafts
 
-Status: **shipped 2026-09-29; everyday authoring improvements continue.** The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped. Multi-page authored tables now repeat their header on continuation pages.
+Status: **shipped 2026-09-29; everyday authoring and extraction improvements continue.** The reader, writer, Review with choices, shared drafts, verifier, inbox, citations, CLI, vector charts and bounded PNG/JPEG authoring are shipped. Multi-page authored tables now repeat their header on continuation pages, and `doc_read(view="table")` exposes conservatively recognized aligned text tables.
 
 ## Owner direction
 
@@ -31,6 +31,14 @@ after each automatic page break. The regression test reads the generated PDF
 back, confirms the header occurs on multiple pages, and checks the first and
 last data rows remain searchable. This applies to authored tables and the
 searchable data tables printed below vector charts.
+
+**Progress — 2026-09-29.** The reader keeps large-gap text runs with their
+horizontal coordinates and recognizes a table only when at least two
+consecutive lines repeat the same column count, aligned starts and row spacing.
+Recognized rows are available as `page:<n>/table:<m>` in the paginated
+`doc_read(view="table")` view and contribute to PDF table stats. Ambiguous or
+complex layouts remain in the anchored text view; the reader does not guess a
+grid from a single line or from irregular columns.
 
 ## The op set
 
@@ -67,11 +75,11 @@ A shared draft of a PDF holds each revision's steps. PDF anchors are positions, 
 - **Encrypted files.** RC4 and AES need primitives the tree does not carry; they are refused with the reason.
 - **Scans.** A page with images and no text layer is named as likely a scan; there is no OCR, and a deleted line removes text, not an image of text.
 - **Reading image pixels.** Added images have an extractable alternative-text caption. Existing image contents are not OCR'd or otherwise understood.
-- **Layout.** Text keeps content-stream order; multi-column reading order and tables as grids are not reconstructed.
+- **Layout.** Text keeps content-stream order; multi-column reading order and complex or irregular tables as grids are not reconstructed. Simple repeated aligned columns can be retrieved with `doc_read(view="table")`; uncertain rows remain text.
 - **Fonts.** A Type0 font with neither a ToUnicode map nor a Unicode CMap, and a symbol font with no `/Differences`, give no way to turn glyphs into letters. Writing uses the standard Helvetica faces, so only WinAnsi (Latin) text can be written, and a replaced line may not match the document's own font.
 - **Deeper edits.** Lines inside form XObjects, true redaction of images, bookmarks for content added to an existing PDF, and page operations on a document with more pages than were read.
 - **Signatures, attachments, XFA.** Never made, opened or rendered.
 
 ## Tests
 
-`crates/vak-pdf/tests/read.rs` and `crates/vak-pdf/tests/edit.rs` (reading, every op, refusals, the diff, choices and narrowing, the projection, cycles, bombs and corruption sweeps, and repeated headers across authored multi-page tables) and each module's unit tests; `crates/vak-tools/src/office_pdf.rs` and `crates/vak-tools/src/doc_read.rs`; `crates/vak-sandbox/src/lib.rs`; the server's PDF review, narrowing and promotion test and room merge rules; the inbox note in `crates/vak-server/src/gateway.rs`; and `crates/vak/tests/office_cli.rs`. Written files were also rendered by the macOS PDF engine to check them outside our own reader.
+`crates/vak-pdf/tests/read.rs` and `crates/vak-pdf/tests/edit.rs` (reading, every op, refusals, the diff, choices and narrowing, the projection, cycles, bombs and corruption sweeps, and repeated headers across authored multi-page tables) and each module's unit tests; `crates/vak-tools/src/office_pdf.rs` and `crates/vak-tools/src/doc_read.rs` (including aligned-table recognition and the paginated table view); `crates/vak-sandbox/src/lib.rs`; the server's PDF review, narrowing and promotion test and room merge rules; the inbox note in `crates/vak-server/src/gateway.rs`; and `crates/vak/tests/office_cli.rs`. Written files were also rendered by the macOS PDF engine to check them outside our own reader.

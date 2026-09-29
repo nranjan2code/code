@@ -57,7 +57,7 @@ impl Tool for DocReadTool {
                 },
                 "section": {
                     "type": "string",
-                    "description": "Optional section to extract: a heading (e.g. '## Methodology', 'Results'), an INI table ('[server]'), a sheet name or table for Office files ('Budget'), a slide ('slide:256' or its title), PDF pages ('page:3', '3-5') or a PDF bookmark title, or an anchor from the outline"
+                    "description": "Optional section to extract: a heading (e.g. '## Methodology', 'Results'), an INI table ('[server]'), a sheet name or table for Office files ('Budget'), a slide ('slide:256' or its title), PDF pages ('page:3', '3-5'), a recognized PDF table anchor ('page:3/table:1') or header title, or a PDF bookmark title or outline anchor"
                 },
                 "offset": {
                     "type": "integer",
@@ -494,9 +494,42 @@ fn pdf(path: &Path, request: &Request) -> Result<String, String> {
             out.push_str(&page(&outline, request.offset, request.limit, "entries"));
         }
         "table" => {
-            return Err(
-                "a PDF has no table structure to show as a grid; use view='text', where each table row is a line with its cells spaced apart".into(),
-            );
+            let matches_section = |table: &&vak_pdf::Table| match section {
+                None => document.tables.len() == 1,
+                Some(wanted) => {
+                    table.anchor.eq_ignore_ascii_case(wanted)
+                        || format!("page:{}", table.page).eq_ignore_ascii_case(wanted)
+                        || table
+                            .rows
+                            .first()
+                            .and_then(|row| row.first())
+                            .is_some_and(|title| title.eq_ignore_ascii_case(wanted))
+                }
+            };
+            let Some(table) = document.tables.iter().find(matches_section) else {
+                let available = document
+                    .tables
+                    .iter()
+                    .map(|table| {
+                        let heading = table.rows.first().map(|row| row.join(" · "));
+                        format!("{} ({})", table.anchor, heading.unwrap_or_default())
+                    })
+                    .collect::<Vec<_>>();
+                return Err(if available.is_empty() {
+                    "no unambiguous aligned table was recognized; use view='text' to inspect anchored page lines".into()
+                } else {
+                    format!(
+                        "no table matches {:?}; choose an anchor or page from: {}",
+                        section.unwrap_or_default(),
+                        available.join(", ")
+                    )
+                });
+            };
+            out.push_str(&format!(
+                "Table [{}] on page {}\n\n",
+                table.anchor, table.page
+            ));
+            out.push_str(&markdown_table(&table.rows, request.offset, request.limit));
         }
         _ => {
             let lines = match section {
@@ -1613,9 +1646,63 @@ mod tests {
         )
         .await;
         assert!(
-            table.is_error && table.content.contains("no table structure"),
+            table.is_error && table.content.contains("no unambiguous aligned table"),
             "{}",
             table.content
+        );
+    }
+
+    #[tokio::test]
+    async fn pdf_table_view_recognizes_repeated_aligned_columns() {
+        let applied = vak_pdf::edit::apply(
+            None,
+            &[vak_pdf::edit::PdfOp::AddTable {
+                rows: vec![
+                    vec![
+                        vak_pdf::edit::Cell::Text("Day".into()),
+                        vak_pdf::edit::Cell::Text("Visitors".into()),
+                    ],
+                    vec![
+                        vak_pdf::edit::Cell::Text("Monday".into()),
+                        vak_pdf::edit::Cell::Text("25".into()),
+                    ],
+                    vec![
+                        vak_pdf::edit::Cell::Text("Tuesday".into()),
+                        vak_pdf::edit::Cell::Text("31".into()),
+                    ],
+                ],
+                header: Some(true),
+                after: None,
+            }],
+            &vak_pdf::edit::EditContext {
+                author: "vak".into(),
+                date: "2026-09-29T00:00:00Z".into(),
+            },
+            vak_pdf::Limits::default(),
+        )
+        .unwrap();
+        let output = read_office(
+            "daily.pdf",
+            applied.bytes,
+            serde_json::json!({"view": "table"}),
+        )
+        .await;
+        assert!(!output.is_error, "{}", output.content);
+        assert!(output.content.contains("Table [page:1/table:1] on page 1"));
+        assert!(
+            output.content.contains("| Day | Visitors |"),
+            "{}",
+            output.content
+        );
+        assert!(
+            output.content.contains("| Monday | 25 |"),
+            "{}",
+            output.content
+        );
+        assert!(
+            output.content.contains("| Tuesday | 31 |"),
+            "{}",
+            output.content
         );
     }
 

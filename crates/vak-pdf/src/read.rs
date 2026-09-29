@@ -28,6 +28,9 @@ const MAX_NAMES: usize = 50_000;
 const MAX_LINKS: usize = 1_000;
 const MAX_LINK_CHARS: usize = 2_000;
 const MAX_LISTED_FILES: usize = 50;
+const MAX_TABLE_COLUMNS: usize = 64;
+const TABLE_COLUMN_TOLERANCE: f64 = 8.0;
+const MAX_TABLE_ROW_GAP: f64 = 48.0;
 
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct Info {
@@ -71,6 +74,15 @@ pub struct Page {
     /// Why this page's content could not be read, when it could not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub not_read: Option<String>,
+}
+
+/// A conservatively recognized text table. Rows are exposed only when at
+/// least two consecutive lines have the same repeated column alignment.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Table {
+    pub anchor: String,
+    pub page: usize,
+    pub rows: Vec<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -207,6 +219,7 @@ pub struct Document {
     /// Pages in the file; `pages` holds those read, at most the page limit.
     pub page_count: usize,
     pub pages: Vec<Page>,
+    pub tables: Vec<Table>,
     pub outline: Vec<Bookmark>,
     pub inspection: Inspection,
     pub not_read: Vec<String>,
@@ -265,6 +278,7 @@ pub(crate) fn read_detailed(
     let mut details = Vec::new();
     let mut fonts = FontCache::new();
     let mut pages = Vec::with_capacity(tree.pages.len());
+    let mut tables = Vec::new();
     let mut failed: Vec<usize> = Vec::new();
     let mut failure: Option<String> = None;
     let mut undecodable: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
@@ -290,6 +304,7 @@ pub(crate) fn read_detailed(
         let mut interpreter = Interpreter::new(file, &limits, node.page_box, &mut fonts);
         interpreter.run_page(&data, node.resources);
         let text = interpreter.finish();
+        tables.extend(aligned_tables(number, &text.lines));
         let page_failure = page_failure.or_else(|| text.errors.first().cloned());
         if let Some(error) = &page_failure {
             failed.push(number);
@@ -404,6 +419,7 @@ pub(crate) fn read_detailed(
             page_count: tree.count,
             outline: outline(file, catalog, &tree.numbers, &limits),
             pages,
+            tables,
             inspection,
             not_read,
         },
@@ -440,6 +456,67 @@ fn page_list(pages: &[usize]) -> String {
 
 fn clean(text: String) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn aligned_tables(page: usize, lines: &[TextLine]) -> Vec<Table> {
+    let mut tables = Vec::new();
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut origins: Vec<f64> = Vec::new();
+    let mut previous_y: Option<f64> = None;
+
+    let flush = |tables: &mut Vec<Table>, rows: &mut Vec<Vec<String>>| {
+        if rows.len() >= 2 {
+            tables.push(Table {
+                anchor: format!("page:{page}/table:{}", tables.len() + 1),
+                page,
+                rows: std::mem::take(rows),
+            });
+        } else {
+            rows.clear();
+        }
+    };
+
+    for line in lines {
+        if line.labels != 0 {
+            flush(&mut tables, &mut rows);
+            origins.clear();
+            previous_y = None;
+            continue;
+        }
+        let cells: Vec<(f64, String)> = line
+            .columns
+            .iter()
+            .map(|(x, text)| (*x, clean(text.clone())))
+            .filter(|(_, text)| !text.is_empty())
+            .collect();
+        let center_y = (line.rect[1] + line.rect[3]) * 0.5;
+        let aligned = cells.len() >= 2
+            && cells.len() <= MAX_TABLE_COLUMNS
+            && (origins.is_empty()
+                || (cells.len() == origins.len()
+                    && cells
+                        .iter()
+                        .zip(&origins)
+                        .all(|((x, _), origin)| (x - origin).abs() <= TABLE_COLUMN_TOLERANCE)
+                    && previous_y.is_some_and(|previous| {
+                        let gap = previous - center_y;
+                        (0.0..=MAX_TABLE_ROW_GAP).contains(&gap)
+                    })));
+
+        if aligned {
+            if origins.is_empty() {
+                origins = cells.iter().map(|(x, _)| *x).collect();
+            }
+            previous_y = Some(center_y);
+            rows.push(cells.into_iter().map(|(_, text)| text).collect());
+        } else {
+            flush(&mut tables, &mut rows);
+            origins.clear();
+            previous_y = None;
+        }
+    }
+    flush(&mut tables, &mut rows);
+    tables
 }
 
 impl Document {
@@ -576,6 +653,7 @@ impl Document {
                     .count(),
             ),
             ("images", self.pages.iter().map(|page| page.images).sum()),
+            ("tables", self.tables.len()),
             ("links", self.inspection.external_links.len()),
             ("comments", comments),
             ("form fields", self.inspection.form_fields),

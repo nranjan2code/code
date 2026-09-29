@@ -35,7 +35,7 @@ mod text;
 mod write;
 
 pub use read::{
-    Bookmark, Document, ExternalLink, Info, Inspection, Line, MAX_LINE_CHARS, Page, read,
+    Bookmark, Document, ExternalLink, Info, Inspection, Line, MAX_LINE_CHARS, Page, Table, read,
 };
 
 use std::fmt;

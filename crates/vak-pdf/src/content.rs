@@ -121,6 +121,10 @@ pub(crate) type FontCache = HashMap<FontKey, Rc<Font>>;
 pub(crate) struct TextLine {
     pub(crate) text: String,
     pub(crate) labels: u8,
+    /// Text runs separated by a large horizontal gap, with each run's left
+    /// coordinate. The reader uses repeated aligned runs to recognize simple
+    /// table rows without changing the anchored text projection.
+    pub(crate) columns: Vec<(f64, String)>,
     /// `[left, bottom, right, top]` in default user space.
     pub(crate) rect: [f64; 4],
     /// The line's text size in user space.
@@ -185,6 +189,7 @@ struct Run {
 
 struct Current {
     text: String,
+    columns: Vec<(f64, String)>,
     /// Characters in `text`, kept as it grows.
     chars: usize,
     labels: u8,
@@ -223,6 +228,7 @@ impl Lines {
             let em = current.size.max(run.size).max(0.1);
             let same_line = (run.y - current.y).abs() <= em * 0.5 && run.labels == current.labels;
             if same_line {
+                let mut starts_column = false;
                 let joins = match run.joined {
                     Some(space) => {
                         if space && !current.text.ends_with(' ') && !run.text.starts_with(' ') {
@@ -237,6 +243,7 @@ impl Lines {
                             false
                         } else {
                             if gap > em * 2.0 {
+                                starts_column = true;
                                 current.text.push_str("   ");
                                 current.chars += 3;
                             } else if gap > em * 0.2
@@ -256,6 +263,11 @@ impl Lines {
                     current.chars += run_chars;
                     current.end = run.end;
                     current.size = current.size.max(run.size);
+                    if starts_column {
+                        current.columns.push((run.x, run.text.clone()));
+                    } else if let Some((_, column)) = current.columns.last_mut() {
+                        column.push_str(&run.text);
+                    }
                     let [left, bottom, right, top] = run_rect(&run);
                     current.rect = [
                         current.rect[0].min(left),
@@ -278,7 +290,8 @@ impl Lines {
             rect: run_rect(&run),
             ops: run.op.into_iter().collect(),
             editable: run.op.is_some(),
-            text: run.text,
+            text: run.text.clone(),
+            columns: vec![(run.x, run.text.clone())],
             labels: run.labels,
             y: run.y,
             start: run.x,
@@ -301,6 +314,7 @@ impl Lines {
         }
         self.lines.push(TextLine {
             text: text.to_string(),
+            columns: current.columns,
             labels: current.labels,
             rect: current.rect,
             size: current.size,
