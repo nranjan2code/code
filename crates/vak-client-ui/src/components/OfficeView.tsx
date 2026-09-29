@@ -420,7 +420,7 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
   const allValues = () => shownPoints().flatMap((point) => point.values).filter((value): value is number => value != null);
   const minimum = () => Math.min(0, ...allValues());
   const maximum = () => Math.max(1, ...allValues());
-  const y = (value: number) => 218 - (value - minimum()) / (maximum() - minimum()) * 174;
+  const scatterChart = () => chartType() === "scatter";
   const scatterX = () => {
     const all = shownPoints().map((point) => Number(point.label)).filter(Number.isFinite);
     const min = Math.min(...all);
@@ -440,11 +440,15 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
     const padding = max === min ? Math.max(1, Math.abs(min) * 0.1) : (max - min) * 0.05;
     return { min: min - padding, max: max + padding };
   };
+  const y = (value: number) => {
+    const bounds = scatterChart() ? scatterY() : { min: minimum(), max: maximum() };
+    return 218 - (value - bounds.min) / Math.max(Number.EPSILON, bounds.max - bounds.min) * 174;
+  };
   const scatterPointY = (value: number) => {
     const bounds = scatterY();
     return 218 - (value - bounds.min) / Math.max(Number.EPSILON, bounds.max - bounds.min) * 174;
   };
-  const baseline = () => y(0);
+  const baseline = () => scatterChart() ? 218 : y(0);
   const seriesClass = (index: number) => `office-chart-series-${index % 4}`;
   const columnGeometry = () => {
     const band = 540 / Math.max(1, shownPoints().length);
@@ -485,10 +489,15 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
       <svg class={`office-chart-svg ${pieLike() ? "pie" : ""}`} viewBox={pieLike() ? "0 0 560 280" : "0 0 640 280"} role="img" aria-label={summary()}>
         <Show when={pieLike()} fallback={<>
           <For each={[0, 1, 2, 3, 4]}>{(tick) => {
-            const value = maximum() - ((maximum() - minimum()) * tick / 4);
+            const bounds = scatterChart() ? scatterY() : { min: minimum(), max: maximum() };
+            const value = bounds.max - ((bounds.max - bounds.min) * tick / 4);
             return <g><line x1="64" x2="616" y1={y(value)} y2={y(value)} class="office-chart-gridline"/><text x="58" y={y(value) + 4} text-anchor="end" class="office-chart-axis-label">{Number(value.toPrecision(3))}</text></g>;
           }}</For>
           <line x1="64" x2="616" y1={baseline()} y2={baseline()} class="office-chart-axis"/>
+          <Show when={scatterChart()}>{(() => {
+            const bounds = scatterX();
+            return <><line x1="70" x2="610" y1="218" y2="218" class="office-chart-axis"/><text x="70" y="250" class="office-chart-category">{Number(bounds.min.toPrecision(3))}</text><text x="610" y="250" text-anchor="end" class="office-chart-category">{Number(bounds.max.toPrecision(3))}</text></>;
+          })()}</Show>
           <For each={series()}>{(_, seriesIndex) => <Show when={seriesType(seriesIndex()) === "scatter"}>{
             <For each={shownPoints()}>{(point) => {
               const value = point.values[seriesIndex()];
@@ -501,7 +510,7 @@ function OfficeChart(props: { anchor: string; rows: api.OfficeUnit[]; unitProps:
             <For each={line.filter((point) => point.y != null)}>{(point) => <circle cx={point.x} cy={point.y!} r="4" class={seriesClass(seriesIndex())}/>}</For>
           </></Show>}</For>
           <For each={columnGeometry()}>{(bar) => <rect x={bar.x} y={bar.y} width={bar.width} height={bar.height} class={bar.className}/>}</For>
-          <For each={shownPoints()}>{(point, index) => <text x={70 + (index() + 0.5) * (540 / Math.max(1, shownPoints().length))} y="250" text-anchor="middle" class="office-chart-category" aria-label={point.label}>{point.label.length > 12 ? `${point.label.slice(0, 11)}…` : point.label}<title>{point.label}</title></text>}</For>
+          <Show when={!scatterChart()}><For each={shownPoints()}>{(point, index) => <text x={70 + (index() + 0.5) * (540 / Math.max(1, shownPoints().length))} y="250" text-anchor="middle" class="office-chart-category" aria-label={point.label}>{point.label.length > 12 ? `${point.label.slice(0, 11)}…` : point.label}<title>{point.label}</title></text>}</For></Show>
           <For each={series()}>{(name, index) => <g transform={`translate(${78 + index() * 150} 270)`}><circle r="4" class={seriesClass(index())}/><text x="8" y="4" class="office-chart-legend">{name}</text></g>}</For>
         </>}>
           <For each={pieSlices()}>{(slice) => <circle cx="152" cy="140" r={doughnut() ? "58" : "76"} fill="none" stroke-width={doughnut() ? "32" : "42"} stroke-dasharray={`${slice.length} ${slice.remainder}`} stroke-dashoffset={-slice.offset} transform="rotate(-90 152 140)" class={`office-chart-pie-segment ${slice.className}`}><title>{slice.label}: {slice.value}</title></circle>}</For>
