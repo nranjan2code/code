@@ -1,3 +1,10 @@
+## 5.2.6 — 2026-09-29
+
+- Fix Settings crashing on web and desktop when presentation styles read their configuration before initialization.
+- Add owner passkey sign-in and recovery for headless web hosting.
+- Make voice setup agent-owned, with discovered model choices and a speech test in Settings.
+- Improve FinOps estimates for provider-qualified models and allow exact price overrides.
+
 ## 5.2.5 — 2026-09-28
 
 - Carry typed result cards in channel delivery packets and render them using
@@ -20,14 +27,6 @@
 - Allow and remove other backup models in the admin portal, for every agent
   or for one, instead of by editing the config file. Routing changes apply
   from the next message, without a restart.
-
-## Unreleased
-
-- Make voice setup Agent-owned: save or remove shared Google Gemini and OpenAI keys in Settings, choose models discovered from the connected account in Settings and Admin, and test speech synthesis. Live microphone and channel calls now use their admitted Agent's configuration; endpoint provider changes no longer inherit model IDs from a different provider. Hosted voice calls without provider-rated usage appear as unknown spend in FinOps.
-- Price provider-qualified model IDs using their normalized model name when
-  the existing estimate table recognizes it. Add exact per-model input and
-  output price overrides from the FinOps screen for short or otherwise
-  unpriced model IDs; changes apply live to new calls.
 
 ## 5.2.2 — 2026-09-28
 
