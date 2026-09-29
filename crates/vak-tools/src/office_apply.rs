@@ -29,12 +29,12 @@ use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
 /// come from the blank itself, since there is nothing to read first.
 static DESCRIPTION: LazyLock<String> = LazyLock::new(|| {
     format!(
-        "Create, or propose edits to, a Word, Excel or PowerPoint file with typed ops. The result is a draft a person reviews and accepts; the workspace does not change until then. \
-         To create a new file from scratch, give path (a new .docx, .xlsx or .pptx name) and ops, and leave out source and base_digest. A new Word document offers the styles {styles}; add content with add_paragraph, add_table and add_image. A new workbook has one empty sheet, {sheet}; use rename_sheet, set_cells, format_cells, set_column_widths and add_chart. Charts use a two-column range with a heading row; Excel recalculates formulas when opened. A chart without a cell is placed below its data, moved right or down when needed to keep it clear of images and other new charts. Set cell when the person names a specific chart anchor. Plan image cells and chart cells together because different anchors can still overlap when the objects have width and height. A new deck has the layouts {layouts}; add slides with add_slide_from_layout, with notes, native tables, charts or PNG/JPEG images in a layout placeholder if wanted. PowerPoint charts use standard Open XML chart parts and include cached values for extraction. Images require descriptive alt_text and carry at most 1 MiB of base64 data. \
+        "Create, or propose edits to, a Word, Excel, PowerPoint or PDF file with typed ops. The result is a draft a person reviews and accepts; the workspace does not change until then. \
+         To create a new file from scratch, give path (a new .docx, .xlsx, .pptx or .pdf name) and ops, and leave out source and base_digest. A new Word document offers the styles {styles}; add content with add_paragraph, add_table and add_image. A new workbook has one empty sheet, {sheet}; use rename_sheet, set_cells, format_cells, set_column_widths and add_chart. Charts use a two-column range with a heading row; Excel recalculates formulas when opened. A chart without a cell is placed below its data, moved right or down when needed to keep it clear of images and other new charts. Set cell when the person names a specific chart anchor. Plan image cells and chart cells together because different anchors can still overlap when the objects have width and height. A new deck has the layouts {layouts}; add slides with add_slide_from_layout, with notes, native tables, charts or PNG/JPEG images in a layout placeholder if wanted. PowerPoint charts use standard Open XML chart parts and include cached values for extraction. Images require descriptive alt_text and carry at most 1 MiB of base64 data. \
          To create a file from a template in the workspace, set source to the template, base_digest to its sha256, and path to the new file. \
          To edit a file, read it with doc_read first and pass the sha256 it printed as base_digest; ops name anchors from that read (p@12, p:1A2B3C4D, a table cell's paragraph as its row shows it, Budget!B4, slide:256/shape:3, slide:256/placeholder:title). Word edits to an existing file become tracked changes; a new file is written clean. \
          Text is plain: Markdown is not interpreted, so headings and lists come from styles. Excel calculates formulas when the file is opened. To keep editing a draft, pass the draft as source with its sha256. Macros are never added or run. A Visio drawing cannot be created or edited: say so, and never build one with a command or script. \
-         A PDF works the same way, created from scratch in the same styles or edited after a doc_read, whose anchors are page:3 and page:3/line:12: replace_paragraph_text and delete_paragraph act on one line (a replaced line is drawn in Helvetica), add_comment and highlight mark a line, fill_field sets a form field, rotate_page, delete_page and move_page rearrange pages, and add_paragraph, add_table, add_chart and add_page_break set new content on new pages after a page (after: page:3) or at the end. A PDF chart is drawn as vector bars and automatically includes its category and value table as searchable text. Only Latin text can be written into a PDF.",
+         A PDF works the same way, created from scratch in the same styles or edited after a doc_read, whose anchors are page:3 and page:3/line:12: replace_paragraph_text and delete_paragraph act on one line (a replaced line is drawn in Helvetica), add_comment and highlight mark a line, fill_field sets a form field, rotate_page, delete_page and move_page rearrange pages, and add_paragraph, add_table, add_chart, add_image and add_page_break set new content on new pages after a page (after: page:3) or at the end. Give add_image a PNG/JPEG image with descriptive alt_text; it is embedded as a standard PDF image and the visible Image description caption stays searchable by doc_read and RAG. Image pixels are not OCR-read. A PDF chart is drawn as vector bars and automatically includes its category and value table as searchable text. Only Latin text can be written into a PDF.",
         styles = vak_ooxml::blank::DOCUMENT_STYLES.join(", "),
         sheet = vak_ooxml::blank::WORKBOOK_SHEET,
         layouts = vak_ooxml::blank::DECK_LAYOUTS
@@ -896,6 +896,16 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("\"add_slide\" is not one of"), "{error}");
+    }
+
+    #[test]
+    fn model_guidance_includes_searchable_pdf_image_authoring() {
+        let description = OfficeApplyTool.description();
+        assert!(description.contains("or .pdf name"));
+        assert!(description.contains("add_table, add_chart, add_image and add_page_break"));
+        assert!(description.contains("descriptive alt_text"));
+        assert!(description.contains("searchable by doc_read and RAG"));
+        assert!(description.contains("Image pixels are not OCR-read"));
     }
 
     #[tokio::test]
