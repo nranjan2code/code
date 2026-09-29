@@ -219,6 +219,7 @@ export interface ConfigInfo {
   sandbox: string;
   theme: string;
   workers: boolean;
+  capability_inheritance?: { mcp: boolean; hooks: boolean; skills: boolean; commands: boolean; plugins: boolean };
   /** Resolved permission rule lists, exactly as the engine evaluates them. */
   permissions?: PermissionRules;
   /** `project_hash` of the workspace this server process is bound to.

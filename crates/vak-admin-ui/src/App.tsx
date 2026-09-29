@@ -1006,9 +1006,13 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
     () => [pluginScope(), selectedAgentId()] as const,
     ([scope]) => api.pluginSources(scope, selectedAgentIdOrUndefined()),
   );
+  const [sharedPlugins] = createResource(
+    () => [pluginScope(), selectedAgentId()] as const,
+    ([scope, agent]) => scope === "workspace" && agent !== "all" && agent !== "global" ? api.plugins("user", agent) : Promise.resolve({ plugins: [] }),
+  );
   const [catalog, { refetch: refetchCatalog }] = createResource(
     () => [catalogQuery(), pluginScope(), selectedAgentId()] as const,
-    ([query, scope]) => api.pluginCatalog(query, scope, selectedAgentIdOrUndefined()),
+    ([query, scope]) => api.pluginCatalog(query, scope === "user" ? "user" : undefined, selectedAgentIdOrUndefined()),
   );
   const refresh = props.ctx.refetchPlugins;
   const install = async (update: boolean) => {
@@ -1054,6 +1058,8 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       setBusy(false);
     }
   };
+  const installedHere = (entry: import("./types").MarketplaceEntry) => props.ctx.plugins().some((plugin) => plugin.name === entry.name);
+  const installedShared = (entry: import("./types").MarketplaceEntry) => sharedPlugins()?.plugins.some((plugin) => plugin.name === entry.name) ?? false;
   return <section class="stack plugin-stack">
     <div class="panel">
       <div class="panel-title-row"><div><h2>Install a reviewed package</h2><p>Packages are inspected, content-addressed, and installed disabled in {props.ctx.scope() === "user" ? "Global" : "Workspace"} until you enable them.</p></div></div>
@@ -1075,8 +1081,21 @@ function PluginsView(props: { ctx: ExtensionsCtx }) {
       <button type="button" disabled={busy() || !sourcePath().trim()} onClick={async () => { setBusy(true); try { const signed = keyId() && publicKey() && signature() ? { key_id: keyId(), public_key: publicKey(), signature: signature() } : undefined; await api.pluginRegisterSource(sourcePath(), sourceLabel() || "Local catalog", pluginScope(), signed, selectedAgentIdOrUndefined()); await refetchSources(); setSourcePath(""); setSourceLabel(""); setKeyId(""); setPublicKey(""); setSignature(""); pushToast("info", "Catalog source registered disabled"); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>Register source</button>
       <Show when={(sources()?.sources ?? []).length > 0}><div class="capability-list" style={{ "margin-top": "12px" }}><For each={sources()?.sources ?? []}>{(source) => <div class="capability-item"><div class="panel-title-row"><span><strong>{source.label}</strong><small>{source.format} · {source.trust} · {source.enabled ? "Enabled" : "Disabled"} · {source.signature ? (source.signature.verified ? "Signed" : "Signature invalid") : "Unsigned"}</small></span><code title={source.catalog_digest}>sha256:{source.catalog_digest.slice(0, 12)}</code></div><code>{source.trace_id}</code><div class="settings-actions"><button class="settings-button" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginSourceAction(source.id, source.enabled ? "disable" : "enable", pluginScope(), selectedAgentIdOrUndefined()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.enabled ? "Disable source" : "Enable source"}</button><Show when={source.signature}><button class="settings-button danger" disabled={busy()} onClick={async () => { setBusy(true); try { await api.pluginKeyAction(source.signature!.key_id, source.signature!.revoked ? "restore" : "revoke", pluginScope(), selectedAgentIdOrUndefined()); await refetchSources(); } catch (error) { pushToast("alert", `${error}`); } finally { setBusy(false); } }}>{source.signature!.revoked ? "Restore key" : "Revoke key"}</button></Show></div></div>}</For></div></Show>
       <div class="form-row"><label>Search catalog entries<input value={catalogQuery()} onInput={(e) => setCatalogQuery(e.currentTarget.value)} placeholder="frontend, testing, release…" /></label></div>
+      <Show when={(catalog()?.errors ?? []).length > 0}><div class="error-state" role="status"><strong>Some catalog entries could not be read</strong><For each={catalog()?.errors ?? []}>{(item) => <p>{item.error}</p>}</For></div></Show>
       <Show when={(catalog()?.entries ?? []).length > 0} fallback={<p class="dim">No catalog entries match yet. Enable a verified source only after reviewing it.</p>}>
-        <div class="capability-list"><For each={catalog()?.entries ?? []}>{(entry) => <div class="capability-item"><div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div><p>{entry.description || "No description"}</p><small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small><div class="row-gap"><button disabled={busy() || !entry.source_enabled || !entry.license} onClick={() => void installFromCatalog(entry, props.ctx.plugins().some((plugin) => plugin.name === entry.name))}>{props.ctx.plugins().some((plugin) => plugin.name === entry.name) ? "Stage update" : "Install disabled"}</button></div></div>}</For></div>
+        <div class="capability-list">
+          <For each={catalog()?.entries ?? []}>{(entry) => (
+            <div class="capability-item">
+              <div class="panel-title-row"><span><strong>{entry.name}</strong><small>{entry.source_label} · {entry.source_scope === "user" ? "Global catalog" : "Agent catalog"} · {entry.source_enabled ? "Source enabled" : "Source disabled"}{entry.version ? ` · v${entry.version}` : ""}</small></span><code title={entry.catalog_digest}>sha256:{entry.catalog_digest.slice(0, 12)}</code></div>
+              <p>{entry.description || "No description"}</p>
+              <small>{entry.license ? `License: ${entry.license}` : "License: not declared"}</small>
+              <div class="row-gap">
+                <button disabled={busy() || !entry.source_enabled || !entry.license} onClick={() => void installFromCatalog(entry, installedHere(entry))}>{installedHere(entry) ? "Stage update" : installedShared(entry) && props.ctx.scope() === "project" ? "Install agent copy" : "Install disabled"}</button>
+                <small>{!installedHere(entry) && installedShared(entry) && props.ctx.scope() === "project" ? "Already inherited from Global. An agent copy lets this agent use its own package generation." : ""}</small>
+              </div>
+            </div>
+          )}</For>
+        </div>
       </Show>
     </div>
     <Show when={!props.ctx.pluginsLoading()} fallback={<div class="panel"><div class="spin" /></div>}>
@@ -1859,13 +1878,31 @@ A scheduled task is something you ask Vakyartha to do on a repeating schedule �
 // ---- Extensions section shell ----------------------------------------------
 
 function ExtensionsSection() {
-  const [config] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
+  const [config, configActions] = createResource(selectedAgentId, () => api.config(selectedAgentIdOrUndefined()));
   const [mcp, mcpActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.mcpServers(scope, selectedAgentIdOrUndefined()));
   const [hooks, hooksActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.hooks(scope, selectedAgentIdOrUndefined()));
   const [skills, skillsActions] = createResource(selectedAgentId, () => api.skills(selectedAgentIdOrUndefined()));
   const [plugins, pluginsActions] = createResource(() => [configScope(), selectedAgentId()] as const, ([scope]) => api.plugins(scope === "user" ? "user" : "workspace", selectedAgentIdOrUndefined()));
   const [proposals, proposalsActions] = createResource(selectedAgentId, () => api.skillProposals(selectedAgentIdOrUndefined()));
   const [tasks, tasksActions] = createResource(() => api.tasks());
+  const [sharedMcp] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.mcpServers("user", agent) : Promise.resolve({ servers: {} }));
+  const [sharedHooks] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.hooks("user", agent) : Promise.resolve({ hooks: [] }));
+  const [sharedPlugins] = createResource(selectedAgentId, (agent) => agent !== "all" && agent !== "global" ? api.plugins("user", agent) : Promise.resolve({ plugins: [] }));
+  const [inheritanceBusy, setInheritanceBusy] = createSignal<string | null>(null);
+  const setInheritance = async (kind: "mcp" | "hooks" | "skills" | "commands" | "plugins", enabled: boolean) => {
+    const labels = { mcp: "Connected apps", hooks: "Automations", skills: "Skills", commands: "Commands", plugins: "Add-ons" };
+    const key = `inherit_${kind}`;
+    setInheritanceBusy(kind);
+    try {
+      await api.patchConfigScope("project", { [key]: enabled }, selectedAgentIdOrUndefined());
+      await Promise.all([configActions.refetch(), mcpActions.refetch(), hooksActions.refetch(), skillsActions.refetch(), pluginsActions.refetch()]);
+      pushToast("info", `${labels[kind]} ${enabled ? "will inherit from Global" : "are now specific to this agent"}`);
+    } catch (error) {
+      pushToast("alert", `Could not update ${labels[kind]} inheritance: ${error}`);
+    } finally {
+      setInheritanceBusy(null);
+    }
+  };
 
   const ctx: ExtensionsCtx = {
     scope: configScope,
@@ -1931,6 +1968,31 @@ function ExtensionsSection() {
         <div class="extension-stat"><strong>{ctx.skills().length}</strong><span>loaded skills</span></div>
         <div class="extension-stat"><strong>{ctx.hooks().length + ctx.tasks().length}</strong><span>automations</span></div>
       </div>
+      <Show when={configScope() === "project" && selectedAgentId() !== "all" && selectedAgentId() !== "global"}>
+        <section class="panel agent-capability-inheritance">
+          <div class="panel-title-row"><div><h2>Shared capabilities for {adminAgents().find((agent) => agent.id === selectedAgentId())?.name || selectedAgentId()}</h2><p class="dim">Choose what this agent inherits from Global. Agent-specific entries remain in its private workspace.</p></div><span class="chip">Agent settings</span></div>
+          <div class="capability-inheritance-list">
+            <For each={[
+              ["mcp", "Connected apps", "Global MCP connections"] as const,
+              ["hooks", "Automations", "Global lifecycle hooks"] as const,
+              ["skills", "Skills", "Global skills"] as const,
+              ["commands", "Commands", "Global commands"] as const,
+              ["plugins", "Add-ons", "Global plugins"] as const,
+            ]}>{([kind, label, detail]) => {
+              const inherited = () => config()?.capability_inheritance?.[kind] !== false;
+              const inheritedNames = () => {
+                if (!inherited()) return "";
+                if (kind === "mcp") return sharedMcp.loading ? "Loading shared connections…" : sharedMcp.error ? "Shared connections unavailable" : Object.keys(sharedMcp()?.servers ?? {}).join(", ") || "None configured";
+                if (kind === "hooks") return sharedHooks.loading ? "Loading shared automations…" : sharedHooks.error ? "Shared automations unavailable" : (sharedHooks()?.hooks ?? []).map((hook) => `${hook.event}${hook.matcher ? ` (${hook.matcher})` : ""}`).join(", ") || "None configured";
+                if (kind === "plugins") return sharedPlugins.loading ? "Loading shared add-ons…" : sharedPlugins.error ? "Shared add-ons unavailable" : (sharedPlugins()?.plugins ?? []).map((plugin) => plugin.name).join(", ") || "None installed";
+                if (kind === "skills") return skills.loading ? "Loading shared skills…" : skills.error ? "Shared skills unavailable" : (skills()?.skills ?? []).filter((skill) => skill.scope === "user" && !skill.shadowed).map((skill) => skill.name).join(", ") || "None available";
+                return "Commands from Global settings";
+              };
+              return <label class="inherit-toggle capability-inheritance-row"><input type="checkbox" checked={inherited()} disabled={inheritanceBusy() !== null} onChange={(event) => void setInheritance(kind, event.currentTarget.checked)} /><span><strong>{label}</strong><small>{inheritanceBusy() === kind ? "Saving…" : inherited() ? `${detail} · ${inheritedNames()}` : "Agent-specific only"}</small></span></label>;
+            }}</For>
+          </div>
+        </section>
+      </Show>
       <Show when={failure()}>
         <section class="panel panel-alert callout" style="margin-bottom:14px">
           <div>

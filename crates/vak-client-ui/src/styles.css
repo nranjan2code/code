@@ -2255,6 +2255,10 @@ kbd { padding: 1px 6px; border: 1px solid var(--border); border-bottom-color: va
 .settings-nav nav button:hover { color: var(--text-soft); background: var(--surface-hover); }
 .settings-nav nav button.active { color: var(--text); background: var(--surface-active); }
 .settings-nav nav button.active .icon { color: var(--accent-bright); }
+.settings-agent-subnav { display: grid; gap: 2px; margin: 0 0 7px 22px; padding: 3px 0 3px 10px; border-left: 1px solid var(--border); }
+.settings-nav nav .settings-agent-subnav button { min-height: 32px; padding: 5px 9px; color: var(--muted); font-size: var(--fs-meta); }
+.settings-nav nav .settings-agent-subnav button.active { color: var(--text); background: var(--surface-active); }
+.settings-inheritance-control { display: inline-flex; align-items: center; gap: var(--space-3); }
 .settings-no-results { padding: var(--space-4) var(--space-3); color: var(--faint); font-size: var(--fs-caption); }
 .settings-nav-foot { display: flex; align-items: center; gap: 9px; margin-top: auto; padding: 11px 9px 2px; border-top: 1px solid var(--border-soft); }
 .settings-app-mark { display: grid; place-items: center; width: 30px; height: 30px; flex: none; }

@@ -673,8 +673,12 @@ export const api = {
     fetch(withAgent("/plugins/audit", agent)).then((r) => handle(r)),
   pluginSources: (scope: "workspace" | "user", agent?: string): Promise<{ sources: MarketplaceSource[] }> =>
     fetch(withAgent(`/plugins/sources?scope=${scope}`, agent)).then((r) => handle(r)),
-  pluginCatalog: (query = "", scope: "workspace" | "user" = "workspace", agent?: string): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> =>
-    fetch(withAgent(`/plugins/catalog?scope=${scope}${query.trim() ? `&q=${encodeURIComponent(query.trim())}` : ""}`, agent)).then((r) => handle(r)),
+  pluginCatalog: (query = "", scope?: "workspace" | "user", agent?: string): Promise<{ entries: MarketplaceEntry[]; errors: { source_id?: string; error: string }[] }> => {
+    const params = new URLSearchParams();
+    if (scope) params.set("scope", scope);
+    if (query.trim()) params.set("q", query.trim());
+    return fetch(withAgent(`/plugins/catalog${params.size ? `?${params}` : ""}`, agent)).then((r) => handle(r));
+  },
   pluginRegisterSource: (path: string, label: string, scope: "workspace" | "user", signature?: { key_id: string; public_key: string; signature: string }, agent?: string): Promise<MarketplaceSource> =>
     fetch("/plugins/sources", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, label, scope, trust: "manual-review", agent, ...(signature ?? {}) }) }).then((r) => handle(r)),
   pluginKeyAction: (keyId: string, action: "revoke" | "restore", scope: "workspace" | "user", agent?: string): Promise<unknown> =>

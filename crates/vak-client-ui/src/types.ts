@@ -414,6 +414,7 @@ export interface ConfigSnapshot {
   /// it never widens the boundary or switches off the sandbox, it only
   /// decides who answers the gate.
   approval_mode: "ask" | "approve-safe" | "auto-approve";
+  memory: { search_enabled: boolean; write_enabled: boolean; reflection: boolean; skill_proposals: boolean };
   sandbox: string;
   /// The rule lists the engine evaluates, effective across all layers.
   permissions: { allow: string[]; ask: string[]; deny: string[] };

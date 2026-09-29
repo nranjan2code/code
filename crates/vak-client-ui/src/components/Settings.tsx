@@ -161,6 +161,7 @@ async function copySettingText(value: string, label: string): Promise<void> {
 export default function Settings() {
   // Presentation memos can run during component setup and read this signal.
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
+  const [privacyLayer, setPrivacyLayer] = createSignal<Awaited<ReturnType<typeof api.getPrivacyConfigLayer>> | null>(null);
   const [recoveryBusy, setRecoveryBusy] = createSignal(false);
   const rotateRecovery = async () => {
     setRecoveryBusy(true);
@@ -646,7 +647,22 @@ export default function Settings() {
   const visibleSkills = createMemo(() =>
     scope() === "user" ? skills().filter((skill) => skill.scope === "user") : skills().filter((skill) => !skill.shadowed),
   );
-  const inherits = (kind: "mcp" | "hooks" | "plugins") => scope() === "user" || config()?.capability_inheritance?.[kind] !== false;
+  const inherits = (kind: "mcp" | "hooks" | "skills" | "commands" | "plugins") => scope() === "user" || config()?.capability_inheritance?.[kind] !== false;
+  const [inheritanceBusy, setInheritanceBusy] = createSignal<string | null>(null);
+  async function setCapabilityInheritance(kind: "mcp" | "hooks" | "skills" | "commands" | "plugins", enabled: boolean) {
+    const key = `inherit_${kind}` as const;
+    setInheritanceBusy(kind);
+    try {
+      await api.patchConfig({ [key]: enabled }, activeAgentId());
+      await Promise.all([load(), refreshMcp(), refreshCapabilities()]);
+      setNotice({ kind: "info", text: enabled ? `${kindLabel(kind)} now inherit from Shared.` : `${kindLabel(kind)} are now specific to ${agentName()}.` });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not update inheritance: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setInheritanceBusy(null);
+    }
+  }
+  const kindLabel = (kind: "mcp" | "hooks" | "skills" | "commands" | "plugins") => ({ mcp: "Connected apps", hooks: "Automations", skills: "Skills", commands: "Commands", plugins: "Add-ons" })[kind];
   const discoverableSkills = createMemo(() => visibleSkills().filter((skill) => {
     const needle = discoveryQuery().trim().toLowerCase();
     return (discoveryKind() === "all" || discoveryKind() === "skills") && (!needle || `${skill.name} ${skill.description}`.toLowerCase().includes(needle));
@@ -973,6 +989,27 @@ export default function Settings() {
   const [sharedRoute, { refetch: refreshSharedRoute }] = createResource(() => api.getGlobalRoute());
   const displayedProvider = () => scope() === "user" ? sharedRoute()?.provider || "" : config()?.provider || "";
   const displayedModel = () => scope() === "user" ? sharedRoute()?.model || "" : config()?.model || "";
+  const privacyPermissionMode = () => scope() === "user"
+    ? privacyLayer()?.permission_mode ?? "WorkspaceWrite"
+    : config()?.permission_mode;
+  const privacyApprovalMode = () => scope() === "user"
+    ? privacyLayer()?.approval_mode ?? "ask"
+    : config()?.approval_mode;
+  const privacyMemory = () => scope() === "user"
+    ? {
+        search_enabled: privacyLayer()?.memory?.search_enabled ?? true,
+        write_enabled: privacyLayer()?.memory?.write_enabled ?? true,
+        reflection: privacyLayer()?.memory?.reflection ?? false,
+        skill_proposals: privacyLayer()?.memory?.skill_proposals ?? true,
+      }
+    : config()?.memory ?? { search_enabled: true, write_enabled: true, reflection: false, skill_proposals: true };
+  const privacyRules = () => scope() === "user"
+    ? {
+        allow: privacyLayer()?.permissions?.allow ?? [],
+        ask: privacyLayer()?.permissions?.ask ?? [],
+        deny: privacyLayer()?.permissions?.deny ?? [],
+      }
+    : config()?.permissions ?? { allow: [], ask: [], deny: [] };
   const currentProviderInfo = () => providers()?.providers.find((p) => p.name === displayedProvider());
   const keyProviderLabel = () => api.providerLabel(providers()?.providers, displayedProvider());
   const changeService = () => {
@@ -986,6 +1023,9 @@ export default function Settings() {
     try {
       const next = await api.getConfig(activeAgentId());
       setConfig(next);
+      if (page() === "privacy") {
+        setPrivacyLayer(await api.getPrivacyConfigLayer(scope() === "user" ? "user" : "workspace", activeAgentId()));
+      }
       setMaxTurns(next.max_turns);
       setEvidenceAgeHours(Math.max(0, Math.round((next.intent_evidence_max_age_secs ?? 86400) / 3600)));
     } catch (error) {
@@ -994,6 +1034,12 @@ export default function Settings() {
       setLoading(false);
     }
   };
+  createEffect(() => {
+    if (page() !== "privacy") return;
+    const currentScope = scope() === "user" ? "user" : "workspace";
+    const agent = activeAgentId();
+    void api.getPrivacyConfigLayer(currentScope, agent).then(setPrivacyLayer).catch(() => setPrivacyLayer(null));
+  });
   onMount(() => void load());
   // Live-reflect config/credential writes made elsewhere (CLI `vak setup`,
   // another client) instead of only ever showing what was true at mount
@@ -1219,6 +1265,7 @@ export default function Settings() {
     try {
       if (scope() === "user") await api.patchGlobalConfig({ permission_mode: wire });
       else await api.patchConfig({ permission_mode: wire }, activeAgentId());
+      if (scope() === "user") setPrivacyLayer((current) => current ? { ...current, permission_mode: wire } : current);
       setConfig((current) => current ? { ...current, permission_mode: mode } : current);
       await loadHealth();
     } catch (error) {
@@ -1235,12 +1282,46 @@ export default function Settings() {
     try {
       if (scope() === "user") await api.patchGlobalConfig({ approval_mode: mode });
       else await api.patchConfig({ approval_mode: mode }, activeAgentId());
+      if (scope() === "user") setPrivacyLayer((current) => current ? { ...current, approval_mode: mode } : current);
       setConfig((current) => (current ? { ...current, approval_mode: mode } : current));
     } catch (error) {
       setNotice({
         kind: "error",
         text: `Could not update approvals: ${error instanceof Error ? error.message : String(error)}`,
       });
+    }
+  };
+
+  const changeMemoryPolicy = async (
+    key: "memory_search_enabled" | "memory_write_enabled" | "memory_reflection" | "memory_skill_proposals",
+    value: boolean,
+  ) => {
+    try {
+      const patch = { [key]: value };
+      if (scope() === "user") await api.patchGlobalConfig(patch);
+      else await api.patchConfig(patch, activeAgentId());
+      if (scope() === "user") setPrivacyLayer((current) => current ? {
+        ...current,
+        memory: {
+          ...current.memory,
+          search_enabled: key === "memory_search_enabled" ? value : current.memory?.search_enabled,
+          write_enabled: key === "memory_write_enabled" ? value : current.memory?.write_enabled,
+          reflection: key === "memory_reflection" ? value : current.memory?.reflection,
+          skill_proposals: key === "memory_skill_proposals" ? value : current.memory?.skill_proposals,
+        },
+      } : current);
+      setConfig((current) => current ? {
+        ...current,
+        memory: {
+          ...current.memory,
+          search_enabled: key === "memory_search_enabled" ? value : current.memory.search_enabled,
+          write_enabled: key === "memory_write_enabled" ? value : current.memory.write_enabled,
+          reflection: key === "memory_reflection" ? value : current.memory.reflection,
+          skill_proposals: key === "memory_skill_proposals" ? value : current.memory.skill_proposals,
+        },
+      } : current);
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not update memory settings: ${error instanceof Error ? error.message : String(error)}` });
     }
   };
 
@@ -1266,7 +1347,7 @@ export default function Settings() {
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id || (item.id === "privacy" && page() === "archived") }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
           </For>
           <Show when={agentEntries().length > 0}>
-            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button>}</For></nav></div>
+            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
           </Show>
           <For each={pageGroups().filter(([group]) => group === "Advanced")}>
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
@@ -1526,7 +1607,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "privacy"}>
-              <header><h1>Privacy and safety</h1><p>{scope() === "user" ? "What every agent may do unless it sets its own, and when it asks." : `What ${agentName()} may do, when it asks, and what it remembers.`}</p></header>
+              <header><h1>{scope() === "user" ? "Shared privacy and safety" : `${agentName()} · Privacy and safety`}</h1><p>{scope() === "user" ? "Defaults for every agent. An agent can set its own choices from its settings." : `These controls are for ${agentName()} only. Unset choices inherit the shared defaults.`}</p></header>
               <Show when={host.authenticate}>
                 <Group title="Your sign-in">
                   <Row title="Recovery codes" description="Create a new set after confirming with your passkey. The previous codes will stop working.">
@@ -1537,11 +1618,19 @@ export default function Settings() {
                   </Row>
                 </Group>
               </Show>
-              <section class="settings-group"><h3>What it may do</h3>
-              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Look only", text: "Read and search this folder. Makes no changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Edit files in this folder", text: "Asks before anything sensitive.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access to this computer", text: "Runs any command and opens files outside this folder.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: config()?.permission_mode === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={config()?.permission_mode === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              <section class="settings-group"><h3>What it may do</h3><p class="settings-group-copy">{scope() === "user" ? (privacyLayer()?.permission_mode ? "Editing the shared permission default." : "No shared permission default is set; built-in defaults apply.") : privacyLayer()?.permission_mode ? `This choice is set for ${agentName()}.` : `${agentName()} inherits the shared permission default.`}</p>
+              <div class="permission-options"><For each={[{ id: "ReadOnly", title: "Look only", text: "Read and search this folder. Makes no changes.", icon: "preview" as IconName }, { id: "WorkspaceWrite", title: "Edit files in this folder", text: "Asks before anything sensitive.", icon: "pencil" as IconName }, { id: "FullAccess", title: "Full access to this computer", text: "Runs any command and opens files outside this folder.", icon: "warning" as IconName }] as const}>{(mode) => <button classList={{ active: privacyPermissionMode() === mode.id, danger: mode.id === "FullAccess" }} onClick={() => void changePermission(mode.id)}><span class="permission-icon"><Icon name={mode.icon} /></span><span><strong>{mode.title}</strong><small>{mode.text}</small></span><span class="permission-check"><Show when={privacyPermissionMode() === mode.id}><Icon name="check" /></Show></span></button>}</For></div>
+              </section>
+              <section class="settings-group">
+                <h3>Memory for {scope() === "user" ? "every agent" : agentName()}</h3>
+                <p class="settings-group-copy">{scope() === "user" ? "Choose what every agent can remember and learn by default. An agent can set its own choices." : "Choose what this agent can remember and learn. Unset choices inherit Shared."}</p>
+                <Row title="Recall saved notes" description="Let the agent search its saved memory while responding."><Switch label="Recall saved notes" checked={privacyMemory().search_enabled} onChange={(value) => void changeMemoryPolicy("memory_search_enabled", value)} /></Row>
+                <Row title="Save useful details" description="Allow the agent to add useful facts to its own memory."><Switch label="Save useful details" checked={privacyMemory().write_enabled} onChange={(value) => void changeMemoryPolicy("memory_write_enabled", value)} /></Row>
+                <Row title="Learn from conversations" description="Reflect on completed conversations to find useful details to remember."><Switch label="Learn from conversations" checked={privacyMemory().reflection} onChange={(value) => void changeMemoryPolicy("memory_reflection", value)} /></Row>
+                <Row title="Suggest new skills" description="Allow memory to propose reusable skills for review."><Switch label="Suggest new skills" checked={privacyMemory().skill_proposals} onChange={(value) => void changeMemoryPolicy("memory_skill_proposals", value)} /></Row>
               </section>
               <section class="settings-group"><h3>When to ask</h3>
-                <p class="settings-group-copy">How often it pauses for your approval.</p>
+                <p class="settings-group-copy">{scope() === "user" ? (privacyLayer()?.approval_mode ? "Editing the shared approval default." : "No shared approval default is set; built-in defaults apply.") : privacyLayer()?.approval_mode ? `This choice is set for ${agentName()}.` : `${agentName()} inherits the shared approval default.`}</p>
                 <div class="permission-options">
                   <For
                     each={
@@ -1554,13 +1643,13 @@ export default function Settings() {
                   >
                     {(mode) => (
                       <button
-                        classList={{ active: config()?.approval_mode === mode.id }}
+                        classList={{ active: privacyApprovalMode() === mode.id }}
                         onClick={() => void changeApproval(mode.id)}
                       >
                         <span class="permission-icon"><Icon name={mode.icon} /></span>
                         <span><strong>{mode.title}</strong><small>{mode.text}</small></span>
                         <span class="permission-check">
-                          <Show when={config()?.approval_mode === mode.id}><Icon name="check" /></Show>
+                          <Show when={privacyApprovalMode() === mode.id}><Icon name="check" /></Show>
                         </span>
                       </button>
                     )}
@@ -1572,15 +1661,17 @@ export default function Settings() {
                 fallback={
                   <Group title="Your rules">
                     <Row title="Custom rules" description="Rules you set win over the choice above.">
-                      <span class="settings-value">{(() => { const n = (["deny", "ask", "allow"] as const).reduce((count, key) => count + (config()?.permissions?.[key]?.length ?? 0), 0); return n ? `${n} rule${n === 1 ? "" : "s"}` : "None"; })()}</span>
+                      <span class="settings-value">{(() => { const n = (["deny", "ask", "allow"] as const).reduce((count, key) => count + (privacyRules()[key]?.length ?? 0), 0); return n ? `${n} rule${n === 1 ? "" : "s"}` : "None"; })()}</span>
                     </Row>
                   </Group>
                 }
               >
-                <Group title="Isolation">
-                  <Row title="Workspace files" description="File access stays inside this agent's folder."><span class="settings-status good">Protected</span></Row>
-                  <Row title="Command isolation" description="Keep commands separated from the rest of this device."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
-                </Group>
+                <Show when={scope() === "workspace"}>
+                  <Group title="Isolation">
+                    <Row title="Workspace files" description="File access stays inside this agent's folder."><span class="settings-status good">Protected</span></Row>
+                    <Row title="Command isolation" description="Keep commands separated from the rest of this device."><span class="settings-status good">{config()?.sandbox ?? "…"}</span></Row>
+                  </Group>
+                </Show>
                 <Group title="Rules">
                   <p class="settings-group-copy">Specific rules take priority over the approval choice above.</p>
                   <For
@@ -1594,15 +1685,15 @@ export default function Settings() {
                   >
                     {(section) => (
                       <Row title={section.title} description={
-                        (config()?.permissions?.[section.key]?.length ?? 0) > 0
-                          ? config()!.permissions[section.key].join(", ")
+                        (privacyRules()[section.key]?.length ?? 0) > 0
+                          ? privacyRules()[section.key].join(", ")
                           : section.empty
                       }>
                         <span />
                       </Row>
                     )}
                   </For>
-                  <Row title="Permission rules" description="Choose which actions are allowed, blocked, or require approval."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row>
+                  <Show when={scope() === "workspace"}><Row title="Permission rules" description="Choose which actions are allowed, blocked, or require approval."><button class="settings-button" onClick={() => void openWorkspaceConfig()}>Edit rules</button></Row></Show>
                 </Group>
               </Show>
               <h2 class="settings-section-title">What it remembers</h2>
@@ -1772,6 +1863,18 @@ export default function Settings() {
                 </Show>
               </Show>
               <Show when={capabilityView() === "mine"}>
+                <Show when={scope() === "workspace"}>
+                  <Group title={`Shared capabilities for ${agentName()}`}>
+                    <p class="settings-hint">Choose which Shared capabilities this agent can use. Turning one off keeps the agent’s own settings and hides Shared entries from its turns.</p>
+                    <For each={[
+                      ["mcp", "Connected apps", "Shared MCP connections"] as const,
+                      ["hooks", "Automations", "Shared lifecycle hooks"] as const,
+                      ["skills", "Skills", "Shared skills"] as const,
+                      ["commands", "Commands", "Shared commands"] as const,
+                      ["plugins", "Add-ons", "Shared plugins"] as const,
+                    ]}>{([kind, label, detail]) => <Row title={label} description={detail}><span class="settings-inheritance-control"><span class="capability-state" classList={{ inherited: inherits(kind), muted: !inherits(kind) }}>{inherits(kind) ? "Inherited from Shared" : "Agent only"}</span><Switch label={`${label} inherit from Shared for ${agentName()}`} checked={inherits(kind)} onChange={(enabled) => void setCapabilityInheritance(kind, enabled)} /><Show when={inheritanceBusy() === kind}><span class="settings-status">Saving…</span></Show></span></Row>}</For>
+                  </Group>
+                </Show>
                 <p class="settings-hint">{scope() === "user" ? "These shared capabilities are available to every agent unless its own settings narrow access." : `These are ${agentName()}'s capabilities. Agent settings take precedence over shared defaults where the same name is configured.`}</p>
                 <Group title={`Skills (${visibleSkills().length})`}><Show when={visibleSkills().length > 0} fallback={<div class="capability-empty"><strong>No skills available</strong><span>Skills discovered for this scope will appear here.</span></div>}><div class="capability-list"><For each={visibleSkills()}>{(skill) => <details class="capability-item"><summary><span><CapabilityIcon name={skill.name} /><span class="capability-title"><strong>{skill.name}</strong><small>{skill.scope === "user" ? "Shared" : "This agent"}</small></span></span><span class="capability-state" classList={{ ready: !skill.shadowed, muted: !!skill.shadowed }}>{skill.shadowed ? "Overridden for this agent" : "Available"}</span></summary><div class="capability-detail"><p>{skill.description || "No description provided."}</p><Show when={skill.provenance}><small>{skill.provenance}</small></Show><Show when={(skill.path || skill.source) && technicalDetails()}><code>{skill.path || skill.source}</code></Show><button class="settings-button" onClick={async () => { try { await navigator.clipboard.writeText(`/skill ${skill.name} `); setNotice({ kind: "info", text: `Copied /skill ${skill.name} to your clipboard.` }); } catch { setNotice({ kind: "error", text: "Could not copy the skill command." }); } }}>Copy skill command</button></div></details>}</For></div></Show></Group>
                 <Group title={`Connections (${totalMcpCount()})`}><Show when={totalMcpCount() > 0} fallback={<div class="capability-empty"><strong>No connections configured</strong><span>{!inherits("mcp") ? "Shared connections are turned off for this agent. Add one under Manage or change this agent’s inheritance settings." : "Add one under Manage to give this agent more tools."}</span></div>}><div class="capability-list"><For each={Object.keys(mcpServers() ?? {})}>{(name) => <div class="capability-item capability-overview-row"><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state ready">{scope() === "user" ? "Shared" : "This agent"}</span></div>}</For><Show when={scope() === "workspace" && inherits("mcp")}><For each={Object.keys(inheritedMcpServers()).filter((name) => !(name in (mcpServers() ?? {})))}>{(name) => <div class="capability-item capability-overview-row"><CapabilityIcon name={name} /><strong>{name}</strong><span class="capability-state inherited">Inherited from Shared</span></div>}</For></Show></div></Show></Group>

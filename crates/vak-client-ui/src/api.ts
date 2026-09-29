@@ -836,7 +836,16 @@ export interface ConfigPatch {
   /// since approval modes shipped; the desktop just never sent it, so the
   /// one control deciding how gates resolve was browser-only.
   approval_mode?: string;
+  memory_search_enabled?: boolean;
+  memory_write_enabled?: boolean;
+  memory_reflection?: boolean;
+  memory_skill_proposals?: boolean;
   theme?: string;
+  inherit_mcp?: boolean;
+  inherit_hooks?: boolean;
+  inherit_skills?: boolean;
+  inherit_commands?: boolean;
+  inherit_plugins?: boolean;
   /// Grants `[plugins] network_allow` for the selected layer. An empty
   /// array clears the layer's grant (deny-by-default); absent leaves the
   /// layer untouched. Non-empty grants are refused for untrusted projects.
@@ -896,6 +905,16 @@ export function putGlobalMcpServers(servers: Record<string, McpServerDef>): Prom
 
 export function getGlobalRoute(): Promise<{ provider?: string | null; model?: string | null }> {
   return req("/config/global");
+}
+
+export function getPrivacyConfigLayer(scope: "user" | "workspace", agent?: string): Promise<{
+  permission_mode?: string | null;
+  approval_mode?: string | null;
+  permissions?: { allow?: string[]; ask?: string[]; deny?: string[] };
+  memory?: { search_enabled?: boolean | null; write_enabled?: boolean | null; reflection?: boolean | null; skill_proposals?: boolean | null };
+}> {
+  const path = scope === "user" ? "/config/global" : "/config/workspace";
+  return req(withAgent(path, agent));
 }
 
 export function patchGlobalConfig(body: ConfigPatch): Promise<void> {
