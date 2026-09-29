@@ -6080,7 +6080,7 @@ code.ic[data-previewable="true"]:hover {
 .office-formula-hint { color: var(--muted); }
 .office-formula { font-family: var(--mono); color: var(--text); }
 .office-formula-value { color: var(--text-soft); }
-.office-grid-scroll { min-height: 0; overflow: auto; border: 1px solid var(--border-soft); border-radius: 8px; }
+.office-grid-scroll { min-height: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; scrollbar-gutter: stable; border: 1px solid var(--border-soft); border-radius: 8px; }
 .office-workbook .office-grid-scroll { flex: 1; }
 .office-sheet-canvas { position: relative; display: inline-block; min-width: max(100%, 1000px); min-height: 720px; }
 .office-sheet-object { position: absolute; z-index: 2; }
@@ -6106,7 +6106,7 @@ code.ic[data-previewable="true"]:hover {
 .office-grid td.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
 .office-grid td:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .office-grid-flagged th { color: var(--text); text-decoration: underline dotted; }
-.office-sheet-tabs { padding-bottom: var(--space-3); }
+.office-sheet-tabs { display: flex; max-width: 100%; gap: var(--space-1); overflow-x: auto; overscroll-behavior-x: contain; padding-bottom: var(--space-3); }
 .office-structure { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-2); padding-bottom: var(--space-3); font-size: var(--fs-meta); }
 .office-structure p { margin: 0; color: var(--text-soft); }
 .office-structure h4 { margin: 6px 0 0; font-size: var(--fs-meta); }
@@ -6121,6 +6121,16 @@ code.ic[data-previewable="true"]:hover {
   .office-outline-open .office-outline { display: flex; }
   .office-outline-toggle { display: inline-flex; }
   .office-outline button { padding-left: var(--space-2); }
+  .office-view { min-width: 0; }
+  .office-view-content, .office-workbook, .office-grid-scroll { min-width: 0; max-width: 100%; }
+  .office-formula-bar { align-items: flex-start; gap: 6px 8px; padding: 8px; overflow-wrap: anywhere; }
+  .office-grid-scroll { -webkit-overflow-scrolling: touch; }
+  .office-sheet-canvas { min-width: max(100%, 640px); min-height: 0; }
+  .office-grid { font-size: var(--fs-caption); }
+  .office-grid th, .office-grid td { padding: 4px 6px; }
+  .office-grid col.office-grid-row-number { width: 38px; }
+  .office-sheet-tabs { flex: none; padding-bottom: 4px; }
+  .office-sheet-tabs button { flex: none; min-height: 40px; }
 }
 .office-structure .office-grid-scroll { flex: none; overflow-x: auto; overflow-y: visible; }
 

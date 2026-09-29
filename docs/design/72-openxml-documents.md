@@ -19,6 +19,11 @@ descriptions as anchored data so search and RAG can consume them without
 reverse-engineering screenshots. Generated and edited artifacts continue
 through the same draft, Review, acceptance, and raw-byte download paths;
 downloading an accepted file preserves its native package structure.
+The Canvas is also in scope at phone and tablet widths: controls must stay
+reachable, the page itself must not overflow horizontally, and workbook
+horizontal scrolling stays inside the grid so cell columns remain usable.
+Desktop and 390 × 844 browser checks are required before calling this stage
+done.
 
 **Progress — 2026-09-29.** Word and PowerPoint create native tables and
 PNG/JPEG images with alternative text; Excel creates native filterable tables,
@@ -54,6 +59,11 @@ through acceptance. The real dev app Canvas has been checked with generated
 workbook and slide drafts; the server acceptance test confirms the accepted
 XLSX keeps its chart clear of the D2 image and that the raw download equals the
 accepted file bytes.
+The workbook grid extends through the visible extent of lower anchored charts
+and images, keeping overlays inside the sheet's scroll surface. The real Canvas
+has also been checked at 1440 × 900 and 390 × 844: the page stays within the
+phone width, horizontal spreadsheet navigation remains inside the grid, and
+sheet tabs remain reachable.
 
 **2026-09-29 — full-fidelity workbook preview reopened by owner request.** The
 owner compared the Canvas with LibreOffice and asked why the spreadsheet view

@@ -640,7 +640,18 @@ function WorkbookGrid(props: {
     }
     const objectPoints = objectCells().map(cellAddress).filter((cell): cell is NonNullable<typeof cell> => Boolean(cell));
     const maxObjectColumn = objectPoints.reduce((max, cell) => Math.max(max, cell.column), 1);
-    const maxObjectRow = objectPoints.reduce((max, cell) => Math.max(max, cell.row), 1);
+    const objectRows = objectAnchors().flatMap(({ cell, endCell, heightPx }) => {
+      const start = cell ? cellAddress(cell) : null;
+      const end = endCell ? cellAddress(endCell) : null;
+      if (end) return [end.row];
+      if (!start || !heightPx) return start ? [start.row] : [];
+      const sheetAnchor = current()?.anchor ?? "";
+      const sheetName = sheetAnchor.endsWith("!") ? sheetAnchor.slice(0, -1) : sheetAnchor;
+      const defaultHeight = Math.max(props.geometry.default_row_heights[sheetName] ?? 20, 1);
+      const coveredRows = Math.max(1, Math.ceil(heightPx / defaultHeight));
+      return [Math.min(1_048_576, start.row + coveredRows - 1)];
+    });
+    const maxObjectRow = objectRows.reduce((max, row) => Math.max(max, row), 1);
     // Keep the familiar blank working area of a spreadsheet visible even
     // when the saved file has only a few used cells. Objects still extend
     // this viewport to their native anchor so their measured overlays land
