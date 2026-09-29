@@ -3018,20 +3018,23 @@ fn session_matches_route(
         let conv_ok = core
             .conversation_context()
             .is_none_or(|expected| header.conversation.as_ref() == Some(expected));
-        let capabilities_ok = header.contract.capabilities == core.capability_descriptors();
+        // Capabilities are rebound from the live admitted registry at each
+        // turn boundary. The frozen packet is an audit snapshot, not a
+        // reason to sever a conversation. In particular,
+        // `capability_descriptors()` is the unresolved projection and can
+        // differ from the admitted packet even with no configuration change.
         if has_channel_override {
             // Channel route overrides: session must match the pinned route.
             // Per-turn routing does not apply across explicit bot/channel splits.
             workspace_ok
                 && agent_ok
                 && conv_ok
-                && capabilities_ok
                 && header.contract.provider == provider
                 && header.contract.model == model
         } else {
-            // No override: per-turn routing handles provider/model, so any
-            // session in this workspace+conversation is valid if capabilities match.
-            workspace_ok && agent_ok && conv_ok && capabilities_ok
+            // No override: per-turn routing handles provider/model, so a
+            // session in this workspace and conversation remains valid.
+            workspace_ok && agent_ok && conv_ok
         }
     })
 }
@@ -4299,7 +4302,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn capability_contract_change_rotates_legacy_binding() {
+    async fn capability_snapshot_change_preserves_binding() {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new(dir.path().to_path_buf()).unwrap();
         core.set_sessions_home(dir.path().join("home"));
@@ -4333,14 +4336,7 @@ mod tests {
         );
 
         let fresh = resolve_session(&state, &core, "telegram:42").await.unwrap();
-
-        assert_ne!(fresh.id, "legacy-session");
-        let lock = fresh
-            .session
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let contract = &lock.as_ref().unwrap().header().unwrap().contract;
-        assert_eq!(contract.capabilities, core.capability_descriptors());
+        assert_eq!(fresh.id, "legacy-session");
         assert!(legacy_path.is_file(), "legacy ledger remains append-only");
     }
 

@@ -6486,9 +6486,9 @@ async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind
 async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> TurnOutcome {
     let summary = failed
         .iter()
-        .map(|(name, kind)| format!("- `{name}`: correctable fault ({kind:?})"))
+        .map(|(name, _)| format!("`{name}`"))
         .collect::<Vec<_>>()
-        .join("\n");
+        .join(", ");
     agent
         .record_activity(
             vak_session::ActivityKind::Diagnostic,
@@ -6518,12 +6518,10 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
         .await;
     let response = AssistantMessage {
         content: vec![ContentBlock::text(format!(
-            "I attempted the requested work, but the supporting tool calls failed \
-             and could not be repaired within the run's recovery budget. I will \
-             not sign off a fabricated answer. What failed:\n{summary}\n\nTo \
-             continue, either correct the inputs above and re-run, or widen the \
-             workspace capabilities / permissions if the failure is an admission \
-             gate."
+            "I couldn't complete this request because repeated calls to {summary} \
+             failed. I stopped rather than give an answer I couldn't support. \
+             The run record has the exact tool errors. Please try again after \
+             those errors are addressed."
         ))],
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),

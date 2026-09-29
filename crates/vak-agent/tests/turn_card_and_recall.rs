@@ -296,7 +296,14 @@ async fn recall_by_id_returns_the_full_evidence_content() {
                 "bash",
                 serde_json::json!({"command": "printf 'HELLO WORLD'"}),
             ),
-            tool_call_msg("t2", "recall", serde_json::json!({"id": "t1"})),
+            tool_call_msg(
+                "t2",
+                "recall",
+                serde_json::json!({
+                    "id": "t1", "turn": 0, "presentation": "",
+                    "range": {"start": 0, "end": 0}
+                }),
+            ),
             text_msg("done"),
         ],
         vec![Arc::new(BashTool)],

@@ -96,12 +96,16 @@ inherits the workspace route revision. First message from an unknown key
 creates a fresh session; later messages resume it across gateway restarts.
 
 Session contracts never mutate. Before every inbound dispatch, the gateway
-compares the bound session's workspace/provider/model contract and its frozen
-capability packet with the effective Core admission contract. Missing ledgers,
-route mismatches, and capability-contract mismatches are stale bindings:
+checks the bound session's workspace, agent, conversation identity, and any
+explicit channel route. Missing ledgers and mismatched identities or explicit
+routes are stale bindings:
 the old JSONL remains intact, the binding rotates, and the inbound message
 starts a fresh session under the new contract. This is how an administrative
 default propagates without corrupting history.
+Capability descriptions and availability are rebound from the live admitted
+registry at turn boundaries (doc 41); a difference from the session header's
+admission snapshot does not rotate the conversation. Revocation still applies
+to the next call through the live registry and permission boundary.
 
 Authenticated administration exposes register, pairwise route update,
 inherit-default, rotate-now, and remove operations. Status includes effective

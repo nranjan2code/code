@@ -42,12 +42,20 @@ pub enum RecallRequest {
 /// `id` but is not rejected when present alongside another field (the
 /// resolver simply ignores it) — the one-of check is what actually matters.
 pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
-    let turn = args.get("turn").and_then(Value::as_u64);
+    // Some providers materialize every optional schema property with an
+    // empty default. Treat those placeholders as absent while retaining the
+    // exactly-one-target rule for meaningful values.
+    let turn = args.get("turn").and_then(Value::as_u64).filter(|n| *n > 0);
     let presentation = args
         .get("presentation")
         .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
         .map(str::to_string);
-    let id = args.get("id").and_then(Value::as_str).map(str::to_string);
+    let id = args
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
     match (turn, presentation, id) {
         (Some(turn), None, None) => Ok(RecallRequest::Turn(turn)),
         (None, Some(presentation), None) => Ok(RecallRequest::Presentation(presentation)),
@@ -58,7 +66,8 @@ pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
                     let start = range.get("start").and_then(Value::as_u64);
                     let end = range.get("end").and_then(Value::as_u64);
                     match (start, end) {
-                        (Some(start), Some(end)) => Some((start, end)),
+                        (Some(0), Some(0)) => None,
+                        (Some(start), Some(end)) if start > 0 && end > 0 => Some((start, end)),
                         _ => {
                             return Err("'range' requires integer 'start' and 'end'".to_string());
                         }
@@ -194,6 +203,28 @@ mod tests {
         assert!(parse_recall_args(&json!({})).is_err());
         assert!(parse_recall_args(&json!({"turn": 1, "id": "x"})).is_err());
         assert!(parse_recall_args(&json!({"id": "x", "range": {"start": 1}})).is_err());
+    }
+
+    #[test]
+    fn ignores_provider_filled_optional_placeholders() {
+        let placeholders =
+            json!({"turn": 0, "presentation": "", "id": "", "range": {"start": 0, "end": 0}});
+        assert!(parse_recall_args(&placeholders).is_err());
+        let mut id_request = placeholders.clone();
+        id_request["id"] = json!("ev1");
+        assert_eq!(
+            parse_recall_args(&id_request).unwrap(),
+            RecallRequest::Id {
+                id: "ev1".into(),
+                range: None
+            }
+        );
+        let mut turn_request = placeholders;
+        turn_request["turn"] = json!(2);
+        assert_eq!(
+            parse_recall_args(&turn_request).unwrap(),
+            RecallRequest::Turn(2)
+        );
     }
 
     #[test]
