@@ -24,7 +24,12 @@ node_modules/
 __pycache__/
 # tools belong in the session cwd
 
+# Build and tool caches
+.cache/
+.remotion/
+
 # Claude Code session/worktree artifacts — never project content.
 .claude/
 # Poolside agent harness scratch (runtime settings, scratch, etc.) — never project content.
 .poolside/
+
