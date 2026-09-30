@@ -484,6 +484,22 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert!(!response_body.contains("abcd-efgh-ijkl-mnop"));
     assert!(!response_body.contains("owner@example.com"));
 
+    let duplicate_icloud = reqwest::Client::new()
+        .post(&icloud_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "email": "OWNER@example.com",
+            "app_specific_password": "qrst-uvwx-yzab-cdef",
+            "capabilities": ["calendar_read"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(duplicate_icloud.status(), reqwest::StatusCode::CONFLICT);
+    let duplicate_message = duplicate_icloud.text().await.unwrap();
+    assert!(!duplicate_message.contains("OWNER@example.com"));
+    assert!(!duplicate_message.contains("qrst-uvwx-yzab-cdef"));
+
     // Refresh failures are persisted in the owner-visible inventory without
     // exposing the provider principal or credential material.
     let google_vault = vak_mail_calendar::vault::AccountVault::for_agent("vak").unwrap();

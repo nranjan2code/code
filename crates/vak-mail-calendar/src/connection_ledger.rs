@@ -37,6 +37,12 @@ pub enum ConditionalUpdateError<E> {
     Operation(E),
 }
 
+#[derive(Debug)]
+pub enum ConditionalAppendError<E> {
+    Ledger(LedgerError),
+    Check(E),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[serde(deny_unknown_fields)]
@@ -163,6 +169,30 @@ impl ConnectionLedger {
             record_id: Uuid::now_v7().to_string(),
             account,
         })
+    }
+
+    /// Append a pending link only after checking the current ledger while
+    /// holding its cross-process exclusive lock. The check and append are one
+    /// transaction, so parallel server processes cannot both admit a link
+    /// that conflicts with current account state.
+    pub fn append_pending_if<E>(
+        &self,
+        account: ConnectedAccount,
+        check: impl FnOnce(&[ConnectedAccount]) -> Result<(), E>,
+    ) -> Result<(), ConditionalAppendError<E>> {
+        if !valid_account_record(&account, &self.agent_id)
+            || account.status != AccountStatus::Pending
+            || account.revision != 1
+        {
+            return Err(ConditionalAppendError::Ledger(LedgerError::InvalidRecord));
+        }
+        self.append_with_check(
+            &ConnectionEvent::Pending {
+                record_id: Uuid::now_v7().to_string(),
+                account,
+            },
+            check,
+        )
     }
 
     pub fn append_connected(&self, account: ConnectedAccount) -> Result<(), LedgerError> {
@@ -338,14 +368,31 @@ impl ConnectionLedger {
     }
 
     fn append(&self, event: &ConnectionEvent) -> Result<(), LedgerError> {
-        validate_agent_path(self.agent_id.as_str())?;
-        let parent = self.path.parent().ok_or(LedgerError::InvalidRecord)?;
-        create_private_dir(parent)?;
-        reject_symlink(parent)?;
+        match self.append_with_check(event, |_| Ok::<(), std::convert::Infallible>(())) {
+            Ok(()) => Ok(()),
+            Err(ConditionalAppendError::Ledger(error)) => Err(error),
+            Err(ConditionalAppendError::Check(never)) => match never {},
+        }
+    }
+
+    fn append_with_check<E>(
+        &self,
+        event: &ConnectionEvent,
+        check: impl FnOnce(&[ConnectedAccount]) -> Result<(), E>,
+    ) -> Result<(), ConditionalAppendError<E>> {
+        validate_agent_path(self.agent_id.as_str()).map_err(ConditionalAppendError::Ledger)?;
+        let parent = self
+            .path
+            .parent()
+            .ok_or(ConditionalAppendError::Ledger(LedgerError::InvalidRecord))?;
+        create_private_dir(parent)
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
+        reject_symlink(parent).map_err(ConditionalAppendError::Ledger)?;
         if self.path.exists() {
-            let metadata = fs::symlink_metadata(&self.path)?;
+            let metadata = fs::symlink_metadata(&self.path)
+                .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
             if metadata.file_type().is_symlink() || !metadata.is_file() {
-                return Err(LedgerError::InvalidRecord);
+                return Err(ConditionalAppendError::Ledger(LedgerError::InvalidRecord));
             }
         }
 
@@ -357,25 +404,47 @@ impl ConnectionLedger {
             options.mode(0o600);
             options.custom_flags(libc::O_NOFOLLOW);
         }
-        let mut file = options.open(&self.path)?;
-        file.lock_exclusive()?;
-        file.seek(SeekFrom::Start(0))?;
+        let mut file = options
+            .open(&self.path)
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
+        file.lock_exclusive()
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
+        file.seek(SeekFrom::Start(0))
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
         let mut current = Vec::new();
-        file.read_to_end(&mut current)?;
-        let mut accounts = self.decode_state(&current)?;
-        self.apply_event(&mut accounts, event)?;
-        file.seek(SeekFrom::End(0))?;
-        let line = serde_json::to_vec(event).map_err(|_| LedgerError::Encode)?;
+        file.read_to_end(&mut current)
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
+        let mut accounts = self
+            .decode_state(&current)
+            .map_err(ConditionalAppendError::Ledger)?;
+        let visible_accounts = accounts.values().cloned().collect::<Vec<_>>();
+        if let Err(error) = check(&visible_accounts) {
+            let _ = FileExt::unlock(&file);
+            return Err(ConditionalAppendError::Check(error));
+        }
+        self.apply_event(&mut accounts, event)
+            .map_err(ConditionalAppendError::Ledger)?;
+        file.seek(SeekFrom::End(0))
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
+        let line = serde_json::to_vec(event)
+            .map_err(|_| ConditionalAppendError::Ledger(LedgerError::Encode))?;
         if line.len() as u64 > MAX_RECORD_BYTES
-            || file.metadata()?.len().saturating_add(line.len() as u64 + 1) > MAX_LEDGER_BYTES
+            || file
+                .metadata()
+                .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?
+                .len()
+                .saturating_add(line.len() as u64 + 1)
+                > MAX_LEDGER_BYTES
         {
             let _ = FileExt::unlock(&file);
-            return Err(LedgerError::TooLarge);
+            return Err(ConditionalAppendError::Ledger(LedgerError::TooLarge));
         }
-        file.write_all(&line)?;
-        file.write_all(b"\n")?;
-        file.sync_data()?;
-        FileExt::unlock(&file)?;
+        file.write_all(&line)
+            .and_then(|_| file.write_all(b"\n"))
+            .and_then(|_| file.sync_data())
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
+        FileExt::unlock(&file)
+            .map_err(|error| ConditionalAppendError::Ledger(LedgerError::Io(error)))?;
         Ok(())
     }
 
@@ -598,7 +667,10 @@ fn is_uuid_v7(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConditionalUpdateError, ConnectionEvent, ConnectionLedger, LedgerError};
+    use super::{
+        ConditionalAppendError, ConditionalUpdateError, ConnectionEvent, ConnectionLedger,
+        LedgerError,
+    };
     use crate::{AccountStatus, Capability, ConnectedAccount, Provider};
     use chrono::Utc;
     use std::collections::{BTreeMap, BTreeSet};
@@ -654,6 +726,51 @@ mod tests {
                 },
             )
             .unwrap();
+    }
+
+    #[test]
+    fn pending_link_check_and_append_are_atomic_across_threads() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-pending-race-{}", Uuid::now_v7());
+        let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let workers = (0..2)
+            .map(|_| {
+                let ledger = ledger.clone();
+                let barrier = barrier.clone();
+                let agent_id = agent_id.clone();
+                std::thread::spawn(move || {
+                    let account_id = Uuid::now_v7().to_string();
+                    let mut account = connected_account(&agent_id, &account_id, 1);
+                    account.status = AccountStatus::Pending;
+                    barrier.wait();
+                    ledger.append_pending_if(account, |existing| {
+                        if existing.iter().any(|account| {
+                            account.provider == Provider::Google && account.revoked_at.is_none()
+                        }) {
+                            Err(())
+                        } else {
+                            Ok(())
+                        }
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+
+        let results = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(ConditionalAppendError::Check(()))))
+                .count(),
+            1
+        );
+        assert_eq!(ledger.read_all().unwrap().len(), 1);
     }
 
     #[test]

@@ -144,9 +144,14 @@ provider write scopes until Stage 3 has the reviewed effect path.
 **Exit:** local contract tests and provider test doubles prove callback replay
 rejection, wrong-principal rejection, scoped account/audience isolation,
 credential redaction, bounded OAuth responses, exact granted-scope handling,
-refresh grant-ceiling preservation, and idempotent local disconnect. Each
-provider reports linked, unverified, reauthentication-required, or explicitly
-unsupported status without implying that content access has been tested.
+refresh grant-ceiling preservation, duplicate-principal rejection, and
+idempotent local disconnect. Each provider reports linked, unverified,
+reauthentication-required, or explicitly unsupported status without implying
+that content access has been tested. Multiple distinct accounts per provider
+remain supported; pending links serialize per Agent/provider, and an active
+principal cannot accumulate a second capability grant. A second attempt made
+while a provider link is pending receives a conflict and can be retried after
+the first link finishes or is cleaned up.
 
 ### Stage 1B — bounded content reads, after M7
 
@@ -748,6 +753,13 @@ authorization and approval boundary on every execution path.
   per-account serialization locks are reclaimed from the shared weak-reference
   table as new accounts are handled. This protects long-lived service memory;
   the focused test and workspace formatting check pass.
+- 2026-09-30: Account linking now rejects a second active connection for the
+  same provider principal and Agent, preventing repeated links with different
+  capability selections from accumulating authority. The ledger performs the
+  principal check atomically with pending-link append across processes; pending
+  same-provider links reject a second attempt before its secret exists. iCloud account
+  email matching is case-insensitive, and the ledger retains no identity
+  fingerprint. OAuth domain and owner/Agent HTTP regressions pass.
 - 2026-09-30: Rechecked Apple's documented third-party account authorization.
   Apple Support describes Apple Account authorization and revocation for
   supported apps. The developer OAuth flow reviewed applies to the Apple School

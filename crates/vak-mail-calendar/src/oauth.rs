@@ -57,6 +57,10 @@ pub enum OAuthExchangeError {
     Persistence,
     #[error("connected account does not match the Agent vault")]
     AgentMismatch,
+    #[error("this provider identity is already connected to the Agent")]
+    AccountAlreadyConnected,
+    #[error("another account connection for this provider is still in progress")]
+    AccountLinkInProgress,
     #[error("provider authorization setup is unavailable")]
     Setup(#[from] OAuthError),
 }
@@ -148,8 +152,34 @@ impl RedeemedAuthorization {
             revoked_at: None,
         };
         ledger
-            .append_pending(account.clone())
-            .map_err(|_| OAuthExchangeError::Persistence)?;
+            .append_pending_if(account.clone(), |existing| {
+                for linked in existing.iter().filter(|linked| {
+                    linked.provider == self.provider && linked.revoked_at.is_none()
+                }) {
+                    if linked.status == AccountStatus::Pending {
+                        return Err(OAuthExchangeError::AccountLinkInProgress);
+                    }
+                    if !matches!(
+                        linked.status,
+                        AccountStatus::Connected | AccountStatus::ReauthenticationRequired
+                    ) {
+                        continue;
+                    }
+                    let stored = vault
+                        .load(&linked.id)
+                        .map_err(|_| OAuthExchangeError::Persistence)?;
+                    if stored.has_same_principal(&self.secret_material) {
+                        return Err(OAuthExchangeError::AccountAlreadyConnected);
+                    }
+                }
+                Ok(())
+            })
+            .map_err(|error| match error {
+                crate::connection_ledger::ConditionalAppendError::Ledger(_) => {
+                    OAuthExchangeError::Persistence
+                }
+                crate::connection_ledger::ConditionalAppendError::Check(error) => error,
+            })?;
         account.status = AccountStatus::Connected;
         account.revision = 2;
         let account_id = account.id.clone();
@@ -2283,6 +2313,112 @@ mod tests {
             other_vault.load(&account_id),
             Err(crate::vault::VaultError::Unavailable)
         ));
+    }
+
+    #[test]
+    fn provider_principal_can_have_only_one_active_account_link_per_agent() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-unique-principal-{}", uuid::Uuid::now_v7());
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
+        let make_redeemed = |provider, principal: &str, capability| RedeemedAuthorization {
+            account_id: uuid::Uuid::now_v7().to_string(),
+            provider,
+            agent_id: agent_id.clone(),
+            audiences: vec![format!("agent:{agent_id}")],
+            capabilities: vec![capability],
+            granted_scopes: scopes_for(provider, &[capability])
+                .unwrap()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            access_token_expires_at: Utc::now() + chrono::Duration::minutes(30),
+            refresh_token_available: true,
+            secret_material: AccountSecretMaterial::new(
+                principal.to_owned(),
+                Some("person@example.com".into()),
+                Some("public-client".into()),
+                Some("access-secret".into()),
+                Some("refresh-secret".into()),
+                None,
+                None,
+            )
+            .unwrap(),
+        };
+
+        let first = make_redeemed(
+            Provider::Google,
+            "google:stable-subject",
+            Capability::MailRead,
+        );
+        let first_account_id = first.account_id.clone();
+        first.persist(&vault, &ledger).unwrap();
+
+        let duplicate = make_redeemed(
+            Provider::Google,
+            "google:stable-subject",
+            Capability::CalendarRead,
+        );
+        let duplicate_account_id = duplicate.account_id.clone();
+        assert!(matches!(
+            duplicate.persist(&vault, &ledger),
+            Err(OAuthExchangeError::AccountAlreadyConnected)
+        ));
+        assert!(matches!(
+            vault.load(&duplicate_account_id),
+            Err(crate::vault::VaultError::Unavailable)
+        ));
+
+        let pending_id = uuid::Uuid::now_v7().to_string();
+        let pending = ConnectedAccount {
+            id: pending_id.clone(),
+            provider: Provider::Google,
+            status: AccountStatus::Pending,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: scopes_for(Provider::Google, &[Capability::MailRead])
+                .unwrap()
+                .into_iter()
+                .map(str::to_owned)
+                .collect(),
+            credential_ref: AccountVault::credential_ref(&pending_id).unwrap(),
+            principal_ref: AccountVault::credential_ref(&pending_id).unwrap(),
+            revision: 1,
+            connected_at: Utc::now(),
+            access_token_expires_at: Some(Utc::now() + chrono::Duration::minutes(30)),
+            refresh_token_available: true,
+            revoked_at: None,
+        };
+        ledger.append_pending(pending).unwrap();
+        let distinct = make_redeemed(
+            Provider::Google,
+            "google:another-subject",
+            Capability::CalendarRead,
+        );
+        assert!(matches!(
+            distinct.persist(&vault, &ledger),
+            Err(OAuthExchangeError::AccountLinkInProgress)
+        ));
+        ledger.append_revoked(&pending_id, Utc::now()).unwrap();
+
+        let distinct = make_redeemed(
+            Provider::Google,
+            "google:another-subject",
+            Capability::CalendarRead,
+        );
+        distinct.persist(&vault, &ledger).unwrap();
+        let accounts = ledger.read_all().unwrap();
+        assert_eq!(
+            accounts
+                .iter()
+                .filter(|account| {
+                    account.status == AccountStatus::Connected && account.revoked_at.is_none()
+                })
+                .count(),
+            2
+        );
+        assert!(vault.load(&first_account_id).is_ok());
     }
 
     #[test]

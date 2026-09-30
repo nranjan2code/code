@@ -202,6 +202,13 @@ authorized space, then narrowed to the Agent and audience allowed to use it;
 linking an account does not publish its content to every Agent or channel.
 Child runs inherit at most the parent call's scoped authority. Account
 unlinking revokes active leases before the UI reports disconnection.
+An Agent may link multiple distinct accounts for one provider, but may have
+only one active link for the same provider principal. A duplicate link cannot
+silently accumulate a second capability selection; disconnect the existing
+link before reconnecting that identity with a different selection. While a
+link is pending, another link for that provider and Agent is rejected until it
+finishes or is cleaned up. Principal comparison stays inside the Agent vault;
+the connection ledger contains no identity fingerprint or mailbox address.
 
 Reads select message IDs, threads, folders, calendars, or a bounded time
 window. Search is a deliberate, scoped operation with a result cap. Free/busy

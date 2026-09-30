@@ -117,6 +117,18 @@ impl AccountSecretMaterial {
         }
         Some(format!("{first}***@{domain}"))
     }
+
+    /// Compare vaulted provider subject identifiers without exposing them to
+    /// callers or serializing them into the account ledger.
+    pub fn has_same_principal(&self, other: &Self) -> bool {
+        self.principal == other.principal
+    }
+
+    /// iCloud's current local enrollment uses an email hint rather than a
+    /// provider-issued stable subject, so compare it case-insensitively.
+    pub fn has_same_principal_ignoring_ascii_case(&self, other: &Self) -> bool {
+        self.principal.eq_ignore_ascii_case(&other.principal)
+    }
 }
 
 impl Drop for AccountSecretMaterial {

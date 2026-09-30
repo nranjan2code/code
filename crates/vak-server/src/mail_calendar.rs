@@ -410,8 +410,53 @@ pub(super) async fn connect_icloud(
         refresh_token_available: false,
         revoked_at: None,
     };
-    if ledger.append_pending(account.clone()).is_err() {
-        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    match ledger.append_pending_if(account.clone(), |existing| {
+        for linked in existing.iter().filter(|linked| {
+            linked.provider == Provider::AppleIcloud && linked.revoked_at.is_none()
+        }) {
+            if linked.status == AccountStatus::Pending {
+                return Err(IcloudPendingCheckError::LinkInProgress);
+            }
+            if !matches!(
+                linked.status,
+                AccountStatus::Connected | AccountStatus::ReauthenticationRequired
+            ) {
+                continue;
+            }
+            let stored = vault
+                .load(&linked.id)
+                .map_err(|_| IcloudPendingCheckError::VaultUnavailable)?;
+            if stored.has_same_principal_ignoring_ascii_case(&material) {
+                return Err(IcloudPendingCheckError::AlreadyConnected);
+            }
+        }
+        Ok(())
+    }) {
+        Ok(()) => {}
+        Err(vak_mail_calendar::connection_ledger::ConditionalAppendError::Check(
+            IcloudPendingCheckError::AlreadyConnected,
+        )) => {
+            request.app_specific_password.0.zeroize();
+            return (
+                StatusCode::CONFLICT,
+                "This iCloud account is already connected to this Agent. Disconnect it before changing its access selection.",
+            )
+                .into_response();
+        }
+        Err(vak_mail_calendar::connection_ledger::ConditionalAppendError::Check(
+            IcloudPendingCheckError::LinkInProgress,
+        )) => {
+            request.app_specific_password.0.zeroize();
+            return (
+                StatusCode::CONFLICT,
+                "Another iCloud account connection for this Agent is still pending. Finish its cleanup before trying again.",
+            )
+                .into_response();
+        }
+        Err(_) => {
+            request.app_specific_password.0.zeroize();
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
+        }
     }
     account.status = AccountStatus::Connected;
     account.revision = 2;
@@ -466,6 +511,13 @@ fn is_loopback_request(headers: &HeaderMap, peer: SocketAddr) -> bool {
                 Some("localhost" | "127.0.0.1" | "::1" | "[::1]")
             )
         })
+}
+
+#[derive(Debug)]
+enum IcloudPendingCheckError {
+    AlreadyConnected,
+    LinkInProgress,
+    VaultUnavailable,
 }
 
 fn wipe_request_bytes(body: Bytes) {
@@ -938,6 +990,34 @@ pub(super) async fn oauth_callback(
             );
         }
     };
+    let Some(_provider_guard) = active_provider_link_guard(&state, &agent_id, grant.provider).await
+    else {
+        return oauth_callback_page(
+            StatusCode::NOT_FOUND,
+            "Agent unavailable",
+            "The Agent that started this account connection is no longer active. Start again from an active Agent's Settings.",
+            false,
+        );
+    };
+    if !state.mail_calendar_oauth.is_current(&grant) {
+        return oauth_callback_page(
+            StatusCode::CONFLICT,
+            "Account connection cancelled",
+            "This account connection was cancelled while sign-in was finishing. Start again from Settings if you still want to connect it.",
+            false,
+        );
+    }
+    if grant
+        .initiating_session_id()
+        .is_some_and(|session| !state.browser_sessions.valid(session))
+    {
+        return oauth_callback_page(
+            StatusCode::BAD_REQUEST,
+            "Sign in again",
+            "The browser session that started this account connection has expired. Start again from Settings.",
+            false,
+        );
+    }
     let persisted = if redeemed.account_id != account_id {
         None
     } else {
@@ -951,6 +1031,22 @@ pub(super) async fn oauth_callback(
                 StatusCode::CONFLICT,
                 "Account connection cancelled",
                 "This account connection was cancelled while sign-in was finishing. Start again from Settings if you still want to connect it.",
+                false,
+            );
+        }
+        Some(Err(vak_mail_calendar::oauth::OAuthExchangeError::AccountAlreadyConnected)) => {
+            return oauth_callback_page(
+                StatusCode::CONFLICT,
+                "Account already connected",
+                "This provider account is already connected to this Agent. Disconnect it before changing its access selection.",
+                false,
+            );
+        }
+        Some(Err(vak_mail_calendar::oauth::OAuthExchangeError::AccountLinkInProgress)) => {
+            return oauth_callback_page(
+                StatusCode::CONFLICT,
+                "Account connection in progress",
+                "Another account connection for this provider is still pending. Finish its cleanup before trying again.",
                 false,
             );
         }
