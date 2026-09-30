@@ -327,7 +327,21 @@ updates/deletions remain unavailable in the unassigned path. Verification:
 111 mail-calendar unit tests, Core mail-calendar tests, server account-scoped
 candidate HTTP tests, server library check, formatting and diff checks, and
 web build pass. The isolated preview refresh and signed-in browser acceptance
-remain open.
+passed for accountless local-draft workflows; connected-account
+source-to-Review acceptance remains open.
+
+**Implemented increment (2026-10-01):** browser acceptance in the isolated
+`mail-calendar-dev-test` profile exercised a synthetic local event through
+create, exact local preview, save, edit, close, and reopen with no provider
+account. It exposed a duplicate autosave race after an explicit save. The UI
+now clears stale debounce timers on explicit save, draft switch/open, and
+close; a browser recheck waited beyond the debounce window and confirmed the
+candidate stayed at revision 4 rather than receiving a duplicate revision.
+Provider credential warning/forms were also checked at 1440×900 and 390×844
+in both themes; their phone layout was fixed to keep warnings full-width and
+stack the inputs. These are visual observations from the running browser;
+the screenshot files required for the full evidence package, source-to-Review
+acceptance, and connected-account checks remain open.
 
 **Implemented increment (2026-09-30):** owner calendar and availability
 previews now accept a selected local date range of up to 30 days, convert the
@@ -1232,6 +1246,15 @@ authorization and approval boundary on every execution path.
   candidate. The 111 mail-calendar tests, Core and server boundary tests, web
   build, format check, and diff check pass; the isolated preview and signed-in
   browser acceptance remain open.
+- 2026-10-01: Exercised the no-account draft UI in the isolated home-folder
+  test profile with a clearly synthetic event: local preview, save, revision,
+  close, and reopen. Fixed a stale autosave timer that could create a second
+  revision after manual Save; a browser wait past 900 ms confirmed the
+  revision remained single. Responsive provider-credential cards were
+  reviewed at 1440×900 and 390×844 in light and dark, and warning text and
+  fields now stack correctly on phones. The preview contains only test data
+  and no provider account; full source-to-Review screenshots and provider
+  account acceptance remain open.
 - 2026-09-30: Added a live local-field preview to the draft editor. It shows
   the current email recipients/subject/body or calendar title/local times/
   location/description and source references, and states that no provider

@@ -97,8 +97,8 @@ function Switch(props: { checked: boolean; onChange: (next: boolean) => void; la
   return <button type="button" class="switch" classList={{ on: props.checked }} role="switch" aria-checked={props.checked} aria-label={props.label} onClick={() => props.onChange(!props.checked)}><span /></button>;
 }
 
-function Row(props: { title: string; description: string; children: JSX.Element; danger?: boolean }) {
-  return <div class="setting-row" classList={{ danger: props.danger }}><div class="setting-copy"><strong>{props.title}</strong><span>{props.description}</span></div><div class="setting-control">{props.children}</div></div>;
+function Row(props: { title: string; description: string; children: JSX.Element; danger?: boolean; className?: string }) {
+  return <div class={`setting-row${props.className ? ` ${props.className}` : ""}`} classList={{ danger: props.danger }}><div class="setting-copy"><strong>{props.title}</strong><span>{props.description}</span></div><div class="setting-control">{props.children}</div></div>;
 }
 
 function Group(props: { title?: string; id?: string; children: JSX.Element }) {
@@ -1216,6 +1216,10 @@ export default function Settings() {
   const [mailCalendarWatchNewMail, setMailCalendarWatchNewMail] = createSignal(false);
   const [mailCalendarRoutineSaving, setMailCalendarRoutineSaving] = createSignal(false);
   let mailCalendarDraftTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearMailCalendarDraftTimer = () => {
+    if (mailCalendarDraftTimer) clearTimeout(mailCalendarDraftTimer);
+    mailCalendarDraftTimer = undefined;
+  };
   let mailCalendarRoutineFolderGeneration = 0;
   createEffect(() => {
     const accountId = mailCalendarEditorAccount();
@@ -1686,6 +1690,7 @@ export default function Settings() {
   };
   const saveMailCalendarDraft = async () => {
     if (mailCalendarSavingDraft()) return;
+    clearMailCalendarDraftTimer();
     const action = buildMailCalendarDraftAction();
     if (!action) {
       setNotice({ kind: "error", text: "Complete the draft fields before saving." });
@@ -1708,8 +1713,13 @@ export default function Settings() {
       const latestAction = buildMailCalendarDraftAction();
       setMailCalendarDirty(JSON.stringify(latestAction) !== JSON.stringify(action));
       setNotice({ kind: "info", text: "Draft saved in this Agent's secure work area. Nothing was sent or changed on the provider." });
-      if (mailCalendarDirty() && mailCalendarDraftTimer) clearTimeout(mailCalendarDraftTimer);
-      if (mailCalendarDirty()) mailCalendarDraftTimer = setTimeout(() => void saveMailCalendarDraft(), 900);
+      if (mailCalendarDirty()) {
+        clearMailCalendarDraftTimer();
+        mailCalendarDraftTimer = setTimeout(() => {
+          mailCalendarDraftTimer = undefined;
+          void saveMailCalendarDraft();
+        }, 900);
+      }
     } catch (error) {
       setNotice({ kind: "error", text: `Could not save this draft: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -1719,10 +1729,14 @@ export default function Settings() {
   const markMailCalendarDraftDirty = () => {
     if (!mailCalendarEditingCandidate()) return;
     setMailCalendarDirty(true);
-    if (mailCalendarDraftTimer) clearTimeout(mailCalendarDraftTimer);
-    mailCalendarDraftTimer = setTimeout(() => void saveMailCalendarDraft(), 900);
+    clearMailCalendarDraftTimer();
+    mailCalendarDraftTimer = setTimeout(() => {
+      mailCalendarDraftTimer = undefined;
+      void saveMailCalendarDraft();
+    }, 900);
   };
   const startMailCalendarDraft = (accountId: string, kind: "mail" | "calendar", sourceRefs: api.MailCalendarCandidate["source_refs"] = []) => {
+    clearMailCalendarDraftTimer();
     setMailCalendarEditorAccount(accountId);
     setMailCalendarEditorKind(kind);
     setMailCalendarDraftPreviewOpen(false);
@@ -1748,6 +1762,7 @@ export default function Settings() {
     setMailCalendarDirty(false);
   };
   const openMailCalendarDraft = (candidate: api.MailCalendarCandidate) => {
+    clearMailCalendarDraftTimer();
     if (candidate.action.kind === "cancel_event") {
       reviewAndCancelCalendarEvent(candidate);
       return;
@@ -2027,7 +2042,7 @@ export default function Settings() {
     }
   };
   const cancelMailCalendarDraftEditor = () => {
-    if (mailCalendarDraftTimer) clearTimeout(mailCalendarDraftTimer);
+    clearMailCalendarDraftTimer();
     setMailCalendarEditorKind(null);
     setMailCalendarEditingCandidate(null);
     setMailCalendarDirty(false);
@@ -2868,23 +2883,23 @@ export default function Settings() {
               <Group title="Connect an account">
                 <Row title="Google · OAuth (recommended)" description="Sign in with Google using a local PKCE flow. Only the access you select is requested. If setup is missing, configure VAK_GOOGLE_OAUTH_CLIENT_ID on this host with a Desktop OAuth client."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("google")}>Connect with Google</button></Row>
                 <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">Google App Password setup is available only when Vakyartha and this browser run on the same device. OAuth remains the recommended method.</p>}>
-                  <Row title="Google Gmail · App Password" description="Optional older sign-in for MailRead only. It cannot access Calendar or send email.">
+                  <Row title="Google Gmail · App Password" description="Optional older sign-in for MailRead only. It cannot access Calendar or send email." className="mail-calendar-credential-row">
                     <p class="settings-hint">Warning: an App Password is a long-lived account credential and is less secure than OAuth. Use a separate password for Vakyartha, then revoke it in your Google Account security settings when you disconnect. Never enter your regular Google password.</p>
-                    <div class="settings-actions"><input type="email" autocomplete="username" value={googleAppEmail()} onInput={(event) => setGoogleAppEmail(event.currentTarget.value)} placeholder="name@gmail.com" /><input type="password" autocomplete="new-password" value={googleAppPassword()} onInput={(event) => setGoogleAppPassword(event.currentTarget.value)} placeholder="Google App Password" /><button class="settings-button" disabled={mailCalendarBusy() || !googleAppEmail() || !googleAppPassword()} onClick={() => void connectGoogleAppPassword()}>Connect Gmail</button></div>
+                    <div class="settings-actions mail-calendar-credential-fields"><input type="email" autocomplete="username" value={googleAppEmail()} onInput={(event) => setGoogleAppEmail(event.currentTarget.value)} placeholder="name@gmail.com" /><input type="password" autocomplete="new-password" value={googleAppPassword()} onInput={(event) => setGoogleAppPassword(event.currentTarget.value)} placeholder="Google App Password" /><button class="settings-button" disabled={mailCalendarBusy() || !googleAppEmail() || !googleAppPassword()} onClick={() => void connectGoogleAppPassword()}>Connect Gmail</button></div>
                   </Row>
                 </Show>
                 <Row title="Microsoft · OAuth (recommended)" description="Outlook email and calendar through local delegated OAuth with PKCE. Configure VAK_MICROSOFT_OAUTH_CLIENT_ID with an Entra public client. No client secret is used."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("microsoft")}>Connect with Microsoft</button></Row>
                 <p class="settings-hint">Exchange Online and Microsoft 365 accounts require OAuth. Never enter your regular Microsoft password here.</p>
                 <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">Outlook.com app-password setup is available only when Vakyartha and this browser run on the same device.</p>}>
-                  <Row title="Outlook.com · App password (email only)" description="For personal Outlook.com, Live, Hotmail, or MSN accounts only. Vakyartha verifies the fixed-host IMAP sign-in before saving it.">
+                  <Row title="Outlook.com · App password (email only)" description="For personal Outlook.com, Live, Hotmail, or MSN accounts only. Vakyartha verifies the fixed-host IMAP sign-in before saving it." className="mail-calendar-credential-row">
                     <p class="settings-hint">Security warning: this is a long-lived credential using Microsoft's legacy IMAP sign-in and is less secure than OAuth. Microsoft may reject it or disable this path. It grants email reading only; no calendar, send, or provider changes. Create a unique app password in Microsoft Account security settings, then revoke it there when disconnected. Do not use your regular Microsoft password or a work/school Exchange password.</p>
-                    <div class="settings-actions"><input type="email" autocomplete="username" value={microsoftAppEmail()} onInput={(event) => setMicrosoftAppEmail(event.currentTarget.value)} placeholder="name@outlook.com" /><input type="password" autocomplete="new-password" value={microsoftAppPassword()} onInput={(event) => setMicrosoftAppPassword(event.currentTarget.value)} placeholder="Microsoft app password" /><button class="settings-button" disabled={mailCalendarBusy() || !microsoftAppEmail() || !microsoftAppPassword()} onClick={() => void connectMicrosoftAppPassword()}>Connect Outlook.com</button></div>
+                    <div class="settings-actions mail-calendar-credential-fields"><input type="email" autocomplete="username" value={microsoftAppEmail()} onInput={(event) => setMicrosoftAppEmail(event.currentTarget.value)} placeholder="name@outlook.com" /><input type="password" autocomplete="new-password" value={microsoftAppPassword()} onInput={(event) => setMicrosoftAppPassword(event.currentTarget.value)} placeholder="Microsoft app password" /><button class="settings-button" disabled={mailCalendarBusy() || !microsoftAppEmail() || !microsoftAppPassword()} onClick={() => void connectMicrosoftAppPassword()}>Connect Outlook.com</button></div>
                   </Row>
                 </Show>
                 <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">For security, add iCloud app-specific passwords only from Vakyartha running on this device. The credential form is unavailable on hosted servers.</p>}>
-                  <Row title="Apple iCloud · App-specific password" description="This build uses a password generated at account.apple.com. Apple also documents account authorization for supported third-party apps, but Vakyartha has no verified integration for it yet.">
+                  <Row title="Apple iCloud · App-specific password" description="This build uses a password generated at account.apple.com. Apple also documents account authorization for supported third-party apps, but Vakyartha has no verified integration for it yet." className="mail-calendar-credential-row">
                     <p class="settings-hint">Security warning: this provider password can grant broader iCloud access than the single capability selected here. It is stored in this Agent's local credential vault, but Apple controls its scope. Use a unique app-specific password, select one access at a time, and revoke it at account.apple.com when you disconnect. Never enter your Apple Account password.</p>
-                    <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
+                    <div class="settings-actions mail-calendar-credential-fields"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
                   </Row>
                   <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. Connect one verified access at a time: “Read email” provides bounded inbox metadata and separately selected plain-text message reads; “Check availability” returns busy intervals only; “Read calendar events” provides a bounded calendar preview. Provider changes and combinations of these accesses are unavailable. Remove the password at Apple to revoke it.</p>
                 </Show>

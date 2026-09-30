@@ -2381,6 +2381,12 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .settings-callout strong { color: var(--text-soft); font-size: var(--fs-meta); }
 .settings-callout span { color: var(--muted); font-size: var(--fs-caption); }
 .settings-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: -10px; }
+.mail-calendar-credential-row { align-items: stretch; flex-direction: column; gap: var(--space-2); }
+.mail-calendar-credential-row .setting-copy { width: 100%; }
+.mail-calendar-credential-row .setting-control { width: 100%; max-width: none; flex-direction: column; align-items: stretch; }
+.mail-calendar-credential-row .settings-hint { margin: 0; }
+.mail-calendar-credential-fields { display: grid; width: 100%; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; margin-top: 0; }
+.mail-calendar-credential-fields input { width: 100%; min-width: 0; }
 .settings-preview { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 17px 18px; }
 .settings-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 10px 0; border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: var(--fs-control); }
 .mail-calendar-preview-item { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--surface-raised); }
@@ -2448,6 +2454,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-draft-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
 .mail-calendar-draft-preview pre { max-height: 300px; margin: 0; overflow: auto; padding: 10px; border-radius: 7px; background: var(--surface-raised); color: var(--text-primary); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 560px) {
+  .mail-calendar-credential-fields { grid-template-columns: minmax(0, 1fr); }
   .mail-calendar-draft-row { align-items: flex-start; flex-direction: column; }
   .mail-calendar-event { grid-template-columns: 1fr; gap: 4px; }
   .mail-calendar-time-grid.is-week { grid-template-columns: 50px repeat(7, minmax(116px, 1fr)); }
