@@ -90,7 +90,11 @@ available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
-surface grant. Local drafts, scheduled read-only routines, and an explicitly
+surface grant. Calendar and availability previews accept an owner-selected
+local date range of up to 30 days and show when the result was refreshed;
+times are rendered in the device's time zone. Inbox navigation remains a
+bounded recent-message view without search or folder selection. Local drafts,
+scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at
 most the routine's configured batch by explicit IDs. Apple carries a

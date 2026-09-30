@@ -1110,6 +1110,12 @@ export default function Settings() {
   };
   const agentName = () => activeAgentId() === "vak" ? "Vakyartha" : activeAgent()?.name ?? "Vakyartha";
   const agentLook = () => activeAgentId() === "vak" ? { character: "vak", animation: "subtle" as const } : { character: activeAgent()?.character ?? "vak", animation: activeAgent()?.animation ?? "subtle" };
+  const toLocalDateInput = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 10);
+  const todayForMailCalendar = new Date();
+  const [mailCalendarRangeFrom, setMailCalendarRangeFrom] = createSignal(toLocalDateInput(todayForMailCalendar));
+  const initialRangeEnd = new Date(todayForMailCalendar);
+  initialRangeEnd.setDate(initialRangeEnd.getDate() + 13);
+  const [mailCalendarRangeTo, setMailCalendarRangeTo] = createSignal(toLocalDateInput(initialRangeEnd));
   const [mailCalendarAccounts, { refetch: refreshMailCalendarAccounts }] = createResource(
     () => page() === "mail-calendar" ? activeAgentId() : null,
     (agentId) => agentId ? api.listMailCalendarAccounts(agentId) : Promise.resolve({ accounts: [] }),
@@ -1137,6 +1143,9 @@ export default function Settings() {
     messages?: api.MailCalendarMailPreview[];
     events?: api.MailCalendarEventPreview[];
     busy?: api.MailCalendarBusySlot[];
+    from?: string;
+    to?: string;
+    refreshedAt?: string;
   } | null>(null);
   let mailCalendarPreviewGeneration = 0;
   const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
@@ -1292,7 +1301,11 @@ export default function Settings() {
       setMailCalendarBusy(false);
     }
   };
-  const loadMailCalendarPreview = async (account: api.MailCalendarAccount, kind: "mail" | "calendar" | "freebusy") => {
+  const loadMailCalendarPreview = async (
+    account: api.MailCalendarAccount,
+    kind: "mail" | "calendar" | "freebusy",
+    selectedRange?: { from: string; to: string },
+  ) => {
     const requestedAgentId = activeAgentId();
     const requestGeneration = ++mailCalendarPreviewGeneration;
     setMailCalendarBusy(true);
@@ -1301,18 +1314,38 @@ export default function Settings() {
       if (kind === "mail") {
         const result = await api.previewMailCalendarMail(requestedAgentId, account.id);
         if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages });
+        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages, refreshedAt: new Date().toISOString() });
       } else {
-        const from = new Date();
-        const to = new Date(from.getTime() + (kind === "freebusy" ? 7 : 14) * 24 * 60 * 60 * 1000);
+        const fromDate = selectedRange?.from || mailCalendarRangeFrom();
+        const toDate = selectedRange?.to || mailCalendarRangeTo();
+        const fromDayUtc = Date.parse(`${fromDate}T00:00:00Z`);
+        const toDayUtc = Date.parse(`${toDate}T00:00:00Z`);
+        const from = new Date(`${fromDate}T00:00:00`);
+        const to = new Date(`${toDate}T00:00:00`);
+        to.setDate(to.getDate() + 1);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fromDate)
+          || !/^\d{4}-\d{2}-\d{2}$/.test(toDate)
+          || !Number.isFinite(from.getTime())
+          || !Number.isFinite(to.getTime())
+          || to <= from
+          || !Number.isFinite(fromDayUtc)
+          || !Number.isFinite(toDayUtc)
+          || toDayUtc < fromDayUtc
+          || (toDayUtc - fromDayUtc) / (24 * 60 * 60 * 1000) + 1 > 30
+          || to.getTime() - from.getTime() > 31 * 24 * 60 * 60 * 1000) {
+          setMailCalendarPreview(null);
+          setNotice({ kind: "error", text: "Choose a valid date range of up to 30 days." });
+          return;
+        }
+        const range = { from: from.toISOString(), to: to.toISOString() };
         if (kind === "calendar") {
-          const result = await api.previewMailCalendarEvents(requestedAgentId, account.id, from.toISOString(), to.toISOString());
+          const result = await api.previewMailCalendarEvents(requestedAgentId, account.id, range.from, range.to);
           if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events });
+          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events, ...range, refreshedAt: new Date().toISOString() });
         } else {
-          const result = await api.previewMailCalendarFreeBusy(requestedAgentId, account.id, from.toISOString(), to.toISOString());
+          const result = await api.previewMailCalendarFreeBusy(requestedAgentId, account.id, range.from, range.to);
           if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-          setMailCalendarPreview({ accountId: account.id, kind, loading: false, busy: result.busy });
+          setMailCalendarPreview({ accountId: account.id, kind, loading: false, busy: result.busy, ...range, refreshedAt: new Date().toISOString() });
         }
       }
     } catch (error) {
@@ -2494,7 +2527,19 @@ export default function Settings() {
               </Group>
               <Group title="Preview, routines and deletion">
                 <Show when={mailCalendarPreview()} keyed>{(preview) => <div class="settings-preview" aria-live="polite">
-                  <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? "Recent inbox" : preview.kind === "calendar" ? "Next two weeks" : "Availability for the next week"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
+                  <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? "Recent inbox" : preview.kind === "calendar" ? "Calendar preview" : "Availability preview"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
+                  <Show when={preview.kind === "calendar" || preview.kind === "freebusy"}>
+                    <div class="mail-calendar-work-actions" aria-label="Calendar preview date range">
+                      <label>From<input aria-label="Preview start date" type="date" value={mailCalendarRangeFrom()} onInput={(event) => setMailCalendarRangeFrom(event.currentTarget.value)} /></label>
+                      <label>Through<input aria-label="Preview end date" type="date" value={mailCalendarRangeTo()} onInput={(event) => setMailCalendarRangeTo(event.currentTarget.value)} /></label>
+                      <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => {
+                        const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
+                        if (account) void loadMailCalendarPreview(account, preview.kind, { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() });
+                      }}>{mailCalendarBusy() ? "Refreshing…" : "Refresh dates"}</button>
+                    </div>
+                    <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone || "this device's time zone"}. Choose up to 30 days.</p>
+                  </Show>
+                  <Show when={preview.refreshedAt}><p class="settings-hint">Updated {relTime(preview.refreshedAt!)}{preview.kind !== "mail" && preview.from && preview.to ? ` · ${new Date(preview.from).toLocaleDateString()} through ${new Date(new Date(preview.to).getTime() - 1).toLocaleDateString()}` : ""}</p></Show>
                   <Show when={preview.kind === "mail"}>
                     <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : "No recent inbox messages were returned."}</p>}>
                       <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.has_attachments}><small>Has attachments · attachment preview is not available yet</small></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
@@ -2601,7 +2646,7 @@ export default function Settings() {
                       <label>Schedule (5-field cron)<input aria-label="Routine schedule" value={mailCalendarRoutineSchedule()} onInput={(event) => setMailCalendarRoutineSchedule(event.currentTarget.value)} placeholder="0 8 * * 1-5" /></label>
                     </Show>
                     <label>What should the summary focus on?<textarea rows={3} value={mailCalendarRoutinePrompt()} onInput={(event) => setMailCalendarRoutinePrompt(event.currentTarget.value)} /></label>
-                    <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}. An email watch discovers up to 100 message IDs without downloading their bodies, then reads them in batches of up to 20. Apple advances with its mailbox UID cursor and Gmail follows its history pages. Microsoft currently scans the latest 100 IDs per check, so a larger arrival burst between checks can leave older mail outside the scan window. Failed or interrupted batches are retried, and the model is skipped when no messages are waiting. Continuous mode checks about once a minute while this service is running; a sleeping host is offline. The first check may include existing recent messages. Content returned by a run is recorded in append-only Agent history and cannot currently be selectively erased.</p>
+                    <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}. An email watch discovers up to 100 message IDs without downloading their bodies, then reads them in batches of up to 20. Apple advances with its mailbox UID cursor, Gmail follows history pages, and Microsoft follows per-folder Graph delta pages. Expired or reset provider cursors stop the watch with an actionable error; recreate the routine to start a new baseline. Failed or interrupted batches are retried, and the model is skipped when no messages are waiting. Continuous mode checks about once a minute while this service is running; a sleeping host is offline. The first check may include existing messages. Content returned by a run is recorded in append-only Agent history and cannot currently be selectively erased.</p>
                     <div class="settings-actions"><button class="btn primary" disabled={mailCalendarRoutineSaving() || !mailCalendarEditorAccount() || !mailCalendarRoutineName().trim() || !mailCalendarRoutinePrompt().trim() || mailCalendarRoutineOperations().length === 0 || !settingsAgents().some((agent) => agent.id === activeAgentId())} onClick={() => void createMailCalendarRoutine()}>{mailCalendarRoutineSaving() ? "Creating…" : mailCalendarWatchNewMail() ? "Create email watch" : "Create scheduled routine"}</button></div>
                   </div>
                 </Show>

@@ -10,6 +10,9 @@ increment adds an owner-confirmed, permission-checked, digest-bound plain
 email send and a
 limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
+Calendar and availability previews now support an owner-selected, device-time-
+zone date range up to 30 days with a visible refresh time. Inbox folder and
+search navigation and the complete connected-account workspace remain open.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
 continuation cursor stored atomically in the encrypted Agent vault. A local
@@ -277,6 +280,14 @@ An exact local-field preview now shows the currently edited email recipients,
 subject, and body or the event title, local start/end time, location, and
 description. This preview explicitly states that it does not send or alter
 provider data; it is not the later effect-aware Review step.
+
+**Implemented increment (2026-09-30):** owner calendar and availability
+previews now accept a selected local date range of up to 30 days, convert the
+boundaries to instants using the device time zone, and show the result refresh
+time and queried dates. This adds bounded date navigation without expanding
+provider scopes. It does not yet provide agenda/day/week navigation, conflict
+display, calendar-source selection, or browser acceptance with connected test
+accounts.
 
 ## Stage 3 — reviewed provider effects
 
@@ -1222,3 +1233,10 @@ authorization and approval boundary on every execution path.
   had no warnings or errors. This smoke check did not connect a provider or
   verify the complete source-to-Review flow. Routine host-health, 24-hour
   recovery, and live-provider acceptance remain open.
+- 2026-09-30: Exercised calendar range preview with a local browser fixture.
+  Changing the dates and refreshing sent the matching UTC instant bounds for
+  the selected Asia/Calcutta dates, and the updated dates and refresh time were
+  displayed. No provider was connected; this verifies UI wiring, not provider
+  calendar behavior. Corrected the routine explanation to describe all three
+  native cursors and visible expiry recovery rather than Microsoft's retired
+  latest-100 scan.
