@@ -1,9 +1,10 @@
 # 80 — Mail and calendar: governed account work
 
 Status: **proposal with Agent/account linking, owner-only bounded
-Google/Microsoft previews, a broker-owned local-surface read tool, and a
-bounded Agent-vault working area for local drafts implemented; Review,
-provider effects, and routines remain in progress, 2026-09-30.**
+Google/Microsoft previews, a broker-owned local-surface read tool, a bounded
+Agent-vault working area for local drafts, and the first scheduled read-only
+`TaskDef` routines implemented; full Review, provider effects, continuous
+routines, and the third provider remain in progress, 2026-09-30.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -46,7 +47,9 @@ available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
-surface grant. Local drafts, Review, and routines remain in progress, with the
+surface grant. Local drafts and a first scheduled read-only routine slice are
+implemented; Review, provider effects, and continuous routines remain in
+progress, with the
 account-deletion limitation below disclosed before those features are enabled.
 No crypto-shred guarantee is made. Apple remains unverified and unavailable.
 Provider-specific API details and consent requirements must be rechecked

@@ -557,6 +557,9 @@ struct CoreInner {
     capabilities_override: std::sync::Mutex<Option<vak_config::CapabilityInheritanceResolved>>,
     /// Restrictive overlay applied only to a gateway channel Core.
     channel_policy: std::sync::Mutex<Option<vak_config::ChannelPolicy>>,
+    /// Runtime-only read scope for a scheduled mail/calendar task. It is
+    /// stamped before session admission and never accepted from tool input.
+    mail_calendar_routine_scope: std::sync::Mutex<Option<vak_mail_calendar::RoutineScope>>,
     /// Live overrides for `[tools]` toggles. Same no-pin, always-take-latest
     /// shape as the memory overrides — `refresh_persisted_preferences` writes
     /// them on every re-read so a live `PUT /config` takes effect on the
@@ -1274,6 +1277,7 @@ impl Core {
             hooks_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             capabilities_override: std::sync::Mutex::new(None),
             channel_policy: std::sync::Mutex::new(None),
+            mail_calendar_routine_scope: std::sync::Mutex::new(None),
             web_fetch_override: std::sync::Mutex::new(None),
             browse_override: std::sync::Mutex::new(None),
             commitment_override: std::sync::Mutex::new(None),
@@ -2104,6 +2108,14 @@ impl Core {
     pub fn apply_channel_policy(&self, policy: vak_config::ChannelPolicy) {
         if let Ok(mut current) = self.inner.channel_policy.lock() {
             *current = Some(policy);
+        }
+    }
+
+    /// Restrict the broker-owned mail/calendar tool to one scheduled routine's
+    /// persisted account and read-operation allowlist.
+    pub fn set_mail_calendar_routine_scope(&self, scope: Option<vak_mail_calendar::RoutineScope>) {
+        if let Ok(mut current) = self.inner.mail_calendar_routine_scope.lock() {
+            *current = scope;
         }
     }
 
@@ -3610,6 +3622,12 @@ impl Core {
         tools.push(Arc::new(mail_calendar::MailCalendarTool {
             agent_id: scope.agent_id.clone(),
             audience_id: scope.audience_id.clone(),
+            routine_scope: self
+                .inner
+                .mail_calendar_routine_scope
+                .lock()
+                .ok()
+                .and_then(|scope| scope.clone()),
         }));
         if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {

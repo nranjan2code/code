@@ -194,6 +194,7 @@ pub fn build_task_def(
             .map(str::to_string),
         agent_id: None,
         agent_revision: None,
+        mail_calendar_scope: None,
         prompt,
     })
 }

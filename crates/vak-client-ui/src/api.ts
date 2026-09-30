@@ -1666,6 +1666,13 @@ export interface TaskDraft {
   model_pin?: string | null;
   agent_id?: string | null;
   agent_revision?: number | null;
+  mail_calendar_scope?: {
+    account_id: string;
+    operations: Array<"recent_mail" | "calendar_events" | "free_busy">;
+    max_items: number;
+  } | null;
+  timezone?: string | null;
+  deliver_to?: string | null;
 }
 
 export function createTask(draft: TaskDraft): Promise<unknown> {

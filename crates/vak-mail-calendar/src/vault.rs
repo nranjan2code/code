@@ -258,6 +258,12 @@ impl AccountVault {
         )
     }
 
+    /// Check only that a credential envelope can be loaded for admission;
+    /// callers never receive any field from the decoded secret material.
+    pub fn credential_available(&self, account_id: &str) -> bool {
+        self.load(account_id).is_ok()
+    }
+
     /// Removes all account credential material from the Agent's credential
     /// scope and its unsent local candidates. Safe to retry after partial
     /// disconnects. Append-only session copies cannot be removed here.

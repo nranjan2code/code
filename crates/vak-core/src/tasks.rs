@@ -260,6 +260,10 @@ pub struct TaskDef {
     pub agent_id: Option<String>,
     #[serde(default)]
     pub agent_revision: Option<u64>,
+    /// A read-only mail/calendar routine pinned to one Agent account and
+    /// operation allowlist. Its scheduler is still this TaskDef scheduler.
+    #[serde(default)]
+    pub mail_calendar_scope: Option<vak_mail_calendar::RoutineScope>,
 }
 
 fn default_interval() -> u64 {
@@ -272,6 +276,8 @@ pub enum TaskError {
     PromptScriptXor { name: String },
     #[error("invalid schedule '{expr}': {reason}")]
     BadSchedule { expr: String, reason: String },
+    #[error("mail/calendar routines require a valid read scope and pinned Agent revision")]
+    InvalidMailCalendarScope,
     #[error("io error on {path}: {source}")]
     Io {
         path: PathBuf,
@@ -294,6 +300,19 @@ impl TaskDef {
             return Err(TaskError::PromptScriptXor {
                 name: self.name.clone(),
             });
+        }
+        if let Some(scope) = &self.mail_calendar_scope {
+            if self.agent_id.as_deref().is_none_or(str::is_empty)
+                || self.agent_revision.is_none_or(|revision| revision == 0)
+                || self
+                    .script
+                    .as_deref()
+                    .is_some_and(|script| !script.trim().is_empty())
+                || self.deliver_to.is_some()
+                || scope.validate().is_err()
+            {
+                return Err(TaskError::InvalidMailCalendarScope);
+            }
         }
         if let Some(expr) = &self.schedule {
             CronExpr::parse(expr).map_err(|reason| TaskError::BadSchedule {
@@ -736,6 +755,7 @@ mod tests {
             model_pin: None,
             agent_id: None,
             agent_revision: None,
+            mail_calendar_scope: None,
         }
     }
 
@@ -764,6 +784,41 @@ mod tests {
             ..base_task()
         };
         assert!(watchdog.validate().is_ok());
+    }
+
+    #[test]
+    fn mail_calendar_routine_requires_a_pinned_agent_and_safe_read_scope() {
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let scope = vak_mail_calendar::RoutineScope {
+            account_id,
+            operations: [vak_mail_calendar::RoutineOperation::RecentMail]
+                .into_iter()
+                .collect(),
+            max_items: 5,
+        };
+        let mut task = base_task();
+        task.agent_id = Some("agent-one".into());
+        task.agent_revision = Some(1);
+        task.mail_calendar_scope = Some(scope.clone());
+        assert!(task.validate().is_ok());
+
+        task.deliver_to = Some("log:shared".into());
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+        task.deliver_to = None;
+        task.agent_revision = None;
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+        task.agent_revision = Some(1);
+        task.script = Some("echo unsafe".into());
+        assert!(matches!(
+            task.validate(),
+            Err(TaskError::PromptScriptXor { .. })
+        ));
     }
 
     #[test]

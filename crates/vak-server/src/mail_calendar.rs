@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 use vak_mail_calendar::{
     AccountStatus, ActionCandidate, Capability, ConnectedAccount, ProposedAction, Provider,
-    SourceRef,
+    RoutineOperation, RoutineScope, SourceRef,
     connection_ledger::ConnectionLedger,
     vault::{AccountSecretMaterial, AccountVault},
 };
@@ -26,6 +26,38 @@ use zeroize::{Zeroize, Zeroizing};
 
 const OAUTH_CALLBACK_COOKIE: &str = "vak_mail_calendar_oauth";
 const OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS: u64 = 10 * 60;
+
+pub(crate) fn validate_routine_scope(agent_id: &str, scope: &RoutineScope) -> Result<(), String> {
+    scope.validate().map_err(|error| error.to_string())?;
+    let ledger = ConnectionLedger::for_agent(agent_id)
+        .map_err(|_| "mail/calendar connection state is unavailable for this Agent".to_string())?;
+    let accounts = ledger
+        .read_all()
+        .map_err(|_| "mail/calendar connection state is unavailable for this Agent".to_string())?;
+    let audience = format!("agent:{agent_id}");
+    let Some(account) = accounts
+        .into_iter()
+        .find(|account| account.id == scope.account_id)
+    else {
+        return Err("the selected mail/calendar account is not linked to this Agent".into());
+    };
+    for operation in &scope.operations {
+        let capability = match operation {
+            RoutineOperation::RecentMail => Capability::MailRead,
+            RoutineOperation::CalendarEvents => Capability::CalendarRead,
+            RoutineOperation::FreeBusy => Capability::CalendarFreeBusy,
+        };
+        if !account.admits(agent_id, &audience, capability) {
+            return Err("the selected account does not grant every requested routine read".into());
+        }
+    }
+    let vault = AccountVault::for_agent(agent_id)
+        .map_err(|_| "mail/calendar credentials are unavailable for this Agent".to_string())?;
+    if !vault.credential_available(&scope.account_id) {
+        return Err("the selected account's saved credential is unavailable".into());
+    }
+    Ok(())
+}
 
 #[derive(Deserialize)]
 pub(super) struct AccountQuery {
@@ -1956,6 +1988,22 @@ pub(super) async fn disconnect_account(
         );
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
+    crate::update_tasks(&state, |tasks| {
+        for task in tasks.values_mut() {
+            if task.agent_id.as_deref() == Some(agent_id.as_str())
+                && task
+                    .mail_calendar_scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.account_id == account_id)
+            {
+                task.enabled = false;
+                task.last_run_status = Some("account_disconnected".into());
+                task.last_delivery_state = Some("paused".into());
+                task.last_summary =
+                    Some("Paused because its linked account was disconnected.".into());
+            }
+        }
+    });
     record_account_event(
         &state,
         "account_disconnected",

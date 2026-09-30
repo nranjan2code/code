@@ -54,6 +54,37 @@ pub enum Capability {
     CalendarWrite,
 }
 
+/// Immutable source and operation boundary for an unattended mail/calendar
+/// routine. This is stored as part of the existing `TaskDef`; it does not
+/// introduce another scheduler or credential store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RoutineScope {
+    pub account_id: AccountId,
+    pub operations: BTreeSet<RoutineOperation>,
+    pub max_items: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineOperation {
+    RecentMail,
+    CalendarEvents,
+    FreeBusy,
+}
+
+impl RoutineScope {
+    pub fn validate(&self) -> Result<(), ContractError> {
+        if Uuid::parse_str(&self.account_id).is_err()
+            || self.operations.is_empty()
+            || !(1..=20).contains(&self.max_items)
+        {
+            return Err(ContractError::InvalidRoutineScope);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConnectedAccount {
@@ -545,6 +576,8 @@ pub enum ContractError {
     AccountDenied,
     #[error("a fresh approval for this exact candidate is required")]
     ApprovalRequired,
+    #[error("mail/calendar routine scope is invalid")]
+    InvalidRoutineScope,
 }
 
 fn validate_scope(value: &str) -> Result<(), ContractError> {

@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
 use vak_mail_calendar::{
-    AccountStatus, Capability,
+    AccountStatus, Capability, RoutineOperation, RoutineScope,
     connection_ledger::ConnectionLedger,
     provider::{CalendarRange, ProviderReadClient},
     vault::AccountVault,
@@ -16,6 +16,7 @@ use vak_mail_calendar::{
 pub struct MailCalendarTool {
     pub agent_id: Option<String>,
     pub audience_id: Option<String>,
+    pub routine_scope: Option<RoutineScope>,
 }
 
 #[async_trait::async_trait]
@@ -78,6 +79,28 @@ impl vak_tools::Tool for MailCalendarTool {
             "free_busy" => Capability::CalendarFreeBusy,
             _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),
         };
+        if let Some(scope) = &self.routine_scope {
+            let permitted_operation = match operation {
+                "recent_mail" => RoutineOperation::RecentMail,
+                "calendar_events" => RoutineOperation::CalendarEvents,
+                "free_busy" => RoutineOperation::FreeBusy,
+                _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),
+            };
+            if !scope.operations.contains(&permitted_operation) {
+                return vak_tools::ToolOutput::error(
+                    "This scheduled routine is not allowed to perform that mail or calendar read.",
+                );
+            }
+            if args
+                .get("account_id")
+                .and_then(Value::as_str)
+                .is_some_and(|requested| requested != scope.account_id)
+            {
+                return vak_tools::ToolOutput::error(
+                    "This scheduled routine is restricted to its configured account.",
+                );
+            }
+        }
 
         let ledger = match ConnectionLedger::for_agent(agent_id) {
             Ok(ledger) => ledger,
@@ -95,9 +118,19 @@ impl vak_tools::Tool for MailCalendarTool {
         };
         let eligible: Vec<_> = accounts
             .into_iter()
-            .filter(|account| account.admits(agent_id, &account_audience, capability))
+            .filter(|account| {
+                account.admits(agent_id, &account_audience, capability)
+                    && self
+                        .routine_scope
+                        .as_ref()
+                        .is_none_or(|scope| account.id == scope.account_id)
+            })
             .collect();
-        let account_id = args.get("account_id").and_then(Value::as_str);
+        let account_id = args.get("account_id").and_then(Value::as_str).or_else(|| {
+            self.routine_scope
+                .as_ref()
+                .map(|scope| scope.account_id.as_str())
+        });
         let account = match account_id {
             Some(id) => eligible.iter().find(|account| account.id == id),
             None if eligible.len() == 1 => eligible.first(),
@@ -133,7 +166,12 @@ impl vak_tools::Tool for MailCalendarTool {
                     .get("limit")
                     .and_then(Value::as_u64)
                     .unwrap_or(10)
-                    .clamp(1, 20) as usize;
+                    .clamp(
+                        1,
+                        self.routine_scope
+                            .as_ref()
+                            .map_or(20, |scope| u64::from(scope.max_items)),
+                    ) as usize;
                 client
                     .recent_mail(account, &vault, agent_id, &account_audience, limit)
                     .await
@@ -151,7 +189,12 @@ impl vak_tools::Tool for MailCalendarTool {
                         .get("limit")
                         .and_then(Value::as_u64)
                         .unwrap_or(50)
-                        .clamp(1, 100) as usize;
+                        .clamp(
+                            1,
+                            self.routine_scope
+                                .as_ref()
+                                .map_or(100, |scope| u64::from(scope.max_items)),
+                        ) as usize;
                     client
                         .calendar_events(
                             account,
@@ -163,10 +206,14 @@ impl vak_tools::Tool for MailCalendarTool {
                         .await
                         .map(|items| json!(items))
                 } else {
+                    let limit = self
+                        .routine_scope
+                        .as_ref()
+                        .map_or(100, |scope| usize::from(scope.max_items));
                     client
                         .free_busy(account, &vault, agent_id, &account_audience, from, to)
                         .await
-                        .map(|items| json!(items))
+                        .map(|items| json!(items.into_iter().take(limit).collect::<Vec<_>>()))
                 }
             }
             _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),
@@ -209,6 +256,7 @@ mod tests {
         let tool = MailCalendarTool {
             agent_id: Some("agent-one".into()),
             audience_id: Some("telegram:private-chat".into()),
+            routine_scope: None,
         };
         let result = tool
             .execute(
@@ -229,6 +277,7 @@ mod tests {
         let tool = MailCalendarTool {
             agent_id: None,
             audience_id: Some("local".into()),
+            routine_scope: None,
         };
         let result = tool
             .execute(
@@ -241,6 +290,55 @@ mod tests {
             result
                 .content
                 .contains("requires an Agent and conversation scope")
+        );
+    }
+
+    #[tokio::test]
+    async fn scheduled_scope_rejects_unselected_operation_before_account_access() {
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let tool = MailCalendarTool {
+            agent_id: Some("agent-one".into()),
+            audience_id: Some("local".into()),
+            routine_scope: Some(RoutineScope {
+                account_id,
+                operations: [RoutineOperation::RecentMail].into_iter().collect(),
+                max_items: 5,
+            }),
+        };
+        let result = tool
+            .execute(
+                &json!({"operation":"calendar_events"}),
+                &vak_tools::ToolContext::default(),
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(result.content.contains("not allowed to perform"));
+    }
+
+    #[tokio::test]
+    async fn scheduled_scope_rejects_another_account_before_account_access() {
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let other_account_id = uuid::Uuid::now_v7().to_string();
+        let tool = MailCalendarTool {
+            agent_id: Some("agent-one".into()),
+            audience_id: Some("local".into()),
+            routine_scope: Some(RoutineScope {
+                account_id,
+                operations: [RoutineOperation::RecentMail].into_iter().collect(),
+                max_items: 5,
+            }),
+        };
+        let result = tool
+            .execute(
+                &json!({"operation":"recent_mail","account_id":other_account_id}),
+                &vak_tools::ToolContext::default(),
+            )
+            .await;
+        assert!(result.is_error);
+        assert!(
+            result
+                .content
+                .contains("restricted to its configured account")
         );
     }
 }

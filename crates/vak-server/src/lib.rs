@@ -17326,6 +17326,7 @@ async fn start_bestofn(
             None,
             None,
             None,
+            None,
             true,
         )
         .await
@@ -17379,6 +17380,7 @@ async fn spawn_isolated_run(
     model_pin: Option<&str>,
     agent_id: Option<&str>,
     agent_revision: Option<u64>,
+    mail_calendar_scope: Option<vak_mail_calendar::RoutineScope>,
     start_turn: bool,
 ) -> Result<String, String> {
     let identity = if let Some(agent_id) = agent_id {
@@ -17416,6 +17418,18 @@ async fn spawn_isolated_run(
         })
         .map_err(|e| format!("child core failed: {e}"))?;
     child_core.set_provider_instance(provider);
+    if let Some(scope) = mail_calendar_scope {
+        child_core.set_permission_mode(vak_config::PermissionMode::ReadOnly);
+        child_core.set_mail_calendar_routine_scope(Some(scope));
+        child_core.apply_channel_policy(vak_config::ChannelPolicy {
+            tools_allow: Some(vec!["mail_calendar".into()]),
+            mcp_allow: Some(Vec::new()),
+            skills_allow: Some(Vec::new()),
+            hooks_allow: Some(Vec::new()),
+            plugins_allow: Some(Vec::new()),
+            ..Default::default()
+        });
+    }
     // The shared root: the child resolves its own Agent's home beneath it,
     // as every Core does. Seeding it with this Core's (already Agent-scoped)
     // home nested one Agent's home inside another's.
@@ -18009,6 +18023,8 @@ struct TaskCreateBody {
     agent_id: Option<String>,
     #[serde(default)]
     agent_revision: Option<u64>,
+    #[serde(default)]
+    mail_calendar_scope: Option<vak_mail_calendar::RoutineScope>,
 }
 
 fn task_default_interval() -> u64 {
@@ -18071,9 +18087,48 @@ async fn create_task(
         model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
         agent_id: body.agent_id.filter(|m| !m.trim().is_empty()),
         agent_revision: body.agent_revision,
+        mail_calendar_scope: body.mail_calendar_scope,
     };
     if let Err((status, payload)) = validate_task_fields(&task) {
         return (status, Json(payload)).into_response();
+    }
+    if let Some(scope) = &task.mail_calendar_scope {
+        let Some(agent_id) = task.agent_id.as_deref() else {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "mail/calendar routines require an Agent" })),
+            )
+                .into_response();
+        };
+        let profiles = match agents::effective(&state.active_core()) {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({ "error": error })),
+                )
+                    .into_response();
+            }
+        };
+        let profile = profiles.iter().find(|profile| profile.id == agent_id);
+        if profile.is_none_or(|profile| {
+            !profile.is_admissible() || Some(profile.revision) != task.agent_revision
+        }) {
+            return (
+                StatusCode::CONFLICT,
+                Json(
+                    serde_json::json!({ "error": "the selected Agent is unavailable or changed" }),
+                ),
+            )
+                .into_response();
+        }
+        if let Err(error) = mail_calendar::validate_routine_scope(agent_id, scope) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
     }
     update_tasks(&state, |map| {
         map.insert(task.id.clone(), task);
@@ -18163,6 +18218,14 @@ async fn patch_task(
                     serde_json::json!({ "error": format!("no task '{id}'") }),
                 )
             })?;
+            if t.mail_calendar_scope.is_some()
+                && (!matches!(&body.agent_id, OptionalStr::Keep) || body.agent_revision.is_some())
+            {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    serde_json::json!({ "error": "a mail/calendar routine's Agent assignment is immutable; recreate the routine to change its owner" }),
+                ));
+            }
             // Apply to a candidate and validate BEFORE committing so a
             // rejected patch never leaves half-mutated state behind.
             let mut candidate = t.clone();
@@ -18446,9 +18509,11 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
             ));
         }
     };
-    // A scheduled run works in its own git worktree of the space, so it
-    // cannot run in a folder that is not a repository.
-    if !vak_core::worktree::is_git_repo(&snapshot.cwd) {
+    // A generic scheduled run gets an isolated git worktree. A scoped mail /
+    // calendar routine has no workspace tools and runs read-only, so it does
+    // not need a project repository or a writable copy.
+    let temporary_worktree = snapshot.mail_calendar_scope.is_none();
+    if temporary_worktree && !vak_core::worktree::is_git_repo(&snapshot.cwd) {
         return Err(refuse_task(
             state,
             &snapshot,
@@ -18459,22 +18524,29 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
         ));
     }
     // Drop the previous worktree (latest-only retention).
-    if let Some(wt) = &snapshot.last_wt {
+    if temporary_worktree && let Some(wt) = &snapshot.last_wt {
         let old = vak_core::worktree::Worktree {
             path: wt.path.clone(),
             branch: wt.branch.clone(),
         };
         let _ = vak_core::worktree::remove(&snapshot.cwd, &old);
     }
-    let rid = format!("task-{}", uuid::Uuid::now_v7().simple());
-    let wt = match vak_core::worktree::create(&snapshot.cwd, &rid) {
-        Ok(wt) => wt,
-        Err(error) => {
-            return Err(refuse_task(
-                state,
-                &snapshot,
-                format!("Its working copy could not be made: {error}."),
-            ));
+    let wt = if temporary_worktree {
+        let rid = format!("task-{}", uuid::Uuid::now_v7().simple());
+        match vak_core::worktree::create(&snapshot.cwd, &rid) {
+            Ok(wt) => wt,
+            Err(error) => {
+                return Err(refuse_task(
+                    state,
+                    &snapshot,
+                    format!("Its working copy could not be made: {error}."),
+                ));
+            }
+        }
+    } else {
+        vak_core::worktree::Worktree {
+            path: snapshot.cwd.clone(),
+            branch: String::new(),
         }
     };
     let fired_at_utc = chrono::Utc::now();
@@ -18492,11 +18564,14 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
         snapshot.model_pin.as_deref(),
         snapshot.agent_id.as_deref(),
         snapshot.agent_revision,
+        snapshot.mail_calendar_scope.clone(),
         false,
     )
     .await
     .map_err(|error| {
-        let _ = vak_core::worktree::remove(&snapshot.cwd, &wt);
+        if temporary_worktree {
+            let _ = vak_core::worktree::remove(&snapshot.cwd, &wt);
+        }
         refuse_task(state, &snapshot, format!("It could not start: {error}."))
     })?;
 
@@ -18511,7 +18586,7 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
             t.last_result_id = None;
             t.last_run_status = Some("working".into());
             t.last_delivery_state = Some("pending".into());
-            t.last_wt = Some(WtMeta {
+            t.last_wt = temporary_worktree.then_some(WtMeta {
                 path: wt.path,
                 branch: wt.branch,
             });
@@ -18529,6 +18604,7 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
         let child_session = child_id.clone();
         let task_name = snapshot.name.clone();
         let deliver_to = snapshot.deliver_to.clone();
+        let mail_calendar_task = snapshot.mail_calendar_scope.is_some();
         let rx = h.events_tx.subscribe();
         tokio::spawn(async move {
             use tokio_stream::StreamExt;
@@ -18536,8 +18612,11 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
                 if let AgentEvent::RunFinished { summary, is_error } = ev.event {
-                    let text =
-                        last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone());
+                    let text = if mail_calendar_task {
+                        None
+                    } else {
+                        Some(last_assistant_text(&child_handle).unwrap_or_else(|| summary.clone()))
+                    };
                     let result_id = child_handle
                         .presentation
                         .lock()
@@ -18552,17 +18631,26 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
                         });
                     update_tasks(&st, |map| {
                         if let Some(t) = map.get_mut(&tid) {
-                            t.last_summary = Some(text.clone());
+                            t.last_summary = text.clone();
                             t.last_result_id = result_id.clone();
                         }
                     });
-                    let delivery_state = if let Some(target) = &deliver_to {
+                    let delivery_state = if mail_calendar_task {
+                        // Mail/calendar output may contain personal content.
+                        // Keep it only in the owning Agent's append-only run
+                        // session; never duplicate it into shared tasks.json
+                        // or the workspace-wide Inbox/outbox.
+                        "agent_session"
+                    } else if let Some(target) = &deliver_to {
                         // Delivery failure must not lose the recorded summary;
                         // it only means this transport could not be reached.
                         gateway::deliver_and_record_with_result(
                             &st.core,
                             target,
-                            &format!("routine '{task_name}' finished:\n{text}"),
+                            &format!(
+                                "routine '{task_name}' finished:\n{}",
+                                text.as_deref().unwrap_or_default()
+                            ),
                             vak_core::inbox::Kind::TaskSummary,
                             format!("routine '{task_name}' finished"),
                             Some(&child_session),
@@ -18577,7 +18665,10 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
                             &st.core.shared_data_home(),
                             vak_core::inbox::Kind::TaskSummary,
                             &format!("routine '{task_name}' finished"),
-                            &format!("routine '{task_name}' finished:\n{text}"),
+                            &format!(
+                                "routine '{task_name}' finished:\n{}",
+                                text.as_deref().unwrap_or_default()
+                            ),
                             Some(&child_session),
                             Some(&tid),
                             result_id.as_deref(),
@@ -20046,6 +20137,7 @@ mod scheduler_pure_tests {
             model_pin: None,
             agent_id: None,
             agent_revision: None,
+            mail_calendar_scope: None,
         };
         let mut tasks = HashMap::from([
             ("running".into(), make("running", Some("working"))),

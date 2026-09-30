@@ -255,6 +255,7 @@ impl vak_tools::Tool for TasksTool {
                     model_pin: str_arg("model_pin"),
                     agent_id,
                     agent_revision,
+                    mail_calendar_scope: None,
                 };
                 if let Err(e) = task.validate() {
                     return vak_tools::ToolOutput::error(task_error_message(e));
