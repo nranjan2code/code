@@ -1,4 +1,5 @@
 import { Show, createSignal } from "solid-js";
+import type { JSX } from "solid-js";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 
@@ -6,6 +7,7 @@ export interface ConfirmConfig {
   title: string;
   description: string;
   detail?: string;
+  reviewContent?: JSX.Element;
   confirmLabel?: string;
   cancelLabel?: string;
   isDanger?: boolean;
@@ -43,6 +45,11 @@ export default function ConfirmModal(props: {
             <button type="button" class="btn" classList={{ primary: !cfg().isDanger, danger: cfg().isDanger }} disabled={busy()} onClick={() => void handleConfirm()}>{busy() ? "Working…" : (cfg().confirmLabel || "Confirm")}</button>
           </>}
         >
+          <Show when={cfg().reviewContent}>
+            <section class="confirm-modal-review" aria-label="Exact effect preview">
+              {cfg().reviewContent}
+            </section>
+          </Show>
           <Show when={cfg().detail}>
             <div class="confirm-modal-detail">
               <Icon name="shield" size={14} />

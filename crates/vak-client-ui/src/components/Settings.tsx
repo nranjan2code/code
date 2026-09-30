@@ -1618,16 +1618,15 @@ export default function Settings() {
       return;
     }
     const draft = candidate.action.draft;
-    const recipients = [
-      ...draft.to.map((address) => `To: ${address.address}`),
-      ...draft.cc.map((address) => `Cc: ${address.address}`),
-      ...draft.bcc.map((address) => `Bcc: ${address.address}`),
-    ].join("\n");
     const account = mailCalendarAccounts()?.accounts.find((item) => item.id === candidate.account_id);
     setConfirmConfig({
       title: "Review this exact email",
-      description: "Sending takes effect immediately. Check every recipient and the full message preview before confirming.",
-      detail: `${recipients}\nSubject: ${draft.subject || "(no subject)"}\n\nThe complete message body is shown in the draft preview behind this review. This request sends this saved revision only. Provider acceptance does not confirm delivery.`,
+      description: "Sending takes effect immediately. Confirm only after checking this complete saved revision.",
+      reviewContent: <div class="mail-calendar-review-payload">
+        <dl><dt>Account</dt><dd>{account?.provider ?? "Account unavailable"}</dd><dt>To</dt><dd>{draft.to.map((address) => address.address).join(", ") || "None"}</dd><dt>Cc</dt><dd>{draft.cc.map((address) => address.address).join(", ") || "None"}</dd><dt>Bcc</dt><dd>{draft.bcc.map((address) => address.address).join(", ") || "None"}</dd><dt>Subject</dt><dd>{draft.subject || "(no subject)"}</dd></dl>
+        <strong>Full message</strong><pre>{draft.body_text || "(empty message)"}</pre>
+        <p>Only this saved revision will be sent. Provider acceptance does not confirm delivery.</p>
+      </div>,
       confirmLabel: "Send this email",
       isDanger: true,
       onConfirm: async () => {
@@ -1667,7 +1666,11 @@ export default function Settings() {
     setConfirmConfig({
       title: "Review this exact calendar event",
       description: "This creates one event immediately. It will not invite attendees or set a reminder.",
-      detail: `Event: ${draft.title}\nStarts: ${new Date(draft.starts_at).toLocaleString()}\nEnds: ${new Date(draft.ends_at).toLocaleString()}\nLocation: ${draft.location || "None"}\n\nThe complete description is shown in the preview behind this review. Times are submitted as the exact instants shown. This saved revision only will be created.`,
+      reviewContent: <div class="mail-calendar-review-payload">
+        <dl><dt>Account</dt><dd>{account?.provider ?? "Account unavailable"}</dd><dt>Event</dt><dd>{draft.title}</dd><dt>Starts</dt><dd>{new Date(draft.starts_at).toLocaleString()}</dd><dt>Ends</dt><dd>{new Date(draft.ends_at).toLocaleString()}</dd><dt>Location</dt><dd>{draft.location || "None"}</dd><dt>Attendees</dt><dd>None</dd><dt>Reminder</dt><dd>None</dd></dl>
+        <strong>Full description</strong><pre>{draft.description || "(no description)"}</pre>
+        <p>Times are submitted as these exact instants. Only this saved revision will be created.</p>
+      </div>,
       confirmLabel: "Create this event",
       isDanger: true,
       onConfirm: async () => {
@@ -1707,7 +1710,11 @@ export default function Settings() {
     setConfirmConfig({
       title: "Review this exact calendar update",
       description: "This updates one standalone Google event. It has no attendees, so no invitations or notifications are sent.",
-      detail: `Event: ${draft.title}\nStarts: ${new Date(draft.starts_at).toLocaleString()}\nEnds: ${new Date(draft.ends_at).toLocaleString()}\nLocation: ${draft.location || "None"}\n\nThe provider event will be re-read and updated only if its version still matches the one used for this draft. If it changed, review a fresh preview and save a new draft.`,
+      reviewContent: <div class="mail-calendar-review-payload">
+        <dl><dt>Account</dt><dd>Google</dd><dt>Event</dt><dd>{draft.title}</dd><dt>Starts</dt><dd>{new Date(draft.starts_at).toLocaleString()}</dd><dt>Ends</dt><dd>{new Date(draft.ends_at).toLocaleString()}</dd><dt>Location</dt><dd>{draft.location || "None"}</dd><dt>Attendees</dt><dd>None</dd><dt>Reminder changes</dt><dd>None</dd></dl>
+        <strong>Full description</strong><pre>{draft.description || "(no description)"}</pre>
+        <p>The provider event is re-read and updated only if its version still matches. If it changed, refresh and review a new draft.</p>
+      </div>,
       confirmLabel: "Update this event",
       isDanger: true,
       onConfirm: async () => {

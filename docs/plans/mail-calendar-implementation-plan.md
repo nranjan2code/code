@@ -1325,6 +1325,14 @@ authorization and approval boundary on every execution path.
   rejects unauthenticated or non-owner requests. Message content stays in the
   transient owner preview and is labeled untrusted; it is not copied to Agent
   history. Apple remains selected-message only. UI typecheck and production
-  build pass; provider fixture tests pass. Full server boundary test is running.
+  build pass; all 93 mail/calendar crate tests and the server mail/calendar
+  account, candidate, OAuth, and thread-preview HTTP tests pass.
   Reply-in-thread semantics, citations, and the complete thread workspace
   remain open.
+- 2026-09-30: Exact-effect confirmation now displays the complete saved email
+  recipient list and body inside the confirmation surface. Calendar create and
+  update confirmations likewise show the complete description and affected
+  fields in the review sheet instead of asking the person to inspect a preview
+  hidden behind it. The content is rendered as escaped text with a bounded,
+  scrollable review area. UI typecheck and production build pass; visual browser
+  acceptance at desktop and phone sizes remains open.
