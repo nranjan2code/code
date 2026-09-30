@@ -5370,4 +5370,78 @@ mod tests {
         assert_eq!(items[0].body_text.as_deref(), Some("selected body"));
         task.abort();
     }
+
+    #[tokio::test]
+    async fn large_simulated_gmail_inbox_stays_within_item_and_content_budgets() {
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
+        let message_reads = Arc::new(AtomicUsize::new(0));
+        let reads_for_message = Arc::clone(&message_reads);
+        let app = axum::Router::new()
+            .route(
+                "/gmail/v1/users/me/messages",
+                axum::routing::get(|axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>| async move {
+                    assert_eq!(query.get("maxResults").map(String::as_str), Some("20"));
+                    axum::Json(json!({
+                        "messages": (0..5_000).map(|i| json!({"id": format!("message-{i:04}")})).collect::<Vec<_>>()
+                    }))
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/messages/{id}",
+                axum::routing::get(move |axum::extract::Path(id): axum::extract::Path<String>| {
+                    let reads = Arc::clone(&reads_for_message);
+                    async move {
+                        reads.fetch_add(1, Ordering::SeqCst);
+                        let oversized_text = "mail body ".repeat(4_000);
+                        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                            .encode(oversized_text);
+                        axum::Json(json!({
+                            "id": id,
+                            "threadId": "synthetic-thread",
+                            "snippet": "synthetic preview",
+                            "payload": {
+                                "mimeType": "text/plain",
+                                "headers": [
+                                    {"name":"From", "value":"sender@example.test"},
+                                    {"name":"To", "value":"recipient@example.test"},
+                                    {"name":"Subject", "value":"Synthetic message"}
+                                ],
+                                "body": {"data": encoded}
+                            }
+                        }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+
+        let messages = client
+            .recent_mail(&account, &vault, &agent_id, &audience, 5_000)
+            .await
+            .unwrap();
+
+        assert_eq!(messages.len(), MAX_MAIL_ITEMS);
+        assert_eq!(message_reads.load(Ordering::SeqCst), MAX_MAIL_ITEMS);
+        assert!(messages.iter().all(|message| {
+            message
+                .body_text
+                .as_ref()
+                .is_some_and(|body| body.len() <= MAX_TEXT_BYTES)
+                && message.to.as_deref() == Some("recipient@example.test")
+        }));
+        task.abort();
+    }
 }

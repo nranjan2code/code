@@ -1482,3 +1482,8 @@ authorization and approval boundary on every execution path.
   control-character cleanup, and Bcc omission; Apple IMAP and Microsoft Graph
   integration fixtures verify the adapter paths. Live provider conformance and
   the broader source-to-Review browser acceptance remain open.
+- 2026-10-01: Added a large synthetic Gmail mailbox acceptance fixture with
+  5,000 listed messages and oversized bodies. It verifies that a request for
+  the whole mailbox still fetches only the 20-item maximum and returns each
+  text body within the 16 KiB projection budget. This is simulated provider
+  data; it does not use a real account or credential.
