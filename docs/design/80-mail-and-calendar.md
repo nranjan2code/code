@@ -806,7 +806,7 @@ permissions. Never accept an ordinary account password as a fallback.
 | Provider | Preferred method | Additional method | Boundary and warning |
 | --- | --- | --- | --- |
 | Google | Local OAuth authorization with PKCE | Google App Password over fixed-host Gmail IMAP | App Password is a long-lived account credential and is less secure than OAuth. The local-only enrollment path verifies it against `imap.gmail.com:993`, stores it only in the owning Agent's credential vault, supports bounded Inbox metadata and selected worker-parsed message reads, and grants MailRead only. No Calendar, send, or provider-write access. Never request the user's ordinary Google password. |
-| Microsoft | Local delegated OAuth authorization with PKCE | None for Exchange Online | Exchange Online disables Basic Authentication for IMAP/POP/SMTP, so an app password is not a supported substitute. Do not offer password collection or imply that an app password will work. Microsoft OAuth setup requires a public-client registration. |
+| Microsoft | Local delegated OAuth authorization with PKCE | None offered | Exchange Online disables Basic Authentication for IMAP/POP/SMTP. Outlook.com/Live's current IMAP settings require OAuth2; Microsoft still documents app passwords for some legacy apps while retiring Basic Authentication. That conflicting legacy path is not offered because it is not a reliable secure integration contract. Never collect the ordinary Microsoft password. OAuth setup requires a public-client registration. |
 | Apple iCloud | Apple documents account authorization for supported third-party apps, but Vak has no verified integration path for it yet | Current: Apple app-specific password over fixed-host IMAP and CalDAV | The app-specific password is broader and longer-lived than OAuth and its scope is controlled by Apple, not Vak. It is stored only in the owning Agent's credential vault; show the warning before entry and revocation steps after connection. Current support is read-only and separately verified as MailRead or CalendarRead. Never request the Apple Account password. |
 
 Password-based alternatives are local-device setup only: refuse them on a
@@ -817,13 +817,16 @@ revocation instruction after connection. Do not broaden a password-based
 account's capabilities just because its protocol technically permits writes.
 The supported choices are intentionally provider-specific: Google offers
 OAuth and its limited Gmail-only App Password fallback; Microsoft offers
-delegated OAuth only because Exchange Online disables Basic Authentication;
+delegated OAuth only (Exchange Online disables Basic Authentication, and
+Outlook.com/Live's current IMAP contract requires OAuth2 despite legacy app-
+password instructions);
 iCloud currently uses an Apple app-specific password for the supported
 protocols; Apple's account authorization for supported third-party apps is a
 candidate to investigate, not a Vakyartha connection option until its grant
 and protocol contract are verified. No provider accepts its ordinary account password here. A device
 authorization code flow, generic IMAP/SMTP credentials, or a Sign in with Apple
 token is not silently treated as an equivalent account grant.
+Provider documentation: [Outlook.com IMAP settings](https://support.microsoft.com/en-us/outlook/pop-imap-and-smtp-settings-for-outlook.com), [Outlook.com Basic Authentication retirement](https://support.microsoft.com/en-us/support/known-issues/outlook-and-other-apps-are-unable-to-connect-to-outlook-com-when-using-basic-authentication), [Microsoft account app passwords](https://support.microsoft.com/en-us/accounts-billing/manage/how-to-get-and-use-app-passwords), and [Apple account authorization for supported third-party apps](https://support.apple.com/en-us/121539).
 For Gmail, the App Password form accepts Google's 16-character value (with
 display spaces), verifies it using TLS and read-only `EXAMINE`, and stores it
 in the Agent vault. OAuth remains the recommended Google method. The Gmail
