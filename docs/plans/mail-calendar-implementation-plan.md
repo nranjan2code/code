@@ -1474,3 +1474,11 @@ authorization and approval boundary on every execution path.
   the CalDAV success status; the account-selection test rejects mixed grants.
   No live iCloud request was made. Worker, provider, Core and server checks and
   the web build pass; live provider conformance remains open.
+- 2026-10-01: Mail previews and conversation pages now include bounded sender,
+  To, and Cc fields for Gmail, Microsoft Graph, and Apple IMAP. Microsoft
+  requests omit Bcc, and the typed result does not expose Bcc to either the
+  owner interface or Agent thread output. The UI labels recipient fields
+  separately from message content. Provider parser fixtures verify projection,
+  control-character cleanup, and Bcc omission; Apple IMAP and Microsoft Graph
+  integration fixtures verify the adapter paths. Live provider conformance and
+  the broader source-to-Review browser acceptance remain open.

@@ -841,6 +841,8 @@ fn cited_mail_thread(
                 },
                 "external_content": {
                     "from": message.from,
+                    "to": message.to,
+                    "cc": message.cc,
                     "subject": message.subject,
                     "received_at": message.received_at,
                     "preview": message.preview,
@@ -1125,6 +1127,8 @@ mod tests {
                     provider_id: "message-1".into(),
                     thread_id: Some("thread-1".into()),
                     from: Some("sender@example.com".into()),
+                    to: Some("recipient@example.com".into()),
+                    cc: None,
                     subject: "Decision".into(),
                     received_at: None,
                     preview: "Untrusted excerpt".into(),
@@ -1143,6 +1147,15 @@ mod tests {
         assert_eq!(citation["message_id"], "message-1");
         assert_eq!(citation["token"], "mailcite:account-1/thread-1/message-1");
         assert_eq!(value["messages"][0]["trust"], "untrusted_provider_content");
+        assert_eq!(
+            value["messages"][0]["external_content"]["to"],
+            "recipient@example.com"
+        );
+        assert!(
+            value["messages"][0]["external_content"]
+                .get("bcc")
+                .is_none()
+        );
         assert_eq!(
             value["messages"][0]["external_content"]["body_text"],
             "Untrusted full text"

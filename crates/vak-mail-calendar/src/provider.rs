@@ -31,6 +31,7 @@ const MAX_GRAPH_WATCH_CURSOR_BYTES: usize = 8192;
 const MAX_SELECTED_MESSAGE_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
+const MAX_MAIL_RECIPIENTS_TEXT_BYTES: usize = 2048;
 const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
 const GMAIL_IMAP_HOST: &str = "imap.gmail.com";
 const OUTLOOK_IMAP_HOST: &str = "outlook.office365.com";
@@ -155,6 +156,10 @@ pub struct MailItem {
     pub provider_id: String,
     pub thread_id: Option<String>,
     pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub cc: Option<String>,
     pub subject: String,
     pub received_at: Option<DateTime<Utc>>,
     pub preview: String,
@@ -841,7 +846,7 @@ impl ProviderReadClient {
                         .header("Prefer", "outlook.body-content-type=\"text\"")
                         .query(&[(
                             "$select",
-                            "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                            "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
                         )]);
                 }
                 Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
@@ -909,6 +914,8 @@ impl ProviderReadClient {
                     .query(&[
                         ("format", "metadata"),
                         ("metadataHeaders", "From"),
+                        ("metadataHeaders", "To"),
+                        ("metadataHeaders", "Cc"),
                         ("metadataHeaders", "Subject"),
                         ("metadataHeaders", "Date"),
                         ("metadataHeaders", "Message-ID"),
@@ -987,7 +994,7 @@ impl ProviderReadClient {
                                 .map_err(|_| ProviderReadError::InvalidResponse)?;
                         url.query_pairs_mut()
                     .append_pair("$top", &limit.to_string())
-                            .append_pair("$select", "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments")
+                            .append_pair("$select", "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments")
                             .append_pair("$filter", &format!("conversationId eq '{escaped}'"))
                             .append_pair("$orderby", "receivedDateTime asc");
                         url
@@ -1591,7 +1598,7 @@ impl ProviderReadClient {
             ])
             .query(&[(
                 "$select",
-                "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
             )]);
         if let Some(query) = query {
             request = request.query(&[("$search", format!("\"{query}\""))]);
@@ -2070,12 +2077,16 @@ where
                 (!address.starts_with('@') && !address.ends_with('@') && address.len() <= 512)
                     .then_some(address)
             });
+        let to = envelope.to.as_deref().and_then(format_imap_recipients);
+        let cc = envelope.cc.as_deref().and_then(format_imap_recipients);
         let received_at = message.internal_date().map(|date| date.with_timezone(&Utc));
         let has_attachments = imap_body_has_attachments(body_structure);
         output.push(MailItem {
             provider_id: format!("{uid_validity}:{uid}"),
             thread_id: None,
             from,
+            to,
+            cc,
             preview: subject.clone(),
             subject,
             received_at,
@@ -2363,10 +2374,14 @@ where
                 (!address.starts_with('@') && !address.ends_with('@') && address.len() <= 512)
                     .then_some(address)
             });
+        let to = envelope.to.as_deref().and_then(format_imap_recipients);
+        let cc = envelope.cc.as_deref().and_then(format_imap_recipients);
         output.push(MailItem {
             provider_id: format!("{}:{uid}", parsed[0].0),
             thread_id: None,
             from,
+            to,
+            cc,
             subject: subject.clone(),
             received_at: message.internal_date().map(|date| date.with_timezone(&Utc)),
             preview: subject,
@@ -2519,6 +2534,59 @@ fn bounded_mail_text(bytes: &[u8], max_bytes: usize) -> String {
         .filter(|ch| !ch.is_control() || *ch == ' ')
         .take(max_bytes)
         .collect()
+}
+
+fn format_imap_recipients(addresses: &[async_imap::imap_proto::Address<'_>]) -> Option<String> {
+    let values = addresses
+        .iter()
+        .take(20)
+        .filter_map(|address| {
+            let mailbox = address.mailbox.as_deref()?;
+            let host = address.host.as_deref()?;
+            let email = format!(
+                "{}@{}",
+                bounded_mail_text(mailbox, 256),
+                bounded_mail_text(host, 256)
+            );
+            if email.starts_with('@') || email.ends_with('@') || email.len() > 512 {
+                return None;
+            }
+            let name = address
+                .name
+                .as_deref()
+                .map(|value| bounded_mail_text(value, 256))
+                .filter(|value| !value.trim().is_empty());
+            Some(name.map_or_else(|| email.clone(), |name| format!("{name} <{email}>")))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (!values.is_empty())
+        .then(|| bounded_mail_text(values.as_bytes(), MAX_MAIL_RECIPIENTS_TEXT_BYTES))
+}
+
+fn graph_recipients(value: Option<&Value>) -> Option<String> {
+    let recipients = value?.as_array()?;
+    let values = recipients
+        .iter()
+        .take(20)
+        .filter_map(|recipient| {
+            let email_address = recipient.get("emailAddress")?;
+            let address = email_address.get("address")?.as_str()?;
+            let address = bounded_mail_text(address.as_bytes(), 512);
+            if address.trim().is_empty() || !address.contains('@') {
+                return None;
+            }
+            let name = email_address
+                .get("name")
+                .and_then(Value::as_str)
+                .map(|value| bounded_mail_text(value.as_bytes(), 256))
+                .filter(|value| !value.trim().is_empty());
+            Some(name.map_or_else(|| address.clone(), |name| format!("{name} <{address}>")))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    (!values.is_empty())
+        .then(|| bounded_mail_text(values.as_bytes(), MAX_MAIL_RECIPIENTS_TEXT_BYTES))
 }
 
 fn imap_body_has_attachments(body: &async_imap::imap_proto::types::BodyStructure<'_>) -> bool {
@@ -2773,7 +2841,7 @@ fn validate_graph_thread_url(
             != Some(limit)
         || pairs.get("$select").map(|value| value.as_ref())
             != Some(
-                "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
             )
         || pairs.get("$orderby").map(|value| value.as_ref()) != Some("receivedDateTime asc")
     {
@@ -2878,7 +2946,7 @@ fn parse_google_message(value: &Value) -> MailItem {
             })
             .and_then(|h| h.get("value"))
             .and_then(Value::as_str)
-            .map(bounded_text)
+            .map(|value| bounded_mail_text(value.as_bytes(), MAX_MAIL_RECIPIENTS_TEXT_BYTES))
     };
     let body = google_plain_text(value.get("payload").unwrap_or(&Value::Null));
     MailItem {
@@ -2891,8 +2959,12 @@ fn parse_google_message(value: &Value) -> MailItem {
             .get("threadId")
             .and_then(Value::as_str)
             .map(bounded_text),
-        from: header("From"),
-        subject: header("Subject").unwrap_or_default(),
+        from: header("From").map(|value| bounded_mail_text(value.as_bytes(), 512)),
+        to: header("To"),
+        cc: header("Cc"),
+        subject: header("Subject")
+            .map(|value| bounded_mail_text(value.as_bytes(), 512))
+            .unwrap_or_default(),
         received_at: value
             .get("internalDate")
             .and_then(Value::as_str)
@@ -3045,7 +3117,9 @@ fn parse_graph_message(value: &Value) -> Option<MailItem> {
         from: value
             .pointer("/from/emailAddress/address")
             .and_then(Value::as_str)
-            .map(bounded_text),
+            .map(|value| bounded_mail_text(value.as_bytes(), 512)),
+        to: graph_recipients(value.get("toRecipients")),
+        cc: graph_recipients(value.get("ccRecipients")),
         subject: value
             .get("subject")
             .and_then(Value::as_str)
@@ -3362,7 +3436,7 @@ mod tests {
         );
 
         let graph = "https://graph.example/v1.0";
-        let valid = "https://graph.example/v1.0/me/messages?$top=20&$select=id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments&$filter=conversationId%20eq%20%27conv%27%2742%27&$orderby=receivedDateTime%20asc&$skiptoken=next";
+        let valid = "https://graph.example/v1.0/me/messages?$top=20&$select=id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments&$filter=conversationId%20eq%20%27conv%27%2742%27&$orderby=receivedDateTime%20asc&$skiptoken=next";
         let cursor = encode_graph_thread_cursor(valid, "conv'42", graph, 20).unwrap();
         assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph, 20).is_ok());
         assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph, 5).is_err());
@@ -3713,7 +3787,7 @@ mod tests {
             .append_pair("$top", "20")
             .append_pair(
                 "$select",
-                "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
             )
             .append_pair("$filter", "conversationId eq 'conv''42'")
             .append_pair("$orderby", "receivedDateTime asc")
@@ -3731,12 +3805,12 @@ mod tests {
                 if values.get("$skiptoken").is_some() {
                     assert_eq!(values.get("$skiptoken").map(|value| value.as_ref()), Some("page-2"));
                     axum::Json(json!({"value":[
-                        {"id":"msg-2","conversationId":"conv'42","subject":"Second","body":{"contentType":"text","content":"there"}}
+                        {"id":"msg-2","conversationId":"conv'42","subject":"Second","toRecipients":[{"emailAddress":{"address":"to@example.test"}}],"body":{"contentType":"text","content":"there"}}
                     ]})).into_response()
                 } else {
                     assert_eq!(values.get("$top").map(|value| value.as_ref()), Some("20"));
                     axum::Json(json!({"value":[
-                        {"id":"msg-1","conversationId":"conv'42","subject":"First","body":{"contentType":"text","content":"hello"}}
+                        {"id":"msg-1","conversationId":"conv'42","subject":"First","toRecipients":[{"emailAddress":{"name":"Recipient","address":"to@example.test"}}],"ccRecipients":[{"emailAddress":{"address":"cc@example.test"}}],"body":{"contentType":"text","content":"hello"}}
                     ], "@odata.nextLink":continuation})).into_response()
                 }
                 }
@@ -3758,6 +3832,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(thread.messages.len(), 1);
+        assert_eq!(
+            thread.messages[0].to.as_deref(),
+            Some("Recipient <to@example.test>")
+        );
+        assert_eq!(thread.messages[0].cc.as_deref(), Some("cc@example.test"));
         assert!(thread.next_cursor.is_some());
         assert!(matches!(
             client
@@ -3992,7 +4071,7 @@ mod tests {
                     )
                 } else if line.contains(" FETCH ") {
                     format!(
-                        "* 1 FETCH (UID 31 ENVELOPE (NIL \"Hello\" ((NIL NIL \"sender\" \"example.test\")) NIL NIL NIL NIL NIL NIL \"<m31>\") INTERNALDATE \"30-Sep-2026 12:00:00 +0000\" RFC822.SIZE 20 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 5 1))\r\n{tag} OK fetched\r\n"
+                        "* 1 FETCH (UID 31 ENVELOPE (NIL \"Hello\" ((NIL NIL \"sender\" \"example.test\")) NIL NIL ((NIL NIL \"recipient\" \"example.test\")) ((NIL NIL \"copy\" \"example.test\")) NIL NIL \"<m31>\") INTERNALDATE \"30-Sep-2026 12:00:00 +0000\" RFC822.SIZE 20 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 5 1))\r\n{tag} OK fetched\r\n"
                     )
                 } else if command.eq_ignore_ascii_case("LOGOUT") {
                     format!("* BYE logging out\r\n{tag} OK logout\r\n")
@@ -4022,6 +4101,8 @@ mod tests {
         assert_eq!(messages[0].provider_id, "7:31");
         assert_eq!(messages[0].subject, "Hello");
         assert_eq!(messages[0].from.as_deref(), Some("sender@example.test"));
+        assert_eq!(messages[0].to.as_deref(), Some("recipient@example.test"));
+        assert_eq!(messages[0].cc.as_deref(), Some("copy@example.test"));
         assert!(!messages[0].has_attachments);
         assert!(messages[0].body_text.is_none());
         session.logout().await.unwrap();
@@ -4151,6 +4232,44 @@ mod tests {
             imap_host(Provider::Microsoft).unwrap(),
             "outlook.office365.com"
         );
+    }
+
+    #[test]
+    fn mail_parsers_project_bounded_to_and_cc_but_never_bcc() {
+        let google = parse_google_message(&json!({
+            "id": "gmail-message",
+            "threadId": "gmail-thread",
+            "payload": {"headers": [
+                {"name": "From", "value": "sender@example.test"},
+                {"name": "To", "value": "Recipient <to@example.test>"},
+                {"name": "Cc", "value": "Copy <cc@example.test>"},
+                {"name": "Bcc", "value": "Hidden <bcc@example.test>"}
+            ]}
+        }));
+        assert_eq!(google.to.as_deref(), Some("Recipient <to@example.test>"));
+        assert_eq!(google.cc.as_deref(), Some("Copy <cc@example.test>"));
+        let serialized = serde_json::to_value(&google).unwrap();
+        assert!(serialized.get("bcc").is_none());
+
+        let graph = parse_graph_message(&json!({
+            "id": "graph-message",
+            "toRecipients": [{"emailAddress":{"name":"Recipient", "address":"to@example.test"}}],
+            "ccRecipients": [{"emailAddress":{"address":"cc@example.test"}}],
+            "bccRecipients": [{"emailAddress":{"address":"bcc@example.test"}}]
+        }))
+        .unwrap();
+        assert_eq!(graph.to.as_deref(), Some("Recipient <to@example.test>"));
+        assert_eq!(graph.cc.as_deref(), Some("cc@example.test"));
+        let serialized = serde_json::to_value(&graph).unwrap();
+        assert!(serialized.get("bcc").is_none());
+
+        let noisy = graph_recipients(Some(
+            &json!([{"emailAddress":{"address":"to@example.test\r\nInjected: yes"}}]),
+        ))
+        .unwrap();
+        assert!(!noisy.contains('\r'));
+        assert!(!noisy.contains('\n'));
+        assert!(noisy.len() <= MAX_MAIL_RECIPIENTS_TEXT_BYTES);
     }
 
     #[tokio::test]

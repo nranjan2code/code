@@ -189,6 +189,8 @@ export interface MailCalendarMailPreview {
   provider_id: string;
   thread_id: string | null;
   from: string | null;
+  to: string | null;
+  cc: string | null;
   subject: string;
   received_at: string | null;
   preview: string;
