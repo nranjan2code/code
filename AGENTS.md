@@ -151,7 +151,9 @@ Read before changing behaviour in these areas:
   routines use the existing `TaskDef` cadence, a bounded provider poll, opaque
   encrypted Agent-vault occurrence keys, and brokered reads of matching events;
   Google and Graph calendar reads follow bounded continuation pages with
-  same-origin Graph validation; live-provider, browser, and 24-hour recovery
+  same-origin Graph validation. Event-trigger scans detect incomplete pages,
+  retain queued occurrences beyond each run's output batch, and fail closed at
+  the 100-event queue ceiling; live-provider, browser, and 24-hour recovery
   acceptance remain open);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.

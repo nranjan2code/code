@@ -229,6 +229,15 @@ pub struct CalendarRange {
     pub limit: usize,
 }
 
+/// One bounded provider observation. `has_more` is true only when the
+/// provider supplied a continuation beyond `events`; callers that require a
+/// complete observation must not advance their durable cursor in that case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalendarEventPage {
+    pub events: Vec<CalendarItem>,
+    pub has_more: bool,
+}
+
 /// An Apple CalDAV URL validated to remain on the fixed HTTPS service host.
 /// Construct paths from provider-returned hrefs with `from_href`; arbitrary
 /// hosts and URL components fail closed before the credential is loaded.
@@ -1234,6 +1243,20 @@ impl ProviderReadClient {
         audience: &str,
         range: CalendarRange,
     ) -> Result<Vec<CalendarItem>, ProviderReadError> {
+        Ok(self
+            .calendar_event_page(account, vault, agent_id, audience, range)
+            .await?
+            .events)
+    }
+
+    pub async fn calendar_event_page(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        range: CalendarRange,
+    ) -> Result<CalendarEventPage, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
         validate_range(range.from, range.to)?;
         let limit = range.limit.clamp(1, MAX_EVENT_ITEMS);
@@ -1664,7 +1687,7 @@ impl ProviderReadClient {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
-    ) -> Result<Vec<CalendarItem>, ProviderReadError> {
+    ) -> Result<CalendarEventPage, ProviderReadError> {
         let max_items = limit.min(MAX_EVENT_ITEMS);
         let mut output = Vec::with_capacity(max_items);
         let mut seen_ids = std::collections::HashSet::new();
@@ -1707,28 +1730,40 @@ impl ProviderReadClient {
                     output.push(event);
                 }
             }
-            if output.len() >= max_items {
-                return Ok(output);
-            }
-            page_token = value
-                .get("nextPageToken")
-                .and_then(Value::as_str)
-                .map(str::to_owned);
-            let Some(token) = &page_token else {
-                return Ok(output);
+            page_token = match value.get("nextPageToken") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(token)) => Some(token.clone()),
+                Some(_) => return Err(ProviderReadError::InvalidResponse),
             };
-            if token.is_empty()
-                || token.len() > 4096
-                || token.chars().any(char::is_control)
-                || !seen_tokens.insert(token.clone())
-            {
-                return Err(ProviderReadError::InvalidResponse);
+            if let Some(token) = &page_token {
+                if token.is_empty()
+                    || token.len() > 4096
+                    || token.chars().any(char::is_control)
+                    || !seen_tokens.insert(token.clone())
+                {
+                    return Err(ProviderReadError::InvalidResponse);
+                }
+            }
+            if output.len() >= max_items {
+                return Ok(CalendarEventPage {
+                    events: output,
+                    has_more: page_token.is_some(),
+                });
+            }
+            if page_token.is_none() {
+                return Ok(CalendarEventPage {
+                    events: output,
+                    has_more: false,
+                });
             }
             if page + 1 == MAX_CALENDAR_PAGES {
                 return Err(ProviderReadError::InvalidResponse);
             }
         }
-        Ok(output)
+        Ok(CalendarEventPage {
+            events: output,
+            has_more: false,
+        })
     }
 
     async fn microsoft_events(
@@ -1737,7 +1772,7 @@ impl ProviderReadClient {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
-    ) -> Result<Vec<CalendarItem>, ProviderReadError> {
+    ) -> Result<CalendarEventPage, ProviderReadError> {
         let mut output = Vec::with_capacity(limit);
         let mut seen_ids = std::collections::HashSet::new();
         let mut next_url: Option<url::Url> = None;
@@ -1789,23 +1824,40 @@ impl ProviderReadClient {
                     output.push(event);
                 }
             }
-            if output.len() >= limit {
-                return Ok(output);
+            next_url = match value.get("@odata.nextLink") {
+                None | Some(Value::Null) => None,
+                Some(Value::String(value)) => Some(validate_graph_calendar_url(
+                    value,
+                    &self.microsoft_graph_base,
+                )?),
+                Some(_) => return Err(ProviderReadError::InvalidResponse),
+            };
+            if next_url
+                .as_ref()
+                .is_some_and(|url| seen_urls.contains(url.as_str()))
+            {
+                return Err(ProviderReadError::InvalidResponse);
             }
-            next_url = value
-                .get("@odata.nextLink")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-                .map(|value| validate_graph_calendar_url(&value, &self.microsoft_graph_base))
-                .transpose()?;
+            if output.len() >= limit {
+                return Ok(CalendarEventPage {
+                    events: output,
+                    has_more: next_url.is_some(),
+                });
+            }
             if next_url.is_none() {
-                return Ok(output);
+                return Ok(CalendarEventPage {
+                    events: output,
+                    has_more: false,
+                });
             }
             if page + 1 == MAX_CALENDAR_PAGES {
                 return Err(ProviderReadError::InvalidResponse);
             }
         }
-        Ok(output)
+        Ok(CalendarEventPage {
+            events: output,
+            has_more: false,
+        })
     }
 
     async fn google_free_busy(
@@ -5784,6 +5836,18 @@ mod tests {
             .unwrap();
         assert_eq!(google_events.len(), 2);
         assert_eq!(google_events[1].provider_id, "google-second");
+        let google_page = client
+            .calendar_event_page(
+                &google,
+                &vault,
+                &agent_id,
+                &audience,
+                CalendarRange { from, to, limit: 1 },
+            )
+            .await
+            .unwrap();
+        assert_eq!(google_page.events.len(), 1);
+        assert!(google_page.has_more);
         let graph_events = client
             .calendar_events(
                 &graph,
@@ -5796,6 +5860,18 @@ mod tests {
             .unwrap();
         assert_eq!(graph_events.len(), 2);
         assert_eq!(graph_events[1].provider_id, "graph-second");
+        let graph_page = client
+            .calendar_event_page(
+                &graph,
+                &graph_vault,
+                &graph_agent_id,
+                &graph_audience,
+                CalendarRange { from, to, limit: 1 },
+            )
+            .await
+            .unwrap();
+        assert_eq!(graph_page.events.len(), 1);
+        assert!(graph_page.has_more);
         assert!(
             validate_graph_calendar_url(
                 "https://attacker.example/me/calendarView?$skiptoken=x",

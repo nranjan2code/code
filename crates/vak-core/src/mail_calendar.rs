@@ -109,14 +109,38 @@ pub async fn calendar_events_with_worker(
     range: CalendarRange,
     worker_exe: &Path,
 ) -> Result<Vec<CalendarItem>, vak_mail_calendar::provider::ProviderReadError> {
+    Ok(calendar_event_page_with_worker(
+        client, account, vault, agent_id, audience, range, worker_exe,
+    )
+    .await?
+    .events)
+}
+
+/// Read one bounded calendar observation and retain whether a provider
+/// continuation or worker-side result ceiling indicates more events exist.
+/// Durable routines use this to avoid advancing after a partial scan.
+pub async fn calendar_event_page_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    range: CalendarRange,
+    worker_exe: &Path,
+) -> Result<
+    vak_mail_calendar::provider::CalendarEventPage,
+    vak_mail_calendar::provider::ProviderReadError,
+> {
     if account.provider != Provider::AppleIcloud {
-        let mut events = client
-            .calendar_events(account, vault, agent_id, audience, range)
+        let mut page = client
+            .calendar_event_page(account, vault, agent_id, audience, range)
             .await?;
-        events.retain(|event| event_overlaps_range(event, range));
-        events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
-        events.truncate(range.limit.clamp(1, 100));
-        return Ok(events);
+        page.events
+            .retain(|event| event_overlaps_range(event, range));
+        page.events
+            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.truncate(range.limit.clamp(1, 100));
+        return Ok(page);
     }
     let calendars = discover_icloud_calendars(
         client,
@@ -152,8 +176,9 @@ pub async fn calendar_events_with_worker(
     // response is untrusted. Enforce the requested window again locally.
     events.retain(|event| event_overlaps_range(event, range));
     events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    let has_more = events.len() >= range.limit.clamp(1, 100);
     events.truncate(range.limit.clamp(1, 100));
-    Ok(events)
+    Ok(vak_mail_calendar::provider::CalendarEventPage { events, has_more })
 }
 
 /// Read availability for an Apple account using CalDAV's VFREEBUSY response,
@@ -698,18 +723,30 @@ impl vak_tools::Tool for MailCalendarTool {
                                 .map_or(100, |scope| u64::from(scope.max_items)),
                         ) as usize;
                     async {
-                        let events = calendar_events_with_worker(
+                        let trigger_scan = event_trigger.is_some();
+                        let query_limit = if trigger_scan {
+                            vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG
+                        } else {
+                            limit
+                        };
+                        let page = calendar_event_page_with_worker(
                             &client,
                             account,
                             &vault,
                             agent_id,
                             &account_audience,
-                            CalendarRange { from, to, limit },
+                            CalendarRange {
+                                from,
+                                to,
+                                limit: query_limit,
+                            },
                             &self.worker_exe,
                         )
                         .await
                         .map_err(|error| error.to_string())?;
-                        let provider_page_full = events.len() >= limit;
+                        if trigger_scan && page.has_more {
+                            return Err("the routine's calendar window exceeds its bounded scan; narrow the catch-up window".into());
+                        }
                         if let (Some(scope), Some(trigger)) =
                             (self.routine_scope.as_ref(), event_trigger)
                         {
@@ -720,22 +757,29 @@ impl vak_tools::Tool for MailCalendarTool {
                                     vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
                                 )
                                 .map_err(|error| error.to_string())?;
-                            let (selected, staged) =
-                                select_pending_calendar_occurrences(events, trigger, &pending);
-                            // If the provider returned fewer than the full
-                            // requested page, it confirms these are the
-                            // current candidates and stale moved/cancelled
-                            // occurrences can be dropped. A full page may
-                            // be truncated, so retain unmatched keys.
-                            if !provider_page_full {
-                                vault
-                                    .reconcile_calendar_occurrences(
-                                        &scope.routine_id,
-                                        &scope.account_id,
-                                        &staged,
-                                    )
-                                    .map_err(|error| error.to_string())?;
-                            }
+                            let (selected, observed) = select_pending_calendar_occurrences(
+                                page.events,
+                                trigger,
+                                &pending,
+                                limit,
+                            );
+                            vault
+                                .reconcile_calendar_occurrences(
+                                    &scope.routine_id,
+                                    &scope.account_id,
+                                    &observed,
+                                )
+                                .map_err(|error| error.to_string())?;
+                            let staged = selected
+                                .iter()
+                                .filter_map(|event| {
+                                    Some(trigger.occurrence_key(
+                                        &event.provider_id,
+                                        event.starts_at?,
+                                        event.ends_at?,
+                                    ))
+                                })
+                                .collect::<Vec<_>>();
                             vault
                                 .stage_delivered_calendar_occurrences(
                                     &scope.routine_id,
@@ -745,7 +789,7 @@ impl vak_tools::Tool for MailCalendarTool {
                                 .map_err(|error| error.to_string())?;
                             Ok(json!(selected))
                         } else {
-                            Ok(json!(events))
+                            Ok(json!(page.events))
                         }
                     }
                     .await
@@ -874,6 +918,7 @@ fn select_pending_calendar_occurrences(
     events: Vec<CalendarItem>,
     trigger: vak_mail_calendar::CalendarEventTrigger,
     pending: &[String],
+    limit: usize,
 ) -> (Vec<CalendarItem>, Vec<String>) {
     let mut selected = Vec::new();
     let mut staged = Vec::new();
@@ -883,8 +928,10 @@ fn select_pending_calendar_occurrences(
         };
         let key = trigger.occurrence_key(&event.provider_id, starts_at, ends_at);
         if pending.contains(&key) {
-            selected.push(event);
             staged.push(key);
+            if selected.len() < limit {
+                selected.push(event);
+            }
         }
     }
     (selected, staged)
@@ -1108,16 +1155,21 @@ mod tests {
             can_cancel: false,
         };
         let expected = trigger.occurrence_key("wanted", starts, ends);
+        let also_expected = trigger.occurrence_key("other", starts, ends);
         let events = vec![
             event("wanted", Some(starts)),
             event("other", Some(starts)),
             event("all-day", None),
         ];
-        let (selected, staged) =
-            select_pending_calendar_occurrences(events, trigger, &[expected.clone()]);
+        let (selected, observed) = select_pending_calendar_occurrences(
+            events,
+            trigger,
+            &[expected.clone(), also_expected.clone()],
+            1,
+        );
         assert_eq!(selected.len(), 1);
         assert_eq!(selected[0].provider_id, "wanted");
-        assert_eq!(staged, [expected]);
+        assert_eq!(observed, [expected, also_expected]);
     }
 
     #[tokio::test]

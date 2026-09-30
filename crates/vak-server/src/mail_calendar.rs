@@ -236,12 +236,15 @@ pub(crate) async fn calendar_event_has_due(
     let range = vak_mail_calendar::provider::CalendarRange {
         from: checked_after - offset - chrono::Duration::minutes(1),
         to: now - offset + chrono::Duration::minutes(1),
-        limit: usize::from(scope.max_items).clamp(1, 100),
+        // Scan to the durable occurrence queue's bound independently of the
+        // Agent run's smaller output budget. Otherwise a full first page can
+        // hide due events permanently when each later poll starts at page one.
+        limit: vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
     };
     if range.from >= range.to {
         return Ok(Some(false));
     }
-    let events = vak_core::mail_calendar::calendar_events_with_worker(
+    let page = vak_core::mail_calendar::calendar_event_page_with_worker(
         &ProviderReadClient::new(),
         &account,
         &vault,
@@ -254,6 +257,11 @@ pub(crate) async fn calendar_event_has_due(
     .map_err(|_| {
         "the calendar event trigger could not check its bounded provider window".to_string()
     })?;
+    if page.has_more {
+        return Err(
+            "the calendar event trigger found more events than its bounded scan can safely reconcile; narrow its catch-up window".into(),
+        );
+    }
     let still_authorized = ledger.read_all().ok().is_some_and(|latest| {
         latest.iter().any(|current| {
             current.id == account.id
@@ -264,7 +272,7 @@ pub(crate) async fn calendar_event_has_due(
     if !still_authorized {
         return Err("the calendar account changed during the trigger check".into());
     }
-    let keys = due_calendar_occurrence_keys(&events, trigger, checked_after, now);
+    let keys = due_calendar_occurrence_keys(&page.events, trigger, checked_after, now);
     vault
         .reconcile_calendar_occurrences(&scope.routine_id, &scope.account_id, &keys)
         .map(Some)

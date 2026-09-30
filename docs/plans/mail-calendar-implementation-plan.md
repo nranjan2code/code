@@ -498,12 +498,15 @@ the Agent-vault occurrence queue, brokered matching reads, and owner settings.
 Google and Microsoft event reads follow bounded continuation pages up to the
 requested result limit, deduplicate repeated event IDs, reject cursor loops,
 and reject Microsoft continuation URLs outside the configured Graph origin
-and calendar-view path. Each page is response-size limited; a provider that
-continues beyond the five-page work budget fails visibly instead of returning
-an apparently complete short result. Live provider behavior, complete
-scheduled-run browser acceptance, and sustained sleep/restart/outage recovery
-remain open. Local polling is best effort while the service host is awake; it
-is not a 24/7 freshness guarantee.
+and calendar-view path. Routine scans now inspect a full 100-event window
+independently of the smaller Agent output budget. The broker retains all
+matching queued keys but stages only the current run's allowed batch, so later
+runs can drain the rest. A provider continuation beyond that bounded window
+fails visibly before the poll advances; Apple treats a full result at its
+100-event ceiling as potentially truncated and fails closed. Live provider
+behavior, complete scheduled-run browser acceptance, and sustained
+sleep/restart/outage recovery remain open. Local polling is best effort while
+the service host is awake; it is not a 24/7 freshness guarantee.
 
 **Implemented increment (2026-09-30):** owner Settings can create, pause,
 resume, run once, inspect, and delete a scheduled read-only routine using the
@@ -678,6 +681,15 @@ remains open.
   poll freshness for event-trigger routines. Focused core, vault and server
   tests, client typecheck/status tests, and the web build pass. Live-provider,
   browser and end-to-end scheduled-run acceptance remain open.
+- 2026-10-01: Closed a calendar-trigger truncation gap. Provider reads now
+  preserve a `has_more` signal from Google and Graph continuation links. The
+  poll scans to the 100-occurrence queue bound rather than the smaller model
+  response limit, and fails before advancing the poll when the bounded window
+  is incomplete. The broker independently retrieves the same complete bounded
+  window, reconciles all still-valid pending occurrences, and stages only the
+  configured per-run output batch; the remainder stays queued for later runs.
+  Apple conservatively treats a full 100-event CalDAV result as truncated.
+  Focused provider, Core selection, and 1,910-event server tests pass.
 - 2026-10-01: Added a 1,910-event synthetic server test for event-relative
   polling: 1,500 matching occurrences are selected, while late, future, and
   all-day events are rejected; occurrence keys contain no event title. Added

@@ -33,9 +33,14 @@ paused for a one-off preview, and store a bounded encrypted mail backlog with
 provider cursors in the Agent vault. Event-relative triggers also use the
 existing `TaskDef` cadence: bounded provider polls queue opaque due-occurrence
 keys in the Agent vault, and the scheduled run's brokered calendar read returns
-only events matching those keys. The brokered read drops unmatched pending keys
-when the provider returns a non-full page; full pages retain them because the
-provider may have more results. Continuous watches show an overdue warning
+only events matching those keys. Provider scans retain continuation status
+and are independent of the run's smaller output budget: the broker reconciles
+up to 100 matching occurrences, returns only the configured per-run batch,
+and leaves remaining matches queued for later runs. A complete observation
+drops stale moved or cancelled candidates; a provider continuation beyond the
+100-event queue bound fails the poll visibly without advancing it. Apple
+CalDAV treats a full 100-event result as possibly truncated and fails closed.
+Continuous watches show an overdue warning
 after three minutes without a successful provider poll. Settings separately
 reports whether the Vakyartha service API is reachable; a reachable process
 does not prove provider freshness or detect sleep between checks. Owners can
