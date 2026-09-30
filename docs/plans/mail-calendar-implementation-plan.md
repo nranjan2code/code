@@ -20,7 +20,7 @@ implementation.
 |---|---|---|
 | Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
 | Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so effects remain disabled and reads stay behind M7. Evaluate Apple's supported authorization flow across desktop and always-on hosts before provider access ships. |
+| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so effects remain disabled and reads stay behind M7. Apple documents Account & Organizational Data Sharing OAuth for Apple School Manager Roster API scopes, not iCloud Mail/Calendar; EventKit is a native on-device calendar permission, not an unattended server grant. Resolve a supported account flow and its revocation lifecycle before provider access ships. |
 
 The third adapter is not a generic arbitrary-host IMAP/CalDAV feature. Custom
 servers, Yahoo, Fastmail, Exchange EWS, and generic SMTP are out of scope for
@@ -28,11 +28,17 @@ this plan. iCloud's app-specific-password fallback is broader than Vak's
 per-operation capabilities; the adapter must disclose that difference and
 cannot claim provider-enforced least privilege. [Apple's support guide](https://support.apple.com/en-us/121539)
 now describes authorizing supported third-party apps with the Apple Account
-and revoking that access from Account Data Sharing. The developer-facing
-materials reviewed for this pass do not describe the mail/calendar client
-authorization protocol or its server-side token lifecycle. Do not substitute
-Sign in with Apple: it authenticates the person to Vakyartha but does not grant
-iCloud Mail/Calendar access ([Apple's Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
+and revoking that access from Account Data Sharing. Apple's developer OAuth
+service documents `edu.users.read` and `edu.classes.read` for the Apple School
+Manager Roster API, not iCloud Mail/Calendar
+([authorization scopes](https://developer.apple.com/documentation/accountorganizationaldatasharing/request-an-authorization),
+[Roster API](https://developer.apple.com/documentation/rosterapi/)). EventKit
+requires a native app's on-device calendar permission and does not define a
+server-side grant for unattended routines
+([EventKit access](https://developer.apple.com/documentation/eventkit/accessing-the-event-store)).
+Do not substitute Sign in with Apple: it authenticates the person to
+Vakyartha but does not grant iCloud Mail/Calendar access ([Apple's Sign in with
+Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
 Before iCloud content access or always-on service support ships, resolve the
 supported integration protocol, token storage/refresh, and revocation contract
 with Apple documentation or Apple Developer Support. No Apple Account password
@@ -740,8 +746,8 @@ authorization and approval boundary on every execution path.
   does not imply that a cleanup retry reattempted provider revocation.
 - 2026-09-30: Rechecked Apple's documented third-party account authorization.
   Apple Support describes Apple Account authorization and revocation for
-  supported apps, while the developer materials reviewed here do not specify
-  the iCloud Mail/Calendar client protocol or server credential lifecycle.
-  Recorded this as a gate before iCloud content or always-on support; Sign in
-  with Apple is explicitly not a data-access grant. M7 remains the gate for
-  all content reads.
+  supported apps. The developer OAuth flow reviewed applies to the Apple School
+  Manager Roster API, and EventKit describes native on-device calendar access;
+  neither specifies a server-side iCloud Mail/Calendar client grant for
+  unattended routines. Recorded this as a provider gate; Sign in with Apple is
+  not a data-access grant. M7 remains the gate for all content reads.

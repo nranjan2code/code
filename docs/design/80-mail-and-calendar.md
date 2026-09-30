@@ -167,12 +167,17 @@ support that flow ([Apple's iCloud third-party app guide](https://support.apple.
 The current Vakyartha branch implements only the app-specific-password
 fallback with IMAP/SMTP and CalDAV; the credential has broader protocol access
 than Vak's selected capabilities and must be disclosed as such. Apple's
-support guide describes the user authorization and revocation experience, but
-the developer documentation reviewed here does not specify how a third-party
-mail/calendar client obtains and refreshes the authorization for a desktop or
-always-on service. **Do not treat Sign in with Apple as this permission:** it
-authenticates a person to Vakyartha, rather than granting access to their
-iCloud Mail or Calendar ([Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
+support guide describes the user authorization and revocation experience.
+Apple's developer OAuth service is Account & Organizational Data Sharing; its
+documented scopes are for the Apple School Manager Roster API
+(`edu.users.read`, `edu.classes.read`), not iCloud Mail or Calendar
+([authorization scopes](https://developer.apple.com/documentation/accountorganizationaldatasharing/request-an-authorization),
+[Roster API](https://developer.apple.com/documentation/rosterapi/)). EventKit
+is a native on-device calendar permission model, not a server-side account
+grant for unattended routines ([EventKit access](https://developer.apple.com/documentation/eventkit/accessing-the-event-store)).
+**Do not treat Sign in with Apple as this permission:** it authenticates a
+person to Vakyartha, rather than granting access to their iCloud Mail or
+Calendar ([Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
 Before enabling iCloud content access, verify Apple's supported integration
 protocol, server credential handling, and revocation behavior for both local
 and always-on clients. No generic arbitrary-URL, raw-HTTP, or model-selected
