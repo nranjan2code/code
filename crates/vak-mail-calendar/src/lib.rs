@@ -60,9 +60,15 @@ pub enum Capability {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RoutineScope {
+    /// Set by the server from the owning TaskDef id; callers cannot choose a
+    /// different durable cursor namespace.
+    #[serde(default)]
+    pub routine_id: String,
     pub account_id: AccountId,
     pub operations: BTreeSet<RoutineOperation>,
     pub max_items: u8,
+    #[serde(default)]
+    pub watch_new_mail: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -76,8 +82,10 @@ pub enum RoutineOperation {
 impl RoutineScope {
     pub fn validate(&self) -> Result<(), ContractError> {
         if Uuid::parse_str(&self.account_id).is_err()
+            || !Uuid::parse_str(&self.routine_id).is_ok_and(|id| id.get_version_num() == 7)
             || self.operations.is_empty()
             || !(1..=20).contains(&self.max_items)
+            || (self.watch_new_mail && !self.operations.contains(&RoutineOperation::RecentMail))
         {
             return Err(ContractError::InvalidRoutineScope);
         }

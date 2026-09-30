@@ -4,7 +4,8 @@ Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
 Google/Microsoft owner previews, the broker-owned local Agent read tool, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
-the first Stage 4 increment adds scheduled read-only routines on `TaskDef`.
+the first Stage 4 increment adds scheduled read-only routines and a best-effort
+scheduled mail watch on `TaskDef`.
 The maintainer authorized continuing against the current 4.x storage model on
 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
@@ -254,13 +255,19 @@ The child runs unattended in `ReadOnly` mode with only the mail/calendar
 brokered tool exposed, no script, no delivery target, and no MCP/skills/hooks/
 plugins. It stores run content only in the Agent's append-only run session,
 not in shared task summaries or Inbox delivery. Disconnect removes the vault
-credential and local candidates, pauses routines for that account, and fences
-reads. The ordinary Vakyartha service must remain running for schedules to
-fire. This is not continuous monitoring: no polling cursor, freshness or
-deduplication policy, durable routine lease, push subscription, awake-host
-health, or restart/recovery acceptance is implemented yet. Current-storage
-session history is append-only and cannot be selectively erased; M7 remains
-the deletion gate.
+credential, local candidates, and mail-watch IDs, pauses routines for that
+account, and fences reads. An optional mail watch deduplicates a bounded
+rolling set of message IDs in the encrypted Agent vault. A content-free
+provider-ID poll skips model dispatch when the bounded latest-message window
+contains no unseen IDs; only a triggered run fetches message content through
+the brokered tool. This is best-effort polling: it has no provider-native
+cursor, can miss messages outside the returned window, does not coordinate
+competing service instances with a durable lease, and has no freshness
+guarantee. The ordinary Vakyartha service must remain running for schedules to
+fire. Durable trigger leases, push subscriptions, awake-host health, and
+restart/recovery acceptance are not implemented yet. Current-storage session
+history is append-only and cannot be selectively erased; M7 remains the
+deletion gate.
 
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during

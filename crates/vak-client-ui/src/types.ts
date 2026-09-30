@@ -504,9 +504,11 @@ export interface TaskDef {
   agent_id?: string | null;
   agent_revision?: number | null;
   mail_calendar_scope?: {
+    routine_id: string;
     account_id: string;
     operations: Array<"recent_mail" | "calendar_events" | "free_busy">;
     max_items: number;
+    watch_new_mail: boolean;
   } | null;
   next_run_at?: string | null;
   timezone?: string | null;

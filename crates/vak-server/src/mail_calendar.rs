@@ -20,6 +20,7 @@ use vak_mail_calendar::{
     AccountStatus, ActionCandidate, Capability, ConnectedAccount, ProposedAction, Provider,
     RoutineOperation, RoutineScope, SourceRef,
     connection_ledger::ConnectionLedger,
+    provider::ProviderReadClient,
     vault::{AccountSecretMaterial, AccountVault},
 };
 use zeroize::{Zeroize, Zeroizing};
@@ -57,6 +58,58 @@ pub(crate) fn validate_routine_scope(agent_id: &str, scope: &RoutineScope) -> Re
         return Err("the selected account's saved credential is unavailable".into());
     }
     Ok(())
+}
+
+/// Poll only the configured account's bounded recent-mail window. The
+/// scheduler uses this content-free result to avoid invoking a model when a
+/// watch has no unseen message IDs; the actual content is read again by the
+/// brokered tool after a run starts.
+pub(crate) async fn mail_watch_has_unseen(
+    agent_id: &str,
+    scope: &RoutineScope,
+) -> Result<bool, String> {
+    scope.validate().map_err(|error| error.to_string())?;
+    if !scope.watch_new_mail || !scope.operations.contains(&RoutineOperation::RecentMail) {
+        return Err("the scheduled routine is not a mail watch".into());
+    }
+    let ledger = ConnectionLedger::for_agent(agent_id)
+        .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
+    let accounts = ledger
+        .read_all()
+        .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
+    let audience = format!("agent:{agent_id}");
+    let account = accounts
+        .into_iter()
+        .find(|account| {
+            account.id == scope.account_id
+                && account.admits(agent_id, &audience, Capability::MailRead)
+        })
+        .ok_or_else(|| "the selected mail account is no longer authorized".to_string())?;
+    let vault = AccountVault::for_agent(agent_id)
+        .map_err(|_| "mail/calendar credentials are unavailable".to_string())?;
+    let item_ids = ProviderReadClient::new()
+        .recent_mail_ids(
+            &account,
+            &vault,
+            agent_id,
+            &audience,
+            usize::from(scope.max_items),
+        )
+        .await
+        .map_err(|_| "the mail watch could not check its bounded provider window".to_string())?;
+    let still_authorized = ledger.read_all().ok().is_some_and(|latest| {
+        latest.iter().any(|current| {
+            current.id == account.id
+                && current.revision == account.revision
+                && current.admits(agent_id, &audience, Capability::MailRead)
+        })
+    });
+    if !still_authorized {
+        return Err("the mail account changed during the watch check".into());
+    }
+    vault
+        .has_unseen_mail_ids(&scope.routine_id, &scope.account_id, &item_ids)
+        .map_err(|_| "the private mail watch cursor is unavailable".to_string())
 }
 
 #[derive(Deserialize)]

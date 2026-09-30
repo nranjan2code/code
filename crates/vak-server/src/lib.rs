@@ -18064,8 +18064,16 @@ async fn create_task(
         )
             .into_response();
     }
+    let task_id = uuid::Uuid::now_v7().to_string();
+    let mut mail_calendar_scope = body.mail_calendar_scope;
+    if let Some(scope) = &mut mail_calendar_scope {
+        // The cursor namespace is owned by the server-created TaskDef id.
+        // Ignore any caller-supplied namespace so it cannot collide with a
+        // different routine's private deduplication state.
+        scope.routine_id = task_id.clone();
+    }
     let task = TaskDef {
-        id: uuid::Uuid::now_v7().to_string(),
+        id: task_id,
         name: body.name,
         prompt: body.prompt,
         interval_secs: body.interval_secs,
@@ -18087,7 +18095,7 @@ async fn create_task(
         model_pin: body.model_pin.filter(|m| !m.trim().is_empty()),
         agent_id: body.agent_id.filter(|m| !m.trim().is_empty()),
         agent_revision: body.agent_revision,
-        mail_calendar_scope: body.mail_calendar_scope,
+        mail_calendar_scope,
     };
     if let Err((status, payload)) = validate_task_fields(&task) {
         return (status, Json(payload)).into_response();
@@ -18338,7 +18346,7 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
 
 /// Fire a task immediately (also resets its schedule).
 async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    match fire_task(&state, &id).await {
+    match fire_task_with_force(&state, &id, true).await {
         Ok(_) => return StatusCode::ACCEPTED,
         Err(NotFired::Gone) => return StatusCode::NOT_FOUND,
         Err(NotFired::Refused) => return StatusCode::UNPROCESSABLE_ENTITY,
@@ -18467,6 +18475,14 @@ fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
 }
 
 async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
+    fire_task_with_force(state, id, false).await
+}
+
+async fn fire_task_with_force(
+    state: &AppState,
+    id: &str,
+    force_mail_watch_run: bool,
+) -> Result<String, NotFired> {
     let Some(snapshot) = state
         .tasks
         .lock()
@@ -18496,6 +18512,36 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
         return fire_script_task(state, &snapshot, script)
             .await
             .ok_or(NotFired::Busy);
+    }
+    if !force_mail_watch_run
+        && let Some(scope) = snapshot
+            .mail_calendar_scope
+            .as_ref()
+            .filter(|scope| scope.watch_new_mail)
+    {
+        let agent_id = snapshot.agent_id.as_deref().ok_or_else(|| {
+            refuse_task(
+                state,
+                &snapshot,
+                "The mail watch has no pinned Agent.".into(),
+            )
+        })?;
+        match mail_calendar::mail_watch_has_unseen(agent_id, scope).await {
+            Ok(false) => {
+                update_tasks(state, |tasks| {
+                    if let Some(task) = tasks.get_mut(id) {
+                        task.last_run_at = Some(chrono::Utc::now());
+                        task.last_run_status = Some("no_changes".into());
+                        task.last_delivery_state = Some("quiet".into());
+                        task.last_summary = None;
+                        task.last_result_id = None;
+                    }
+                });
+                return Ok(id.to_owned());
+            }
+            Ok(true) => {}
+            Err(error) => return Err(refuse_task(state, &snapshot, error)),
+        }
     }
     let provider = match state.core.provider() {
         Ok(provider) => provider,

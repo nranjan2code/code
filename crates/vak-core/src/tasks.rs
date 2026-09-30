@@ -309,6 +309,7 @@ impl TaskDef {
                     .as_deref()
                     .is_some_and(|script| !script.trim().is_empty())
                 || self.deliver_to.is_some()
+                || scope.routine_id != self.id
                 || scope.validate().is_err()
             {
                 return Err(TaskError::InvalidMailCalendarScope);
@@ -788,19 +789,41 @@ mod tests {
 
     #[test]
     fn mail_calendar_routine_requires_a_pinned_agent_and_safe_read_scope() {
+        let task_id = uuid::Uuid::now_v7().to_string();
         let account_id = uuid::Uuid::now_v7().to_string();
         let scope = vak_mail_calendar::RoutineScope {
+            routine_id: task_id.clone(),
             account_id,
             operations: [vak_mail_calendar::RoutineOperation::RecentMail]
                 .into_iter()
                 .collect(),
             max_items: 5,
+            watch_new_mail: true,
         };
         let mut task = base_task();
+        task.id = task_id;
         task.agent_id = Some("agent-one".into());
         task.agent_revision = Some(1);
         task.mail_calendar_scope = Some(scope.clone());
         assert!(task.validate().is_ok());
+        let mut other_task = task.clone();
+        other_task.id = uuid::Uuid::now_v7().to_string();
+        assert!(matches!(
+            other_task.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
+        let mut calendar_only = task.clone();
+        calendar_only
+            .mail_calendar_scope
+            .as_mut()
+            .unwrap()
+            .operations = [vak_mail_calendar::RoutineOperation::FreeBusy]
+            .into_iter()
+            .collect();
+        assert!(matches!(
+            calendar_only.validate(),
+            Err(TaskError::InvalidMailCalendarScope)
+        ));
 
         task.deliver_to = Some("log:shared".into());
         assert!(matches!(

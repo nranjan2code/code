@@ -24,8 +24,12 @@ are blocked until an explicit share flow exists. Apple remains unverified and
 unavailable. A bounded Agent-vault working area now stores local email and
 event drafts with revision checks and disconnect cleanup. The first scheduled
 read-only routine slice uses the existing TaskDef scheduler and is scoped to
-one Agent revision, one account, and selected read operations. It is not
-continuous monitoring. Full source editing, Review, provider effects, the
+one Agent revision, one account, and selected read operations. A scheduled
+email watch can deduplicate a bounded set of seen message IDs in the encrypted
+Agent vault and skip model dispatch when a content-free ID poll finds no new
+items. It may miss messages outside the provider's latest-item window and
+does not coordinate multiple service instances. It is not reliable continuous
+monitoring. Full source editing, Review, provider effects, the
 third provider, and continuous routines are still being built against current
 4.x storage. Before a read, the product explains that disconnect removes the
 saved credential and blocks future reads, while content recorded in append-only

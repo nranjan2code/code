@@ -18,6 +18,10 @@ const MAX_PRINCIPAL_BYTES: usize = 512;
 const WORK_AREA_KEY: &str = "vak_mail_calendar_work_area";
 const MAX_WORK_AREA_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WORK_AREA_CANDIDATES: usize = 32;
+const ROUTINE_CURSOR_KEY: &str = "vak_mail_calendar_routine_cursors";
+const MAX_ROUTINE_CURSORS: usize = 128;
+const MAX_ROUTINE_SEEN_IDS: usize = 512;
+const MAX_ROUTINE_CURSOR_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
@@ -164,6 +168,14 @@ struct VaultPayload {
     app_password: Option<String>,
 }
 
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoutineCursor {
+    routine_id: String,
+    account_id: String,
+    seen_ids: Vec<String>,
+}
+
 impl Drop for VaultPayload {
     fn drop(&mut self) {
         self.principal.zeroize();
@@ -270,7 +282,97 @@ impl AccountVault {
     pub fn remove(&self, account_id: &str) -> Result<(), VaultError> {
         let key = Self::credential_ref(account_id)?;
         vak_config::remove_env_file_key(&self.scope_hint, &key)?;
-        self.remove_candidates_for_account(account_id)
+        self.remove_candidates_for_account(account_id)?;
+        self.remove_routine_cursors_for_account(account_id)
+    }
+
+    /// Atomically remember opaque provider item ids for one routine and
+    /// return only ids this routine has not seen. The encrypted credential
+    /// store holds this bounded state; mailbox content is never persisted.
+    pub fn remember_new_mail_ids(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        item_ids: &[String],
+    ) -> Result<Vec<String>, VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        if item_ids.len() > 100
+            || item_ids
+                .iter()
+                .any(|id| id.is_empty() || id.len() > 512 || id.chars().any(char::is_control))
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_routine_cursors(|mut cursors| {
+            let index = cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id);
+            if let Some(index) = index {
+                if cursors[index].account_id != account_id {
+                    return Err(VaultError::InvalidReference);
+                }
+            } else {
+                if cursors.len() >= MAX_ROUTINE_CURSORS {
+                    return Err(VaultError::TooLarge);
+                }
+                cursors.push(RoutineCursor {
+                    routine_id: routine_id.to_owned(),
+                    account_id: account_id.to_owned(),
+                    seen_ids: Vec::new(),
+                });
+            }
+            let cursor = cursors
+                .iter_mut()
+                .find(|cursor| cursor.routine_id == routine_id)
+                .ok_or(VaultError::Unavailable)?;
+            let mut fresh = Vec::new();
+            for item_id in item_ids {
+                if !cursor.seen_ids.iter().any(|seen| seen == item_id) {
+                    fresh.push(item_id.clone());
+                    cursor.seen_ids.push(item_id.clone());
+                }
+            }
+            if cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS {
+                let remove = cursor.seen_ids.len() - MAX_ROUTINE_SEEN_IDS;
+                cursor.seen_ids.drain(..remove);
+            }
+            self.write_routine_cursors(&cursors)?;
+            Ok(fresh)
+        })
+    }
+
+    /// Read-only counterpart used by the scheduler to avoid starting a model
+    /// run when the bounded provider window contains no unseen messages.
+    pub fn has_unseen_mail_ids(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        item_ids: &[String],
+    ) -> Result<bool, VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        if item_ids.len() > 100
+            || item_ids
+                .iter()
+                .any(|id| id.is_empty() || id.len() > 512 || id.chars().any(char::is_control))
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_routine_cursors(|cursors| {
+            let Some(cursor) = cursors
+                .iter()
+                .find(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(!item_ids.is_empty());
+            };
+            if cursor.account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            Ok(item_ids
+                .iter()
+                .any(|id| !cursor.seen_ids.iter().any(|seen| seen == id)))
+        })
     }
 
     /// Return only this Agent's saved local candidates. Content is held as one
@@ -350,6 +452,89 @@ impl AccountVault {
             }
             Ok(())
         })
+    }
+
+    fn remove_routine_cursors_for_account(&self, account_id: &str) -> Result<(), VaultError> {
+        self.with_routine_cursors(|mut cursors| {
+            let before = cursors.len();
+            cursors.retain(|cursor| cursor.account_id != account_id);
+            if cursors.len() != before {
+                self.write_routine_cursors(&cursors)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn with_routine_cursors<T>(
+        &self,
+        operation: impl FnOnce(Vec<RoutineCursor>) -> Result<T, VaultError>,
+    ) -> Result<T, VaultError> {
+        let agent_home = self
+            .scope_hint
+            .parent()
+            .ok_or(VaultError::InvalidReference)?;
+        let work_dir = agent_home.join("mail-calendar");
+        ensure_agent_directory(&work_dir, true)?;
+        let lock_path = work_dir.join(".routine-cursors.lock");
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let lock = options.open(&lock_path).map_err(VaultError::Store)?;
+        lock.lock_exclusive().map_err(VaultError::Store)?;
+        let result = (|| {
+            let Some(encoded) = vak_config::read_env_file_var(&self.scope_hint, ROUTINE_CURSOR_KEY)
+            else {
+                return operation(Vec::new());
+            };
+            let encoded = Zeroizing::new(encoded);
+            if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
+                return Err(VaultError::TooLarge);
+            }
+            let cursors: Vec<RoutineCursor> =
+                serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
+            if cursors.len() > MAX_ROUTINE_CURSORS
+                || cursors.iter().any(|cursor| {
+                    validate_account_id(&cursor.account_id).is_err()
+                        || validate_account_id(&cursor.routine_id).is_err()
+                        || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
+                        || cursor.seen_ids.iter().any(|id| {
+                            id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
+                        })
+                })
+                || cursors.iter().enumerate().any(|(index, cursor)| {
+                    cursors[index + 1..]
+                        .iter()
+                        .any(|next| next.routine_id == cursor.routine_id)
+                })
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            operation(cursors)
+        })();
+        let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
+        if let Err(error) = unlock_result {
+            return Err(error);
+        }
+        result
+    }
+
+    fn write_routine_cursors(&self, cursors: &[RoutineCursor]) -> Result<(), VaultError> {
+        let encoded =
+            Zeroizing::new(serde_json::to_string(cursors).map_err(|_| VaultError::Unavailable)?);
+        if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
+            return Err(VaultError::TooLarge);
+        }
+        vak_config::upsert_env_file(&self.scope_hint, ROUTINE_CURSOR_KEY, &encoded)
+            .map_err(VaultError::Store)
     }
 
     fn with_work_area<T>(
@@ -604,6 +789,61 @@ mod tests {
         let remaining = vault.list_candidates().unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].account_id, other_account);
+    }
+
+    #[test]
+    fn routine_mail_dedup_is_bounded_agent_account_scoped_and_removed_on_disconnect() {
+        vak_config::paths::isolate_home_for_tests();
+        let vault = AccountVault::for_agent(&format!("mailcal-watch-{}", Uuid::now_v7())).unwrap();
+        let account_id = Uuid::now_v7().to_string();
+        let other_account = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let ids = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect::<Vec<_>>()
+        };
+
+        assert!(
+            !vault
+                .has_unseen_mail_ids(&routine_id, &account_id, &ids(&[]))
+                .unwrap()
+        );
+        assert!(
+            vault
+                .has_unseen_mail_ids(&routine_id, &account_id, &ids(&["m1"]))
+                .unwrap()
+        );
+        assert_eq!(
+            vault
+                .remember_new_mail_ids(&routine_id, &account_id, &ids(&["m1", "m2"]))
+                .unwrap(),
+            ids(&["m1", "m2"])
+        );
+        assert_eq!(
+            vault
+                .remember_new_mail_ids(&routine_id, &account_id, &ids(&["m2", "m3"]))
+                .unwrap(),
+            ids(&["m3"])
+        );
+        assert!(
+            !vault
+                .has_unseen_mail_ids(&routine_id, &account_id, &ids(&["m2", "m3"]))
+                .unwrap()
+        );
+        assert!(matches!(
+            vault.remember_new_mail_ids(&routine_id, &other_account, &ids(&["m4"])),
+            Err(VaultError::InvalidReference)
+        ));
+
+        vault.remove(&account_id).unwrap();
+        assert_eq!(
+            vault
+                .remember_new_mail_ids(&routine_id, &other_account, &ids(&["m4"]))
+                .unwrap(),
+            ids(&["m4"])
+        );
     }
 
     #[test]

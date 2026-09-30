@@ -94,12 +94,16 @@ Read before changing behaviour in these areas:
   on the local owner surface are implemented on `codex/mail-calendar` against
   current 4.x storage. Channel reads fail closed. The
   bounded Agent-vault working area with local email/event drafts is
-  implemented. Full source editing, Review, provider effects, and continuous
-  routines remain in progress. The first scheduled read-only routine slice
+  implemented. Full source editing, Review, provider effects, and reliable
+  continuous routines remain in progress. Scheduled read-only routines now
+  support an explicitly best-effort email watch with bounded encrypted
+  deduplication IDs. The first scheduled read-only routine slice
   uses the existing `TaskDef` scheduler, pins an Agent revision/account/read
   allowlist, restricts its unattended child to the brokered mail/calendar
-  tool, and pauses when its account is disconnected. Disconnect removes credentials
-  and unsent drafts for that account and fences future reads, but cannot erase
+  tool, and pauses when its account is disconnected. The watch polls only
+  provider IDs and skips model dispatch when unchanged, but has no native
+  cursor or multi-instance lease. Disconnect removes credentials and unsent
+  drafts for that account and fences future reads, but cannot erase
   content already recorded in append-only Agent sessions; disclose this until
   lifecycle erasure ships);
   implementation stages and provider support matrix are in

@@ -127,6 +127,65 @@ impl ProviderReadClient {
         }
     }
 
+    /// Return only stable provider message IDs for a bounded recent window.
+    /// Used by scheduled watches before model admission so a quiet poll never
+    /// downloads message bodies merely to decide that there is no new work.
+    pub async fn recent_mail_ids(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let limit = limit.clamp(1, MAX_MAIL_ITEMS).to_string();
+        let response = match account.provider {
+            Provider::Google => {
+                self.http
+                    .get(format!("{}/users/me/messages", self.google_gmail_base))
+                    .bearer_auth(token.as_str())
+                    .query(&[("labelIds", "INBOX"), ("maxResults", limit.as_str())])
+                    .send()
+                    .await
+            }
+            Provider::Microsoft => {
+                self.http
+                    .get(format!(
+                        "{}/me/mailFolders/inbox/messages",
+                        self.microsoft_graph_base
+                    ))
+                    .bearer_auth(token.as_str())
+                    .query(&[
+                        ("$top", limit.as_str()),
+                        ("$orderby", "receivedDateTime desc"),
+                    ])
+                    .query(&[("$select", "id")])
+                    .send()
+                    .await
+            }
+            Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+        }
+        .map_err(|_| ProviderReadError::Unavailable)?;
+        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+        let items = match account.provider {
+            Provider::Google => value.get("messages").and_then(Value::as_array),
+            Provider::Microsoft => value.get("value").and_then(Value::as_array),
+            Provider::AppleIcloud => None,
+        }
+        .ok_or(ProviderReadError::InvalidResponse)?;
+        Ok(items
+            .iter()
+            .take(limit.parse().unwrap_or(1))
+            .filter_map(|item| item.get("id").and_then(Value::as_str))
+            .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+            .map(str::to_owned)
+            .collect())
+    }
+
     pub async fn calendar_events(
         &self,
         account: &ConnectedAccount,
@@ -757,6 +816,8 @@ mod tests {
     use super::*;
     use crate::{AccountStatus, vault::AccountSecretMaterial};
     use std::collections::BTreeSet;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
 
     #[test]
@@ -894,14 +955,19 @@ mod tests {
             )
             .unwrap();
 
+        let message_reads = Arc::new(AtomicUsize::new(0));
+        let message_reads_for_handler = message_reads.clone();
         let app = axum::Router::new()
             .route("/gmail/v1/users/me/messages", axum::routing::get(|| async {
                 axum::Json(json!({"messages":[{"id":"message-1","threadId":"thread-1"}]}))
             }))
-            .route("/gmail/v1/users/me/messages/message-1", axum::routing::get(|| async {
+            .route("/gmail/v1/users/me/messages/message-1", axum::routing::get(move || {
+                let reads = message_reads_for_handler.clone();
+                async move {
+                reads.fetch_add(1, Ordering::SeqCst);
                 let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("hello from inbox");
                 axum::Json(json!({"id":"message-1","threadId":"thread-1","snippet":"hello","internalDate":"1790784000000","payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":"Hello"},{"name":"From","value":"sender@example.test"}],"body":{"data":encoded}}}))
-            }));
+            }}));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move {
@@ -943,6 +1009,13 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].subject, "Hello");
         assert_eq!(messages[0].body_text.as_deref(), Some("hello from inbox"));
+        assert_eq!(message_reads.load(Ordering::SeqCst), 1);
+        let ids = client
+            .recent_mail_ids(&account, &vault, &agent_id, &format!("agent:{agent_id}"), 1)
+            .await
+            .unwrap();
+        assert_eq!(ids, ["message-1"]);
+        assert_eq!(message_reads.load(Ordering::SeqCst), 1);
         assert!(matches!(
             client
                 .recent_mail(&account, &vault, "another-agent", "agent:elsewhere", 1)
