@@ -727,10 +727,13 @@ views with the same capabilities. The visual system follows `DESIGN.md` and
 The current owner calendar preview implements agenda, one-day, and seven-day
 read-only layouts over its selected date range. The day and week layouts show
 local device time, all-day entries, and conflict markers; the agenda groups
-entries by local date. This is an incremental preview surface, not the complete
-calendar workspace in the table: source selection, cross-calendar conflicts,
-event attendee editing, proposed slots, and event occurrence/series choices
-remain open.
+entries by local date. An owner may explicitly compare up to five other
+connected calendar accounts with CalendarRead for the same date range; partial
+read failures are shown, compared events are read-only, and detected overlaps
+identify conflicts across accounts. This remains an incremental preview, not
+the complete calendar workspace: source selection, event attendee editing,
+proposed slots, and event occurrence/series choices remain open. A previewed
+free slot is not an atomic booking.
 
 Owner mail previews can select among Gmail labels and up to 100 Microsoft
 top-level mail folders, then search only inside the selected label or folder.

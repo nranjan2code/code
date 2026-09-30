@@ -1155,6 +1155,9 @@ export default function Settings() {
     query?: string;
     folderId?: string;
     folderName?: string;
+    comparedCalendarCount?: number;
+    failedCalendarCount?: number;
+    skippedCalendarCount?: number;
   } | null>(null);
   const [mailThreadPreview, setMailThreadPreview] = createSignal<{
     accountId: string;
@@ -1394,7 +1397,8 @@ export default function Settings() {
         if (kind === "calendar") {
           const result = await api.previewMailCalendarEvents(requestedAgentId, account.id, range.from, range.to);
           if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events, ...range, fromDate, toDate, refreshedAt: new Date().toISOString() });
+          const accountName = `${account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple" : "Microsoft"}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`;
+          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events.map((event) => ({ ...event, account_id: account.id, account_name: accountName })), ...range, fromDate, toDate, refreshedAt: new Date().toISOString() });
         } else {
           const result = await api.previewMailCalendarFreeBusy(requestedAgentId, account.id, range.from, range.to);
           if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
@@ -1408,6 +1412,40 @@ export default function Settings() {
       }
     } finally {
       if (requestGeneration === mailCalendarPreviewGeneration) setMailCalendarBusy(false);
+    }
+  };
+  const compareOtherCalendars = async (preview: { accountId: string; kind: "mail" | "calendar" | "freebusy"; from?: string; to?: string; fromDate?: string; toDate?: string }) => {
+    if (preview.kind !== "calendar" || mailCalendarBusy()) return;
+    const agentId = activeAgentId();
+    const availableSources = (mailCalendarAccounts()?.accounts ?? [])
+      .filter((account) => account.id !== preview.accountId && account.status === "connected" && account.credential_available && !account.revoked_at && account.capabilities.includes("calendar_read"))
+    const sources = availableSources.slice(0, 5);
+    if (sources.length === 0) {
+      setNotice({ kind: "info", text: "No other connected calendar with event-read access is available to compare." });
+      return;
+    }
+    const generation = ++mailCalendarPreviewGeneration;
+    setMailCalendarBusy(true);
+    try {
+      const results = await Promise.allSettled(sources.map(async (account) => {
+        const response = await api.previewMailCalendarEvents(agentId, account.id, preview.from!, preview.to!);
+        const accountName = `${account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple" : "Microsoft"}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`;
+        return response.events.map((event) => ({ ...event, account_id: account.id, account_name: accountName }));
+      }));
+      if (generation !== mailCalendarPreviewGeneration || agentId !== activeAgentId() || page() !== "mail-calendar") return;
+      const current = mailCalendarPreview();
+      if (!current || current.kind !== "calendar" || current.accountId !== preview.accountId) return;
+      const successful = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
+      const failed = results.filter((result) => result.status === "rejected").length;
+      setMailCalendarPreview({
+        ...current,
+        events: [...(current.events ?? []).filter((event) => event.account_id === current.accountId), ...successful],
+        comparedCalendarCount: results.length - failed,
+        failedCalendarCount: failed,
+        skippedCalendarCount: Math.max(0, availableSources.length - sources.length),
+      });
+    } finally {
+      if (generation === mailCalendarPreviewGeneration) setMailCalendarBusy(false);
     }
   };
   const shiftMailCalendarPreviewRange = (preview: { accountId: string; kind: "mail" | "calendar" | "freebusy" }, days: number) => {
@@ -2699,8 +2737,10 @@ export default function Settings() {
                         if (account) void loadMailCalendarPreview(account, preview.kind, { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() });
                       }}>{mailCalendarBusy() ? "Refreshing…" : "Refresh dates"}</button>
                       <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, 7)}>Next 7 days</button>
+                      <Show when={preview.kind === "calendar"}><button class="settings-button" disabled={mailCalendarBusy() || preview.loading} onClick={() => void compareOtherCalendars(preview)}>{mailCalendarBusy() ? "Comparing…" : preview.comparedCalendarCount !== undefined ? "Compare again" : "Compare other calendars"}</button></Show>
                     </div>
                     <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone || "this device's time zone"}. Choose up to 30 days.</p>
+                    <Show when={preview.kind === "calendar" && preview.comparedCalendarCount !== undefined}><p class="settings-hint" role="status">Compared {preview.comparedCalendarCount} other calendar{preview.comparedCalendarCount === 1 ? "" : "s"}{preview.failedCalendarCount ? `; ${preview.failedCalendarCount} could not be read` : ""}{preview.skippedCalendarCount ? `; ${preview.skippedCalendarCount} more skipped because comparisons are capped at five` : ""}. Compared events are read-only.</p></Show>
                   </Show>
                   <Show when={preview.kind === "mail"}>
                     <form class="mail-calendar-work-actions" onSubmit={(event) => {
@@ -2724,13 +2764,14 @@ export default function Settings() {
                     </Show>
                   </Show>
                   <Show when={preview.kind === "calendar"}>
-                    <Show when={mailCalendarConflictIds().size > 0}><p class="settings-hint" role="status">{mailCalendarConflictIds().size} events overlap another event in this preview. Check these times before changing or adding an event.</p></Show>
+                    <Show when={mailCalendarConflictIds().size > 0}><p class="settings-hint" role="status">{mailCalendarConflictIds().size} events overlap another event{preview.comparedCalendarCount ? " across these calendars" : " in this preview"}. Check these times before changing or adding an event.</p></Show>
                     <Show when={(preview.events?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading calendar…" : "No events in this time range."}</p>}>
                       <MailCalendarAgenda
                         events={preview.events ?? []}
                         from={preview.fromDate ?? mailCalendarRangeFrom()}
                         to={preview.toDate ?? mailCalendarRangeTo()}
                         conflicts={mailCalendarConflictIds()}
+                        primaryAccountId={preview.accountId}
                         onDraftUpdate={(event) => {
                           if (mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider !== "google") return;
                           startMailCalendarDraft(preview.accountId, "calendar", [{ item_id: event.provider_id, version: event.version, label: event.title }]);

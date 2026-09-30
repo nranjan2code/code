@@ -306,18 +306,20 @@ previews now accept a selected local date range of up to 30 days, convert the
 boundaries to instants using the device time zone, and show the result refresh
 time and queried dates. This adds bounded date navigation without expanding
 provider scopes, adds previous/next seven-day navigation, and flags overlapping
-timed or all-day entries in the selected account preview. Cross-calendar
-conflict detection, calendar-source selection, and browser acceptance with
-connected test accounts remain open.
+timed or all-day entries in the selected account preview. An explicit owner
+comparison now checks up to five other readable calendar accounts; calendar-
+source selection and browser acceptance with connected test accounts remain
+open.
 
 **Implemented increment (2026-09-30):** the calendar preview now offers an
 agenda grouped by local date, a day timeline, and a seven-day timeline over the
 currently selected preview range. Timed events follow local wall-clock hours,
 all-day entries have a separate lane, and current-preview conflicts remain
-labelled without relying on colour alone. This is still an owner preview, not a
-full calendar workspace: source selection, cross-calendar conflicts, editing
-attendees, proposed slots, occurrence/series choices, and browser acceptance
-remain open.
+labelled without relying on colour alone. Owners can explicitly compare up to
+five other connected calendars for the same range; partial read failures are
+shown and compared events are read-only. This remains an incremental preview,
+not a full calendar workspace: source selection, editing attendees, proposed
+slots, occurrence/series choices, and browser acceptance remain open.
 
 **Implemented increment (2026-09-30):** Google and Microsoft owner inbox
 previews now return bounded attachment cards. A person can select one supported
@@ -354,8 +356,7 @@ reviewed candidate, and re-fetch the source immediately before dispatch. A
 changed source ID, thread/conversation ID, or subject fails closed. Gmail sends
 validated `In-Reply-To`/`References` headers and `threadId`; Graph uses its
 message-scoped `/reply` endpoint. IDs are appended as fixed-host path segments.
-The complete conversation workspace, click-through citation navigation, and
-live-provider conformance remain open.
+The complete conversation workspace and live-provider conformance remain open.
 
 **Implemented increment (2026-09-30):** the brokered Agent read tool can read
 one selected Google or Microsoft conversation page using the `thread_id` from

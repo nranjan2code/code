@@ -29,6 +29,14 @@ test("marks both timed events when their intervals overlap", () => {
   assert.deepEqual([...result].sort(), ["first", "second"]);
 });
 
+test("detects cross-account conflicts without conflating equal provider IDs", () => {
+  const result = overlappingMailCalendarEventIds([
+    { ...timed("same-id", "2026-10-01T09:00:00Z", "2026-10-01T10:00:00Z"), account_id: "account-a" },
+    { ...timed("same-id", "2026-10-01T09:30:00Z", "2026-10-01T10:30:00Z"), account_id: "account-b" },
+  ]);
+  assert.deepEqual([...result].sort(), ["account-a::same-id", "account-b::same-id"]);
+});
+
 test("uses exclusive all-day end dates and skips invalid or missing bounds", () => {
   const result = overlappingMailCalendarEventIds([
     allDay("all-day", "2026-10-01", "2026-10-02"),

@@ -193,6 +193,8 @@ export interface MailCalendarAttachmentPreview {
 export interface MailCalendarFolder { provider_id: string; name: string }
 export interface MailCalendarEventPreview {
   provider_id: string;
+  account_id?: string;
+  account_name?: string;
   version: string | null;
   title: string;
   starts_at: string | null;

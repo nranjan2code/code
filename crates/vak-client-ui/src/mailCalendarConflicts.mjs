@@ -17,7 +17,7 @@ export function overlappingMailCalendarEventIds(events) {
     const start = event.all_day ? localDayStart(event.starts_on) : event.starts_at ? Date.parse(event.starts_at) : NaN;
     const end = event.all_day ? localDayStart(event.ends_on) : event.ends_at ? Date.parse(event.ends_at) : NaN;
     return Number.isFinite(start) && Number.isFinite(end) && end > start
-      ? [{ id: event.provider_id, start, end }]
+      ? [{ id: event.account_id ? `${event.account_id}::${event.provider_id}` : event.provider_id, start, end }]
       : [];
   }).sort((left, right) => left.start - right.start || left.end - right.end);
   const conflicts = new Set();
