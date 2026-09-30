@@ -765,6 +765,12 @@ authorization and approval boundary on every execution path.
   owner can reconnect that identity and remove the old entry as Settings says.
   The OAuth regression covers active-duplicate rejection, pending-link
   conflict, and reconnect after reauthentication is required.
+- 2026-09-30: Account inventory now marks a reauthentication-required row when
+  the same vaulted provider principal has a newer active link. Settings then
+  directs the owner to remove the old row and hides a reconnect action that
+  would be rejected. Missing or nonrenewable credentials direct the owner to
+  disconnect before relinking. The HTTP test checks the flag without exposing
+  principal data; the Settings typecheck and production web build pass.
 - 2026-09-30: Rechecked Apple's documented third-party account authorization.
   Apple Support describes Apple Account authorization and revocation for
   supported apps. The developer OAuth flow reviewed applies to the Apple School

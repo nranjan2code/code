@@ -140,6 +140,7 @@ export interface MailCalendarAccount {
   status: MailCalendarAccountStatus;
   identity_masked: string | null;
   credential_available: boolean;
+  superseded_by_active_link: boolean;
   capabilities: MailCalendarCapability[];
   connected_at: string;
   access_token_expires_at: string | null;

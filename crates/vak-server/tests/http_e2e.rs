@@ -556,6 +556,42 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     google_ledger
         .append_reauthentication_required(&google_id, chrono::Utc::now())
         .unwrap();
+    let replacement_google_id = uuid::Uuid::now_v7().to_string();
+    let mut replacement_google = google_ledger
+        .read_all()
+        .unwrap()
+        .into_iter()
+        .find(|account| account.id == google_id)
+        .unwrap();
+    replacement_google.id = replacement_google_id.clone();
+    replacement_google.credential_ref =
+        vak_mail_calendar::vault::AccountVault::credential_ref(&replacement_google_id).unwrap();
+    replacement_google.principal_ref = replacement_google.credential_ref.clone();
+    replacement_google.status = vak_mail_calendar::AccountStatus::Pending;
+    replacement_google.revision = 1;
+    replacement_google.revoked_at = None;
+    replacement_google.connected_at = chrono::Utc::now();
+    google_vault
+        .store(
+            &replacement_google_id,
+            vak_mail_calendar::vault::AccountSecretMaterial::new(
+                "google:subject".into(),
+                Some("google-owner@example.com".into()),
+                Some("test-client".into()),
+                Some("replacement-access-secret".into()),
+                Some("replacement-refresh-token-secret".into()),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    google_ledger
+        .append_pending(replacement_google.clone())
+        .unwrap();
+    replacement_google.status = vak_mail_calendar::AccountStatus::Connected;
+    replacement_google.revision = 2;
+    google_ledger.append_connected(replacement_google).unwrap();
     let repeated_refresh = reqwest::Client::new()
         .post(format!(
             "http://{addr}/mail-calendar/accounts/vak/{google_id}/refresh"
@@ -601,11 +637,20 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert_eq!(google["status"], "reauthentication_required");
     assert_eq!(google["identity_masked"], "g***@example.com");
     assert_eq!(google["credential_available"], true);
+    assert_eq!(google["superseded_by_active_link"], true);
+    let replacement_google = accounts["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == replacement_google_id)
+        .unwrap();
+    assert_eq!(replacement_google["superseded_by_active_link"], false);
     let serialized_accounts = accounts.to_string();
     assert!(!serialized_accounts.contains("abcd-efgh-ijkl-mnop"));
     assert!(!serialized_accounts.contains("owner@example.com"));
     assert!(!serialized_accounts.contains("google-owner@example.com"));
     assert!(!serialized_accounts.contains("refresh-token-secret"));
+    assert!(!serialized_accounts.contains("replacement-refresh-token-secret"));
     google_vault.remove(&google_id).unwrap();
     let after_credential_removal: serde_json::Value = reqwest::Client::new()
         .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))

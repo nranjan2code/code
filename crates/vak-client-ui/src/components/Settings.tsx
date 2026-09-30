@@ -1986,15 +1986,20 @@ export default function Settings() {
                     <For each={mailCalendarAccounts()?.accounts ?? []}>{(account) => {
                       const label = account.provider === "google" ? "Google account" : account.provider === "microsoft" ? "Microsoft account" : "Apple iCloud account";
                       const needsNewOAuthLink = account.status === "reauthentication_required"
-                        || (account.status === "connected" && (!account.credential_available || !account.refresh_token_available));
+                        && account.credential_available
+                        && !account.superseded_by_active_link;
                       const connectionState = account.revoked_at
                         ? "Disconnected"
                         : !account.credential_available
-                          ? "Saved sign-in details are unavailable · connect again, then remove this entry"
+                          ? "Saved sign-in details are unavailable · disconnect this entry, then connect again"
                           : account.status === "pending"
                             ? "Connection incomplete · cleanup needed"
                             : account.status === "reauthentication_required"
-                              ? "New sign-in required · connect again, then remove this entry"
+                            ? account.superseded_by_active_link
+                                ? "Reconnected · remove this old entry"
+                                : "New sign-in required · connect again, then remove this entry"
+                              : account.status === "connected" && !account.refresh_token_available
+                                ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
                               : account.provider === "apple_icloud"
                                 ? "Credential saved · not verified"
                                 : "Connected";

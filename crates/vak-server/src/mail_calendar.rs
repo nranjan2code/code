@@ -38,6 +38,7 @@ struct AccountView {
     status: AccountStatus,
     identity_masked: Option<String>,
     credential_available: bool,
+    superseded_by_active_link: bool,
     capabilities: Vec<Capability>,
     connected_at: chrono::DateTime<chrono::Utc>,
     access_token_expires_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -71,28 +72,68 @@ pub(super) async fn list_accounts(
                 Ok(vault) => vault,
                 Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
             };
-            Json(serde_json::json!({
-                    "accounts": accounts.into_iter().map(|account| {
-                    let credential = vault.load(&account.id);
-                    let identity_masked = credential.as_ref().ok()
-                        .and_then(|secret| secret.masked_display_identity());
+            let credentials = accounts
+                .iter()
+                .map(|account| vault.load(&account.id))
+                .collect::<Vec<_>>();
+            let account_views = accounts
+                .iter()
+                .enumerate()
+                .map(|(index, account)| {
+                    let credential = &credentials[index];
+                    let superseded_by_active_link = account.status
+                        == AccountStatus::ReauthenticationRequired
+                        && credential.as_ref().is_ok_and(|candidate| {
+                            accounts.iter().enumerate().any(|(other_index, other)| {
+                                other_index != index
+                                    && other.provider == account.provider
+                                    && other.status == AccountStatus::Connected
+                                    && other.revoked_at.is_none()
+                                    && credentials[other_index].as_ref().is_ok_and(|other_secret| {
+                                        same_provider_principal(
+                                            account.provider,
+                                            candidate,
+                                            other_secret,
+                                        )
+                                    })
+                            })
+                        });
                     AccountView {
-                        id: account.id,
+                        id: account.id.clone(),
                         provider: account.provider,
                         status: account.status,
-                        identity_masked,
+                        identity_masked: credential
+                            .as_ref()
+                            .ok()
+                            .and_then(AccountSecretMaterial::masked_display_identity),
                         credential_available: credential.is_ok(),
-                        capabilities: account.capabilities.into_iter().collect(),
+                        superseded_by_active_link,
+                        capabilities: account.capabilities.iter().copied().collect(),
                         connected_at: account.connected_at,
                         access_token_expires_at: account.access_token_expires_at,
                         refresh_token_available: account.refresh_token_available,
                         revoked_at: account.revoked_at,
                     }
-                }).collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            Json(serde_json::json!({
+                "accounts": account_views
             }))
             .into_response()
         }
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+fn same_provider_principal(
+    provider: Provider,
+    left: &AccountSecretMaterial,
+    right: &AccountSecretMaterial,
+) -> bool {
+    if provider == Provider::AppleIcloud {
+        left.has_same_principal_ignoring_ascii_case(right)
+    } else {
+        left.has_same_principal(right)
     }
 }
 
@@ -1272,6 +1313,7 @@ pub(super) async fn refresh_account(
             status: refreshed.status,
             identity_masked,
             credential_available: true,
+            superseded_by_active_link: false,
             capabilities: refreshed.capabilities.into_iter().collect(),
             connected_at: refreshed.connected_at,
             access_token_expires_at: refreshed.access_token_expires_at,
