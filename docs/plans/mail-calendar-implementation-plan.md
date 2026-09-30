@@ -1,7 +1,8 @@
 # Plan — secure mail and calendar package
 
-Status: **Stage 0 and Stage 1A Agent/account linking complete on
-`codex/mail-calendar`; Stage 1B awaits the data-architecture M7 gate.** The
+Status: **Stage 0 and Stage 1A Agent/account linking complete, with a
+skills-only installable package added on `codex/mail-calendar`; Stage 1B awaits
+the data-architecture M7 gate.** The
 owner opened this feature branch on 2026-09-29. The design contract is
 `docs/design/80-mail-and-calendar.md`. This plan stages the work so a secure
 read path, exact preview, and provider actions can be reviewed as concrete
@@ -833,3 +834,9 @@ authorization and approval boundary on every execution path.
   checks pass. Strict server Clippy remains blocked by four existing
   `collapsible_if` findings in unrelated server modules; none are in the
   mail/calendar module.
+- 2026-09-30: Added the native `packages/mail-calendar` plugin package. It
+  contributes one inert skill for account setup and honest action availability;
+  the manifest declares no tools, MCP servers, hooks, commands, scripts, or
+  executable files. The package inspection regression passes and proves its
+  component inventory is skills-only. Content operations remain unavailable
+  behind M7.

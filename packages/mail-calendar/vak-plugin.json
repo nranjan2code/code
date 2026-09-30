@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "name": "mail-calendar",
+  "version": "1.0.0",
+  "description": "Owner-managed email and calendar account setup with explicit availability and safety boundaries.",
+  "license": "MIT",
+  "publisher": {
+    "id": "vakyartha",
+    "name": "Vakyartha",
+    "url": "https://vakyartha.com"
+  },
+  "components": {
+    "skills": ["skills/mail-calendar"]
+  }
+}

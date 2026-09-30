@@ -1,6 +1,7 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **proposal with Stage 1A account linking implemented, 2026-09-30.**
+Status: **proposal with Stage 1A account linking and a skills-only installable
+package implemented, 2026-09-30.**
 Stage 1B provider-content reads await data-architecture M7. The owner
 authorized a feature branch after the design review. Typed contracts,
 Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
@@ -27,6 +28,11 @@ generic account admission contract also refuses every Apple iCloud connection
 while that credential path remains unverified, even if the record stores a
 read capability. A future reviewed verifier must explicitly change
 this gate before an iCloud adapter can use the credential.
+The repository-local native package is `packages/mail-calendar`. Its only
+component is an inert skill that explains account setup and current limits; it
+declares no executable, MCP, command, hook, or data-access capability. The
+package registry inspects it through the same native manifest path used for
+other local packages. Provider operations remain unavailable to Agents.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Account erasure remains

@@ -2448,6 +2448,26 @@ mod tests {
     }
 
     #[test]
+    fn mail_calendar_package_is_installable_but_declares_no_executable_access() {
+        let package_root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../packages/mail-calendar");
+        let inspected = inspect_package(&package_root).unwrap();
+
+        assert_eq!(inspected.manifest.name, "mail-calendar");
+        assert_eq!(inspected.manifest.license.as_deref(), Some("MIT"));
+        assert_eq!(inspected.capabilities.skills, ["mail-calendar"]);
+        assert!(inspected.capabilities.commands.is_empty());
+        assert!(inspected.capabilities.mcp_manifests.is_empty());
+        assert!(inspected.capabilities.hooks.is_empty());
+        assert!(inspected.capabilities.scripts.is_empty());
+        assert!(inspected.capabilities.executables.is_empty());
+
+        let skill = fs::read_to_string(package_root.join("skills/mail-calendar/SKILL.md")).unwrap();
+        assert!(skill.contains("does not provide tools to read email or calendar content"));
+        assert!(skill.contains("Do not work around this boundary"));
+    }
+
+    #[test]
     fn changing_content_changes_digest() {
         let temp = tempfile::tempdir().unwrap();
         package(temp.path());
