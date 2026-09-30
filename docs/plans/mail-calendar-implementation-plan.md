@@ -552,6 +552,14 @@ of treating a model-run start or failed attempt as source freshness. Legacy
 does not prove that the service process is awake or healthy between checks;
 host-health reporting and sustained recovery acceptance remain open.
 
+**Implemented increment (2026-10-01):** mail/calendar routines are now saved
+paused. The owner can run a one-off, read-only preview and inspect the Agent
+run history before choosing Resume; this keeps a newly configured schedule or
+watch from starting before its scope and sample result are reviewed. Other
+TaskDef kinds retain their existing create-and-run behavior. Server regression
+coverage verifies this creation default, and the owner UI labels the first
+manual execution “Preview run”.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -603,6 +611,12 @@ authorization and approval boundary on every execution path.
   compatibility/round-trip suite, formatting, server library check, and web
   build pass. Awake-host health, freshness targets, and 24-hour service
   acceptance remain open.
+- 2026-10-01: New mail/calendar routines are saved paused so scheduled or
+  continuous work cannot begin before the owner reviews a sample. The owner
+  can run the read-only routine once, inspect its Agent run history, then
+  Resume it. Generic scheduled tasks keep their prior active-on-create
+  behavior. The server creation-default test and web build verify this
+  increment; broader preview/browser acceptance remains open.
 - 2026-10-01: Added explicit accessible names to the Google, Microsoft, and
   Apple app-password email and password fields after the running preview
   exposed anonymous text fields in its accessibility tree. The UI typecheck

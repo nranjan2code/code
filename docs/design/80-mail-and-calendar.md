@@ -15,8 +15,9 @@ Google also supports conditional cancellation of one unchanged public,
 standalone, timed event with no attendees when the connected owner is its
 organizer. It uses the event ETag precondition; the UI requires exact event
 review and a separate owner confirmation.
-Scheduled and one-minute continuous read-only routines use `TaskDef` and a
-bounded encrypted Agent-vault mail backlog with provider cursors. Starting a
+Scheduled and one-minute continuous read-only routines use `TaskDef`, are
+saved paused for a one-off read-only preview, and use a bounded encrypted
+Agent-vault mail backlog with provider cursors. Starting a
 local draft from a selected conversation message preserves its source reference
 and can create a provider-threaded reply on Google or Microsoft. The full conversation workspace,
 Apple conversation grouping/effects, event update/cancellation beyond the
@@ -817,11 +818,12 @@ candidate must still pass the normal freshness checks, exact Review and
 single-use confirmation before an effect. Local draft deletion remains a
 separate action.
 
-Automation preview runs the configured selector on a bounded sample, shows
-which source items would match and what actions would be prepared, and cannot
+Automation preview runs the saved routine once against its authorized bounded
+source selection, shows the resulting sample in Agent run history, and cannot
 commit external effects. It still needs real read authorization and applies
-the same model-disclosure rules. The person can adjust the rule, inspect the
-new preview, then enable it. History links a trigger to its observation,
+the same model-disclosure rules. New routines are saved paused; the person can
+adjust the routine, run another preview, inspect the result, then resume its
+schedule. History links a trigger to its observation,
 candidate, approval/grant, dispatch, and receipt; technical IDs stay behind
 Show technical details, while account, audience, freshness, and safety states
 remain visible. Provide keyboard editing, labelled controls, screen-reader

@@ -18041,6 +18041,10 @@ fn task_default_interval() -> u64 {
     3600
 }
 
+fn task_enabled_on_create(is_mail_calendar_routine: bool) -> bool {
+    !is_mail_calendar_routine
+}
+
 /// Structural validation shared by POST and PATCH: TaskDef::validate owns
 /// the prompt-XOR-script and cron-grammar rules; the server adds its
 /// transport-shape rules on top. Returns a typed 400 payload on failure.
@@ -18087,7 +18091,10 @@ async fn create_task(
         name: body.name,
         prompt: body.prompt,
         interval_secs: body.interval_secs,
-        enabled: true,
+        // Mail/calendar routines are saved paused so the owner can inspect a
+        // read-only sample run before any schedule or watcher becomes active.
+        // Other task kinds retain their established create-and-run behavior.
+        enabled: task_enabled_on_create(mail_calendar_scope.is_some()),
         cwd: state.core.cwd().clone(),
         created_at: chrono::Utc::now(),
         last_run_at: None,
@@ -20263,7 +20270,10 @@ async fn launch_logs(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod scheduler_pure_tests {
-    use super::{TaskDef, cron_slot_missed, recover_interrupted_tasks, stdout_section};
+    use super::{
+        TaskDef, cron_slot_missed, recover_interrupted_tasks, stdout_section,
+        task_enabled_on_create,
+    };
     use chrono::TimeZone;
     use chrono::Utc;
     use std::collections::HashMap;
@@ -20279,6 +20289,12 @@ mod scheduler_pure_tests {
 
     fn utc(dt: chrono::DateTime<chrono::Local>) -> chrono::DateTime<Utc> {
         dt.with_timezone(&Utc)
+    }
+
+    #[test]
+    fn mail_calendar_routines_are_saved_paused_for_preview() {
+        assert!(!task_enabled_on_create(true));
+        assert!(task_enabled_on_create(false));
     }
 
     #[test]
