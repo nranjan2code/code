@@ -2236,6 +2236,31 @@ mod tests {
     }
 
     #[test]
+    fn durable_disconnect_fence_is_bound_to_the_consumed_oauth_grant() {
+        let store = AuthorizationStore::default();
+        let (url, account_id) = store
+            .begin_native(
+                Provider::Google,
+                "agent-7",
+                &["agent:agent-7".to_owned()],
+                &[Capability::MailRead],
+                "vak-test-client",
+                "http://127.0.0.1:43127/mail-calendar/oauth/callback",
+            )
+            .unwrap();
+        assert!(store.set_durable_fence(&account_id, "fence-before-disconnect".to_owned()));
+        assert!(!store.set_durable_fence("unknown-account", "ignored".to_owned()));
+        let state = Url::parse(&url)
+            .unwrap()
+            .query_pairs()
+            .find(|(name, _)| name == "state")
+            .map(|(_, value)| value.into_owned())
+            .unwrap();
+        let grant = store.consume(&state, None, None).unwrap();
+        assert_eq!(grant.durable_fence(), "fence-before-disconnect");
+    }
+
+    #[test]
     fn provider_disconnect_cancels_pending_and_in_flight_authorizations() {
         let store = AuthorizationStore::default();
         let (url, _) = store

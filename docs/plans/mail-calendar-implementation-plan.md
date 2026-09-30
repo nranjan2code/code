@@ -796,13 +796,14 @@ authorization and approval boundary on every execution path.
   so the other process cannot tombstone that attempt. Stage 1A remains
   incomplete until a durable provider authorization fence was checked
   atomically with final vault persistence.
-- 2026-09-30: Added an opaque per-provider fence event to the append-only
-  Agent account ledger. OAuth start captures the current fence; disconnect
-  appends its account tombstone and advances that fence as one locked ledger
-  transaction. Callback activation compares the captured fence while holding
-  the same cross-process lock through vault persistence. A regression uses
+- 2026-09-30: Added an opaque per-provider fence to the append-only Agent
+  account ledger's atomic `Disconnected` event. OAuth start captures the
+  current fence; disconnect appends its account tombstone and advances that
+  fence as one locked ledger transaction. Callback activation compares the
+  captured fence while holding the same cross-process lock through vault
+  persistence. A regression uses
   independent ledger handles to prove that a disconnect in one invalidates a
   callback in the other before its credential-write closure runs. All 50
-  mail/calendar domain tests and the focused server account/OAuth HTTP tests
-  pass. Content reads, previews, retained copies, and routines remain disabled
-  behind the M7 gate.
+  mail/calendar domain tests, the consumed-grant fence test, and all 16 server
+  HTTP tests pass. Content reads, previews, retained copies, and routines
+  remain disabled behind the M7 gate.
