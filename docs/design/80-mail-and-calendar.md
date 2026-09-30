@@ -21,6 +21,10 @@ checks it under the same cross-process ledger lock as the vault write. A
 disconnect in another server process therefore invalidates a callback already
 in flight. The separate in-memory callback fence table is capped so eviction
 invalidates stale commits instead of authorizing them.
+The generic account admission contract also refuses every Apple iCloud
+connection while that credential path remains unverified, even if the record
+stores a read capability. A future reviewed verifier must explicitly change
+this gate before an iCloud adapter can use the credential.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Account erasure remains
