@@ -10,6 +10,12 @@ increment adds an owner-confirmed, permission-checked, digest-bound plain
 email send and a
 limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
+Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
+now implemented for the scheduled mail watch, with each bounded page's IDs and
+continuation cursor stored atomically in the encrypted Agent vault. A local
+browser smoke check passed at 1440 × 900 and 390 × 844 with no console warnings
+or errors; full source-to-Review browser acceptance and live provider checks
+remain open.
 The maintainer authorized continuing against the current 4.x storage model on
 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
@@ -1210,3 +1216,9 @@ authorization and approval boundary on every execution path.
   the bounded per-folder API continuation URLs; continuation origins are
   validated against the configured Graph origin before any bearer-auth request.
   Live provider verification remains open.
+- 2026-09-30: Updated provider and routine status after all three mail-watch
+  cursors landed. A manually served, isolated worktree build rendered the
+  email/calendar settings in a browser at 1440 × 900 and 390 × 844; its console
+  had no warnings or errors. This smoke check did not connect a provider or
+  verify the complete source-to-Review flow. Routine host-health, 24-hour
+  recovery, and live-provider acceptance remain open.

@@ -2445,7 +2445,7 @@ export default function Settings() {
 
             <Show when={page() === "mail-calendar"}>
               <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p></header>
-              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft reads are available here; verified Apple Mail-only accounts can preview inbox metadata.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
+              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
               <Group title="Choose access">
                 <p class="settings-hint">Read access is selected by default. Email sending and calendar event creation are optional and request separate provider permissions. Every effect requires review and confirmation. Event creation currently supports one timed event without attendees, invitations, recurrence, or reminders. Provider calendar-write consent is broader than this action; Vak currently sends only a new-event request through the reviewed broker.</p>
                 <div class="capability-list">
@@ -2574,7 +2574,7 @@ export default function Settings() {
                 </Show>
               </Group>
               <Group title="Scheduled routines">
-                <p class="settings-hint">A routine runs on this server schedule and stores its result only in this Agent's run history. Its run can access only the selected account and reads below; it cannot use other tools or change provider data. The server must stay running for schedules to fire. Account disconnect pauses matching routines.</p>
+                <p class="settings-hint">A routine runs on this Vakyartha server and stores its result only in this Agent's run history. Its run can access only the selected account and reads below; it cannot use other tools or change provider data. The service must stay running and connected for schedules and continuous checks; closing the app window alone does not stop the service. Account disconnect pauses matching routines.</p>
                 <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account with read access to schedule a routine.</p>}>
                   <div class="mail-calendar-editor">
                     <label>Routine name<input value={mailCalendarRoutineName()} onInput={(event) => setMailCalendarRoutineName(event.currentTarget.value)} /></label>
@@ -2606,7 +2606,16 @@ export default function Settings() {
                   </div>
                 </Show>
                 <Show when={mailCalendarTasks.loading} fallback={<div class="mail-calendar-drafts"><Show when={(mailCalendarTasks()?.length ?? 0) > 0} fallback={<p class="settings-hint">No scheduled mail/calendar routines yet.</p>}>
-                  <For each={mailCalendarTasks() ?? []}>{(task) => <article class="mail-calendar-draft-row"><div><strong>{task.name}</strong><span>{(task.enabled ? "On" : "Paused") + " · " + (task.schedule ?? (Math.round(task.interval_secs / 60) + " minute interval")) + " · " + (task.last_run_status ?? "Not run yet") + (task.next_run_at ? " · next " + new Date(task.next_run_at).toLocaleString() : "")}</span></div><div class="settings-actions"><Show when={task.last_session_id}><button class="settings-button" onClick={() => setTranscriptViewId(task.last_session_id!)}>Open latest run</button></Show><button class="settings-button" disabled={!task.enabled && mailCalendarAccounts()?.accounts.some((account) => account.id === task.mail_calendar_scope?.account_id && !!account.revoked_at)} onClick={() => void runMailCalendarRoutine(task)}>Run now</button><button class="settings-button" onClick={() => void toggleMailCalendarRoutine(task)}>{task.enabled ? "Pause" : "Resume"}</button><button class="settings-button danger" onClick={() => deleteMailCalendarRoutine(task)}>Delete</button></div></article>}</For>
+                  <For each={mailCalendarTasks() ?? []}>{(task) => {
+                    const status = !task.enabled ? "Paused"
+                      : task.last_run_status === "working" ? "Running"
+                      : ["failed", "refused", "interrupted", "account_disconnected"].includes(task.last_run_status ?? "") ? "Needs attention"
+                      : task.mail_calendar_scope?.watch_new_mail ? "Watching" : "Scheduled";
+                    const frequency = task.mail_calendar_scope?.watch_new_mail && task.interval_secs <= 60
+                      ? "Checks about once a minute"
+                      : task.schedule ?? `${Math.max(1, Math.round(task.interval_secs / 60))} minute interval`;
+                    return <article class="mail-calendar-draft-row"><div><strong>{task.name}</strong><span>{status} · {frequency}{task.last_run_at ? ` · last run ${relTime(task.last_run_at)}` : " · not run yet"}{task.next_run_at ? ` · next ${new Date(task.next_run_at).toLocaleString()}` : ""}</span></div><div class="settings-actions"><Show when={task.last_session_id}><button class="settings-button" onClick={() => setTranscriptViewId(task.last_session_id!)}>Open latest run</button></Show><button class="settings-button" disabled={!task.enabled && mailCalendarAccounts()?.accounts.some((account) => account.id === task.mail_calendar_scope?.account_id && !!account.revoked_at)} onClick={() => void runMailCalendarRoutine(task)}>Run now</button><button class="settings-button" onClick={() => void toggleMailCalendarRoutine(task)}>{task.enabled ? "Pause" : "Resume"}</button><button class="settings-button danger" onClick={() => deleteMailCalendarRoutine(task)}>Delete</button></div></article>;
+                  }}</For>
                 </Show></div>}>
                   <p class="settings-hint">Loading scheduled routines…</p>
                 </Show>

@@ -109,8 +109,9 @@ Read before changing behaviour in these areas:
   tool, and pauses when its account is disconnected. The watch polls only
   provider IDs and skips model dispatch when unchanged. An Agent-vault OS
   lease prevents duplicate runs of one routine across local server processes
-  through child completion; native provider cursors and multi-host fencing
-  remain outstanding. Startup catch-up now evaluates cron slots in the task's
+  through child completion. Apple UID, Gmail history, and Microsoft Graph
+  per-folder delta cursors now advance atomically with the encrypted backlog;
+  multi-host fencing remains outstanding. Startup catch-up now evaluates cron slots in the task's
   configured IANA timezone and compares absolute instants across DST changes.
   Disconnect removes credentials and unsent
   drafts for that account and fences future reads, but cannot erase
