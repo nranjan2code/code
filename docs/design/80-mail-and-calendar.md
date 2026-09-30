@@ -163,13 +163,21 @@ Google Workspace, Microsoft Graph, and Apple iCloud have separate adapters;
 adding one must not change the policy or Review contract. Google and Microsoft
 use delegated OAuth. Apple now documents Apple Account authorization for
 supported third-party apps, and app-specific passwords when an app does not
-support that flow. The current Vakyartha branch implements only the
-app-specific-password fallback with IMAP/SMTP and CalDAV; the credential has
-broader protocol access than Vak's selected capabilities and must be disclosed
-as such. Before enabling iCloud content access, verify an Apple-supported
-authorization flow for Vakyartha's desktop and always-on server clients. No
-generic arbitrary-URL, raw-HTTP, or model-selected MCP call is an escape hatch
-to the account. Custom IMAP/CalDAV hosts are out of initial scope.
+support that flow ([Apple's iCloud third-party app guide](https://support.apple.com/en-us/121539)).
+The current Vakyartha branch implements only the app-specific-password
+fallback with IMAP/SMTP and CalDAV; the credential has broader protocol access
+than Vak's selected capabilities and must be disclosed as such. Apple's
+support guide describes the user authorization and revocation experience, but
+the developer documentation reviewed here does not specify how a third-party
+mail/calendar client obtains and refreshes the authorization for a desktop or
+always-on service. **Do not treat Sign in with Apple as this permission:** it
+authenticates a person to Vakyartha, rather than granting access to their
+iCloud Mail or Calendar ([Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
+Before enabling iCloud content access, verify Apple's supported integration
+protocol, server credential handling, and revocation behavior for both local
+and always-on clients. No generic arbitrary-URL, raw-HTTP, or model-selected
+MCP call is an escape hatch to the account. Custom IMAP/CalDAV hosts are out of
+initial scope.
 
 The package declares capabilities such as `mail.read`, `mail.prepare`,
 `mail.send`, `calendar.freebusy`, `calendar.read`, and `calendar.write`. These

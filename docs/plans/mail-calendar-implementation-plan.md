@@ -26,12 +26,17 @@ The third adapter is not a generic arbitrary-host IMAP/CalDAV feature. Custom
 servers, Yahoo, Fastmail, Exchange EWS, and generic SMTP are out of scope for
 this plan. iCloud's app-specific-password fallback is broader than Vak's
 per-operation capabilities; the adapter must disclose that difference and
-cannot claim provider-enforced least privilege. Apple's current guidance also
-describes authorizing supported third-party apps with the Apple Account and
-revoking that access from Account Data Sharing. Vakyartha has not implemented
-that authorization flow; before iCloud content access ships, verify whether
-Apple offers a supported integration usable by Vakyartha's desktop and
-always-on server clients. No Apple Account password is accepted.
+cannot claim provider-enforced least privilege. [Apple's support guide](https://support.apple.com/en-us/121539)
+now describes authorizing supported third-party apps with the Apple Account
+and revoking that access from Account Data Sharing. The developer-facing
+materials reviewed for this pass do not describe the mail/calendar client
+authorization protocol or its server-side token lifecycle. Do not substitute
+Sign in with Apple: it authenticates the person to Vakyartha but does not grant
+iCloud Mail/Calendar access ([Apple's Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
+Before iCloud content access or always-on service support ships, resolve the
+supported integration protocol, token storage/refresh, and revocation contract
+with Apple documentation or Apple Developer Support. No Apple Account password
+is accepted.
 
 ### OAuth setup for the current account-linking stage
 
@@ -733,3 +738,10 @@ authorization and approval boundary on every execution path.
   and not-retried provider-revocation outcomes in its response and audit entry.
   Settings gives provider-specific guidance for unsupported revocation and
   does not imply that a cleanup retry reattempted provider revocation.
+- 2026-09-30: Rechecked Apple's documented third-party account authorization.
+  Apple Support describes Apple Account authorization and revocation for
+  supported apps, while the developer materials reviewed here do not specify
+  the iCloud Mail/Calendar client protocol or server credential lifecycle.
+  Recorded this as a gate before iCloud content or always-on support; Sign in
+  with Apple is explicitly not a data-access grant. M7 remains the gate for
+  all content reads.
