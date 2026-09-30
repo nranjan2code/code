@@ -1731,6 +1731,7 @@ export interface TaskDraft {
   mail_calendar_scope?: {
     routine_id?: string;
     account_id: string;
+    mail_folder_id?: string | null;
     operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
     max_items: number;
     watch_new_mail: boolean;

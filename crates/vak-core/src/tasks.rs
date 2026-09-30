@@ -794,6 +794,7 @@ mod tests {
         let scope = vak_mail_calendar::RoutineScope {
             routine_id: task_id.clone(),
             account_id,
+            mail_folder_id: None,
             operations: [vak_mail_calendar::RoutineOperation::RecentMail]
                 .into_iter()
                 .collect(),
@@ -841,6 +842,23 @@ mod tests {
         assert!(matches!(
             task.validate(),
             Err(TaskError::PromptScriptXor { .. })
+        ));
+
+        let mut folder_watch = scope.clone();
+        folder_watch.mail_folder_id = Some("SENT".into());
+        assert!(matches!(
+            folder_watch.validate(),
+            Err(vak_mail_calendar::ContractError::InvalidRoutineScope)
+        ));
+        let mut folder_without_mail = scope;
+        folder_without_mail.mail_folder_id = Some("INBOX".into());
+        folder_without_mail.operations = [vak_mail_calendar::RoutineOperation::CalendarEvents]
+            .into_iter()
+            .collect();
+        folder_without_mail.watch_new_mail = false;
+        assert!(matches!(
+            folder_without_mail.validate(),
+            Err(vak_mail_calendar::ContractError::InvalidRoutineScope)
         ));
     }
 

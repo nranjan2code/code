@@ -29,7 +29,10 @@ use zeroize::{Zeroize, Zeroizing};
 const OAUTH_CALLBACK_COOKIE: &str = "vak_mail_calendar_oauth";
 const OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS: u64 = 10 * 60;
 
-pub(crate) fn validate_routine_scope(agent_id: &str, scope: &RoutineScope) -> Result<(), String> {
+pub(crate) async fn validate_routine_scope(
+    agent_id: &str,
+    scope: &RoutineScope,
+) -> Result<(), String> {
     scope.validate().map_err(|error| error.to_string())?;
     let ledger = ConnectionLedger::for_agent(agent_id)
         .map_err(|_| "mail/calendar connection state is unavailable for this Agent".to_string())?;
@@ -61,6 +64,15 @@ pub(crate) fn validate_routine_scope(agent_id: &str, scope: &RoutineScope) -> Re
         .map_err(|_| "mail/calendar credentials are unavailable for this Agent".to_string())?;
     if !vault.credential_available(&scope.account_id) {
         return Err("the selected account's saved credential is unavailable".into());
+    }
+    if let Some(folder_id) = scope.mail_folder_id.as_deref() {
+        let folders = ProviderReadClient::new()
+            .list_mail_folders(&account, &vault, agent_id, &audience)
+            .await
+            .map_err(|_| "the selected mail folder could not be verified".to_string())?;
+        if !folders.iter().any(|folder| folder.provider_id == folder_id) {
+            return Err("the selected mail folder does not belong to this account".into());
+        }
     }
     Ok(())
 }

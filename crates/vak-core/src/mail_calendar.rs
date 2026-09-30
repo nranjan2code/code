@@ -236,6 +236,7 @@ impl vak_tools::Tool for MailCalendarTool {
             "properties": {
                 "operation": {"type": "string", "enum": ["recent_mail", "read_thread", "read_message", "calendar_events", "free_busy"]},
                 "account_id": {"type": "string", "description": "Optional linked account id; omit only when one matching account is available."},
+                "folder_id": {"type": "string", "description": "Optional owner-selected mail folder or Gmail label for recent_mail; omit for Inbox."},
                 "provider_id": {"type": "string", "description": "Required for read_message; use an ID returned by recent_mail."},
                 "thread_id": {"type": "string", "description": "Required for read_thread; use the thread_id returned by recent_mail."},
                 "cursor": {"type": "string", "description": "Optional continuation from read_thread for the same thread and page size."},
@@ -398,6 +399,37 @@ impl vak_tools::Tool for MailCalendarTool {
             }
         };
         let client = ProviderReadClient::new();
+        let mail_folder_id = if operation == "recent_mail" {
+            let requested_folder = args.get("folder_id").and_then(Value::as_str);
+            match resolve_mail_folder_id(self.routine_scope.as_ref(), requested_folder) {
+                Some(folder_id) => folder_id,
+                None => {
+                    return vak_tools::ToolOutput::error(
+                        "This scheduled routine is restricted to its configured mail folder.",
+                    );
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(folder_id) = mail_folder_id.as_deref() {
+            match client
+                .list_mail_folders(account, &vault, agent_id, &account_audience)
+                .await
+            {
+                Ok(folders) if folders.iter().any(|folder| folder.provider_id == folder_id) => {}
+                Ok(_) => {
+                    return vak_tools::ToolOutput::error(
+                        "Select a mail folder that belongs to this connected account.",
+                    );
+                }
+                Err(error) => {
+                    return vak_tools::ToolOutput::error(format!(
+                        "The selected mail folder could not be verified: {error}"
+                    ));
+                }
+            }
+        }
         let result = match operation {
             "recent_mail" | "read_thread" | "read_message" => {
                 let limit = args
@@ -523,7 +555,14 @@ impl vak_tools::Tool for MailCalendarTool {
                         .await
                     } else {
                         client
-                            .recent_mail(account, &vault, agent_id, &account_audience, limit)
+                            .recent_mail_in_folder(
+                                account,
+                                &vault,
+                                agent_id,
+                                &account_audience,
+                                mail_folder_id.as_deref(),
+                                limit,
+                            )
                             .await
                             .map_err(|error| error.to_string())
                             .map(|items| json!(items))
@@ -657,6 +696,23 @@ impl vak_tools::Tool for MailCalendarTool {
     }
 }
 
+fn resolve_mail_folder_id(
+    scope: Option<&RoutineScope>,
+    requested: Option<&str>,
+) -> Option<Option<String>> {
+    match scope {
+        None => Some(requested.map(str::to_owned)),
+        Some(scope) => {
+            let matches_scope = match (scope.mail_folder_id.as_deref(), requested) {
+                (_, None) => true,
+                (Some(allowed), Some(requested)) => allowed == requested,
+                (None, Some(requested)) => matches!(requested, "INBOX" | "inbox"),
+            };
+            matches_scope.then(|| scope.mail_folder_id.clone())
+        }
+    }
+}
+
 fn cited_mail_thread(
     account: &vak_mail_calendar::ConnectedAccount,
     audience: &str,
@@ -723,6 +779,42 @@ fn encode_citation_part(value: &str) -> String {
 mod tests {
     use super::*;
     use vak_tools::Tool;
+
+    #[test]
+    fn mail_folder_selection_is_pinned_to_unattended_scope() {
+        let scope = RoutineScope {
+            routine_id: uuid::Uuid::now_v7().to_string(),
+            account_id: uuid::Uuid::now_v7().to_string(),
+            mail_folder_id: Some("SENT".into()),
+            operations: [RoutineOperation::RecentMail].into_iter().collect(),
+            max_items: 5,
+            watch_new_mail: false,
+        };
+        assert_eq!(
+            resolve_mail_folder_id(Some(&scope), None),
+            Some(Some("SENT".into()))
+        );
+        assert_eq!(
+            resolve_mail_folder_id(Some(&scope), Some("SENT")),
+            Some(Some("SENT".into()))
+        );
+        assert_eq!(resolve_mail_folder_id(Some(&scope), Some("INBOX")), None);
+        assert_eq!(
+            resolve_mail_folder_id(None, Some("INBOX")),
+            Some(Some("INBOX".into()))
+        );
+
+        let mut inbox_scope = scope;
+        inbox_scope.mail_folder_id = None;
+        assert_eq!(
+            resolve_mail_folder_id(Some(&inbox_scope), Some("inbox")),
+            Some(None)
+        );
+        assert_eq!(
+            resolve_mail_folder_id(Some(&inbox_scope), Some("SENT")),
+            None
+        );
+    }
 
     #[test]
     fn routine_item_limit_is_reserved_across_repeated_concurrent_calls() {
@@ -863,6 +955,7 @@ mod tests {
             routine_scope: Some(RoutineScope {
                 routine_id: uuid::Uuid::now_v7().to_string(),
                 account_id,
+                mail_folder_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
@@ -888,6 +981,7 @@ mod tests {
             routine_scope: Some(RoutineScope {
                 routine_id: uuid::Uuid::now_v7().to_string(),
                 account_id: uuid::Uuid::now_v7().to_string(),
+                mail_folder_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 10,
                 watch_new_mail: false,
@@ -979,6 +1073,7 @@ mod tests {
             routine_scope: Some(RoutineScope {
                 routine_id: uuid::Uuid::now_v7().to_string(),
                 account_id,
+                mail_folder_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,

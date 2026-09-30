@@ -249,7 +249,7 @@ the first link finishes or is cleaned up.
 
 ### Stage 1B — bounded content reads, current storage
 
-The first slice implements owner-only bounded inbox, event, and free/busy
+The first slice implements owner-only bounded folder, event, and free/busy
 previews for Google and Microsoft through fixed-host, read-only adapters. A
 broker-owned Agent tool now offers bounded reads on the local owner surface;
 channel audiences fail closed until explicitly shareable grants are built.
@@ -266,6 +266,15 @@ bounded responses, no remote HTML loads, prompt-injection containment,
 revocation during a read, and no message-read mutation apply here. Each
 provider must return useful structured views or an explicit unsupported or
 reauthentication state.
+
+**Implemented increment (2026-09-30):** the Agent tool accepts an optional
+owner-selected folder/label for `recent_mail` on Google, Microsoft, or Apple.
+Before reading, it verifies that the folder ID appears in the bounded folder
+inventory returned by that same account. Scheduled routines persist one
+`mail_folder_id`, verify it against the provider on creation and at every
+read, and reject model-supplied folder changes. Older routines remain scoped
+to Inbox. Continuous new-mail watches remain Inbox-only because their durable
+provider cursors are currently Inbox-scoped; Apple exposes Inbox only.
 
 **Implemented increment (2026-09-30):** each Agent-read thread message now
 includes a bounded, percent-encoded `mailcite:` token. Both streaming Markdown
@@ -1410,3 +1419,10 @@ authorization and approval boundary on every execution path.
   The regression tests verify the exact `If-Match` header and `sendUpdates=none`
   request, source eligibility and stale-version behavior. The mail/calendar
   crate suite (101 tests), server check, permission test, and UI typecheck pass.
+- 2026-09-30: Agent `recent_mail` can now read one selected folder or label
+  after validating membership in the connected account\x27s bounded folder
+  inventory. Scheduled routines persist that selection and cannot widen it at
+  run time; creation and each read revalidate the folder. Continuous watches
+  remain Inbox-only, matching their provider cursor contract. The mail/calendar
+  crate suite (101 tests), 11 Core mail/calendar tests, server check, UI
+  typecheck, and production web build pass.

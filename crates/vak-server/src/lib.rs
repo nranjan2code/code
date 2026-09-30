@@ -18138,7 +18138,7 @@ async fn create_task(
             )
                 .into_response();
         }
-        if let Err(error) = mail_calendar::validate_routine_scope(agent_id, scope) {
+        if let Err(error) = mail_calendar::validate_routine_scope(agent_id, scope).await {
             return (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 Json(serde_json::json!({ "error": error })),
@@ -20334,6 +20334,7 @@ mod scheduler_pure_tests {
             mail_calendar_scope: Some(RoutineScope {
                 routine_id: routine_id.clone(),
                 account_id: account_id.clone(),
+                mail_folder_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 1,
                 watch_new_mail: true,

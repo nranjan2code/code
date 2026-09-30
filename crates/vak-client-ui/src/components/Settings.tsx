@@ -1210,9 +1210,41 @@ export default function Settings() {
   const [mailCalendarRoutineSchedule, setMailCalendarRoutineSchedule] = createSignal("0 8 * * 1-5");
   const [mailCalendarWatchMode, setMailCalendarWatchMode] = createSignal<"scheduled" | "continuous">("scheduled");
   const [mailCalendarRoutineOperations, setMailCalendarRoutineOperations] = createSignal<Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">>(["recent_mail", "calendar_events"]);
+  const [mailCalendarRoutineFolders, setMailCalendarRoutineFolders] = createSignal<api.MailCalendarFolder[]>([]);
+  const [mailCalendarRoutineFolderId, setMailCalendarRoutineFolderId] = createSignal("");
   const [mailCalendarWatchNewMail, setMailCalendarWatchNewMail] = createSignal(false);
   const [mailCalendarRoutineSaving, setMailCalendarRoutineSaving] = createSignal(false);
   let mailCalendarDraftTimer: ReturnType<typeof setTimeout> | undefined;
+  let mailCalendarRoutineFolderGeneration = 0;
+  createEffect(() => {
+    const accountId = mailCalendarEditorAccount();
+    const agentId = activeAgentId();
+    const generation = ++mailCalendarRoutineFolderGeneration;
+    setMailCalendarRoutineFolders([]);
+    setMailCalendarRoutineFolderId("");
+    if (!accountId || !agentId || page() !== "mail-calendar") return;
+    void api.listMailCalendarFolders(agentId, accountId).then(({ folders }) => {
+      if (generation !== mailCalendarRoutineFolderGeneration || agentId !== activeAgentId()) return;
+      setMailCalendarRoutineFolders(folders);
+      const previous = mailCalendarRoutineFolderId();
+      const selected = folders.some((folder) => folder.provider_id === previous)
+        ? previous
+        : folders.find((folder) => folder.name.trim().toLowerCase() === "inbox")?.provider_id
+          ?? folders[0]?.provider_id
+          ?? "";
+      setMailCalendarRoutineFolderId(selected);
+    }).catch(() => {
+      if (generation === mailCalendarRoutineFolderGeneration) {
+        setMailCalendarRoutineFolders([]);
+        setMailCalendarRoutineFolderId("");
+      }
+    });
+  });
+  createEffect(() => {
+    if (!mailCalendarWatchNewMail()) return;
+    const inbox = mailCalendarRoutineFolders().find((folder) => folder.name.trim().toLowerCase() === "inbox");
+    if (inbox) setMailCalendarRoutineFolderId(inbox.provider_id);
+  });
   createEffect(() => {
     activeAgentId();
     mailCalendarPreviewGeneration += 1;
@@ -1926,6 +1958,10 @@ export default function Settings() {
     const account = mailCalendarAccounts()?.accounts.find((item) => item.id === mailCalendarEditorAccount());
     const profile = settingsAgents().find((item) => item.id === activeAgentId());
     if (!account || !profile || mailCalendarRoutineOperations().length === 0) return;
+    if (mailCalendarRoutineOperations().includes("recent_mail") && !mailCalendarRoutineFolderId()) {
+      setNotice({ kind: "error", text: "Choose a verified mail folder for this routine." });
+      return;
+    }
     setMailCalendarRoutineSaving(true);
     try {
       await api.createTask({
@@ -1938,6 +1974,7 @@ export default function Settings() {
         agent_revision: profile.revision,
         mail_calendar_scope: {
           account_id: account.id,
+          ...(mailCalendarRoutineOperations().includes("recent_mail") ? { mail_folder_id: mailCalendarRoutineFolderId() } : {}),
           operations: [...mailCalendarRoutineOperations()],
           max_items: 10,
           watch_new_mail: mailCalendarWatchNewMail(),
@@ -2929,6 +2966,10 @@ export default function Settings() {
                   <div class="mail-calendar-editor">
                     <label>Routine name<input value={mailCalendarRoutineName()} onInput={(event) => setMailCalendarRoutineName(event.currentTarget.value)} /></label>
                     <label>Account<select aria-label="Routine account" value={mailCalendarEditorAccount()} onChange={(event) => { const accountId = event.currentTarget.value; setMailCalendarEditorAccount(accountId); if (mailCalendarAccounts()?.accounts.find((account) => account.id === accountId)?.provider === "apple_icloud") setMailCalendarRoutineOperations((current) => current.filter((operation) => operation !== "mail_thread")); }}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{(account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple Mail" : "Microsoft") + (account.identity_masked ? " · " + account.identity_masked : "")}</option>}</For></select></label>
+                    <Show when={mailCalendarRoutineOperations().includes("recent_mail")}>
+                      <label>Mail folder or label<select aria-label="Routine mail folder" value={mailCalendarRoutineFolderId()} disabled={mailCalendarWatchNewMail()} onChange={(event) => setMailCalendarRoutineFolderId(event.currentTarget.value)}><For each={mailCalendarRoutineFolders()}>{(folder) => <option value={folder.provider_id}>{folder.name}</option>}</For></select></label>
+                      <p class="settings-hint">The routine reads only this folder or label. New-mail watches remain limited to Inbox.</p>
+                    </Show>
                     <fieldset class="mail-calendar-routine-operations"><legend>Allow these reads</legend>
                       <For each={([
                         ["recent_mail", "Recent email", "mail_read"],

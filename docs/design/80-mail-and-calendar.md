@@ -4,7 +4,7 @@ Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-onl
 bounded Google/Microsoft previews with selected Gmail labels and Microsoft
 top-level folders (Apple remains Inbox-only), explicit phrase search across all
 three providers, paginated Google/Microsoft conversation previews, brokered
-Agent reads of selected Google/Microsoft threads with per-message source
+Agent reads of selected Google/Microsoft folders and threads with per-message source
 citations, and an Agent-vault working area for local drafts are
 implemented. The work area supports saved candidates, exact-payload preview
 and Review, email send, Google standalone-event update, and limited event create
@@ -748,7 +748,10 @@ Apple iCloud currently exposes only Inbox. Google labels are labels and may
 contain the same message in more than one label; the UI names this choice
 "Folder or label" instead of implying identical provider semantics. Child
 folder traversal, paging beyond the bounded folder list, and the full thread
-workspace remain open. Agent tools and scheduled watches remain Inbox-scoped.
+workspace remain open. The Agent can read a selected folder/label after the
+provider confirms it belongs to the account. Scheduled routines are pinned to
+one owner-selected folder/label and recheck membership; continuous new-mail
+watches remain Inbox-only because provider watch cursors are Inbox-scoped.
 
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized

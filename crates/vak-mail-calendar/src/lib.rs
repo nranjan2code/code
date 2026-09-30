@@ -71,6 +71,10 @@ pub struct RoutineScope {
     #[serde(default)]
     pub routine_id: String,
     pub account_id: AccountId,
+    /// One owner-selected mail folder/label for recent mail reads. `None`
+    /// preserves the provider Inbox default for older saved routines.
+    #[serde(default)]
+    pub mail_folder_id: Option<String>,
     pub operations: BTreeSet<RoutineOperation>,
     pub max_items: u8,
     #[serde(default)]
@@ -93,6 +97,18 @@ impl RoutineScope {
             || self.operations.is_empty()
             || !(1..=20).contains(&self.max_items)
             || (self.watch_new_mail && !self.operations.contains(&RoutineOperation::RecentMail))
+            || self.mail_folder_id.as_ref().is_some_and(|folder| {
+                folder.trim().is_empty()
+                    || folder.len() > 512
+                    || folder.chars().any(char::is_control)
+            })
+            || (self.mail_folder_id.is_some()
+                && !self.operations.contains(&RoutineOperation::RecentMail))
+            || (self.watch_new_mail
+                && self
+                    .mail_folder_id
+                    .as_deref()
+                    .is_some_and(|folder| !matches!(folder, "INBOX" | "inbox")))
         {
             return Err(ContractError::InvalidRoutineScope);
         }
