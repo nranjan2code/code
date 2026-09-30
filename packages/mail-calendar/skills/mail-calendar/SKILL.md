@@ -20,18 +20,22 @@ description: Helps people manage email and calendar account connections and accu
 
 ## Current action boundary
 
-This package currently provides owner-managed account setup and cleanup only.
-It does not provide tools to read email or calendar content, prepare drafts,
-send messages, change events, create previews, or run scheduled or continuous
-routines. Do not claim to have read, changed, sent, scheduled, or monitored
-anything in an account.
+This package contributes guidance only; it declares no provider tools. In the
+application, the owner can preview bounded Google/Microsoft data, save local
+email/event drafts, and configure scoped scheduled read routines. Agent reads
+are brokered and currently limited to the local owner surface. A first
+plain-text email send is available only from the owner Settings Review flow,
+with an explicit provider send grant, a fresh exact-candidate confirmation,
+and the Agent Core permission decision. Agents cannot dispatch that effect
+through this package. Provider acceptance does not prove delivery, and an
+ambiguous attempt must not be retried. Calendar changes, attachments, Apple
+content, and reliable continuous service are not available.
 
-If asked to perform one of those actions, explain that the mail/calendar
-operation is not available yet and that the account can be managed in Settings.
-Do not work around this boundary with Bash, arbitrary HTTP requests, an MCP
-server, another Agent, another connected-service credential, or a provider's
-web interface. A connected account or provider grant is not itself permission
-for an Agent action.
+If asked to send, direct the owner to review and confirm the exact saved draft
+in Settings. Do not claim an Agent sent it or work around this boundary with
+Bash, arbitrary HTTP requests, an MCP server, another Agent, another
+connected-service credential, or a provider's web interface. A connected
+account or provider grant is not itself permission for an Agent action.
 
 When these operations become available, follow their per-call account,
 audience, capability, permission, and Review requirements. An email send or

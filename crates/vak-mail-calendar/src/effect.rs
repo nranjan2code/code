@@ -86,26 +86,7 @@ impl ProviderEffectClient {
         if account.provider == Provider::AppleIcloud {
             return Err(ProviderEffectError::Unsupported);
         }
-        draft
-            .validate()
-            .map_err(|_| ProviderEffectError::Rejected)?;
-        if !draft.attachment_refs.is_empty()
-            || draft.from_alias.is_some()
-            || draft.reply_to_message_id.is_some()
-            || draft
-                .to
-                .iter()
-                .chain(&draft.cc)
-                .chain(&draft.bcc)
-                .any(|address| {
-                    address
-                        .display_name
-                        .as_ref()
-                        .is_some_and(|name| name.chars().any(char::is_control))
-                })
-        {
-            return Err(ProviderEffectError::Unsupported);
-        }
+        validate_mail_draft(draft)?;
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
@@ -139,6 +120,32 @@ impl ProviderEffectClient {
             Provider::AppleIcloud => Err(ProviderEffectError::Unsupported),
         }
     }
+}
+
+/// Validate the currently supported plain-text send profile before a durable
+/// single-use dispatch claim is created.
+pub fn validate_mail_draft(draft: &MailDraft) -> Result<(), ProviderEffectError> {
+    draft
+        .validate()
+        .map_err(|_| ProviderEffectError::Rejected)?;
+    if !draft.attachment_refs.is_empty()
+        || draft.from_alias.is_some()
+        || draft.reply_to_message_id.is_some()
+        || draft
+            .to
+            .iter()
+            .chain(&draft.cc)
+            .chain(&draft.bcc)
+            .any(|address| {
+                address
+                    .display_name
+                    .as_ref()
+                    .is_some_and(|name| name.chars().any(char::is_control))
+            })
+    {
+        return Err(ProviderEffectError::Unsupported);
+    }
+    Ok(())
 }
 
 fn graph_recipients(addresses: &[MailAddress]) -> Vec<Value> {

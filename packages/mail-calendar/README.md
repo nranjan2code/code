@@ -29,9 +29,15 @@ email watch can deduplicate a bounded set of seen message IDs in the encrypted
 Agent vault and skip model dispatch when a content-free ID poll finds no new
 items. It may miss messages outside the provider's latest-item window and
 does not coordinate multiple service instances. It is not reliable continuous
-monitoring. Full source editing, Review, provider effects, the
-third provider, and continuous routines are still being built against current
-4.x storage. Before a read, the product explains that disconnect removes the
+monitoring. The first provider effect is plain-text email sending from an
+unchanged saved candidate on the owner Settings surface. It requires a
+separately selected Google or Microsoft send grant, Core permission approval,
+and explicit review of the exact recipients, subject, and message. The
+provider accepting a request is not delivery confirmation; ambiguous outcomes
+cannot be retried. Agent/model initiated sends, calendar changes, attachments,
+the third provider, multi-instance routine leases, and reliable continuous
+service recovery remain unimplemented. This uses current 4.x storage. Before a
+read, the product explains that disconnect removes the
 saved credential and blocks future reads, while content recorded in append-only
 Agent session history cannot currently be erased. This package does not claim
 account-content crypto-shredding; that requires future data-architecture

@@ -5,7 +5,9 @@ Google/Microsoft owner previews, the broker-owned local Agent read tool, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
 the first Stage 4 increment adds scheduled read-only routines and a best-effort
-scheduled mail watch on `TaskDef`.
+scheduled mail watch on `TaskDef`; the first Stage 3 increment adds an
+owner-confirmed, permission-checked, digest-bound plain email send for Google
+and Microsoft.
 The maintainer authorized continuing against the current 4.x storage model on
 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
@@ -154,12 +156,13 @@ credentials. Connecting or refreshing credentials still requires an active
 Agent. Hard deletion of Agent-owned data remains part of the data-architecture
 lifecycle work.
 
-During Stage 1, account linking accepts only `mail.read`,
+The Stage 1A account-linking increment initially accepted only `mail.read`,
 `calendar.freebusy`, and `calendar.read`. For Microsoft, the calendar scopes
 are separated: `calendar.freebusy` requests `Calendars.ReadBasic`, while
-`calendar.read` requests `Calendars.Read`. The server rejects send, write, and
-prepare capabilities even if a caller bypasses the Settings UI. Do not request
-provider write scopes until Stage 3 has the reviewed effect path.
+`calendar.read` requests `Calendars.Read`. Stage 3 now adds optional
+`mail.send` for Google and Microsoft because its exact-draft broker path is in
+place; it remains unselected by default. Calendar writes and prepare scopes
+remain rejected even if a caller bypasses the Settings UI.
 
 **Exit:** local contract tests and provider test doubles prove callback replay
 rejection, wrong-principal rejection, scoped account/audience isolation,
@@ -234,6 +237,21 @@ contained to the confirmed operation.
 timeout never retries blindly. Edited candidates, changed permissions,
 expired approvals, spoofed recipient fields, recurring-series changes, and
 revoked accounts fail closed. Provider-accepted is not shown as delivered.
+
+**Implemented increment (2026-09-30):** the Settings work area now supports
+an explicit opt-in provider send grant for Google and Microsoft, exact
+candidate digest/revision review, and a confirmed owner-only send action. The
+broker evaluates `mail_calendar_send` through the Agent Core permission engine,
+rechecks the Agent/account/capability/vault, validates the plain-text profile,
+then writes a cross-process single-use action claim before dispatch. Receipts
+are encrypted in the Agent vault, included as status in the candidate list,
+and removed on account disconnect. Unknown network outcomes cannot be retried;
+accepted means provider accepted, not delivered. Attachments, aliases, reply
+semantics, calendar writes, model-initiated effects, standing grants and full
+provider reconciliation remain unavailable. The first server integration
+test proves stale digests and accounts without `mail_send` are rejected before
+a claim or provider call. The effect adapter tests cover provider payloads and
+ambiguous responses.
 
 ## Stage 4 — scheduled and continuous routines
 

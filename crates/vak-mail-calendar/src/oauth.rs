@@ -707,14 +707,17 @@ pub(crate) fn scopes_for(
     provider: Provider,
     capabilities: &[Capability],
 ) -> Result<Vec<&'static str>, OAuthError> {
-    // Stage 1 only links accounts for bounded reads. Do not let a direct API
-    // caller acquire send or calendar-write grants before their reviewed
-    // provider-effect path exists, even if the UI does not offer those boxes.
+    // Admit only scopes with a provider adapter and brokered operation path.
+    // Calendar writes remain held until their review/reconciliation contract
+    // ships; mail send has its own exact-candidate approval path.
     if capabilities.is_empty()
         || capabilities.iter().any(|capability| {
             !matches!(
                 capability,
-                Capability::MailRead | Capability::CalendarFreeBusy | Capability::CalendarRead
+                Capability::MailRead
+                    | Capability::MailSend
+                    | Capability::CalendarFreeBusy
+                    | Capability::CalendarRead
             )
         })
     {
@@ -2685,16 +2688,20 @@ mod tests {
     }
 
     #[test]
-    fn account_linking_rejects_provider_write_and_prepare_capabilities() {
+    fn account_linking_rejects_calendar_write_and_prepare_capabilities() {
         for provider in [Provider::Google, Provider::Microsoft] {
-            for capability in [
-                Capability::MailSend,
-                Capability::MailPrepare,
-                Capability::CalendarWrite,
-            ] {
+            for capability in [Capability::MailPrepare, Capability::CalendarWrite] {
                 assert!(scopes_for(provider, &[Capability::MailRead, capability]).is_err());
             }
         }
+        assert!(
+            scopes_for(Provider::Google, &[Capability::MailSend])
+                .is_ok_and(|scopes| scopes.contains(&"https://www.googleapis.com/auth/gmail.send"))
+        );
+        assert!(
+            scopes_for(Provider::Microsoft, &[Capability::MailSend])
+                .is_ok_and(|scopes| scopes.contains(&"Mail.Send"))
+        );
     }
 
     #[test]

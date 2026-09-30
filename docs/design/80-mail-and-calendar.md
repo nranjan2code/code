@@ -1,12 +1,14 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **proposal with Agent/account linking, owner-only bounded
+Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only bounded
 Google/Microsoft previews, a broker-owned local-surface read tool, a bounded
 Agent-vault working area for local drafts, and the first scheduled read-only
 `TaskDef` routines with best-effort encrypted bounded email-ID deduplication
-implemented;
-full Review, provider effects, reliable continuous routines, and the third
-provider remain in progress, 2026-09-30.**
+implemented. Stage 3 now has an initial exact-candidate email-send path for
+Google/Microsoft, with explicit provider scope opt-in, owner confirmation,
+permission-engine evaluation, and a durable single-use claim. Calendar effects,
+full provider reconciliation, reliable continuous routines, and the third
+provider remain open, 2026-09-30.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -23,8 +25,12 @@ reports no token expiry; it does not verify the credential with Apple or
 enable provider content access. Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
 share grant. Reads supplied to the model are retained in current append-only
-session history. Routines, local content drafts, Review, and provider effects
-remain unimplemented. OAuth authorization attempts are bounded and single-use;
+session history. Local drafts and scheduled read-only routines are implemented.
+The first plain-text email effect is implemented for Google and Microsoft;
+its Review confirmation is owner-only and sends only an unchanged saved
+candidate revision. Unknown outcomes remain non-retryable and appear in the
+local candidate list. Calendar changes, Agent-initiated effects, and provider
+reconciliation are not implemented. OAuth authorization attempts are bounded and single-use;
 disconnect serializes with new links and atomically advances a durable,
 Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
 attempt captures that fence at initiation; callback credential persistence
@@ -43,15 +49,19 @@ declares no executable, MCP, command, hook, or data-access capability. The
 package registry inspects it through the same native manifest path used for
 other local packages; installation leaves it disabled until a separate review
 and enable action. The package itself grants no data access; mail/calendar
-reads are available only through the Core broker tool.
+reads are available only through the Core broker tool. Provider effects do not
+run through the package skill or a model tool; the send endpoint is an
+owner-authenticated broker operation.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
 surface grant. Local drafts, scheduled read-only routines, and an explicitly
-best-effort scheduled email watch are implemented; Review, provider effects,
-reliable continuous routines, and the third provider remain in progress. The
+best-effort scheduled email watch are implemented. Email send has a first
+effect-aware owner confirmation path; event create/update/cancel/RSVP, standing
+grants, complete receipt reconciliation, durable continuous service recovery,
+and the third provider remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.
 No crypto-shred guarantee is made. Apple remains unverified and unavailable.

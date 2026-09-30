@@ -94,7 +94,8 @@ Read before changing behaviour in these areas:
   on the local owner surface are implemented on `codex/mail-calendar` against
   current 4.x storage. Channel reads fail closed. The
   bounded Agent-vault working area with local email/event drafts is
-  implemented. Full source editing, Review, provider effects, and reliable
+  implemented. Full source editing, calendar effects and reconciliation,
+  standing grants, and reliable
   continuous routines remain in progress. Scheduled read-only routines now
   support an explicitly best-effort email watch with bounded encrypted
   deduplication IDs. The first scheduled read-only routine slice
@@ -105,7 +106,12 @@ Read before changing behaviour in these areas:
   cursor or multi-instance lease. Disconnect removes credentials and unsent
   drafts for that account and fences future reads, but cannot erase
   content already recorded in append-only Agent sessions; disclose this until
-  lifecycle erasure ships);
+  lifecycle erasure ships. A first Stage 3 increment enables explicitly
+  opted-in Google/Microsoft plain-text email sending through an owner-confirmed
+  exact-candidate Review, Agent Core permission evaluation, and an encrypted
+  single-use action claim. Provider acceptance is not delivery; unknown
+  outcomes cannot be retried. Attachments, aliases, reply semantics, calendar
+  writes, and model-initiated effects remain unavailable);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,

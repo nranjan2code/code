@@ -1013,7 +1013,7 @@ async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native
         assert_eq!(params.get("state").map(|value| value.len()), Some(43));
         let state = params.get("state").unwrap().to_string();
 
-        for forbidden in ["mail_prepare", "mail_send", "calendar_write"] {
+        for forbidden in ["mail_prepare", "calendar_write"] {
             let rejected = client
                 .post(format!("http://{addr}/mail-calendar/accounts/vak/oauth"))
                 .bearer_auth(&token)
@@ -1027,9 +1027,38 @@ async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native
             assert_eq!(
                 rejected.status(),
                 reqwest::StatusCode::BAD_REQUEST,
-                "{provider} must reject {forbidden} during read-only Stage 1"
+                "{provider} must reject {forbidden} until its reviewed effect path exists"
             );
         }
+
+        let send_scope = client
+            .post(format!("http://{addr}/mail-calendar/accounts/vak/oauth"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "provider": provider,
+                "capabilities": ["mail_send"]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(send_scope.status(), reqwest::StatusCode::OK);
+        let send_result: serde_json::Value = send_scope.json().await.unwrap();
+        let send_url = url::Url::parse(send_result["authorization_url"].as_str().unwrap()).unwrap();
+        let scopes = send_url
+            .query_pairs()
+            .find(|(key, _)| key == "scope")
+            .map(|(_, value)| value.into_owned())
+            .unwrap_or_default();
+        assert!(
+            scopes.split_whitespace().any(|scope| {
+                if provider == "google" {
+                    scope == "https://www.googleapis.com/auth/gmail.send"
+                } else {
+                    scope == "Mail.Send"
+                }
+            }),
+            "{provider} must request only its mail-send scope"
+        );
 
         let callback_host = if provider == "microsoft" {
             format!("localhost:{}", addr.port())
@@ -1182,6 +1211,47 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     let created: serde_json::Value = create.json().await.unwrap();
     let candidate_id = created["candidate"]["id"].as_str().unwrap().to_owned();
     assert_eq!(created["candidate"]["revision"], 1);
+    let candidate_digest = created["candidate_digest"].as_str().unwrap().to_owned();
+    assert_eq!(created["candidate"]["candidate_digest"], candidate_digest);
+
+    let send_url = format!("{candidates_url}/{candidate_id}/send");
+    let unconfirmed = client
+        .post(&send_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": 1,
+            "candidate_digest": candidate_digest,
+            "confirm": false
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unconfirmed.status(), reqwest::StatusCode::BAD_REQUEST);
+    let changed_payload = client
+        .post(&send_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": 1,
+            "candidate_digest": "0".repeat(64),
+            "confirm": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(changed_payload.status(), reqwest::StatusCode::CONFLICT);
+    let not_granted = client
+        .post(&send_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": 1,
+            "candidate_digest": candidate_digest,
+            "confirm": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(not_granted.status(), reqwest::StatusCode::FORBIDDEN);
+    assert!(vault.list_action_receipts().unwrap().is_empty());
 
     let update = |revision| {
         client.post(&candidates_url).bearer_auth(&token).json(&serde_json::json!({

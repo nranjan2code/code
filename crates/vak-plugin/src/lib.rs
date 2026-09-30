@@ -2463,8 +2463,8 @@ mod tests {
         assert!(inspected.capabilities.executables.is_empty());
 
         let skill = fs::read_to_string(package_root.join("skills/mail-calendar/SKILL.md")).unwrap();
-        assert!(skill.contains("does not provide tools to read email or calendar content"));
-        assert!(skill.contains("Do not work around this boundary"));
+        assert!(skill.contains("Agents cannot dispatch that effect"));
+        assert!(skill.contains("or work around this boundary"));
 
         let home = tempfile::tempdir().unwrap();
         let store = PluginStore::new(home.path());

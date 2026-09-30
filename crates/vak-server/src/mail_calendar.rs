@@ -3,7 +3,7 @@
 //! Owner-facing account, bounded read-preview, and local-candidate routes. All
 //! data operations remain Agent-scoped; provider writes are a separate gate.
 
-use crate::{AppState, AuthenticatedPrincipal, agents};
+use crate::{AppState, AuthenticatedPrincipal, agent_chats, agents};
 use axum::{
     Json,
     body::Bytes,
@@ -17,9 +17,10 @@ use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vak_mail_calendar::{
-    AccountStatus, ActionCandidate, Capability, ConnectedAccount, ProposedAction, Provider,
-    RoutineOperation, RoutineScope, SourceRef,
+    AccountStatus, ActionCandidate, ActionState, CandidateApproval, Capability, ConnectedAccount,
+    ProposedAction, Provider, RoutineOperation, RoutineScope, SourceRef,
     connection_ledger::ConnectionLedger,
+    effect::{ProviderEffectClient, ProviderEffectError},
     provider::ProviderReadClient,
     vault::{AccountSecretMaterial, AccountVault},
 };
@@ -234,6 +235,15 @@ pub(super) struct CandidateDeleteRequest {
     expected_revision: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SendCandidateRequest {
+    expected_revision: u64,
+    candidate_digest: String,
+    /// Set only by the owner's explicit exact-payload confirmation control.
+    confirm: bool,
+}
+
 pub(super) async fn list_candidates(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
@@ -249,8 +259,18 @@ pub(super) async fn list_candidates(
         Ok(vault) => vault,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
+    let receipts = match vault.list_action_receipts() {
+        Ok(receipts) => receipts,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
     match vault.list_candidates() {
-        Ok(candidates) => Json(serde_json::json!({"candidates": candidates})).into_response(),
+        Ok(candidates) => Json(serde_json::json!({
+            "candidates": candidates.into_iter().filter_map(|candidate| {
+                let state = receipts.iter().find(|receipt| receipt.candidate_id == candidate.id).map(|receipt| receipt.state);
+                candidate_view(candidate, state)
+            }).collect::<Vec<_>>()
+        }))
+        .into_response(),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
@@ -369,7 +389,17 @@ pub(super) async fn save_candidate(
                 )
                     .into_response();
             }
-            Json(serde_json::json!({"candidate": candidate})).into_response()
+            let digest = match candidate.digest() {
+                Ok(digest) => digest,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            match candidate_view(candidate, None) {
+                Some(candidate) => {
+                    Json(serde_json::json!({"candidate": candidate, "candidate_digest": digest}))
+                        .into_response()
+                }
+                None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            }
         }
         Err(vak_mail_calendar::vault::VaultError::Conflict) => (
             StatusCode::CONFLICT,
@@ -383,6 +413,289 @@ pub(super) async fn save_candidate(
             .into_response(),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+
+fn candidate_view(
+    candidate: ActionCandidate,
+    action_state: Option<ActionState>,
+) -> Option<serde_json::Value> {
+    let digest = candidate.digest().ok()?;
+    let mut value = serde_json::to_value(candidate).ok()?;
+    value
+        .as_object_mut()?
+        .insert("candidate_digest".into(), digest.into());
+    if let Some(state) = action_state {
+        value
+            .as_object_mut()?
+            .insert("action_state".into(), serde_json::to_value(state).ok()?);
+    }
+    Some(value)
+}
+
+/// Commit only an exact, owner-confirmed plain email candidate. The account
+/// lock spans revalidation, durable single-use claim, provider dispatch, and
+/// receipt persistence so local disconnect/revision paths cannot cross it.
+pub(super) async fn send_mail_candidate(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<SendCandidateRequest>,
+) -> Response {
+    use axum::response::IntoResponse;
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if !request.confirm
+        || request.candidate_digest.len() != 64
+        || !request
+            .candidate_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Review and confirm the exact email draft.",
+        )
+            .into_response();
+    }
+    let vault = match AccountVault::for_agent(&agent_id) {
+        Ok(vault) => vault,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let initial = match vault.list_candidates() {
+        Ok(candidates) => candidates
+            .into_iter()
+            .find(|candidate| candidate.id == candidate_id),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(initial) = initial else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if initial.agent_id != agent_id || initial.audience_id != format!("agent:{agent_id}") {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let account_lock = state.mail_calendar_account_lock(&agent_id, &initial.account_id);
+    let _account_guard = account_lock.lock().await;
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::CONFLICT.into_response();
+    }
+
+    // Reload candidate and account after waiting for the same account lock
+    // used by save, disconnect, and refresh handlers.
+    let candidate = match vault.list_candidates() {
+        Ok(candidates) => candidates
+            .into_iter()
+            .find(|candidate| candidate.id == candidate_id),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(candidate) = candidate else {
+        return StatusCode::CONFLICT.into_response();
+    };
+    if candidate.account_id != initial.account_id
+        || candidate.agent_id != agent_id
+        || candidate.audience_id != format!("agent:{agent_id}")
+        || candidate.revision != request.expected_revision
+        || !candidate
+            .digest()
+            .is_ok_and(|digest| digest == request.candidate_digest)
+    {
+        return (
+            StatusCode::CONFLICT,
+            "The draft changed. Reload and review it again before sending.",
+        )
+            .into_response();
+    }
+    let ProposedAction::SendMail { draft } = &candidate.action else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Only plain email drafts can be sent by this action.",
+        )
+            .into_response();
+    };
+    if vak_mail_calendar::effect::validate_mail_draft(draft).is_err() {
+        return (
+            StatusCode::BAD_REQUEST,
+            "This send profile supports a plain-text message without attachments or aliases.",
+        )
+            .into_response();
+    }
+    if !candidate.source_refs.iter().all(|source| {
+        source
+            .item_id
+            .chars()
+            .all(|character| !character.is_control())
+    }) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    let ledger = match ConnectionLedger::for_agent(&agent_id) {
+        Ok(ledger) => ledger,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let account = match ledger.read_all() {
+        Ok(accounts) => accounts.into_iter().find(|account| {
+            account.id == candidate.account_id
+                && account.owner_agent_id == agent_id
+                && account.admits(&agent_id, &candidate.audience_id, Capability::MailSend)
+        }),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(account) = account else {
+        return (StatusCode::FORBIDDEN, "This account cannot send email.").into_response();
+    };
+    if account
+        .access_token_expires_at
+        .is_some_and(|expires| expires <= Utc::now())
+    {
+        return (
+            StatusCode::PRECONDITION_REQUIRED,
+            "Refresh this account's sign-in before sending.",
+        )
+            .into_response();
+    }
+    if !vault.credential_available(&account.id) {
+        return (
+            StatusCode::CONFLICT,
+            "Sign in to this account again before sending.",
+        )
+            .into_response();
+    }
+
+    // The Core permission engine remains an independent gate from OAuth
+    // capability and explicit Review confirmation. Ask can be resolved only
+    // by this owner-confirmed, digest-bound request; an explicit Deny wins.
+    let core = match agent_chats::resolve_agent_core(&state, &agent_id) {
+        Ok((_, core)) => core,
+        Err(response) => return response,
+    };
+    let engine = match core.build_permission_engine(&[]) {
+        Ok(engine) => engine,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let mode = match core.effective_permission_mode() {
+        vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
+        vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
+        vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+    };
+    let permission_args = serde_json::json!({
+        "agent_id": agent_id,
+        "account_id": account.id,
+        "candidate_id": candidate.id,
+        "candidate_digest": request.candidate_digest.clone(),
+        "revision": candidate.revision,
+    });
+    if matches!(
+        engine.evaluate("mail_calendar_send", &permission_args, mode, core.cwd()),
+        vak_permission::Decision::Deny { .. }
+    ) {
+        return (
+            StatusCode::FORBIDDEN,
+            "The Agent's permission rules deny email sending.",
+        )
+            .into_response();
+    }
+    let now = Utc::now();
+    let approval = CandidateApproval {
+        candidate_id: candidate.id.clone(),
+        candidate_digest: request.candidate_digest,
+        account_id: account.id.clone(),
+        agent_id: agent_id.clone(),
+        audience_id: candidate.audience_id.clone(),
+        approved_at: now,
+        expires_at: now + chrono::Duration::minutes(5),
+        single_use: true,
+    };
+    if candidate
+        .authorize_effect(&account, &approval, now)
+        .is_err()
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    // Fail before claiming if the client cannot be constructed. Once the
+    // claim is durable, every result is single-use, including unknown.
+    let client = match ProviderEffectClient::new() {
+        Ok(client) => client,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let mut receipt = match vault.begin_action(&candidate) {
+        Ok(receipt) => receipt,
+        Err(vak_mail_calendar::vault::VaultError::Conflict) => {
+            let prior = vault.list_action_receipts().ok().and_then(|receipts| {
+                receipts
+                    .into_iter()
+                    .find(|receipt| receipt.candidate_id == candidate.id)
+            });
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({
+                    "error": "This draft already has a send attempt; it will not be retried.",
+                    "receipt": prior,
+                })),
+            )
+                .into_response();
+        }
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    match client
+        .send_mail(&account, &vault, &agent_id, &candidate.audience_id, draft)
+        .await
+    {
+        Ok(accepted) => {
+            receipt.state = ActionState::ProviderAccepted;
+            receipt.provider_item_id = accepted.provider_item_id;
+            receipt.detail_code = Some("provider_accepted_not_delivery".into());
+        }
+        Err(error) => {
+            receipt.state = match error {
+                ProviderEffectError::Unknown => ActionState::Unknown,
+                _ => ActionState::Failed,
+            };
+            receipt.detail_code = Some(
+                match error {
+                    ProviderEffectError::Unknown => "outcome_unknown",
+                    ProviderEffectError::ReauthorizationRequired => "reauthorization_required",
+                    ProviderEffectError::NotAdmitted => "account_not_admitted",
+                    ProviderEffectError::Unsupported => "operation_unsupported",
+                    ProviderEffectError::Rejected => "provider_rejected",
+                }
+                .into(),
+            );
+            if error == ProviderEffectError::ReauthorizationRequired {
+                mark_account_reauthentication_required(&state, &account, "provider_send_rejected");
+            }
+        }
+    }
+    record_account_event(
+        &state,
+        "mail_send_effect",
+        &agent_id,
+        &account.id,
+        account.provider,
+        &account.capabilities,
+        receipt.detail_code.as_deref().unwrap_or("outcome_unknown"),
+    );
+    let accepted = receipt.state == ActionState::ProviderAccepted;
+    if vault.settle_action(receipt.clone()).is_err() {
+        // The durable dispatch claim remains, so clients cannot repeat the
+        // effect. Report ambiguity until an explicit reconciliation exists.
+        return (
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "state": "dispatching",
+                "message": "The provider request was made; do not retry this draft.",
+            })),
+        )
+            .into_response();
+    }
+    let status = if accepted {
+        StatusCode::ACCEPTED
+    } else {
+        StatusCode::BAD_GATEWAY
+    };
+    (status, Json(serde_json::json!({ "receipt": receipt }))).into_response()
 }
 
 pub(super) async fn delete_candidate(
@@ -401,6 +714,30 @@ pub(super) async fn delete_candidate(
         Ok(vault) => vault,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
+    let initial = match vault.list_candidates() {
+        Ok(candidates) => candidates
+            .into_iter()
+            .find(|candidate| candidate.id == candidate_id),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(initial) = initial else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let account_lock = state.mail_calendar_account_lock(&agent_id, &initial.account_id);
+    let _account_guard = account_lock.lock().await;
+    if !registered_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let still_exists = vault.list_candidates().is_ok_and(|candidates| {
+        candidates.into_iter().any(|candidate| {
+            candidate.id == candidate_id
+                && candidate.account_id == initial.account_id
+                && candidate.agent_id == agent_id
+        })
+    });
+    if !still_exists {
+        return StatusCode::CONFLICT.into_response();
+    }
     match vault.delete_candidate(&candidate_id, request.expected_revision) {
         Ok(()) => Json(serde_json::json!({"deleted": true})).into_response(),
         Err(vak_mail_calendar::vault::VaultError::Conflict) => (
@@ -655,6 +992,14 @@ fn mark_preview_reauthentication(
     ) {
         return;
     }
+    mark_account_reauthentication_required(state, account, "provider_read_rejected");
+}
+
+fn mark_account_reauthentication_required(
+    state: &AppState,
+    account: &ConnectedAccount,
+    outcome: &str,
+) {
     if let Ok(ledger) = ConnectionLedger::for_agent(&account.owner_agent_id) {
         if ledger
             .append_reauthentication_required(&account.id, Utc::now())
@@ -667,7 +1012,7 @@ fn mark_preview_reauthentication(
                 &account.id,
                 account.provider,
                 &account.capabilities,
-                "provider_read_rejected",
+                outcome,
             );
         }
     }

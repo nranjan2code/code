@@ -66,7 +66,7 @@ const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
 /// — so the injection silently made `approval_mode = "auto-approve"` a
 /// no-op for exactly these two tools while working for every other one.
 /// A mode default must be sourced as a mode default.
-const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
+const NETWORK_TOOLS: [&str; 3] = ["webfetch", "browse", "mail_calendar_send"];
 
 impl PermissionEngine {
     pub fn new(rules: Vec<Rule>) -> Self {
@@ -411,6 +411,33 @@ mod tests {
                 "mail_calendar",
                 &serde_json::json!({}),
                 Mode::ReadOnly,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+    }
+
+    #[test]
+    fn mail_calendar_send_requires_approval_in_read_only_and_workspace_write() {
+        let engine = PermissionEngine::default();
+        for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+            assert!(matches!(
+                engine.evaluate(
+                    "mail_calendar_send",
+                    &serde_json::json!({"candidate_id": "candidate-v7"}),
+                    mode,
+                    Path::new("/workspace")
+                ),
+                Decision::Ask { .. }
+            ));
+        }
+        let denied = PermissionEngine::from_rule_strings(&["-mail_calendar_send".into()])
+            .expect("valid rule");
+        assert!(matches!(
+            denied.evaluate(
+                "mail_calendar_send",
+                &serde_json::json!({"candidate_id": "candidate-v7"}),
+                Mode::FullAccess,
                 Path::new("/workspace")
             ),
             Decision::Deny { .. }

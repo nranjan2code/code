@@ -223,6 +223,8 @@ export interface MailCalendarCandidate {
   action: MailCalendarDraftAction;
   revision: number;
   created_at: string;
+  candidate_digest?: string;
+  action_state?: "prepared" | "awaiting_approval" | "dispatching" | "provider_accepted" | "confirmed" | "failed" | "unknown" | "cancelled" | "expired";
 }
 export function listMailCalendarCandidates(agentId: string): Promise<{ candidates: MailCalendarCandidate[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates`);
@@ -232,6 +234,12 @@ export function saveMailCalendarCandidate(agentId: string, payload: { account_id
 }
 export function deleteMailCalendarCandidate(agentId: string, candidateId: string, expectedRevision: number): Promise<{ deleted: boolean }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}`, { method: "DELETE", body: JSON.stringify({ expected_revision: expectedRevision }) });
+}
+export function sendMailCalendarCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/send`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
 }
 
 export async function disconnectMailCalendarAccount(agentId: string, accountId: string): Promise<{ disconnected: boolean; already_disconnected: boolean; provider_grant_revoked: boolean; provider_revocation: "confirmed" | "unsupported" | "unconfirmed" | "not_retried"; content_erased: boolean }> {
