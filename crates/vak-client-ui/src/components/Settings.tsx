@@ -1132,6 +1132,7 @@ export default function Settings() {
   const [mailCalendarDraftStarts, setMailCalendarDraftStarts] = createSignal("");
   const [mailCalendarDraftEnds, setMailCalendarDraftEnds] = createSignal("");
   const [mailCalendarDraftLocation, setMailCalendarDraftLocation] = createSignal("");
+  const [mailCalendarDraftPreviewOpen, setMailCalendarDraftPreviewOpen] = createSignal(false);
   const [mailCalendarSavingDraft, setMailCalendarSavingDraft] = createSignal(false);
   let mailCalendarDraftTimer: ReturnType<typeof setTimeout> | undefined;
   createEffect(() => {
@@ -1142,6 +1143,7 @@ export default function Settings() {
     setMailCalendarPreview(null);
     setMailCalendarEditorKind(null);
     setMailCalendarEditorAccount("");
+    setMailCalendarDraftPreviewOpen(false);
     setMailCalendarEditingCandidate(null);
     setMailCalendarDirty(false);
     void refreshMailCalendarCandidates();
@@ -1159,6 +1161,7 @@ export default function Settings() {
       setMailCalendarBusy(false);
       setMailCalendarPreview(null);
       setMailCalendarEditorKind(null);
+      setMailCalendarDraftPreviewOpen(false);
       setMailCalendarEditingCandidate(null);
       setMailCalendarDirty(false);
     }
@@ -1367,6 +1370,7 @@ export default function Settings() {
   const startMailCalendarDraft = (accountId: string, kind: "mail" | "calendar", sourceRefs: api.MailCalendarCandidate["source_refs"] = []) => {
     setMailCalendarEditorAccount(accountId);
     setMailCalendarEditorKind(kind);
+    setMailCalendarDraftPreviewOpen(false);
     setMailCalendarEditingCandidate(null);
     setMailCalendarSourceRefs(sourceRefs);
     setMailCalendarDraftTo("");
@@ -1386,6 +1390,7 @@ export default function Settings() {
   const openMailCalendarDraft = (candidate: api.MailCalendarCandidate) => {
     setMailCalendarEditorAccount(candidate.account_id);
     setMailCalendarEditorKind(candidate.action.kind === "send_mail" ? "mail" : "calendar");
+    setMailCalendarDraftPreviewOpen(false);
     setMailCalendarEditingCandidate(candidate);
     setMailCalendarSourceRefs(candidate.source_refs);
     if (candidate.action.kind === "send_mail") {
@@ -2287,7 +2292,21 @@ export default function Settings() {
                       <label>Description<textarea rows={5} value={mailCalendarDraftDescription()} onInput={(event) => { setMailCalendarDraftDescription(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
                     </Show>
                     <Show when={mailCalendarSourceRefs().length > 0}><p class="settings-hint">Based on a selected item: {mailCalendarSourceRefs().map((source) => source.label ?? source.item_id).join(", ")}</p></Show>
-                    <div class="settings-actions"><button class="btn primary" disabled={mailCalendarSavingDraft()} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
+                    <div class="settings-actions"><button class="settings-button" aria-expanded={mailCalendarDraftPreviewOpen()} onClick={() => setMailCalendarDraftPreviewOpen((open) => !open)}>{mailCalendarDraftPreviewOpen() ? "Hide preview" : "Preview draft"}</button><button class="btn primary" disabled={mailCalendarSavingDraft()} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
+                    <Show when={mailCalendarDraftPreviewOpen()}>
+                      <section class="mail-calendar-draft-preview" aria-label="Exact local draft preview">
+                        <p class="settings-hint"><strong>Local preview</strong> · This shows the current draft only. It does not send email, invite attendees, or change a calendar.</p>
+                        <Show when={mailCalendarEditorKind() === "mail"}>
+                          <dl><dt>To</dt><dd>{mailCalendarDraftTo() || "No recipient"}</dd><dt>Subject</dt><dd>{mailCalendarDraftSubject() || "(no subject)"}</dd></dl>
+                          <pre>{mailCalendarDraftBody() || "(empty message)"}</pre>
+                        </Show>
+                        <Show when={mailCalendarEditorKind() === "calendar"}>
+                          <dl><dt>Event</dt><dd>{mailCalendarDraftTitle() || "(no title)"}</dd><dt>Starts</dt><dd>{mailCalendarDraftStarts() ? new Date(mailCalendarDraftStarts()).toLocaleString() : "No start time"} · this device's time zone</dd><dt>Ends</dt><dd>{mailCalendarDraftEnds() ? new Date(mailCalendarDraftEnds()).toLocaleString() : "No end time"} · this device's time zone</dd><dt>Location</dt><dd>{mailCalendarDraftLocation() || "None"}</dd></dl>
+                          <pre>{mailCalendarDraftDescription() || "(no description)"}</pre>
+                        </Show>
+                        <Show when={mailCalendarSourceRefs().length > 0}><p>Source: {mailCalendarSourceRefs().map((source) => source.label ?? source.item_id).join(", ")}</p></Show>
+                      </section>
+                    </Show>
                   </div>
                 </Show>
               </Group>

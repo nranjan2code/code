@@ -213,6 +213,10 @@ enforces revision compare-and-swap, validates Agent/account/source lineage,
 and removes candidates for an account during disconnect cleanup. Drafts are
 local only; this does not complete source-to-edit navigation, exact-effect
 preview, Review choices, mobile/accessibility screenshots, or provider writes.
+An exact local-field preview now shows the currently edited email recipients,
+subject, and body or the event title, local start/end time, location, and
+description. This preview explicitly states that it does not send or alter
+provider data; it is not the later effect-aware Review step.
 
 ## Stage 3 — reviewed provider effects
 
@@ -915,3 +919,9 @@ authorization and approval boundary on every execution path.
   provider effects, and routines are still open. Verification: 60
   mail-calendar tests, the candidate lifecycle HTTP test, `cargo fmt --check`,
   and the web build pass.
+- 2026-09-30: Added a live local-field preview to the draft editor. It shows
+  the current email recipients/subject/body or calendar title/local times/
+  location/description and source references, and states that no provider
+  action occurs. `npm run build:web` and TypeScript checking pass. Browser
+  inspection reached the running app's passkey sign-in gate, so the signed-in
+  working-area interaction and responsive layout are not visually verified.

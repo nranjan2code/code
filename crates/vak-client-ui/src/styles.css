@@ -2389,6 +2389,11 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-editor label { flex: initial; }
 .mail-calendar-editor textarea { resize: vertical; line-height: 1.5; }
 .mail-calendar-editor .settings-actions { flex-wrap: wrap; align-items: center; }
+.mail-calendar-draft-preview { display: flex; flex-direction: column; gap: var(--space-2); padding: 12px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--surface); color: var(--text-primary); }
+.mail-calendar-draft-preview dl { display: grid; grid-template-columns: minmax(72px, auto) 1fr; gap: 6px 12px; margin: 0; }
+.mail-calendar-draft-preview dt { color: var(--muted); font-size: var(--fs-meta); }
+.mail-calendar-draft-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.mail-calendar-draft-preview pre { max-height: 300px; margin: 0; overflow: auto; padding: 10px; border-radius: 7px; background: var(--surface-raised); color: var(--text-primary); font: inherit; white-space: pre-wrap; overflow-wrap: anywhere; }
 @media (max-width: 560px) {
   .mail-calendar-draft-row { align-items: flex-start; flex-direction: column; }
 }
