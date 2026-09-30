@@ -3629,6 +3629,7 @@ impl Core {
                 .ok()
                 .and_then(|scope| scope.clone()),
             worker_exe: self.tool_worker_exe(),
+            routine_items_used: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }));
         if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {

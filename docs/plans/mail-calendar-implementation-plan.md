@@ -374,6 +374,11 @@ encrypted bounded backlog above, and skips model runs while no mail is waiting.
 It depends on the service host staying awake and connected; this does not
 establish push delivery, a source-freshness target, or 24/7 availability.
 
+The routine's configured item limit is enforced across all mail/calendar tool
+calls in one run. Concurrent calls reserve from the same per-run budget before
+provider I/O; unused capacity is returned, while failed or cancelled calls
+release their reservation.
+
 Missed scheduled slots now use each task's configured IANA timezone during
 startup catch-up, with instant-based comparison across daylight-saving gaps
 and folds. A server regression covers a New York fall-back slot missed while
@@ -1178,3 +1183,8 @@ authorization and approval boundary on every execution path.
   backlog. Settings explains that a sleeping local host is offline; native
   push, awake-host health, and 24-hour outage/restart acceptance remain open.
   `npm run build:web` and TypeScript checking pass.
+- 2026-09-30: Enforced routine `max_items` as a per-run ceiling across repeated
+  and concurrent broker calls, reserving capacity before provider reads and
+  releasing unused capacity after results or failures. Core regression tests
+  verify reservations cannot exceed the configured ceiling and cancelled work
+  does not strand capacity.

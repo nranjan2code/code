@@ -565,8 +565,9 @@ an authorized retained observation, labelled with when it was read.
 ### D10 — Automation control and recovery
 
 Each routine has pause, resume, run-once, last-result, pending-review, and
-revoke controls. Put a finite bound on lookback, messages/events fetched,
-model cost, actions per run, and daily actions. Quiet no-change runs stay
+revoke controls. Put a finite per-run bound on total messages/events returned
+across repeated and concurrent tool calls, as well as lookback, model cost,
+actions per run, and daily actions. Quiet no-change runs stay
 quiet; meaningful changes, failures, and required action reach the configured
 audience. Configure time zone, daylight-saving schedule behavior, lateness
 limit, and missed-run policy. On restart, do not burst-replay expired reminders
