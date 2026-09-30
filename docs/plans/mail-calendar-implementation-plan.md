@@ -5,6 +5,7 @@ Google/Microsoft owner previews, owner-submitted bounded inbox search for all
 three providers, the broker-owned local Agent read tool, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
+the owner calendar preview now has grouped agenda, day, and week layouts;
 the first Stage 4 increment adds scheduled read-only routines and a bounded,
 encrypted scheduled mail-watch backlog on `TaskDef`; the first Stage 3
 increment adds an owner-confirmed, permission-checked, digest-bound plain
@@ -287,9 +288,18 @@ previews now accept a selected local date range of up to 30 days, convert the
 boundaries to instants using the device time zone, and show the result refresh
 time and queried dates. This adds bounded date navigation without expanding
 provider scopes, adds previous/next seven-day navigation, and flags overlapping
-timed or all-day entries in the selected account preview. It does not yet
-provide agenda/day/week grid views, cross-calendar conflict detection,
-calendar-source selection, or browser acceptance with connected test accounts.
+timed or all-day entries in the selected account preview. Cross-calendar
+conflict detection, calendar-source selection, and browser acceptance with
+connected test accounts remain open.
+
+**Implemented increment (2026-09-30):** the calendar preview now offers an
+agenda grouped by local date, a day timeline, and a seven-day timeline over the
+currently selected preview range. Timed events follow local wall-clock hours,
+all-day entries have a separate lane, and current-preview conflicts remain
+labelled without relying on colour alone. This is still an owner preview, not a
+full calendar workspace: source selection, cross-calendar conflicts, editing
+attendees, proposed slots, occurrence/series choices, and browser acceptance
+remain open.
 
 **Implemented increment (2026-09-30):** Google and Microsoft owner inbox
 previews now return bounded attachment cards. A person can select one supported

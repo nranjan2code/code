@@ -695,6 +695,14 @@ views with the same capabilities. The visual system follows `DESIGN.md` and
 | Automation workspace | Trigger and next run/check, host and freshness, scope and standing grant, preview/sample run, queued drafts, last result and history, budgets, pause/resume/run-once/revoke |
 | Activity and receipts | Separate actions waiting for review, accepted by the provider, confirmed, failed, expired, and unknown; source/run links and safe recovery actions |
 
+The current owner calendar preview implements agenda, one-day, and seven-day
+read-only layouts over its selected date range. The day and week layouts show
+local device time, all-day entries, and conflict markers; the agenda groups
+entries by local date. This is an incremental preview surface, not the complete
+calendar workspace in the table: source selection, cross-calendar conflicts,
+event attendee editing, proposed slots, and event occurrence/series choices
+remain open.
+
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized
 structured content with remote resources blocked; do not mount mail HTML in
