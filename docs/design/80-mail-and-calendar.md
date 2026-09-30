@@ -96,8 +96,13 @@ surface grant. Calendar and availability previews accept an owner-selected
 local date range of up to 30 days and show when the result was refreshed;
 times are rendered in the device's time zone. Inbox navigation remains a
 bounded recent-message view and owner-submitted phrase search within the selected
-inbox; folder selection is not available. Search results are transient and the
-phrase is not logged or retained. Local drafts,
+inbox. Owner mail previews can select Gmail labels and Microsoft top-level
+folders; Apple and Agent/watcher reads remain Inbox-only. Google and Microsoft
+owners can open one bounded thread preview with its separate messages; Apple
+supports a selected-message preview without conversation grouping. These
+results are transient and search phrases are not logged or retained. The
+complete thread workspace, source citations, and cross-folder Agent access
+remain open. Local drafts,
 scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at

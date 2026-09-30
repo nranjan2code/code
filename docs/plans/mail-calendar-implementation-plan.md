@@ -16,7 +16,8 @@ Calendar and availability previews now support an owner-selected, device-time-
 zone date range up to 30 days, previous/next seven-day navigation, and a visible
 refresh time. Owner folder/label selection now covers Gmail labels and up to 100
 Microsoft top-level folders; Apple remains Inbox-only. Child-folder traversal,
-the full connected-account workspace, and thread workspace remain open.
+the full connected-account workspace and complete thread workspace remain
+open; Google and Microsoft now have a bounded owner thread preview.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
 continuation cursor stored atomically in the encrypted Agent vault. A local
@@ -320,7 +321,16 @@ Microsoft opaque folder IDs are validated and encoded as one fixed-host path
 segment. Folder inventory and reads remain owner-only and pass through the
 existing MailRead account/audience admission. Apple exposes its Inbox only;
 scheduled Agent tools and mail watches remain Inbox-scoped. Nested folders,
-pagination beyond the bounded list, and full thread navigation remain open.
+pagination beyond the bounded list and full thread workspace remain open.
+
+**Implemented increment (2026-09-30):** a person can open one selected Google
+or Microsoft conversation from the owner mail preview. Results are capped at
+20 messages and a 256 KiB provider response, every returned message must match
+the requested thread/conversation ID, and the surface labels message content
+untrusted. Opaque IDs are handled as fixed-host path/query data, with Microsoft
+OData quoting escaped. Apple remains selected-message-only. This does not yet
+provide cross-folder Agent reads, full thread navigation/citations, reply
+headers, or compose-in-thread semantics.
 
 ## Stage 3 — reviewed provider effects
 
@@ -1308,4 +1318,13 @@ authorization and approval boundary on every execution path.
   Selected-folder searches stay provider-scoped. Agent tools and scheduled
   watches continue using Inbox. Google and Microsoft request fixtures, owner
   HTTP boundary coverage, UI typecheck, and production web build pass. Child
-  folder traversal, folder pagination, and full thread navigation remain open.
+  folder traversal, folder pagination, and the full thread workspace remain open.
+- 2026-09-30: Added bounded owner-only conversation previews for Google and
+  Microsoft. Each preview returns at most 20 messages and 256 KiB, validates
+  that every returned message belongs to the requested conversation, and
+  rejects unauthenticated or non-owner requests. Message content stays in the
+  transient owner preview and is labeled untrusted; it is not copied to Agent
+  history. Apple remains selected-message only. UI typecheck and production
+  build pass; provider fixture tests pass. Full server boundary test is running.
+  Reply-in-thread semantics, citations, and the complete thread workspace
+  remain open.

@@ -2406,6 +2406,11 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-attachment { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: 7px 0; border-top: 1px solid var(--border-soft); }
 .mail-calendar-attachment-preview { flex: 1 1 100%; min-width: 0; padding: 10px; border-radius: 8px; background: var(--surface); }
 .mail-calendar-attachment-preview pre { max-height: 320px; margin: 8px 0 0; overflow: auto; color: var(--text-secondary); font: inherit; font-size: var(--fs-control); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-calendar-thread { display: grid; gap: 8px; width: 100%; margin-top: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); }
+.mail-calendar-thread-message { display: grid; gap: 5px; min-width: 0; padding: 10px; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--surface-raised); }
+.mail-calendar-thread-message strong { color: var(--text-primary); font-size: var(--fs-control); overflow-wrap: anywhere; }
+.mail-calendar-thread-message span, .mail-calendar-thread-message small { color: var(--muted); font-size: var(--fs-meta); overflow-wrap: anywhere; }
+.mail-calendar-thread-message p { margin: 0; color: var(--text-secondary); font-size: var(--fs-control); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-preview .settings-hint { padding: 10px 0; }
 .mail-calendar-work-actions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-2); padding: 12px 17px; }
 .mail-calendar-work-actions label,

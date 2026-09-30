@@ -896,6 +896,12 @@ pub(super) struct MessagePreviewRequest {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct ThreadPreviewRequest {
+    thread_id: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct AttachmentPreviewRequest {
     message_id: String,
     attachment_id: String,
@@ -1164,6 +1170,76 @@ pub(super) async fn message_preview(
             record_account_event(
                 &state,
                 "mail_message_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
+}
+
+/// Open one selected Google/Microsoft conversation for the owner. The
+/// provider adapter bounds the response and verifies every returned message's
+/// conversation membership before the content reaches this transient preview.
+pub(super) async fn thread_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+    Json(request): Json<ThreadPreviewRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if request.thread_id.is_empty()
+        || request.thread_id.len() > 512
+        || request.thread_id.chars().any(char::is_control)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    record_account_event(
+        &state,
+        "mail_thread_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    let result = ProviderReadClient::default()
+        .mail_thread(
+            &account,
+            &vault,
+            &agent_id,
+            &format!("agent:{agent_id}"),
+            &request.thread_id,
+        )
+        .await;
+    match result {
+        Ok(thread) => {
+            record_account_event(
+                &state,
+                "mail_thread_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(thread).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "mail_thread_preview",
                 &agent_id,
                 &account_id,
                 account.provider,

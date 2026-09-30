@@ -755,6 +755,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-folders", get(mail_calendar::mail_folders))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/attachment-preview", post(mail_calendar::attachment_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/message-preview", post(mail_calendar::message_preview))
+        .route("/mail-calendar/accounts/{agent_id}/{account_id}/thread-preview", post(mail_calendar::thread_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview", post(mail_calendar::calendar_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview", post(mail_calendar::free_busy_preview))
         .route("/mail-calendar/accounts/{agent_id}/candidates", get(mail_calendar::list_candidates).post(mail_calendar::save_candidate))

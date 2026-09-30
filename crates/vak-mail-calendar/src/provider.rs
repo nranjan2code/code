@@ -20,6 +20,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
+const MAX_THREAD_MESSAGES: usize = 20;
 const MAX_MAIL_FOLDERS: usize = 100;
 pub const MAX_MAIL_ATTACHMENTS: usize = 20;
 pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
@@ -159,6 +160,12 @@ pub struct MailItem {
     pub has_attachments: bool,
     #[serde(default)]
     pub attachments: Vec<MailAttachmentRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailThread {
+    pub provider_id: String,
+    pub messages: Vec<MailItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -811,6 +818,93 @@ impl ProviderReadClient {
             output.push(item);
         }
         Ok(output)
+    }
+
+    /// Open one explicitly selected provider conversation. Thread membership
+    /// is verified from every returned message and the response is bounded.
+    pub async fn mail_thread(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        thread_id: &str,
+    ) -> Result<MailThread, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if thread_id.is_empty() || thread_id.len() > 512 || thread_id.chars().any(char::is_control)
+        {
+            return Err(ProviderReadError::InvalidSearch);
+        }
+        if account.provider == Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let messages = match account.provider {
+            Provider::Google => {
+                if !valid_google_label_id(thread_id) {
+                    return Err(ProviderReadError::InvalidSearch);
+                }
+                let url = graph_url_segments(
+                    &self.google_gmail_base,
+                    &["users", "me", "threads", thread_id],
+                )?;
+                let response = self
+                    .http
+                    .get(url)
+                    .bearer_auth(token.as_str())
+                    .query(&[("format", "full")])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                let value = parse_response(response, MAX_SELECTED_MESSAGE_RESPONSE_BYTES).await?;
+                let rows = value
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                let mut messages = Vec::new();
+                for row in rows.iter().take(MAX_THREAD_MESSAGES) {
+                    let item = parse_google_message(row);
+                    if item.thread_id.as_deref() != Some(thread_id) || item.provider_id.is_empty() {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    messages.push(item);
+                }
+                messages
+            }
+            Provider::Microsoft => {
+                let escaped = thread_id.replace('\'', "''");
+                let response = self.http.get(format!("{}/me/messages", self.microsoft_graph_base))
+                    .bearer_auth(token.as_str())
+                    .header("Prefer", "outlook.body-content-type=\"text\"")
+                    .query(&[("$top", MAX_THREAD_MESSAGES.to_string()),
+                        ("$select", "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments".to_owned()),
+                        ("$filter", format!("conversationId eq '{escaped}'")),
+                        ("$orderby", "receivedDateTime asc".to_owned())])
+                    .send().await.map_err(|_| ProviderReadError::Unavailable)?;
+                let value = parse_response(response, MAX_SELECTED_MESSAGE_RESPONSE_BYTES).await?;
+                let rows = value
+                    .get("value")
+                    .and_then(Value::as_array)
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                let mut messages = Vec::new();
+                for row in rows.iter().take(MAX_THREAD_MESSAGES) {
+                    let item =
+                        parse_graph_message(row).ok_or(ProviderReadError::InvalidResponse)?;
+                    if item.thread_id.as_deref() != Some(thread_id) || item.provider_id.is_empty() {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    messages.push(item);
+                }
+                messages
+            }
+            Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+        };
+        Ok(MailThread {
+            provider_id: thread_id.to_owned(),
+            messages,
+        })
     }
 
     /// Fetch one owner-selected, previewable file attachment from the
@@ -3024,6 +3118,99 @@ mod tests {
             .await
             .unwrap();
         assert!(messages.is_empty());
+        vault.remove(&account.id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn google_thread_preview_is_bounded_and_rejects_foreign_messages() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
+        let mismatch = Arc::new(AtomicBool::new(false));
+        let app_mismatch = Arc::clone(&mismatch);
+        let app = axum::Router::new().route(
+            "/gmail/v1/users/me/threads/thread_1",
+            axum::routing::get(move |request: Request<axum::body::Body>| {
+                let mismatch = Arc::clone(&app_mismatch);
+                async move {
+                    assert_eq!(request.headers().get(reqwest::header::AUTHORIZATION).and_then(|value| value.to_str().ok()), Some("Bearer access-token"));
+                    assert!(request.uri().query().unwrap_or_default().contains("format=full"));
+                    let second_thread = if mismatch.load(Ordering::SeqCst) { "other-thread" } else { "thread_1" };
+                    axum::Json(json!({"messages":[
+                        {"id":"msg-1","threadId":"thread_1","payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":"First"}],"body":{}}},
+                        {"id":"msg-2","threadId":second_thread,"payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":"Second"}],"body":{}}}
+                    ]})).into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let thread = client
+            .mail_thread(&account, &vault, &agent_id, &audience, "thread_1")
+            .await
+            .unwrap();
+        assert_eq!(thread.messages.len(), 2);
+        assert_eq!(thread.messages[0].subject, "First");
+        mismatch.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            client
+                .mail_thread(&account, &vault, &agent_id, &audience, "thread_1")
+                .await,
+            Err(ProviderReadError::InvalidResponse)
+        ));
+        vault.remove(&account.id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn microsoft_thread_preview_escapes_filter_and_checks_conversation_membership() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Microsoft);
+        let app = axum::Router::new().route(
+            "/graph/v1.0/me/messages",
+            axum::routing::get(|request: Request<axum::body::Body>| async move {
+                assert_eq!(request.headers().get(reqwest::header::AUTHORIZATION).and_then(|value| value.to_str().ok()), Some("Bearer access-token"));
+                let query = request.uri().query().unwrap_or_default();
+                let values = url::form_urlencoded::parse(query.as_bytes()).collect::<std::collections::HashMap<_, _>>();
+                assert_eq!(values.get("$filter").map(|value| value.as_ref()), Some("conversationId eq 'conv''42'"));
+                axum::Json(json!({"value":[
+                    {"id":"msg-1","conversationId":"conv'42","subject":"First","body":{"contentType":"text","content":"hello"}},
+                    {"id":"msg-2","conversationId":"conv'42","subject":"Second","body":{"contentType":"text","content":"there"}}
+                ]})).into_response()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let thread = client
+            .mail_thread(&account, &vault, &agent_id, &audience, "conv'42")
+            .await
+            .unwrap();
+        assert_eq!(thread.messages.len(), 2);
+        assert_eq!(thread.messages[1].body_text.as_deref(), Some("there"));
         vault.remove(&account.id).unwrap();
         task.abort();
     }

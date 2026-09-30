@@ -988,6 +988,48 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mail_calendar_thread_preview_requires_owner_authentication() {
+    let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    std::mem::forget(dir);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let url =
+        format!("http://{addr}/mail-calendar/accounts/unknown-agent/no-account/thread-preview");
+    let body = serde_json::json!({"thread_id":"thread-1"});
+    let unauthenticated = reqwest::Client::new()
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthenticated.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let non_owner = reqwest::Client::new()
+        .post(url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(non_owner.status(), reqwest::StatusCode::NOT_FOUND);
+
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native_redirects() {
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
