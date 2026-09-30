@@ -1,7 +1,8 @@
 # 80 — Mail and calendar: governed account work
 
 Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only bounded
-Google/Microsoft previews, a broker-owned local-surface read tool, a bounded
+Google/Microsoft previews and explicit phrase search within the selected inbox across
+Google, Microsoft, and Apple, a broker-owned local-surface read tool, a bounded
 Agent-vault working area for local drafts, and the first scheduled read-only
 `TaskDef` routines with best-effort encrypted bounded email-ID deduplication
 implemented. Stage 3 has exact-candidate email send and one limited timed event
@@ -93,7 +94,9 @@ the connected account's declared capability and the owning Agent's local
 surface grant. Calendar and availability previews accept an owner-selected
 local date range of up to 30 days and show when the result was refreshed;
 times are rendered in the device's time zone. Inbox navigation remains a
-bounded recent-message view without search or folder selection. Local drafts,
+bounded recent-message view and owner-submitted phrase search within the selected
+inbox; folder selection is not available. Search results are transient and the
+phrase is not logged or retained. Local drafts,
 scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at

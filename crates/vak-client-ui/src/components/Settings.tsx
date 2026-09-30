@@ -1146,7 +1146,9 @@ export default function Settings() {
     from?: string;
     to?: string;
     refreshedAt?: string;
+    query?: string;
   } | null>(null);
+  const [mailCalendarSearchQuery, setMailCalendarSearchQuery] = createSignal("");
   let mailCalendarPreviewGeneration = 0;
   const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
   const [mailCalendarEditorKind, setMailCalendarEditorKind] = createSignal<"mail" | "calendar" | null>(null);
@@ -1305,6 +1307,7 @@ export default function Settings() {
     account: api.MailCalendarAccount,
     kind: "mail" | "calendar" | "freebusy",
     selectedRange?: { from: string; to: string },
+    searchQuery?: string,
   ) => {
     const requestedAgentId = activeAgentId();
     const requestGeneration = ++mailCalendarPreviewGeneration;
@@ -1312,9 +1315,11 @@ export default function Settings() {
     setMailCalendarPreview({ accountId: account.id, kind, loading: true });
     try {
       if (kind === "mail") {
-        const result = await api.previewMailCalendarMail(requestedAgentId, account.id);
+        const query = searchQuery?.trim() || undefined;
+        setMailCalendarSearchQuery(query ?? "");
+        const result = await api.previewMailCalendarMail(requestedAgentId, account.id, 20, query);
         if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages, refreshedAt: new Date().toISOString() });
+        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages, refreshedAt: new Date().toISOString(), query });
       } else {
         const fromDate = selectedRange?.from || mailCalendarRangeFrom();
         const toDate = selectedRange?.to || mailCalendarRangeTo();
@@ -2539,9 +2544,20 @@ export default function Settings() {
                     </div>
                     <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone || "this device's time zone"}. Choose up to 30 days.</p>
                   </Show>
+                  <Show when={preview.kind === "mail"}>
+                    <form class="mail-calendar-work-actions" onSubmit={(event) => {
+                      event.preventDefault();
+                      const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
+                      if (account) void loadMailCalendarPreview(account, "mail", undefined, mailCalendarSearchQuery());
+                    }}>
+                      <label>Search this inbox<input aria-label="Search this inbox" type="search" maxlength="128" value={mailCalendarSearchQuery()} onInput={(event) => setMailCalendarSearchQuery(event.currentTarget.value)} placeholder="Phrase in sender, subject or message" /></label>
+                      <button class="settings-button" type="submit" disabled={mailCalendarBusy()}>{mailCalendarBusy() ? "Searching…" : "Search inbox"}</button>
+                    </form>
+                    <p class="settings-hint">Search runs only when you submit it and only in this account’s inbox. Results are a temporary preview.</p>
+                  </Show>
                   <Show when={preview.refreshedAt}><p class="settings-hint">Updated {relTime(preview.refreshedAt!)}{preview.kind !== "mail" && preview.from && preview.to ? ` · ${new Date(preview.from).toLocaleDateString()} through ${new Date(new Date(preview.to).getTime() - 1).toLocaleDateString()}` : ""}</p></Show>
                   <Show when={preview.kind === "mail"}>
-                    <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : "No recent inbox messages were returned."}</p>}>
+                    <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : preview.query ? "No inbox messages matched that phrase." : "No recent inbox messages were returned."}</p>}>
                       <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.has_attachments}><small>Has attachments · attachment preview is not available yet</small></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
                     </Show>
                   </Show>

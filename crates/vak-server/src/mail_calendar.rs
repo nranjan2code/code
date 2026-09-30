@@ -830,6 +830,7 @@ pub(super) async fn delete_candidate(
 #[derive(Deserialize)]
 pub(super) struct MailPreviewRequest {
     limit: Option<usize>,
+    query: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -879,16 +880,34 @@ pub(super) async fn mail_preview(
         &account.capabilities,
         "requested",
     );
-    match vak_mail_calendar::provider::ProviderReadClient::default()
-        .recent_mail(
-            &account,
-            &vault,
-            &agent_id,
-            &format!("agent:{agent_id}"),
-            request.limit.unwrap_or(10),
-        )
-        .await
+    let client = vak_mail_calendar::provider::ProviderReadClient::default();
+    let preview = if request
+        .query
+        .as_deref()
+        .is_some_and(|query| !query.trim().is_empty())
     {
+        client
+            .search_mail(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                request.query.as_deref().unwrap_or_default(),
+                request.limit.unwrap_or(10),
+            )
+            .await
+    } else {
+        client
+            .recent_mail(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                request.limit.unwrap_or(10),
+            )
+            .await
+    };
+    match preview {
         Ok(messages) => {
             record_account_event(
                 &state,
@@ -1211,7 +1230,9 @@ fn provider_preview_error(error: vak_mail_calendar::provider::ProviderReadError)
             StatusCode::PRECONDITION_REQUIRED,
             "reauthentication_required",
         ),
-        E::InvalidRange | E::InvalidResponse => (StatusCode::BAD_REQUEST, "invalid_request"),
+        E::InvalidRange | E::InvalidResponse | E::InvalidSearch => {
+            (StatusCode::BAD_REQUEST, "invalid_request")
+        }
         E::WatchCursorReset => (StatusCode::CONFLICT, "watch_cursor_reset"),
         E::Vault => (StatusCode::SERVICE_UNAVAILABLE, "credential_unavailable"),
         E::Unavailable => (StatusCode::BAD_GATEWAY, "provider_unavailable"),

@@ -198,9 +198,9 @@ export interface MailCalendarEventPreview {
 }
 export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
 
-export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10): Promise<{ messages: MailCalendarMailPreview[] }> {
+export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10, query?: string): Promise<{ messages: MailCalendarMailPreview[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-preview`, {
-    method: "POST", body: JSON.stringify({ limit }),
+    method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}) }),
   });
 }
 export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "no_plain_text" }> {

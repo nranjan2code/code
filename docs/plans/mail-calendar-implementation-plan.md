@@ -1,7 +1,8 @@
 # Plan — secure mail and calendar package
 
 Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
-Google/Microsoft owner previews, the broker-owned local Agent read tool, and
+Google/Microsoft owner previews, owner-submitted bounded inbox search for all
+three providers, the broker-owned local Agent read tool, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
 the first Stage 4 increment adds scheduled read-only routines and a bounded,
@@ -11,8 +12,8 @@ email send and a
 limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
 Calendar and availability previews now support an owner-selected, device-time-
-zone date range up to 30 days with a visible refresh time. Inbox folder and
-search navigation and the complete connected-account workspace remain open.
+zone date range up to 30 days with a visible refresh time. Folder selection and
+the complete connected-account workspace remain open.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
 continuation cursor stored atomically in the encrypted Agent vault. A local
@@ -1240,3 +1241,9 @@ authorization and approval boundary on every execution path.
   calendar behavior. Corrected the routine explanation to describe all three
   native cursors and visible expiry recovery rather than Microsoft's retired
   latest-100 scan.
+- 2026-09-30: Added explicit owner-submitted phrase search scoped to the selected
+  Inbox for Google, Microsoft, and Apple IMAP. Requests are bounded to 20 items,
+  query text is length/control-character validated, and the phrase is not written
+  to audit events; results remain transient previews. TypeScript, UI build, and
+  compile checks pass; provider request tests and browser fixture verification
+  remain to run.

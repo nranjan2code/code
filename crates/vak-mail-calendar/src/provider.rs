@@ -138,6 +138,8 @@ pub enum ProviderReadError {
     WatchCursorReset,
     #[error("requested time range is outside the allowed window")]
     InvalidRange,
+    #[error("search phrase is invalid or exceeds its size limit")]
+    InvalidSearch,
     #[error("credential vault is unavailable")]
     Vault,
 }
@@ -268,8 +270,41 @@ impl ProviderReadClient {
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
         match account.provider {
-            Provider::Google => self.google_mail(token.as_str(), limit).await,
-            Provider::Microsoft => self.microsoft_mail(token.as_str(), limit).await,
+            Provider::Google => self.google_mail(token.as_str(), limit, None).await,
+            Provider::Microsoft => self.microsoft_mail(token.as_str(), limit, None).await,
+            Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
+        }
+    }
+
+    /// Run an explicit, bounded phrase search within the selected inbox. The
+    /// query is sent only to this account's provider and results are transient.
+    pub async fn search_mail(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<MailItem>, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        let query = validate_mail_search_query(query)?;
+        if account.provider == Provider::AppleIcloud {
+            return icloud_search_mail(account, vault, &query, limit.clamp(1, MAX_MAIL_ITEMS))
+                .await;
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        match account.provider {
+            Provider::Google => {
+                self.google_mail(&token, limit.clamp(1, MAX_MAIL_ITEMS), Some(&query))
+                    .await
+            }
+            Provider::Microsoft => {
+                self.microsoft_mail(&token, limit.clamp(1, MAX_MAIL_ITEMS), Some(&query))
+                    .await
+            }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
     }
@@ -854,12 +889,17 @@ impl ProviderReadClient {
         &self,
         token: &str,
         limit: usize,
+        query: Option<&str>,
     ) -> Result<Vec<MailItem>, ProviderReadError> {
-        let response = self
+        let mut request = self
             .http
             .get(format!("{}/users/me/messages", self.google_gmail_base))
             .bearer_auth(token)
-            .query(&[("labelIds", "INBOX"), ("maxResults", &limit.to_string())])
+            .query(&[("labelIds", "INBOX"), ("maxResults", &limit.to_string())]);
+        if let Some(query) = query {
+            request = request.query(&[("q", format!(r#"in:inbox "{query}""#))]);
+        }
+        let response = request
             .send()
             .await
             .map_err(|_| ProviderReadError::Unavailable)?;
@@ -901,9 +941,10 @@ impl ProviderReadClient {
         &self,
         token: &str,
         limit: usize,
+        query: Option<&str>,
     ) -> Result<Vec<MailItem>, ProviderReadError> {
         let limit = limit.to_string();
-        let response = self
+        let mut request = self
             .http
             .get(format!(
                 "{}/me/mailFolders/inbox/messages",
@@ -921,7 +962,11 @@ impl ProviderReadClient {
             .query(&[(
                 "$select",
                 "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
-            )])
+            )]);
+        if let Some(query) = query {
+            request = request.query(&[("$search", format!("\"{query}\""))]);
+        }
+        let response = request
             .send()
             .await
             .map_err(|_| ProviderReadError::Unavailable)?;
@@ -1165,6 +1210,20 @@ async fn verify_icloud_calendar_credentials_at(
     read_caldav_multistatus(response).await.map(|_| ())
 }
 
+fn validate_mail_search_query(query: &str) -> Result<String, ProviderReadError> {
+    let query = query.trim();
+    if query.is_empty()
+        || query.chars().count() > 128
+        || query.len() > 512
+        || query
+            .chars()
+            .any(|ch| ch.is_control() || ch == '"' || ch == '\\')
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    Ok(query.to_owned())
+}
+
 fn admit(
     account: &ConnectedAccount,
     vault: &AccountVault,
@@ -1188,6 +1247,49 @@ async fn icloud_recent_mail(
         .map_err(|_| ProviderReadError::Vault)?;
     let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
     let result = icloud_fetch_recent_mail(&mut session, limit).await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+async fn icloud_search_mail(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<MailItem>, ProviderReadError> {
+    let (login, password) = vault
+        .icloud_imap_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let result = async {
+        let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        if mailbox.exists == 0 {
+            return Ok(Vec::new());
+        }
+        let validity = mailbox
+            .uid_validity
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let criterion = format!("TEXT \"{query}\"");
+        let uids = tokio::time::timeout(StdDuration::from_secs(10), session.uid_search(criterion))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        let mut uids = uids.into_iter().collect::<Vec<_>>();
+        uids.sort_unstable_by(|left, right| right.cmp(left));
+        let ids = uids
+            .into_iter()
+            .take(limit)
+            .map(|uid| format!("{validity}:{uid}"))
+            .collect::<Vec<_>>();
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        icloud_fetch_mail_by_ids(&mut session, &ids).await
+    }
+    .await;
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
 }
@@ -2618,6 +2720,21 @@ mod tests {
         let now = Utc::now();
         assert!(validate_range(now, now + Duration::days(32)).is_err());
         assert!(validate_range(now, now + Duration::days(30)).is_ok());
+    }
+
+    #[test]
+    fn inbox_search_query_is_bounded_and_safe_for_provider_syntax() {
+        assert_eq!(
+            validate_mail_search_query("  team update  ").unwrap(),
+            "team update"
+        );
+        for invalid in ["", "   ", "bad\nquery", "quote\"query", "slash\\query"] {
+            assert!(matches!(
+                validate_mail_search_query(invalid),
+                Err(ProviderReadError::InvalidSearch)
+            ));
+        }
+        assert!(validate_mail_search_query(&"x".repeat(129)).is_err());
     }
 
     #[test]
