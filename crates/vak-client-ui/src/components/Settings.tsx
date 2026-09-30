@@ -3165,7 +3165,7 @@ export default function Settings() {
                       }}</For>
                     </fieldset>
                     <label class="capability-item"><input type="checkbox" disabled={!mailCalendarRoutineOperations().includes("recent_mail") || mailCalendarEventTriggerEnabled()} checked={mailCalendarWatchNewMail()} onChange={(event) => setMailCalendarWatchNewMail(event.currentTarget.checked)} /><span>Watch for new email on this schedule</span></label>
-                    <label class="capability-item"><input type="checkbox" disabled={!mailCalendarRoutineOperations().includes("calendar_events") || mailCalendarWatchNewMail()} checked={mailCalendarEventTriggerEnabled()} onChange={(event) => setMailCalendarEventTriggerEnabled(event.currentTarget.checked)} /><span>Run around a calendar event</span></label>
+                    <label class="capability-item"><input type="checkbox" disabled={!mailCalendarRoutineOperations().includes("calendar_events") || mailCalendarWatchNewMail()} checked={mailCalendarEventTriggerEnabled()} onChange={(event) => { setMailCalendarEventTriggerEnabled(event.currentTarget.checked); if (event.currentTarget.checked) setMailCalendarWatchMode("continuous"); }} /><span>Run around a calendar event</span></label>
                     <Show when={mailCalendarEventTriggerEnabled()}>
                       <div class="mail-calendar-editor">
                         <label>Event boundary<select aria-label="Event trigger boundary" value={mailCalendarEventBoundary()} onChange={(event) => setMailCalendarEventBoundary(event.currentTarget.value as "start" | "end")}><option value="start">Event start</option><option value="end">Event end</option></select></label>
