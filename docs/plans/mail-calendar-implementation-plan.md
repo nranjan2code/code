@@ -1444,3 +1444,12 @@ authorization and approval boundary on every execution path.
   account-lifecycle HTTP tests, UI typecheck, and production web build pass.
   No live provider sign-in was made; owner-provided credentials should be
   entered only in the local Settings form.
+- 2026-09-30: Made all currently supported provider sign-in choices explicit in
+  Settings and the design matrix. Google OAuth is recommended with a clearly
+  limited, less-secure Gmail App Password fallback; Microsoft is OAuth-only,
+  with Outlook.com/Live legacy password guidance documented as an unstable
+  path that is not offered; iCloud warns that its app-specific password has
+  broader provider authority. Apple documents account authorization for
+  supported third-party apps, but its Mail/Calendar grant is not yet verified
+  for Vakyartha and remains a follow-up. UI typecheck and production web build
+  pass; no provider credentials were used.
