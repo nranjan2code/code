@@ -2443,7 +2443,7 @@ fn edge_attachment_modalities_aggregate() {
 }
 
 #[test]
-fn edge_previous_act_adds_continuity_signal() {
+fn edge_previous_act_only_adds_continuity_for_explicit_follow_up() {
     let mut request = req("check the logs");
     request.history.previous_act = Some(Act::Modify);
     request.history.turn_index = 2;
@@ -2453,8 +2453,19 @@ fn edge_previous_act_adds_continuity_signal() {
         .iter()
         .any(|s| s.name.starts_with("continues:"));
     assert!(
-        has_continuity,
-        "previous act should add a continuity signal"
+        !has_continuity,
+        "a fresh directive must not inherit prior act"
+    );
+
+    let mut follow_up = req("do that again");
+    follow_up.history.previous_act = Some(Act::Modify);
+    follow_up.history.turn_index = 2;
+    let extraction = extract(&follow_up);
+    assert!(
+        extraction
+            .signals
+            .iter()
+            .any(|s| s.name.starts_with("continues:"))
     );
 }
 

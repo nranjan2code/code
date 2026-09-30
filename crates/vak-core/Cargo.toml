@@ -34,6 +34,7 @@ vak-mcp = { workspace = true }
 vak-permission = { workspace = true }
 vak-plugin = { workspace = true }
 vak-session = { workspace = true }
+vak-store = { workspace = true }
 vak-context = { workspace = true }
 vak-tools = { workspace = true }
 vak-sandbox = { workspace = true }

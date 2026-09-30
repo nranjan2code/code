@@ -225,11 +225,15 @@ budget      = horizon.tokens
             − current_turn_reserve       (= max observed current-turn size for this model, EWMA)
 # never split a turn: every cost check is turn-whole
 value(turn) = max(recency, relevance, anaphora)
-              recency   = 1 / (1 + age in closed turns)      # newest = 1.0
-              relevance = BM25(directive + reading terms) / best score  # best = 1.0
+              recency   = 1 / (1 + age), only for a relevant or referenced turn
+              relevance = subject-token search of the directive / best score
               anaphora  = 1.0 for the preceding turn when the directive refers back
-fill turns at Full in descending value while cost ≤ budget, skipping one
-that does not fit for a cheaper one further down; the rest as cards
+cost each rendered Full record and Card line with the current profile;
+never trust a stored estimate that omits tool arguments
+full_history_budget = min(budget, 12,000 tokens)
+fill eligible turns at Full in descending value while their combined cost ≤
+full_history_budget, skipping one that does not fit for a cheaper one further
+down; the rest as cards
 newest → oldest while they fit; the overflow collapses into one packet.
 summary     = compaction packet over the packet range, or the stored one
 ```
@@ -289,11 +293,15 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
   when the loaded set does. No schemas.
 - **`find_tools({ query })`** returns full schemas for matching deferred
   tools and promotes them to loaded definitions for the rest of the turn on
-  every provider (`vak_agent::load_discovered`). The presentation-check nudge
-  loads the card tool it names the same way. A deferred tool the reading did
-  not predict and the model then used is the measured misread. On Anthropic
-  the deferred schemas additionally ride `defer_loading: true` with the
-  server-side tool search tool (§11).
+  every provider (`vak_agent::load_discovered`). Its result reports how many
+  tool names are new to the current turn; repeating discovery with a different
+  wording that returns only already surfaced schemas says so explicitly. The
+  prompt tells the model to stop rephrasing that search and use an available
+  tool or state the missing capability. The presentation-check nudge loads
+  the card tool it names the same way. A deferred tool the reading did not
+  predict and the model then used is the measured misread. On Anthropic the
+  deferred schemas additionally ride `defer_loading: true` with the server-side
+  tool search tool (§11).
 - **MCP**: reached only through `mcp`, and started only by that demand
   (docs/design/41-capability-registry.md). The prompt names each admitted
   server with the tool *names* the pool last observed (none before its first
@@ -404,6 +412,9 @@ tolerate topic changes:
   no retrieval, ends the turn with a system-authored statement that no
   current value was retrieved, naming the last figure the conversation
   recorded and when — never a carried-over figure presented as current.
+  A request to recall what the assistant reported earlier is historical
+  retrieval, even when it names a temporal topic such as “the latest weather
+  answer”; it must not be routed through this freshness gate.
   Measured live: the model's "repair" was a different stale card from an
   older turn. The signal sets the domain
   only — raising the evidence standard through the stance text made the
@@ -646,10 +657,14 @@ the planner, never by a constant:
 
 Relevance is intent-driven: the current directive's reading (act, domains,
 entities) and its text are matched against the card index; the top matches
-are promoted to full record inside a reserved slice of the budget. A turn
-that shares no domain, entity, or lexical overlap with the directive stays a
-card. Anaphora ("do that again", "the second one") promotes the immediately
-preceding turn regardless of overlap.
+are promoted to full record inside the 12,000-token history slice. A large
+model horizon does not authorize filling the prompt with every lexical match.
+A turn that shares no domain, entity, or lexical overlap with the directive
+stays a card. Lexical matching finds candidates; it is not semantic proof that
+the user meant a candidate. Anaphora ("do that again", "the second one")
+promotes the immediately preceding turn when it fits the same slice. The model
+can reopen specific records with `recall` rather than receiving an unbounded
+collection of them up front.
 
 Any turn at card or packet fidelity can be reopened by the model with
 `recall({ turn: 17 })`, which returns its full record; the model sees the
@@ -793,3 +808,24 @@ cheaper than doing the same client-side. The rule for using them:
 - **Uniqueness invariant**: no tool name appears twice across schemas, index,
   and system prompt; no directive text appears both in a working-set turn and
   in the thread.
+
+### Context selection repair, 2026-09-30
+
+The installed desktop weather comparison exposed two planner defects: unrelated
+closed turns were admitted by recency alone, and recorded Full costs omitted
+tool arguments while Card costs measured the search index rather than the wire
+line. The planner now admits Full records by subject relevance or a reference,
+uses recency only within admitted context, and remeasures the actual projections
+with the current profile. A minimal reading carries compact references and
+only promotes an immediate follow-up reference. The append-only ledger stays
+complete. These repairs do not establish million-turn scalability; the remaining
+indexing and semantic-selection work is tracked in
+[the repair plan](../plans/context-selection-repair.md).
+
+Recall is an on-demand expansion path, not a mandatory step on every turn. The
+system prompt directs the model to answer fresh or unrelated requests without
+recalling history, and to recall only when a specific prior detail is needed.
+An empty recall query is invalid and returns a corrective tool error; it must
+not be dispatched as a broad history search. Focused tool tests cover this
+contract. Live model behavior and million-turn scaling remain unproven; see
+[the repair plan](../plans/context-selection-repair.md).

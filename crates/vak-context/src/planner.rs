@@ -19,8 +19,8 @@ use crate::capacity::CapacityProfile;
 /// the directive text — deliberately loose, since a false positive costs
 /// one extra `Full` turn and a false negative costs nothing the relevance
 /// search wouldn't otherwise catch.
-pub const ANAPHORA_PHRASES: [&str; 7] = [
-    "that", "it", "again", "the same", "previous", "above", "this one",
+pub const ANAPHORA_PHRASES: [&str; 8] = [
+    "that", "it", "again", "the same", "previous", "above", "this one", "continue",
 ];
 
 /// Inputs to one planning pass. `reading` is the current directive's own
@@ -56,12 +56,6 @@ fn is_anaphoric(directive: &str) -> bool {
     })
 }
 
-/// How many of the most recent closed turns a `minimal` reading may still
-/// carry at `Full`. Two: the exchange just before this one, and the one
-/// before that, which is what a greeting or a one-line answer plausibly
-/// refers to.
-const MINIMAL_FULL_TURNS: usize = 2;
-
 /// When the card tier overflows, the number of turns evicted into the
 /// packet is rounded UP to a multiple of this many (item 3 fix). Without
 /// batching, a fixed budget means every new turn displaces exactly the one
@@ -74,6 +68,12 @@ const MINIMAL_FULL_TURNS: usize = 2;
 /// holds for this many turns before jumping by that many at once.
 const PACKET_BATCH_TURNS: usize = 8;
 
+/// Maximum total tokens of historical full records admitted automatically on
+/// one request. A large model horizon is not a relevance budget: if a query
+/// matches many old turns, keep the best compact cards in context and let the
+/// model reopen specific records through `recall` as needed.
+const MAX_FULL_HISTORY_TOKENS: u64 = 12_000;
+
 /// A turn's value from recency alone: `1 / (1 + age)` where `age` is how
 /// many closed turns came after it. The most recent closed turn is worth
 /// 1.0, the one before it 0.5, and so on — a parameter-free decay that a
@@ -83,20 +83,11 @@ fn recency_value(age: usize) -> f64 {
     1.0 / (1.0 + age as f64)
 }
 
-/// The relevance query: the directive plus the current reading's act and
-/// domain words, so reading overlap is scored by the same BM25 as the text
-/// instead of being a separate boolean bonus.
-fn relevance_query(directive: &str, reading: Option<&ReadingKey>) -> String {
-    let mut query = directive.to_string();
-    if let Some(reading) = reading {
-        query.push(' ');
-        query.push_str(&reading.act);
-        for domain in &reading.domains {
-            query.push(' ');
-            query.push_str(domain);
-        }
-    }
-    query
+/// Match the subject the person named. Generic intent labels such as
+/// `answer`/`information` occur in unrelated cards and are not evidence that
+/// their full records belong in this request.
+fn relevance_query(directive: &str) -> String {
+    directive.to_string()
 }
 
 /// Builds the working-set plan for one request (§4, §10). Never splits a
@@ -127,24 +118,22 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     let mut full_ids: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut retrieved: Vec<String> = Vec::new();
 
-    // Every closed turn is scored once and the budget is filled in
-    // descending value: the most recent turn and the most relevant turn are
-    // both worth 1.0, an older or less relevant one proportionally less, so
-    // no share of the budget is reserved for either signal — recency and
-    // relevance compete for the same tokens on equal terms, and a turn that
-    // does not fit is skipped for a cheaper one further down the ranking
-    // rather than blocking everything behind it.
+    // Every closed turn is scored once. Relevance selects which records may
+    // be reopened automatically, but it does not grant the whole model
+    // horizon to history: a broad query could otherwise promote enough full
+    // records to produce a 100k-token prompt. The rest stays as compact cards
+    // for targeted `recall` calls.
     let anaphoric = is_anaphoric(input.directive);
     let preceding = closed.last().map(|turn| turn.id.clone());
     // `ContextProfile::Minimal` (docs/design/47-commitment-kernel.md): just
     // the conversation. No relevance retrieval promotes an older turn, and
-    // only the most recent turns are candidates for `Full`; a greeting does
+    // only a referenced preceding turn is eligible for `Full`; a greeting does
     // not pay for last Tuesday. Anaphora still promotes the preceding turn —
     // "thanks, do that again" points at it.
     let minimal = input
         .reading
         .is_some_and(vak_session::ReadingKey::is_minimal);
-    let query = relevance_query(input.directive, input.reading);
+    let query = relevance_query(input.directive);
     let lexical: std::collections::HashMap<String, f64> = if minimal {
         std::collections::HashMap::new()
     } else {
@@ -156,18 +145,24 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         .enumerate()
         .map(|(position, turn)| {
             let age = closed.len() - 1 - position;
-            let recency = if minimal && age >= MINIMAL_FULL_TURNS {
-                0.0
-            } else {
-                recency_value(age)
-            };
             let relevance = if best_lexical > 0.0 {
                 lexical.get(&turn.id).copied().unwrap_or(0.0) / best_lexical
             } else {
                 0.0
             };
-            let anaphora = if anaphoric && preceding.as_deref() == Some(turn.id.as_str()) {
+            let anaphora = if anaphoric
+                && lexical.is_empty()
+                && preceding.as_deref() == Some(turn.id.as_str())
+            {
                 1.0
+            } else {
+                0.0
+            };
+            // Recency ranks admitted context; it cannot admit unrelated
+            // full records merely because the model has spare capacity.
+            // Cards retain the rest of the conversation for recall.
+            let recency = if relevance > 0.0 || anaphora > 0.0 {
+                recency_value(age)
             } else {
                 0.0
             };
@@ -184,6 +179,8 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(b.2.cmp(&a.2))
     });
+    let full_history_budget = budget.min(MAX_FULL_HISTORY_TOKENS);
+    let mut full_history_spent = 0_u64;
     for (value, recency, _, turn) in &ranked {
         // A turn worth nothing is not promoted to `Full`, whatever the
         // budget; it still gets a card below.
@@ -191,8 +188,11 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
             continue;
         }
         let cost = turn.card.as_ref().map(|c| c.tokens_full).unwrap_or(0);
-        if spent.saturating_add(cost) <= budget {
+        if full_history_spent.saturating_add(cost) <= full_history_budget
+            && spent.saturating_add(cost) <= budget
+        {
             spent += cost;
+            full_history_spent += cost;
             full_ids.insert(turn.id.clone());
             if *value > *recency {
                 retrieved.push(turn.id.clone());
@@ -272,12 +272,58 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
     };
 
     WorkingSetPlan {
+        selected_records: None,
         per_turn,
         packet_range,
         retrieved,
         budget,
         spent,
     }
+}
+
+/// Plan only scoped, indexed candidates. Unselected history remains on disk;
+/// it contributes neither arbitrary cards nor automatic compaction packets.
+/// A candidate too large for Full can ride as its bounded discovery card.
+pub fn plan_selected(input: PlanInput) -> WorkingSetPlan {
+    let reserve = input
+        .profile
+        .current_turn_reserve(input.current_turn_tokens);
+    let budget = input
+        .profile
+        .budget(input.prefix_tokens, input.tail_tokens, reserve);
+    let mut plan = WorkingSetPlan {
+        budget,
+        selected_records: Some(vec![]),
+        ..Default::default()
+    };
+    for turn in &input.index.turns {
+        if !turn.closed || turn.behind_reset {
+            continue;
+        }
+        let (Some(card), Some(closing)) = (&turn.card, &turn.closing_entry_id) else {
+            continue;
+        };
+        let full = input
+            .profile
+            .estimate_tokens(messages_chars(&turn.full_record()));
+        let compact = input
+            .profile
+            .estimate_tokens(card.addressed_message().chars().count() as u64);
+        let (fidelity, cost) = if plan.spent.saturating_add(full) <= budget {
+            (Fidelity::Full, full)
+        } else if plan.spent.saturating_add(compact) <= budget {
+            (Fidelity::Card, compact)
+        } else {
+            continue;
+        };
+        plan.spent = plan.spent.saturating_add(cost);
+        plan.per_turn.push((turn.id.clone(), fidelity));
+        plan.selected_records
+            .as_mut()
+            .map(|sources| sources.push((turn.id.clone(), closing.clone())));
+        plan.retrieved.push(turn.id.clone());
+    }
+    plan
 }
 
 /// Plans one request against the ledger as it stands: builds the
@@ -296,6 +342,18 @@ pub fn plan_for_session(
 ) -> WorkingSetPlan {
     let mut index = TurnIndex::from_log(log);
     index.ensure_cards(&|text| profile.estimate_tokens(text.chars().count() as u64));
+    // Stored costs were measured when the card was written, possibly with
+    // another model/profile. Older cards also counted text_content() alone,
+    // omitting tool-call arguments, and costed index_text() as the card even
+    // though the wire carries line(). Cost the actual two projections now.
+    // This changes no ledger data and sends no new model-visible content.
+    for (number, turn) in index.turns.iter_mut().enumerate() {
+        let full_cost = profile.estimate_tokens(messages_chars(&turn.full_record()));
+        if let Some(card) = &mut turn.card {
+            card.tokens_full = full_cost;
+            card.tokens_card = profile.estimate_tokens(card.line(number + 1).len() as u64);
+        }
+    }
     let directive = index
         .turns
         .last()
@@ -448,7 +506,7 @@ mod tests {
         let result = plan(PlanInput {
             profile: &profile,
             index: &index,
-            directive: "unrelated question",
+            directive: "turn",
             reading: None,
             prefix_tokens: 100,
             tail_tokens: 0,
@@ -469,6 +527,185 @@ mod tests {
         assert!(
             !full.contains(&ids[0].as_str()),
             "turn one must not be Full"
+        );
+        assert!(result.spent <= result.budget);
+    }
+
+    #[test]
+    fn planning_remeasures_tool_arguments_instead_of_trusting_old_card_costs() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "s1");
+        let mut log = SessionLog::create(path, header(dir.path())).unwrap();
+        let id = log
+            .append_message(MessageRecord {
+                message: M::user_text("create spreadsheet"),
+                meta: None,
+            })
+            .unwrap()
+            .id;
+        log.append_message(MessageRecord {
+            message: M::assistant(vec![vak_llm::ContentBlock::ToolUse {
+                id: "call".into(),
+                name: "write".into(),
+                input: serde_json::json!({"content": "spreadsheet data ".repeat(10_000)}),
+            }]),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(MessageRecord {
+            message: M {
+                role: vak_llm::Role::User,
+                content: vec![vak_llm::ContentBlock::ToolResult {
+                    tool_use_id: "call".into(),
+                    content: "written".into(),
+                    is_error: false,
+                }],
+            },
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(MessageRecord {
+            message: M::assistant(vec![vak_llm::ContentBlock::text("Created spreadsheet")]),
+            meta: None,
+        })
+        .unwrap();
+        log.append_turn_card(TurnCardRecord {
+            turn_id: id.clone(),
+            card: card(&id, "create spreadsheet", 1, 1, &[]),
+        })
+        .unwrap();
+        log.append_message(MessageRecord {
+            message: M::user_text("update spreadsheet"),
+            meta: None,
+        })
+        .unwrap();
+        let result = plan_for_session(&log, &profile(1_000), 0, 0);
+        assert!(
+            result.per_turn.contains(&(id, Fidelity::Card)),
+            "oversized arguments must be recalled, not admitted at a false cost: {result:?}"
+        );
+        assert!(result.spent <= result.budget);
+    }
+
+    #[test]
+    fn fresh_topic_does_not_fill_spare_capacity_with_unrelated_evidence() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, ids) = fixture(
+            dir.path(),
+            &[
+                (
+                    "what is the current Indian stock market",
+                    50_000,
+                    40,
+                    &["information"],
+                ),
+                (
+                    "make the latest Excel document",
+                    50_000,
+                    40,
+                    &["information"],
+                ),
+            ],
+        );
+        let index = TurnIndex::from_log(&log);
+        let reading = ReadingKey {
+            act: "answer".into(),
+            domains: vec!["information".into()],
+            modalities: vec![],
+            context: "recall".into(),
+        };
+        let profile = profile(200_000);
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "what is the current weather in noida",
+            reading: Some(&reading),
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        assert!(
+            ids.iter()
+                .all(|id| result.per_turn.contains(&(id.clone(), Fidelity::Card)))
+        );
+        assert_eq!(result.spent, 80);
+        assert!(result.retrieved.is_empty());
+    }
+
+    #[test]
+    fn return_to_a_topic_one_hundred_turns_back_retrieves_only_that_topic() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut specs = vec![("Noida weather forecast", 100, 5, &[][..])];
+        specs.extend((0..100).map(|_| ("Indian stock market dashboard", 100, 5, &[][..])));
+        let (log, ids) = fixture(dir.path(), &specs);
+        let index = TurnIndex::from_log(&log);
+        let profile = profile(100_000);
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "Noida weather update",
+            reading: None,
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        assert!(result.per_turn.contains(&(ids[0].clone(), Fidelity::Full)));
+        assert!(
+            result
+                .per_turn
+                .iter()
+                .filter(|(_, f)| *f == Fidelity::Full)
+                .count()
+                == 1
+        );
+        assert!(result.retrieved.contains(&ids[0]));
+    }
+
+    #[test]
+    fn matching_history_cannot_fill_the_model_horizon_with_full_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let specs = (0..20)
+            .map(|n| {
+                let text = if n == 0 {
+                    "Noida weather from earlier"
+                } else {
+                    "Noida weather details and measurements"
+                };
+                (text, 6_000, 40, &[][..])
+            })
+            .collect::<Vec<_>>();
+        let (log, _) = fixture(dir.path(), &specs);
+        let index = TurnIndex::from_log(&log);
+        let result = plan(PlanInput {
+            profile: &profile(200_000),
+            index: &index,
+            directive: "What temperature did you report in the latest weather answer?",
+            reading: None,
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        let full_cost = result
+            .per_turn
+            .iter()
+            .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
+            .map(|(id, _)| {
+                index
+                    .turns
+                    .iter()
+                    .find(|turn| turn.id == *id)
+                    .and_then(|turn| turn.card.as_ref())
+                    .map(|card| card.tokens_full)
+                    .unwrap_or(0)
+            })
+            .sum::<u64>();
+        assert!(full_cost <= MAX_FULL_HISTORY_TOKENS, "{full_cost}");
+        assert!(
+            result
+                .per_turn
+                .iter()
+                .any(|(_, fidelity)| *fidelity == Fidelity::Card),
+            "the rest of matching history should remain available in compact form"
         );
         assert!(result.spent <= result.budget);
     }
@@ -508,9 +745,8 @@ mod tests {
     }
 
     /// `ContextProfile::Minimal` (docs/design/47-commitment-kernel.md): a
-    /// greeting does not retrieve an older turn on relevance, and only the
-    /// most recent turns are candidates for `Full`, however much budget
-    /// there is.
+    /// greeting does not retrieve an older turn or admit unrelated recent
+    /// turns at Full, however much spare budget there is.
     #[test]
     fn a_minimal_reading_neither_retrieves_nor_carries_old_turns_at_full() {
         let dir = tempfile::tempdir().unwrap();
@@ -548,12 +784,11 @@ mod tests {
             .map(|(id, _)| id.as_str())
             .collect();
         assert!(result.retrieved.is_empty(), "{:?}", result.retrieved);
-        assert!(full.contains(&ids[3].as_str()));
-        assert!(full.contains(&ids[2].as_str()));
+        assert!(full.is_empty(), "{full:?}");
         assert!(!full.contains(&ids[1].as_str()), "{full:?}");
         assert!(!full.contains(&ids[0].as_str()), "{full:?}");
 
-        // The same request with a recall reading carries everything.
+        // A recall reading retrieves the matching subject, not every turn.
         let recall = ReadingKey {
             context: "recall".into(),
             ..minimal.clone()
@@ -572,7 +807,7 @@ mod tests {
             .iter()
             .filter(|(_, fidelity)| *fidelity == Fidelity::Full)
             .count();
-        assert_eq!(full, 4);
+        assert_eq!(full, 1);
     }
 
     #[test]
@@ -687,7 +922,7 @@ mod tests {
         let result = plan(PlanInput {
             profile: &profile,
             index: &index,
-            directive: "unrelated",
+            directive: "turn",
             reading: None,
             prefix_tokens: 0,
             tail_tokens: 0,
@@ -782,5 +1017,42 @@ mod tests {
                 .all(|(_, f)| !matches!(f, Fidelity::Full | Fidelity::Card))
         );
         assert_eq!(result.spent, 0);
+    }
+
+    #[test]
+    fn selected_plan_uses_only_scoped_candidates_and_costs_actual_card_markup() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, ids) = fixture(
+            dir.path(),
+            &[
+                ("weather in Noida", 400, 40, &["weather"]),
+                ("OpenAI release notes", 450, 45, &["release"]),
+            ],
+        );
+        let mut index = TurnIndex::from_log(&log);
+        index.turns.retain(|turn| turn.id == ids[1]);
+        let profile = profile(20_000);
+        let plan = plan_selected(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "continue the release notes",
+            reading: None,
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        assert_eq!(plan.selected_records.as_ref().unwrap().len(), 1);
+        assert_eq!(plan.selected_records.as_ref().unwrap()[0].0, ids[1]);
+        assert!(
+            !plan
+                .selected_records
+                .as_ref()
+                .unwrap()
+                .iter()
+                .any(|(id, _)| id == &ids[0])
+        );
+        let full_chars = messages_chars(&index.turns[0].full_record());
+        assert_eq!(plan.per_turn[0].1, Fidelity::Full);
+        assert_eq!(plan.spent, profile.estimate_tokens(full_chars));
     }
 }

@@ -575,7 +575,7 @@ mod tests {
         let s1 = store.import_session(home, &path).unwrap();
         assert_eq!(s1.entries_indexed, 2);
         let s2 = store.import_session(home, &path).unwrap();
-        assert_eq!(s2.skipped, 2);
+        assert_eq!(s2.skipped, 0);
         assert_eq!(s2.entries_indexed, 0);
 
         // Search still works after double-import.

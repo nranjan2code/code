@@ -29,6 +29,7 @@ pub mod presentation_tools;
 /// `(allow, ask, deny)`.
 pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 
+mod indexed_history;
 pub mod prompts;
 pub mod reach;
 pub mod reflection;
@@ -324,6 +325,10 @@ pub struct RemovedKey {
 pub enum CoreError {
     #[error("no AI provider is selected; choose a provider and model in settings")]
     RouteNotConfigured,
+    #[error("history index error: {0}")]
+    HistoryIndex(#[from] vak_store::StoreError),
+    #[error("history is not indexed: {0}")]
+    HistoryNotIndexed(String),
     #[error("provider auth missing: set {env} for provider '{provider}'")]
     MissingAuth { env: String, provider: String },
     #[error("config error: {0}")]
@@ -433,6 +438,8 @@ fn vak_core_ledger(core: &Core) -> finops::FinOpsLedger {
 }
 
 struct CoreInner {
+    history_indexing: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
+    history_index_failures: std::sync::Mutex<std::collections::HashSet<PathBuf>>,
     config: vak_config::Config,
     cwd: PathBuf,
     sessions_home: PathBuf,
@@ -1272,6 +1279,8 @@ impl Core {
             Vec::new()
         };
         Ok(Core::from_inner(Arc::new(CoreInner {
+            history_indexing: std::sync::Mutex::new(std::collections::HashSet::new()),
+            history_index_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
             config,
             cwd,
             sessions_home,
@@ -6454,6 +6463,30 @@ impl Core {
             .header()
             .map(|h| h.session_id.clone())
             .unwrap_or_default();
+        self.queue_history_index(&sid);
+        let history_core = self.clone();
+        let history_session = sid.clone();
+        cfg.history_recall = Some(Arc::new(move |request, leaf, cancel| {
+            let core = history_core.clone();
+            let session = history_session.clone();
+            Box::pin(async move {
+                match tokio::task::spawn_blocking(move || {
+                    core.resolve_indexed_recall(&session, &leaf, request, cancel)
+                })
+                .await
+                {
+                    Ok(output) => output,
+                    Err(_) => Err(serde_json::json!({"type":"history_unavailable",
+                        "message":"history lookup could not finish"})
+                    .to_string()),
+                }
+            })
+        }));
+        let refresh_core = self.clone();
+        let refresh_session = sid.clone();
+        cfg.history_refresh = Some(Arc::new(move || {
+            refresh_core.queue_history_index(&refresh_session)
+        }));
         let turn_gate = self.spend_gate_for(&sid);
         // An envelope's lifetime spend limit meets the configured run cap;
         // the smaller governs.

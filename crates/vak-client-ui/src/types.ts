@@ -552,7 +552,7 @@ export interface WorkReceipt {
 }
 
 export interface WorkProjection {
-  contract: { contract_id: string; objective: string };
+  contract: { contract_id: string; objective: string; items: Array<{ item_id: string; title: string }> };
   status: string;
   items: Record<string, { status: string; attempt: number; blocker?: string; evidence: unknown[] }>;
   criteria: Record<string, unknown>;

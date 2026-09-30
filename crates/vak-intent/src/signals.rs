@@ -365,6 +365,7 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("monitor", Act::Verify, 0.8),
     ("compile", Act::Verify, 0.7),
     ("lint", Act::Verify, 0.8),
+    ("double-check", Act::Verify, 0.85),
     // Orchestrate
     ("orchestrate", Act::Orchestrate, 1.0),
     ("coordinate", Act::Orchestrate, 0.8),
@@ -823,6 +824,25 @@ const TIME_WORDS: &[&str] = &[
     "time", "date", "day", "weekday", "clock", "timezone", "hour", "year", "month",
 ];
 
+/// A recency adjective can describe a value in the world ("latest weather")
+/// or a prior conversational answer ("the latest weather answer you
+/// reported"). The latter is a history lookup and must not trigger the
+/// current-value freshness gate. These are structural cues: require both a
+/// response noun and an explicit reference to what the assistant said before
+/// suppressing live-data intent, so ordinary requests for the latest news or
+/// weather still require retrieval.
+fn refers_to_prior_response(tokens: &Tokens) -> bool {
+    let has_response_noun = ["answer", "response", "reply", "message", "turn"]
+        .iter()
+        .any(|word| tokens.words.iter().any(|token| token == word));
+    let has_past_reference = [
+        "earlier", "previous", "prior", "last", "before", "said", "report", "told", "answered",
+    ]
+    .iter()
+    .any(|word| tokens.words.iter().any(|token| token == word));
+    has_response_noun && has_past_reference
+}
+
 /// Phrases implying the work outlives this turn. Sequencing words ("then",
 /// "after that") are not here: they separate the parts of one request, which
 /// is what strands are for, not a claim that the work spans sessions.
@@ -1092,11 +1112,30 @@ pub struct Extraction {
 
 /// Split into lowercase alphanumeric words, preserving order.
 fn words(text: &str) -> Vec<String> {
-    text.to_ascii_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|w| !w.is_empty())
-        .map(|w| w.to_string())
-        .collect()
+    let lower = text.to_ascii_lowercase();
+    let chars: Vec<char> = lower.chars().collect();
+    let mut out = Vec::new();
+    let mut current = String::new();
+    for (i, ch) in chars.iter().copied().enumerate() {
+        // Keep an internal hyphen with its compound. Splitting
+        // "latency-check" into two tokens made the noun `check` look like an
+        // imperative verb and caused the stop gate to launch unrelated tools.
+        // Compound verbs that are meaningful actions are listed explicitly.
+        let internal_hyphen = ch == '-'
+            && i > 0
+            && i + 1 < chars.len()
+            && chars[i - 1].is_ascii_alphanumeric()
+            && chars[i + 1].is_ascii_alphanumeric();
+        if ch.is_ascii_alphanumeric() || internal_hyphen {
+            current.push(ch);
+        } else if !current.is_empty() {
+            out.push(std::mem::take(&mut current));
+        }
+    }
+    if !current.is_empty() {
+        out.push(current);
+    }
+    out
 }
 
 /// Crude English de-inflection, enough to match a lexicon of bare verbs.
@@ -1934,8 +1973,16 @@ pub(crate) fn extract_part(
     }
 
     // --- session ----------------------------------------------------------
-    if let Some(previous) = request.history.previous_act {
-        // Continuity is a real prior, but a weak one: people change subject.
+    if out.act.is_empty()
+        && part_words
+            .iter()
+            .any(|word| DEICTIC_WORDS.contains(&word.as_str()))
+        && let Some(previous) = request.history.previous_act
+    {
+        // The preceding act can resolve an explicit pointer such as "that
+        // again", but it cannot classify a fresh directive by itself. People
+        // change subject every turn; an act prior without a reference made a
+        // short format request inherit verification work from the prior turn.
         out.act.add(previous, 0.25);
         out.signals.push(Signal::new(
             SignalKind::Session,
@@ -2127,6 +2174,9 @@ fn read_stakes_and_evidence(clause: &ClauseRead, checkable: bool, out: &mut Extr
 
 fn read_recency(clause: &ClauseRead, out: &mut Extraction) {
     let tokens = &clause.tokens;
+    if refers_to_prior_response(tokens) {
+        return;
+    }
     let only_live_is_current =
         live_means_current(&tokens.words) && tokens.words.iter().any(|word| word == LIVE_WORD);
     if TIME_WORDS
@@ -2271,6 +2321,16 @@ mod tests {
         ] {
             assert!(extract(&request(local)).recency.is_none(), "{local}");
         }
+        let recalled = extract(&request(
+            "What temperature did you report in the latest weather answer? Include its time.",
+        ));
+        assert!(recalled.recency.is_none(), "{:?}", recalled.recency);
+        assert!(
+            extract(&request("What is the latest weather in Noida?"))
+                .recency
+                .is_some(),
+            "a live weather request must still require a current observation"
+        );
         assert!(
             extract(&request("explain how copper is refined"))
                 .recency
@@ -2358,6 +2418,33 @@ mod tests {
         assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Verify));
         let extraction = extract(&request("hello there, how are you doing today"));
         assert_eq!(extraction.act.winner().map(|w| w.0), Some(Act::Converse));
+    }
+
+    #[test]
+    fn hyphenated_output_literal_is_not_misread_as_a_verify_command() {
+        let extraction = extract(&request(
+            "Reply with exactly latency-check and no other text.",
+        ));
+        assert_ne!(extraction.act.winner().map(|w| w.0), Some(Act::Verify));
+
+        let explicit = extract(&request("Please double-check this translation."));
+        assert_eq!(explicit.act.winner().map(|w| w.0), Some(Act::Verify));
+    }
+
+    #[test]
+    fn previous_act_only_resolves_explicit_continuity_not_a_new_topic() {
+        let mut fresh = request("Reply with exactly latency-check and no other text.");
+        fresh.history.turn_index = 8;
+        fresh.history.previous_act = Some(Act::Verify);
+        assert_ne!(extract(&fresh).act.winner().map(|w| w.0), Some(Act::Verify));
+
+        let mut follow_up = request("Do that again.");
+        follow_up.history.turn_index = 8;
+        follow_up.history.previous_act = Some(Act::Verify);
+        assert_eq!(
+            extract(&follow_up).act.winner().map(|w| w.0),
+            Some(Act::Verify)
+        );
     }
 
     #[test]

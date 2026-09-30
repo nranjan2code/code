@@ -45,9 +45,13 @@ launches all reveal and focus that same window.
   `Open Operations Center` opens the same authenticated shell directly at
   `#/operations`. Both resolve the configured gateway port and reuse the
   pinned token when one exists.
-- Closing the main window hides it, preserving the local embedded backend and
-  the tray until the user explicitly quits. Durable gateway and Telegram work
-  remains independently supervised by the platform service manager.
+- Closing the main window hides it, preserving the tray. When Desktop is
+  attached to the managed gateway, that service owns the active session and
+  continues work until it settles even if Desktop exits. A standalone
+  embedded fallback is process-owned and does not promise fire-and-forget
+  across an explicit Quit; install/activate the gateway for durable local
+  work shared with Web. Gateway and Telegram work remain supervised by the
+  platform service manager.
 - The tray watchdog reports state transitions. It never restarts managed
   services; launchd/systemd `KeepAlive` is the sole automatic recovery owner.
 

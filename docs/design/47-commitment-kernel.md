@@ -1,7 +1,7 @@
 # 47 — The commitment kernel
 
 Status: **shipped**. The current deterministic reader is
-`vak_intent::RESOLVER_VERSION = 6`. The historical reviews below explain why
+`vak_intent::RESOLVER_VERSION = 8`. The historical reviews below explain why
 it changed; this document describes the current implementation. One known
 boundary remains: `full-access` bypasses the permission engine's approval
 gate, so the kernel's irreversible-work approval floor cannot force a prompt
@@ -12,7 +12,7 @@ there.
 | I0 | kernel (`vak-intent`): seven axes, cascade, authority, narrowing lattice, **strands** | `Core::resolve_turn_intent_with_escalation` |
 | I1 | commitment ledger (`vak-commit`): lifecycle, satisfaction lattice, projection, portfolio scheduler | `commitments::plan_episodes` then `begin_episodes` — one commitment per thread |
 | I2 | admission, intent ledger entry, `[intent]`/`[commitment]` config, `vak intent explain` | `IntentRecord` (reading, strands, engagement, note) |
-| I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only the two most recent turns at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
+| I3 | route demand, per-commitment budget, prompt projection, **context profile** | `plan_route_ladder(demand)`, `CoreSpendGate::narrow_run_cap`; `ContextProfile` reaches the working-set planner through `ReadingKey.context` (`minimal`: no relevance retrieval, only an explicitly referenced preceding turn at `Full`), the tail (`working`/`full`: the workspace delta since the session began, logged as a `workspace_delta` activity first) and the note (`full`: `commitments::prompt_projection`) |
 | I4 | capability slicing (progressive disclosure) | stage-4 exclusion for a confident reading; the tool surface (core vs. deferred) for every reading |
 | I5 | envelopes: `vak grant` / `vak revoke`; a live grant narrows the strands that serve its commitment and pre-authorizes, one gate at a time, the actions it covers; revocation honoured on read | `vak_intent::apply_envelopes` → `intent::permission_mode` → `cfg.mode` and `spend_ceiling_usd` → the run cap; `intent::envelope_check` → `AgentConfig::envelope_check` |
 | I6 | episodes bracketing durable turns; upkeep tick — schedule wakes, predicate wakes, escalation policies, explicit expiry; **`Defer`** | `intent::DeferringApprover` parks an unanswerable gate in the inbox and suspends the commitment |
@@ -878,9 +878,13 @@ On the `main` line, resolver version 4 separately fixed the sense of `live`:
 the verb "reside" ("we live in the city") carries no recency or stakes,
 while "a live score" asks for a current value and "go live" describes a
 launch. Version 5 combined that reading with the clause-aware reader described
-above. Version 6 pins the current tier-1 lexicon and lets irreversible stakes
-words raise caution even when another recognized action verb is present; the
-digest regression test prevents the tables from drifting without a version bump.
+above. Version 6 pins the tier-1 lexicon and lets irreversible stakes words
+raise caution even when another recognized action verb is present. Version 7
+preserves internal hyphens during lexical reading and recognizes the compound
+verb "double-check", preventing a noun such as "latency-check" from becoming
+a verification command. Version 8 lets the previous act resolve an explicit
+deictic follow-up but never classify a fresh directive by itself. The digest
+regression test prevents lexicon tables from drifting without a version bump.
 
 One finding is left as a decision rather than a fix: under `full-access`
 the permission engine allows every call without asking, so the approval

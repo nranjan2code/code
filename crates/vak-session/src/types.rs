@@ -859,6 +859,9 @@ pub enum ChildRunStatus {
 #[allow(clippy::large_enum_variant)]
 pub enum EntryPayload {
     Header(SessionHeader),
+    /// Exact addressed history projection for a provider request. Selection
+    /// is derived state, but the choice the model saw belongs in this ledger.
+    ContextSelection(ContextSelectionRecord),
     Message(MessageRecord),
     Compaction(CompactionEntry),
     /// Audit record for one unit of provider work (docs/design/42-managed-work-contracts.md).
@@ -903,6 +906,14 @@ pub enum EntryPayload {
     /// the `ToolResult` block holds what the request carried, and `recall`
     /// and the closed-turn digests read this.
     EvidenceBody(EvidenceBodyRecord),
+}
+
+/// Replays an addressed projection against the exact pre-request leaf.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContextSelectionRecord {
+    pub policy_version: u32,
+    pub leaf_id: String,
+    pub plan: crate::turns::WorkingSetPlan,
 }
 
 /// The whole result behind a windowed `ToolResult` block.
@@ -975,6 +986,8 @@ pub fn line_digest(line: &str) -> String {
 
 #[derive(Debug, thiserror::Error)]
 pub enum SessionError {
+    #[error("selected history is missing, mismatched, or exceeds the projection boundary")]
+    InvalidSelection,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("json error at line {line}: {message}")]

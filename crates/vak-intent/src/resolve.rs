@@ -56,10 +56,16 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// words count when the verb is unknown and a weak part keeps them, the flag
 /// spellings of destructive git commands and common instruction verbs are
 /// read). 5 — the two together: `live` counts as a recency word only in the
-/// sense of *current*, and "go live" is a stakes phrase. The test
+/// sense of *current*, and "go live" is a stakes phrase. 6 — irreversible
+/// stakes words can raise caution when another action verb is present. 7 —
+/// preserve internal hyphens during lexical reading and recognize the explicit
+/// compound action "double-check", so a noun such as "latency-check" no
+/// longer becomes a verification command. 8 — the previous turn's act can
+/// resolve an explicit deictic follow-up, but never classifies a new directive
+/// on its own. The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 6;
+pub const RESOLVER_VERSION: u32 = 8;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1361,8 +1367,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            6,
-            "efddcec2f20c375f3c787b163ae28414b8d3aa1d47e0071dfb4b03d2e208c4c1",
+            8,
+            "1c3149e2a620e896ddf606f725316261de379ff56c5ca088cf93d55fb4d30d0f",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(

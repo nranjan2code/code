@@ -21,12 +21,16 @@ use serde_json::{Value, json};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
-/// One parsed, validated `recall` call. Exactly one of the three request
+/// One parsed, validated `recall` call. Exactly one of the supported request
 /// shapes is ever produced by [`parse_recall_args`].
 #[derive(Debug, Clone, PartialEq)]
 pub enum RecallRequest {
     /// `{ turn }`: the 1-based turn number (`TurnIndex` order).
     Turn(u64),
+    /// Stable directive entry ID, independent of display numbering.
+    TurnId(String),
+    /// Search compact records in the current conversation before reopening one.
+    Search { query: String, limit: usize },
     /// `{ presentation }`: a `Presentation` ledger-entry id.
     Presentation(String),
     /// `{ id, range? }`: an evidence id (tool_use_id), optionally sliced to
@@ -37,8 +41,8 @@ pub enum RecallRequest {
     },
 }
 
-/// Validates a `recall` call's arguments: exactly one of `turn`,
-/// `presentation`, or `id` must be present; `range` is only meaningful with
+/// Validates a `recall` call's arguments: exactly one of `query`, `turn_id`,
+/// `turn`, `presentation`, or `id` must be present; `range` is only meaningful with
 /// `id` but is not rejected when present alongside another field (the
 /// resolver simply ignores it) — the one-of check is what actually matters.
 pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
@@ -56,6 +60,42 @@ pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
         .and_then(Value::as_str)
         .filter(|s| !s.trim().is_empty())
         .map(str::to_string);
+    let query = args
+        .get("query")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let turn_id = args
+        .get("turn_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(turn_id) = turn_id {
+        if turn.is_some() || presentation.is_some() || id.is_some() || query.is_some() {
+            return Err("turn_id cannot be combined with another recall target".into());
+        }
+        if turn_id.len() > 128 {
+            return Err("turn_id is too long".into());
+        }
+        return Ok(RecallRequest::TurnId(turn_id.into()));
+    }
+    if let Some(query) = query {
+        if turn.is_some() || presentation.is_some() || id.is_some() {
+            return Err("query cannot be combined with a recall target".into());
+        }
+        if query.chars().count() > 2048 {
+            return Err("query must be at most 2048 characters".into());
+        }
+        let limit = args
+            .get("limit")
+            .and_then(Value::as_u64)
+            .unwrap_or(8)
+            .clamp(1, 20) as usize;
+        return Ok(RecallRequest::Search {
+            query: query.into(),
+            limit,
+        });
+    }
     match (turn, presentation, id) {
         (Some(turn), None, None) => Ok(RecallRequest::Turn(turn)),
         (None, Some(presentation), None) => Ok(RecallRequest::Presentation(presentation)),
@@ -76,7 +116,11 @@ pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
             };
             Ok(RecallRequest::Id { id, range })
         }
-        _ => Err("exactly one of 'turn', 'presentation', or 'id' is required".to_string()),
+        _ => Err(if args.get("query").is_some() {
+            "'query' must be a non-empty description of the past subject or result to find; omit recall for a fresh or unrelated request, and use an exact turn_id, turn, presentation, or evidence id when available".to_string()
+        } else {
+            "exactly one non-empty target is required: query, turn_id, turn, presentation, or id; omit recall for a fresh or unrelated request".to_string()
+        }),
     }
 }
 
@@ -116,15 +160,21 @@ impl Tool for RecallTool {
     }
 
     fn description(&self) -> &str {
-        "Reopen a past turn's full record, a presentation's canonical payload, or an evidence \
-         result's full content (optionally by line range). Exactly one of turn, presentation, \
-         or id."
+        "Use only when the current request needs missing information from an earlier turn. Do not \
+         call for a fresh or unrelated request, and never call with an empty query. Search this \
+         conversation's past turns with a specific natural-language subject/referent query, then reopen a matching turn's full \
+         record, a presentation's canonical payload, or an evidence result (optionally by line \
+         range). Exactly one of query, turn_id, turn, presentation, or id. Old records describe what \
+         happened then; use fresh evidence for current conditions."
     }
 
     fn schema(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
+                "turn_id": {"type": "string", "description": "Stable turn_id from a search result or selected reference; reopens that turn even when display numbering changes."},
+                "query": {"type": "string", "minLength": 1, "description": "Required only when searching history: give a non-empty natural-language subject, entity, or artifact from an earlier turn. Never send an empty string. Do not call recall for fresh or unrelated requests. Returns compact candidate references, not verified facts."},
+                "limit": {"type": "integer", "description": "Search result count, default 8, maximum 20."},
                 "turn": {
                     "type": "integer",
                     "description": "Turn number (as shown in a <turns> card line) to reopen as its full record."
@@ -199,10 +249,44 @@ mod tests {
     }
 
     #[test]
+    fn stable_turn_targets_are_exclusive() {
+        assert_eq!(
+            parse_recall_args(&json!({"turn_id": "stable", "turn": 0, "query": ""})).unwrap(),
+            RecallRequest::TurnId("stable".into())
+        );
+        assert!(parse_recall_args(&json!({"turn_id": "stable", "query": "topic"})).is_err());
+        assert!(parse_recall_args(&json!({"turn_id": "stable", "id": "evidence"})).is_err());
+    }
+
+    #[test]
+    fn search_is_bounded_and_exclusive() {
+        assert_eq!(
+            parse_recall_args(&json!({"query": " Noida forecast ", "limit": 1000})).unwrap(),
+            RecallRequest::Search {
+                query: "Noida forecast".into(),
+                limit: 20
+            }
+        );
+        assert!(parse_recall_args(&json!({"query": "weather", "turn": 1})).is_err());
+        assert!(parse_recall_args(&json!({"query": "x".repeat(2049)})).is_err());
+        assert!(parse_recall_args(&json!({"query": " "})).is_err());
+    }
+
+    #[test]
     fn rejects_zero_or_multiple_fields() {
         assert!(parse_recall_args(&json!({})).is_err());
         assert!(parse_recall_args(&json!({"turn": 1, "id": "x"})).is_err());
         assert!(parse_recall_args(&json!({"id": "x", "range": {"start": 1}})).is_err());
+    }
+
+    #[test]
+    fn empty_search_returns_actionable_guidance() {
+        let error = parse_recall_args(&json!({"query": "  "})).unwrap_err();
+        assert!(error.contains("non-empty description"));
+        assert!(error.contains("fresh or unrelated request"));
+
+        let error = parse_recall_args(&json!({})).unwrap_err();
+        assert!(error.contains("omit recall"));
     }
 
     #[test]

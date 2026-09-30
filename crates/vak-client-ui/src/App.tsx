@@ -503,7 +503,10 @@ export async function openAgentChat(agentId = "vak", createNew = false): Promise
     const localConversation = (session: SessionSummary) =>
       session.agent?.id === agentId
       && session.conversation?.audience_id === "local"
-      && session.conversation?.conversation_id === `agent:${agentId}:local`;
+      && (
+        session.conversation?.conversation_id === `agent:${agentId}:local`
+        || session.conversation?.conversation_id?.startsWith(`agent:${agentId}:local:`)
+      );
     const remembered = lastSessionByAgent.get(agentId);
     const recent = sessions().find((session) => session.title && localConversation(session))?.session_id;
     const existing = remembered && sessions().some((session) => session.session_id === remembered)

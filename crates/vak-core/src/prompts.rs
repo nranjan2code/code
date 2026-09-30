@@ -1107,6 +1107,42 @@ mod tests {
         assert!(content.is_empty(), "{content:?}");
     }
 
+    #[test]
+    fn history_contract_survives_custom_operating_rules() {
+        let layers = vec![
+            LayerInput::new(PromptLayer::Seed, None, seed_content()),
+            LayerInput::new(
+                PromptLayer::Agent,
+                Some("custom-agent".into()),
+                LayerContent {
+                    operating_rules: Some("Respond concisely.".into()),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = resolve(
+            &layers,
+            &RuntimeSections {
+                capability_contract: seed("test").capability_contract,
+                ..Default::default()
+            },
+        );
+        assert!(out.text.contains("Respond concisely."));
+        for required in [
+            "omitted history remains searchable",
+            "`recall`",
+            "scores are not",
+            "Independent requests need no history search",
+            "Current facts need fresh evidence",
+            "Unavailable history differs from no matches",
+        ] {
+            assert!(
+                out.text.contains(required),
+                "missing history contract: {required}"
+            );
+        }
+    }
+
     /// Additive Agent instructions are recorded as what they are, so an
     /// operator reading provenance does not see them as operating rules.
     #[test]

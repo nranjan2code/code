@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use vak_llm::Message;
@@ -186,6 +186,64 @@ impl SessionLog {
         })
     }
 
+    /// Read one located canonical record without materializing its prefix.
+    /// This low-level primitive grants no access: Core validates the requested
+    /// session, workspace, agent/audience and trash before calling it.
+    pub fn read_record_at(
+        path: &Path,
+        offset: u64,
+        length: u64,
+        expected_id: &str,
+        expected_digest: &str,
+    ) -> Result<Entry, SessionError> {
+        if length == 0 || length > 64 * 1024 * 1024 {
+            return Err(SessionError::Corrupt {
+                line: 0,
+                message: "invalid indexed record size".into(),
+            });
+        }
+        let mut file = File::open(path)?;
+        let file_len = file.metadata()?.len();
+        if offset.checked_add(length).is_none_or(|end| end > file_len) {
+            return Err(SessionError::Corrupt {
+                line: 0,
+                message: "indexed record is outside the ledger".into(),
+            });
+        }
+        file.seek(SeekFrom::Start(offset))?;
+        let mut bytes = vec![0; length as usize];
+        file.read_exact(&mut bytes)?;
+        if bytes.last() != Some(&b'\n') {
+            return Err(SessionError::Corrupt {
+                line: 0,
+                message: "indexed record is incomplete".into(),
+            });
+        }
+        let line = std::str::from_utf8(&bytes)
+            .map_err(|error| SessionError::Corrupt {
+                line: 0,
+                message: error.to_string(),
+            })?
+            .trim_end_matches(['\r', '\n']);
+        if crate::types::line_digest(line) != expected_digest {
+            return Err(SessionError::Corrupt {
+                line: 0,
+                message: "indexed record changed; rebuild the index".into(),
+            });
+        }
+        let entry: Entry = serde_json::from_str(line).map_err(|error| SessionError::Corrupt {
+            line: 0,
+            message: error.to_string(),
+        })?;
+        if entry.id != expected_id {
+            return Err(SessionError::Corrupt {
+                line: 0,
+                message: "indexed entry identity mismatch".into(),
+            });
+        }
+        Ok(entry)
+    }
+
     pub fn open(path: PathBuf) -> Result<Self, SessionError> {
         let file = LedgerFile::lock(OpenOptions::new().append(true).open(&path)?, &path)?;
         let reader = BufReader::new(File::open(&path)?);
@@ -293,9 +351,7 @@ impl SessionLog {
     /// The latest goal update on the active branch. An update on a branch
     /// the conversation left behind is not part of its goal.
     pub fn latest_goal_update(&self) -> Option<vak_intent::GoalUpdate> {
-        self.chain_to_root()
-            .into_iter()
-            .rev()
+        self.active_entries_rev()
             .find_map(|entry| match &entry.payload {
                 EntryPayload::GoalUpdate(update) => Some(update.clone()),
                 _ => None,
@@ -501,9 +557,7 @@ impl SessionLog {
     /// active chain — the directive the current turn answers. `None` before
     /// any real user message exists.
     pub fn latest_directive_entry_id(&self) -> Option<String> {
-        self.chain_to_root()
-            .into_iter()
-            .rev()
+        self.active_entries_rev()
             .find_map(|entry| match &entry.payload {
                 EntryPayload::Message(record)
                     if record.message.role == vak_llm::Role::User
@@ -736,16 +790,14 @@ impl SessionLog {
         bound: crate::types::TurnCapabilitiesBound,
     ) -> Result<Entry, SessionError> {
         let digest = bound.digest();
-        let previous =
-            self.chain_to_root()
-                .into_iter()
-                .rev()
-                .find_map(|entry| match &entry.payload {
-                    EntryPayload::TurnCapabilitiesBound(earlier) => {
-                        Some((entry.id.clone(), earlier.digest()))
-                    }
-                    _ => None,
-                });
+        let previous = self
+            .active_entries_rev()
+            .find_map(|entry| match &entry.payload {
+                EntryPayload::TurnCapabilitiesBound(earlier) => {
+                    Some((entry.id.clone(), earlier.digest()))
+                }
+                _ => None,
+            });
         let parent = self.tail_id.clone();
         let payload = match previous {
             Some((entry, earlier)) if earlier == digest => {
@@ -1215,6 +1267,74 @@ impl SessionLog {
         self.tail_id.as_ref()
     }
 
+    /// Walk backwards without allocating a vector for the entire active chain.
+    /// Consumers that need only the newest state can stop immediately.
+    pub fn active_entries_rev(&self) -> impl Iterator<Item = &Entry> {
+        let mut cursor = self.tail_id.as_deref();
+        std::iter::from_fn(move || {
+            let id = cursor?;
+            let entry = self.entries.get(*self.by_id.get(id)?)?;
+            cursor = entry.parent_id.as_deref();
+            Some(entry)
+        })
+    }
+
+    /// Inspect the latest message without constructing/cloning the whole chain.
+    pub fn latest_message(&self) -> Option<&Message> {
+        let mut cursor = self.tail_id.as_deref();
+        while let Some(id) = cursor {
+            let entry = self.entries.get(*self.by_id.get(id)?)?;
+            if let EntryPayload::Message(record) = &entry.payload {
+                return Some(&record.message);
+            }
+            cursor = entry.parent_id.as_deref();
+        }
+        None
+    }
+
+    /// Reconstruct the active turn only. Work is proportional to this turn,
+    /// not to unrelated settled history. Include admission metadata preceding
+    /// its directive, stopping before the previous message.
+    pub fn current_turn_index(&self) -> TurnIndex {
+        self.current_turn_index_at(self.tail_id.as_deref())
+    }
+
+    fn current_turn_index_at(&self, leaf: Option<&str>) -> TurnIndex {
+        let mut entries = Vec::new();
+        let mut cursor = leaf;
+        let mut found_directive = false;
+        while let Some(id) = cursor {
+            let Some(entry) = self
+                .by_id
+                .get(id)
+                .and_then(|position| self.entries.get(*position))
+            else {
+                break;
+            };
+            if found_directive && matches!(entry.payload, EntryPayload::Message(_)) {
+                break;
+            }
+            if let EntryPayload::Message(record) = &entry.payload {
+                found_directive = record.control_kind().is_none()
+                    && record.message.role == vak_llm::Role::User
+                    && record
+                        .message
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
+                    && !record
+                        .message
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, vak_llm::ContentBlock::ToolResult { .. }));
+            }
+            entries.push(entry);
+            cursor = entry.parent_id.as_deref();
+        }
+        entries.reverse();
+        TurnIndex::from_entries(entries)
+    }
+
     pub fn chain_to_root(&self) -> Vec<&Entry> {
         let mut chain = Vec::new();
         let mut cursor = self.tail_id.clone();
@@ -1397,6 +1517,9 @@ impl SessionLog {
         &self,
         plan: Option<&WorkingSetPlan>,
     ) -> Vec<(String, Message, bool, bool)> {
+        if let Some(plan) = plan.filter(|plan| plan.selected_records.is_some()) {
+            return self.derive_selected(plan);
+        }
         let (boundary_pos, position_owned, reset_summary) = self.reset_boundary();
         let position: HashMap<&str, usize> = position_owned
             .iter()
@@ -1502,6 +1625,196 @@ impl SessionLog {
         out
     }
 
+    /// Reconstruct only addressed closed turns plus the active turn. The host
+    /// has already validated source membership against the selected leaf.
+    fn derive_selected(&self, plan: &WorkingSetPlan) -> Vec<(String, Message, bool, bool)> {
+        self.derive_selected_at(plan, self.tail_id.as_deref())
+    }
+
+    fn derive_selected_at(
+        &self,
+        plan: &WorkingSetPlan,
+        leaf: Option<&str>,
+    ) -> Vec<(String, Message, bool, bool)> {
+        let mut out = Vec::new();
+        for (turn_id, closing_id) in plan.selected_records.iter().flatten() {
+            let Some(fidelity) = plan
+                .per_turn
+                .iter()
+                .find_map(|(id, fidelity)| (id == turn_id).then_some(fidelity))
+            else {
+                continue;
+            };
+            let mut entries = Vec::new();
+            let mut cursor = Some(closing_id.as_str());
+            while let Some(id) = cursor {
+                let Some(entry) = self
+                    .by_id
+                    .get(id)
+                    .and_then(|index| self.entries.get(*index))
+                else {
+                    break;
+                };
+                entries.push(entry);
+                if entry.id == *turn_id {
+                    break;
+                }
+                if entries.len() >= 512 {
+                    break;
+                }
+                cursor = entry.parent_id.as_deref();
+            }
+            if entries.last().is_none_or(|entry| entry.id != *turn_id) {
+                continue;
+            }
+            entries.reverse();
+            let index = TurnIndex::from_entries(entries);
+            let Some(turn) = index.turn_by_id(turn_id).filter(|turn| turn.closed) else {
+                continue;
+            };
+            match fidelity {
+                Fidelity::Full => out.extend(
+                    turn.full_record()
+                        .into_iter()
+                        .map(|message| (turn_id.clone(), message, false, false)),
+                ),
+                Fidelity::Card => {
+                    if let Some(card) = &turn.card {
+                        out.push((
+                            turn_id.clone(),
+                            Message::user_text(card.addressed_message()),
+                            true,
+                            false,
+                        ));
+                    }
+                }
+                Fidelity::Packet => {}
+            }
+        }
+        let current = self.current_turn_index_at(leaf);
+        if let Some(turn) = current
+            .turns
+            .last()
+            .filter(|turn| !turn.closed && !turn.behind_reset)
+        {
+            out.extend(
+                turn.current_verbatim()
+                    .into_iter()
+                    .map(|message| (turn.id.clone(), message, false, false)),
+            );
+        }
+        out
+    }
+
+    /// Checked addressed projection. A missing or mismatched source is an
+    /// error, never an apparently successful projection with history omitted.
+    /// The broker must separately authorize the selected leaf and sources.
+    pub fn derive_selected_checked(
+        &self,
+        plan: &WorkingSetPlan,
+    ) -> Result<Vec<Message>, SessionError> {
+        self.derive_selected_checked_at(plan, self.tail_id.as_deref())
+    }
+
+    fn derive_selected_checked_at(
+        &self,
+        plan: &WorkingSetPlan,
+        leaf: Option<&str>,
+    ) -> Result<Vec<Message>, SessionError> {
+        let invalid = || SessionError::InvalidSelection;
+        let sources = plan.selected_records.as_ref().ok_or_else(invalid)?;
+        if plan.packet_range.is_some() || sources.len() != plan.per_turn.len() {
+            return Err(invalid());
+        }
+        let mut seen = std::collections::HashSet::new();
+        for (turn_id, closing_id) in sources {
+            if !seen.insert(turn_id) {
+                return Err(invalid());
+            }
+            let fidelity = plan
+                .per_turn
+                .iter()
+                .find_map(|(id, fidelity)| (id == turn_id).then_some(fidelity))
+                .ok_or_else(invalid)?;
+            if matches!(fidelity, Fidelity::Packet) {
+                return Err(invalid());
+            }
+            let closing = self
+                .by_id
+                .get(closing_id)
+                .and_then(|index| self.entries.get(*index))
+                .ok_or_else(invalid)?;
+            if !matches!(&closing.payload, EntryPayload::TurnCard(record) if record.turn_id == *turn_id)
+            {
+                return Err(invalid());
+            }
+            let mut cursor = Some(closing_id.as_str());
+            let mut count = 0;
+            let mut found = false;
+            while let Some(id) = cursor {
+                let entry = self
+                    .by_id
+                    .get(id)
+                    .and_then(|index| self.entries.get(*index))
+                    .ok_or_else(invalid)?;
+                count += 1;
+                if entry.id == *turn_id {
+                    found = true;
+                    break;
+                }
+                if count >= 512 {
+                    break;
+                }
+                cursor = entry.parent_id.as_deref();
+            }
+            if !found {
+                return Err(invalid());
+            }
+        }
+        Ok(self
+            .derive_selected_at(plan, leaf)
+            .into_iter()
+            .map(|(_, message, _, _)| message)
+            .collect())
+    }
+
+    /// Record the checked projection before dispatch. The captured leaf
+    /// prevents subsequent tool results or future turns from changing replay.
+    pub fn append_context_selection(
+        &mut self,
+        plan: WorkingSetPlan,
+    ) -> Result<Entry, SessionError> {
+        self.derive_selected_checked(&plan)?;
+        let leaf_id = self.tail_id.clone().ok_or(SessionError::InvalidSelection)?;
+        let record = crate::types::ContextSelectionRecord {
+            policy_version: 1,
+            leaf_id,
+            plan,
+        };
+        self.append(Entry::new(
+            self.tail_id.clone(),
+            EntryPayload::ContextSelection(record),
+        ))
+    }
+
+    /// Reconstruct the exact message projection captured by a selection entry.
+    /// Prefix/tool interfaces remain in the turn's capability binding.
+    pub fn replay_context_selection(&self, entry_id: &str) -> Result<Vec<Message>, SessionError> {
+        let entry = self
+            .by_id
+            .get(entry_id)
+            .and_then(|index| self.entries.get(*index))
+            .ok_or(SessionError::InvalidSelection)?;
+        let EntryPayload::ContextSelection(record) = &entry.payload else {
+            return Err(SessionError::InvalidSelection);
+        };
+        if record.policy_version != 1 || entry.parent_id.as_deref() != Some(record.leaf_id.as_str())
+        {
+            return Err(SessionError::InvalidSelection);
+        }
+        self.derive_selected_checked_at(&record.plan, Some(&record.leaf_id))
+    }
+
     /// `derive_keyed_tagged` with a `WorkingSetPlan` applied — the projection
     /// the request assembler sends once a `CapacityProfile` is available
     /// (docs/design/68-context-engine.md §4/§10).
@@ -1526,7 +1839,11 @@ impl SessionLog {
     /// requests.
     pub fn derive_with_plan_and_directive(&self, plan: &WorkingSetPlan) -> (Vec<Message>, usize) {
         let messages = self.derive_with_plan(plan);
-        let index = TurnIndex::from_log(self);
+        let index = if plan.selected_records.is_some() {
+            self.current_turn_index()
+        } else {
+            TurnIndex::from_log(self)
+        };
         let directive_at = index
             .turns
             .last()
@@ -1632,22 +1949,19 @@ impl SessionLog {
     /// there is no open turn, or the open turn itself predates the
     /// boundary.
     pub fn open_turn_verbatim(&self) -> Vec<Message> {
-        let (boundary_pos, position, _) = self.reset_boundary();
-        let index = TurnIndex::from_log(self);
-        let Some(turn) = index.turns.last().filter(|t| !t.closed) else {
+        let index = self.current_turn_index();
+        let Some(turn) = index
+            .turns
+            .last()
+            .filter(|turn| !turn.closed && !turn.behind_reset)
+        else {
             return Vec::new();
         };
-        let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
-        if turn_pos < boundary_pos {
-            return Vec::new();
-        }
         turn.current_verbatim()
     }
 
     pub fn latest_reading(&self) -> Option<crate::turns::ReadingKey> {
-        self.chain_to_root()
-            .into_iter()
-            .rev()
+        self.active_entries_rev()
             .find_map(|entry| match &entry.payload {
                 EntryPayload::Intent(record) => Some(crate::turns::ReadingKey::from_record(record)),
                 _ => None,

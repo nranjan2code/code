@@ -34,9 +34,9 @@ import {
 } from "../store";
 import * as api from "../api";
 import { toggleSplit } from "../App";
-import AgentMark from "./AgentMark";
 import CoworkingShare from "./CoworkingShare";
 import Icon, { type IconName } from "./Icon";
+import AgentPresence from "./AgentPresence";
 
 const INBOX_POLL_MS = 20_000;
 
@@ -61,7 +61,6 @@ const tools = [...generalTools, ...devTools];
 export default function WorkspaceHeader() {
   const session = createMemo(() => sessions().find((item) => item.session_id === activeId()));
   const title = createMemo(() => agentForSession(activeId()).name);
-  const titleGlyph = createMemo(() => agentForSession(activeId()).character);
   // Each Agent now has its own workspace (server-resolved per agent id), so
   // the pill must reflect the active session's cwd, not the process-global
   // one — otherwise every agent shows the same directory regardless of which
@@ -77,11 +76,6 @@ export default function WorkspaceHeader() {
     if (itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "Needs your decision";
     if (isRunning(id)) return isStopping(id) ? "Stopping…" : retryOf(id) ? "Retrying" : "Working";
     return needsService() ? "Needs an AI service" : "";
-  });
-  const characterState = createMemo(() => {
-    const id = activeId();
-    if (id && itemsOf(id).some((item) => item.kind === "approval" && !item.resolved)) return "waiting" as const;
-    return isRunning(id) ? "working" as const : "idle" as const;
   });
   const [exporting, setExporting] = createSignal(false);
   const [sharing, setSharing] = createSignal(false);
@@ -144,24 +138,7 @@ export default function WorkspaceHeader() {
           <button type="button" class="icon-button has-tooltip" data-tooltip="Show sidebar ⌘B" aria-label="Show sidebar" onClick={() => setSidebarOpen(true)}><Icon name="sidebar" /></button>
         </Show>
         <div class="workspace-title">
-          <div class="workspace-title-row" style="display: flex; align-items: center; gap: 8px;">
-            <button
-              type="button"
-              class="agent-header-btn"
-              style="display: inline-flex; align-items: center; gap: 6px; background: transparent; border: none; padding: 2px 6px; border-radius: var(--radius-sm); cursor: pointer; color: var(--text);"
-              onClick={() => {
-                setAgentPickerTab("fleet");
-                setAgentPickerOpen(true);
-              }}
-              title="Switch agent"
-            >
-              <h1 class="agent-header-title">
-                <AgentMark character={titleGlyph()} motion={agentForSession(activeId()).animation} size={28} state={characterState()} interactive />
-                <span>{title()}</span>
-                <span style="font-size: var(--fs-caption); opacity: 0.6;">▾</span>
-              </h1>
-            </button>
-
+          <div class="workspace-title-row">
             <Show when={technicalDetails()}>
 
             <button
@@ -180,7 +157,6 @@ export default function WorkspaceHeader() {
             </button>
 
             </Show>
-
             <Show when={activeId() && taskStatus()}>
               <Show when={taskStatus() === "Needs an AI service"} fallback={
                 <span class="run-state" classList={{ active: isRunning(activeId()), attention: taskStatus() === "Needs your decision" }}>
@@ -203,6 +179,9 @@ export default function WorkspaceHeader() {
           </div>
         </div>
       </div>
+      <Show when={activeId()}>
+        <AgentPresence sessionId={activeId()} working={Boolean(isRunning(activeId()))} />
+      </Show>
       <div class="workspace-actions" aria-label="Workspace tools">
         <Show when={activeId()}>
           <button type="button" class="workspace-details-button" aria-label="Share" title="Share" onClick={() => setSharing(true)}><Icon name="chat" size={14} /><span>Share</span></button>

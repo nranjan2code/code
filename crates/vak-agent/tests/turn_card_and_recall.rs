@@ -343,3 +343,119 @@ async fn recall_by_id_returns_the_full_evidence_content() {
         "recall({{ id }}) must return the evidence content verbatim"
     );
 }
+
+#[tokio::test]
+async fn recall_query_discovers_old_work_and_logs_its_bounded_result() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "recall-search",
+        vec![
+            text_msg("Noida weather observation from last month"),
+            tool_call_msg(
+                "search-old",
+                "recall",
+                serde_json::json!({"query": "Noida weather", "limit": 1}),
+            ),
+            text_msg("Found the older observation; current weather still needs a fresh check."),
+        ],
+        vec![],
+        false,
+    );
+    for prompt in [
+        "record Noida weather",
+        "find my earlier weather observation",
+    ] {
+        let outcome = agent
+            .run(
+                prompt,
+                &Default::default(),
+                CancellationToken::new(),
+                mpsc::channel(64).0,
+            )
+            .await;
+        assert!(
+            matches!(outcome, TurnOutcome::Completed { .. }),
+            "{outcome:?}"
+        );
+    }
+    let session = agent.session.lock().await;
+    let result = session
+        .message_chain()
+        .iter()
+        .flat_map(|(_, m)| &m.content)
+        .find_map(|block| match block {
+            ContentBlock::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } if tool_use_id == "search-old" => {
+                assert!(!is_error);
+                Some(serde_json::from_str::<serde_json::Value>(content).unwrap())
+            }
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(result["matches"].as_array().unwrap().len(), 1);
+    assert_eq!(result["matches"][0]["turn"], 1);
+    assert_eq!(result["historical"], true);
+    assert!(
+        result["matches"][0]["record"]
+            .as_str()
+            .unwrap()
+            .contains("Noida")
+    );
+    assert!(session.derive_messages().iter().flat_map(|m| &m.content).any(|block|
+        matches!(block, ContentBlock::ToolResult { tool_use_id, .. } if tool_use_id == "search-old")));
+}
+
+#[tokio::test]
+async fn host_history_lookup_is_logged_without_in_memory_fallback() {
+    let dir = tempdir().unwrap();
+    let mut agent = build_agent(
+        &dir,
+        "host-recall",
+        vec![
+            tool_call_msg(
+                "host-history",
+                "recall",
+                serde_json::json!({"query":"old budget"}),
+            ),
+            text_msg("History is warming; could you share the missing budget detail?"),
+        ],
+        vec![],
+        false,
+    );
+    agent.config.run_retry_attempts = 0;
+    agent.config.max_retries = 0;
+    let called = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = called.clone();
+    agent.config.history_recall = Some(Arc::new(move |request, leaf, _cancel| {
+        assert!(matches!(request, vak_tools::RecallRequest::Search { .. }));
+        assert!(!leaf.is_empty());
+        count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Box::pin(async {
+            Err(
+                serde_json::json!({"type":"history_unavailable", "message":"History is warming"})
+                    .to_string(),
+            )
+        })
+    }));
+    let outcome = agent
+        .run(
+            "find the old budget",
+            &Default::default(),
+            Default::default(),
+            mpsc::channel(64).0,
+        )
+        .await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(called.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let session = agent.session.lock().await;
+    assert!(session.derive_messages().iter().flat_map(|m| &m.content).any(|block|
+        matches!(block, ContentBlock::ToolResult { tool_use_id, content, is_error: true }
+            if tool_use_id == "host-history" && content.contains("history_unavailable"))));
+}

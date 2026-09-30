@@ -100,6 +100,7 @@ impl Tool for FindToolsTool {
             .map(|n| (n as usize).clamp(1, MAX_LIMIT))
             .unwrap_or(DEFAULT_LIMIT);
         let matches = rank(&self.catalogue, &self.keywords, query, limit);
+        let mut new_match_count = 0usize;
         if let Some(sink) = &self.discovered {
             let mut discovered = sink
                 .lock()
@@ -107,8 +108,11 @@ impl Tool for FindToolsTool {
             for def in &matches {
                 if !discovered.iter().any(|existing| existing.name == def.name) {
                     discovered.push((*def).clone());
+                    new_match_count += 1;
                 }
             }
+        } else {
+            new_match_count = matches.len();
         }
         let schemas: Vec<Value> = matches
             .iter()
@@ -120,7 +124,13 @@ impl Tool for FindToolsTool {
                 })
             })
             .collect();
-        ToolOutput::ok(json!({"matches": schemas}).to_string())
+        let mut result = json!({"matches": schemas, "new_match_count": new_match_count});
+        if new_match_count == 0 && !matches.is_empty() {
+            result["note"] = json!(
+                "No new tool names matched beyond tools already returned this turn. The full admitted catalogue has been searched; use the best available match or state the limitation instead of repeating discovery with reworded queries."
+            );
+        }
+        ToolOutput::ok(result.to_string())
     }
 }
 
@@ -240,6 +250,35 @@ mod tests {
         let out = tool.execute(&json!({"query": "forecast"}), &ctx()).await;
         let parsed: Value = serde_json::from_str(&out.content).unwrap();
         assert_eq!(parsed["matches"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_search_results_explicitly_signal_that_discovery_did_not_expand() {
+        let discovered = Arc::new(Mutex::new(Vec::new()));
+        let tool = FindToolsTool::new(vec![def(
+            "webfetch",
+            "Fetch a known URL over HTTP.",
+            json!({"type":"object","properties":{"url":{"type":"string"}}}),
+        )])
+        .with_discovered_sink(discovered);
+
+        let first = tool.execute(&json!({"query":"webfetch"}), &ctx()).await;
+        let first: Value = serde_json::from_str(&first.content).unwrap();
+        assert_eq!(first["new_match_count"], 1);
+        assert!(first.get("note").is_none());
+
+        let repeat = tool
+            .execute(&json!({"query":"http fetch URL"}), &ctx())
+            .await;
+        let repeat: Value = serde_json::from_str(&repeat.content).unwrap();
+        assert_eq!(repeat["new_match_count"], 0);
+        assert!(
+            repeat["note"]
+                .as_str()
+                .unwrap()
+                .contains("instead of repeating discovery")
+        );
+        assert_eq!(repeat["matches"][0]["name"], "webfetch");
     }
 
     #[tokio::test]

@@ -4172,10 +4172,8 @@ pub(crate) fn import_session_sync(
     if let Ok(read) = std::fs::read_dir(&dir) {
         for project in read.flatten() {
             let candidate = project.path().join(format!("{session_id}.jsonl"));
-            if candidate.is_file()
-                && let Ok(stats) = store.import_session(home, &candidate)
-            {
-                return stats.entries_indexed > 0 || stats.skipped > 0;
+            if candidate.is_file() && store.import_session(home, &candidate).is_ok() {
+                return true;
             }
         }
     }
@@ -4193,10 +4191,9 @@ pub(crate) fn import_session_sync(
             if let Ok(projects) = std::fs::read_dir(&agent_sessions) {
                 for project in projects.flatten() {
                     let candidate = project.path().join(format!("{session_id}.jsonl"));
-                    if candidate.is_file()
-                        && let Ok(stats) = store.import_session(&agent_home, &candidate)
+                    if candidate.is_file() && store.import_session(&agent_home, &candidate).is_ok()
                     {
-                        return stats.entries_indexed > 0 || stats.skipped > 0;
+                        return true;
                     }
                 }
             }
@@ -4535,6 +4532,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Presentation(_) => {}
                         vak_session::EntryPayload::TurnCard(_) => {}
                         vak_session::EntryPayload::EvidenceBody(_) => {}
+                        vak_session::EntryPayload::ContextSelection(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
