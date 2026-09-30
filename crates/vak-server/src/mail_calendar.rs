@@ -347,6 +347,7 @@ pub(super) async fn connect_icloud(
                 Capability::MailRead | Capability::CalendarFreeBusy | Capability::CalendarRead
             )
         });
+    let audit_capabilities = capabilities.clone();
     if !valid_email || !valid_password || !apple_read_only {
         request.app_specific_password.0.zeroize();
         return (
@@ -423,6 +424,15 @@ pub(super) async fn connect_icloud(
         let _ = vault.remove(&account_id);
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
+    record_account_event(
+        &state,
+        "account_connected",
+        &agent_id,
+        &account_id,
+        Provider::AppleIcloud,
+        &audit_capabilities,
+        "connected_unverified",
+    );
     Json(serde_json::json!({ "connected": true })).into_response()
 }
 
@@ -491,6 +501,32 @@ fn valid_icloud_email(email: &str) -> bool {
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         });
     valid_local && valid_domain
+}
+
+fn record_account_event(
+    state: &AppState,
+    label: &str,
+    agent_id: &str,
+    account_id: &str,
+    provider: Provider,
+    capabilities: &BTreeSet<Capability>,
+    outcome: &str,
+) {
+    let detail = serde_json::json!({
+        "agent_id": agent_id,
+        "account_id": account_id,
+        "provider": provider,
+        "capabilities": capabilities,
+        "outcome": outcome,
+    })
+    .to_string();
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::MailCalendarAccount,
+        label,
+        &detail,
+        None,
+    );
 }
 
 #[cfg(test)]
@@ -907,7 +943,15 @@ pub(super) async fn oauth_callback(
                 false,
             );
         }
-        Some(Ok(_)) => {}
+        Some(Ok(account)) => record_account_event(
+            &state,
+            "account_connected",
+            &account.owner_agent_id,
+            &account.id,
+            account.provider,
+            &account.capabilities,
+            "connected",
+        ),
     }
     oauth_callback_page(
         StatusCode::OK,
@@ -1008,6 +1052,15 @@ pub(super) async fn refresh_account(
                 {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
+                record_account_event(
+                    &state,
+                    "account_reauthentication_required",
+                    &agent_id,
+                    &account_id,
+                    account.provider,
+                    &account.capabilities,
+                    "reauthentication_required",
+                );
                 return (
                     StatusCode::CONFLICT,
                     "This account needs to be connected again.",
@@ -1084,6 +1137,15 @@ pub(super) async fn refresh_account(
                 .into_response();
         }
     }
+    record_account_event(
+        &state,
+        "account_refreshed",
+        &agent_id,
+        &account_id,
+        refreshed.provider,
+        &refreshed.capabilities,
+        "refreshed",
+    );
     let identity_masked = vault
         .load(&refreshed.id)
         .ok()
@@ -1184,8 +1246,30 @@ pub(super) async fn disconnect_account(
         vak_mail_calendar::oauth::revoke_provider_grant(&vault, &account).await
     };
     if vault.remove(&account_id).is_err() {
+        record_account_event(
+            &state,
+            "account_disconnect_cleanup_pending",
+            &agent_id,
+            &account_id,
+            account.provider,
+            &account.capabilities,
+            "credential_removal_failed",
+        );
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
+    record_account_event(
+        &state,
+        "account_disconnected",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        if provider_grant_revoked {
+            "provider_revocation_confirmed"
+        } else {
+            "provider_revocation_unconfirmed"
+        },
+    );
     Json(serde_json::json!({ "disconnected": true, "already_disconnected": already_disconnected, "provider_grant_revoked": provider_grant_revoked, "content_erased": false })).into_response()
 }
 

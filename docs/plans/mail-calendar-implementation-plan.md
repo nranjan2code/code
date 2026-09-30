@@ -723,3 +723,9 @@ authorization and approval boundary on every execution path.
   per-Agent connection-ledger path and checks it against `vak_core::state::REGISTRY`.
   The mail/calendar suite now passes 47 unit tests plus this registry test,
   confirming that the ledger is covered by backup, purge, and upgrade checks.
+- 2026-09-30: Account link, refresh, reauthentication-required, and disconnect
+  transitions now emit a dedicated `mail_calendar_account` security event with
+  only opaque Agent/account IDs, provider, selected capabilities, and outcome.
+  The HTTP lifecycle test verifies events omit mailbox identity and credential
+  values, and distinguishes an unconfirmed provider revocation from local
+  credential cleanup.

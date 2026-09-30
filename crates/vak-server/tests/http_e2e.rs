@@ -341,7 +341,9 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
-    core.set_sessions_home(dir.path().join("home"));
+    let sessions_home = dir.path().join("home");
+    core.set_sessions_home(sessions_home.clone());
+    let account_audit_home = core.sessions_home();
     let agent_workspace = core.cwd().to_path_buf();
     let mut paused_agent = vak_server::agents::find_template("writer")
         .unwrap()
@@ -791,6 +793,31 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert_eq!(cleanup.status(), reqwest::StatusCode::OK);
     let paused_vault = vak_mail_calendar::vault::AccountVault::for_agent("mail-paused").unwrap();
     assert!(paused_vault.load(&paused_account_id).is_err());
+
+    let account_events = vak_core::security_events::list(&account_audit_home, 200)
+        .into_iter()
+        .filter(|event| event.kind == vak_core::security_events::EventKind::MailCalendarAccount)
+        .collect::<Vec<_>>();
+    assert!(
+        account_events.iter().any(|event| {
+            event.label == "account_connected"
+                && event.detail.contains(apple_id)
+                && event.detail.contains("apple_icloud")
+                && event.detail.contains("connected_unverified")
+        }),
+        "{account_events:?}"
+    );
+    assert!(account_events.iter().any(|event| {
+        event.label == "account_disconnected"
+            && event.detail.contains(apple_id)
+            && event.detail.contains("provider_revocation_unconfirmed")
+    }));
+    let serialized_account_events = serde_json::to_string(&account_events).unwrap();
+    assert!(!serialized_account_events.contains("owner@example.com"));
+    assert!(!serialized_account_events.contains("google-owner@example.com"));
+    assert!(!serialized_account_events.contains("abcd-efgh-ijkl-mnop"));
+    assert!(!serialized_account_events.contains("access-token-secret"));
+    assert!(!serialized_account_events.contains("refresh-token-secret"));
 
     handle.abort();
 }
