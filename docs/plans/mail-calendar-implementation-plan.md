@@ -414,9 +414,11 @@ authorization and approval boundary on every execution path.
   using `BODY.PEEK[]`; the source UIDVALIDITY must match, and each message is
   capped at 128 KiB within the 512 KiB transport budget. The owner preview and
   Agent read tool can request one selected message, and the UI labels its
-  content untrusted. The UID parser, real-worker MIME path, owner-only/unverified
-  HTTP boundary, server check, and web build pass; no live Apple message fetch
-  has been performed.
+  content untrusted. Local protocol fixtures verify the `BODY.PEEK[]` request
+  and stale UIDVALIDITY rejection before fetch; the implementation enforces the
+  128 KiB message cap. The UID parser, real-worker MIME path,
+  owner-only/unverified HTTP boundary, server check, and web build pass; no live
+  Apple message fetch has been performed.
 
 - 2026-09-30: Implemented a desktop-native OAuth return path for the Tauri
   bearer-authenticated UI. The owner-authenticated start creates a bounded,

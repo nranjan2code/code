@@ -1043,6 +1043,47 @@ async fn icloud_recent_mail_ids(
     result
 }
 
+async fn icloud_fetch_message_mime<T>(
+    session: &mut async_imap::Session<BudgetIo<T>>,
+    expected_validity: u32,
+    uid: u32,
+) -> Result<Vec<u8>, ProviderReadError>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?;
+    if mailbox.uid_validity != Some(expected_validity) {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let mut fetched = tokio::time::timeout(
+        StdDuration::from_secs(10),
+        session.uid_fetch(uid.to_string(), "UID RFC822.SIZE BODY.PEEK[]"),
+    )
+    .await
+    .map_err(|_| ProviderReadError::Unavailable)?
+    .map_err(map_imap_error)?;
+    use futures::TryStreamExt;
+    let mut raw = None;
+    while let Some(message) = tokio::time::timeout(StdDuration::from_secs(10), fetched.try_next())
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?
+    {
+        if message.uid != Some(uid) {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let body = message.body().ok_or(ProviderReadError::InvalidResponse)?;
+        if body.is_empty() || body.len() > MAX_MESSAGE_BYTES {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        raw = Some(body.to_vec());
+    }
+    raw.ok_or(ProviderReadError::InvalidResponse)
+}
+
 fn parse_icloud_provider_id(provider_id: &str) -> Result<(u32, u32), ProviderReadError> {
     let (validity, uid) = provider_id
         .split_once(':')
@@ -1076,41 +1117,7 @@ async fn icloud_message_mime(
         .icloud_imap_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
     let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
-    let result = async {
-        let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
-            .await
-            .map_err(|_| ProviderReadError::Unavailable)?
-            .map_err(map_imap_error)?;
-        if mailbox.uid_validity != Some(expected_validity) {
-            return Err(ProviderReadError::InvalidResponse);
-        }
-        let mut fetched = tokio::time::timeout(
-            StdDuration::from_secs(10),
-            session.uid_fetch(uid.to_string(), "UID RFC822.SIZE BODY.PEEK[]"),
-        )
-        .await
-        .map_err(|_| ProviderReadError::Unavailable)?
-        .map_err(map_imap_error)?;
-        use futures::TryStreamExt;
-        let mut raw = None;
-        while let Some(message) =
-            tokio::time::timeout(StdDuration::from_secs(10), fetched.try_next())
-                .await
-                .map_err(|_| ProviderReadError::Unavailable)?
-                .map_err(map_imap_error)?
-        {
-            if message.uid != Some(uid) {
-                return Err(ProviderReadError::InvalidResponse);
-            }
-            let body = message.body().ok_or(ProviderReadError::InvalidResponse)?;
-            if body.is_empty() || body.len() > MAX_MESSAGE_BYTES {
-                return Err(ProviderReadError::InvalidResponse);
-            }
-            raw = Some(body.to_vec());
-        }
-        raw.ok_or(ProviderReadError::InvalidResponse)
-    }
-    .await;
+    let result = icloud_fetch_message_mime(&mut session, expected_validity, uid).await;
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
 }
@@ -1606,6 +1613,133 @@ mod tests {
         assert_eq!(messages[0].from.as_deref(), Some("sender@example.test"));
         assert!(!messages[0].has_attachments);
         assert!(messages[0].body_text.is_none());
+        session.logout().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn icloud_selected_message_uses_uidvalidity_and_body_peek() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_stream, server_stream) = tokio::io::duplex(8192);
+        let raw = b"Subject: Selected\r\nContent-Type: text/plain\r\n\r\nBody".to_vec();
+        let expected_raw = raw.clone();
+        let server = tokio::spawn(async move {
+            let mut stream = BufReader::new(server_stream);
+            stream
+                .get_mut()
+                .write_all(b"* OK test server\r\n")
+                .await
+                .unwrap();
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split_whitespace().next().unwrap_or("A0000").to_owned();
+                let upper = line.to_ascii_uppercase();
+                let command = if upper.contains(" LOGIN ") {
+                    format!("{tag} OK authenticated\r\n")
+                } else if upper.contains(" CAPABILITY") {
+                    format!("* CAPABILITY IMAP4rev1\r\n{tag} OK capabilities\r\n")
+                } else if upper.contains(" EXAMINE ") {
+                    format!(
+                        "* 1 EXISTS\r\n* OK [UIDVALIDITY 7] valid\r\n{tag} OK [READ-ONLY] selected\r\n"
+                    )
+                } else if upper.contains(" UID FETCH ") {
+                    assert!(upper.contains("BODY.PEEK[]"), "{line}");
+                    assert!(!upper.contains("BODY[]"), "{line}");
+                    let mut response = format!(
+                        "* 1 FETCH (UID 31 RFC822.SIZE {} BODY[] {{{}}}\r\n",
+                        raw.len(),
+                        raw.len()
+                    )
+                    .into_bytes();
+                    response.extend_from_slice(&raw);
+                    response.extend_from_slice(format!(")\r\n{tag} OK fetched\r\n").as_bytes());
+                    if stream.get_mut().write_all(&response).await.is_err() {
+                        break;
+                    }
+                    continue;
+                } else if upper.contains(" LOGOUT") {
+                    format!("* BYE logging out\r\n{tag} OK logout\r\n")
+                } else {
+                    format!("{tag} BAD unsupported\r\n")
+                };
+                if stream
+                    .get_mut()
+                    .write_all(command.as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if upper.contains(" LOGOUT") {
+                    break;
+                }
+            }
+        });
+        let client = async_imap::Client::new(BudgetIo::new(client_stream, 8192, 8192));
+        let mut session = client.login("owner@icloud.com", "secret").await.unwrap();
+        let body = icloud_fetch_message_mime(&mut session, 7, 31)
+            .await
+            .unwrap();
+        assert_eq!(body, expected_raw);
+        session.logout().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn icloud_selected_message_refuses_stale_uidvalidity_before_fetch() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_stream, server_stream) = tokio::io::duplex(2048);
+        let server = tokio::spawn(async move {
+            let mut stream = BufReader::new(server_stream);
+            stream
+                .get_mut()
+                .write_all(b"* OK test server\r\n")
+                .await
+                .unwrap();
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split_whitespace().next().unwrap_or("A0000").to_owned();
+                let upper = line.to_ascii_uppercase();
+                let response = if upper.contains(" LOGIN ") {
+                    format!("{tag} OK authenticated\r\n")
+                } else if upper.contains(" CAPABILITY") {
+                    format!("* CAPABILITY IMAP4rev1\r\n{tag} OK capabilities\r\n")
+                } else if upper.contains(" EXAMINE ") {
+                    format!(
+                        "* 1 EXISTS\r\n* OK [UIDVALIDITY 8] valid\r\n{tag} OK [READ-ONLY] selected\r\n"
+                    )
+                } else if upper.contains(" LOGOUT") {
+                    format!("* BYE logging out\r\n{tag} OK logout\r\n")
+                } else {
+                    panic!("stale UIDVALIDITY must prevent a fetch: {line}");
+                };
+                if stream
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if upper.contains(" LOGOUT") {
+                    break;
+                }
+            }
+        });
+        let client = async_imap::Client::new(BudgetIo::new(client_stream, 2048, 2048));
+        let mut session = client.login("owner@icloud.com", "secret").await.unwrap();
+        assert!(matches!(
+            icloud_fetch_message_mime(&mut session, 7, 31).await,
+            Err(ProviderReadError::InvalidResponse)
+        ));
         session.logout().await.unwrap();
         server.await.unwrap();
     }
