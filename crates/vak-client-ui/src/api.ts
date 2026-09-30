@@ -178,6 +178,7 @@ export interface MailCalendarMailPreview {
   received_at: string | null;
   preview: string;
   body_text: string | null;
+  body_status?: "available" | "no_plain_text" | "unavailable";
   has_attachments: boolean;
 }
 export interface MailCalendarEventPreview {
@@ -200,6 +201,11 @@ export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
 export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10): Promise<{ messages: MailCalendarMailPreview[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-preview`, {
     method: "POST", body: JSON.stringify({ limit }),
+  });
+}
+export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "no_plain_text" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/message-preview`, {
+    method: "POST", body: JSON.stringify({ provider_id: providerId }),
   });
 }
 export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50): Promise<{ events: MailCalendarEventPreview[] }> {

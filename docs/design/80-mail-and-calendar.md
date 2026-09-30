@@ -12,13 +12,13 @@ Event creation has no attendees, recurrence, or reminders and saves the
 reviewed instants as UTC. Other event update/cancel/RSVP, full provider
 reconciliation and reliable continuous routines remain open, 2026-09-30.
 iCloud links now verify fixed-host IMAP MailRead-only or CalDAV CalendarRead-only
-access as separate account selections. Mail previews expose bounded inbox
-metadata only. Calendar previews perform fixed-origin CalDAV discovery and
+access as separate account selections. Apple inbox previews expose bounded
+metadata, and the person or Agent can request one selected message body through
+a fixed-UID, read-only fetch parsed in the isolated worker. Calendar previews perform fixed-origin CalDAV discovery and
 range-bounded event reads; provider XML and iCalendar content are parsed in the
 network-denied worker. CalDAV results are filtered locally against the
 requested time range after worker parsing. A bounded worker-side MIME parser
-now selects plain-text parts and skips HTML and attachments, but Apple IMAP
-message retrieval is not yet connected to it. Apple free/busy, message bodies,
+selects bounded plain-text parts and skips HTML and attachments. Apple free/busy,
 event changes, and mixed capability selections remain unavailable or
 unverified. No credentialed live
 Apple Calendar request has been made, so authenticated provider discovery
@@ -37,8 +37,10 @@ activation and removes it. Apple enrollment records only read capabilities
 and stores the password in the Agent vault. A Mail-only selection verifies
 the app-specific password against `imap.mail.me.com:993` using TLS, read-only
 `EXAMINE`, and a fixed session byte budget. Such an account is admitted only
-for `MailRead`; inbox metadata is bounded to 20 items and message bodies are
-not fetched. A separate `CalendarRead`-only selection is verified through
+for `MailRead`; inbox metadata is bounded to 20 items and an explicitly selected
+message can be fetched separately without setting `Seen`. Raw MIME is passed
+to the isolated worker and only bounded plain text is returned. A separate
+`CalendarRead`-only selection is verified through
 the fixed-host CalDAV authentication probe. The adapter discovers the
 principal, home set and calendar collections, validates each href against
 `https://caldav.icloud.com`, and sends bounded event reports to the isolated
@@ -99,8 +101,8 @@ and the third provider remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.
 No crypto-shred guarantee is made. Apple Mail is available only for a verified
-Mail-only account and currently returns bounded metadata without message
-bodies. Apple Calendar is available for a separately verified CalendarRead-only
+Mail-only account; inbox listing returns bounded metadata and a separately
+selected message can return bounded plain text. Apple Calendar is available for a separately verified CalendarRead-only
 account through fixed-origin CalDAV discovery and worker-isolated parsing;
 free/busy and provider effects remain unavailable. No live credentialed Apple
 Calendar verification has been performed.
@@ -259,7 +261,12 @@ Apple's manual iCloud Mail configuration documents IMAP at
 The Mail-only connection path authenticates and runs `EXAMINE INBOX` before
 storing the credential, then the preview reads at most 20 message envelopes
 and body structures with a 512 KiB protocol-session limit. It does not fetch
-message bodies. Calendar access requires a separate CalendarRead-only
+message bodies during the inbox listing. A separate selected-message request
+uses `UID FETCH BODY.PEEK[]`, checks UIDVALIDITY, caps the full message at
+128 KiB within the 512 KiB IMAP session budget, and sends raw MIME directly to
+the network-denied worker. It returns only bounded `text/plain`; HTML and
+attachments are not exposed, and HTML-only messages are labelled as lacking a
+plain-text body. Calendar access requires a separate CalendarRead-only
 selection and a successful fixed-host CalDAV authentication probe. That path
 performs bounded discovery and range queries, validates every provider href
 against the fixed Apple origin, and parses returned XML/iCalendar inside the

@@ -809,6 +809,11 @@ pub(super) struct MailPreviewRequest {
 }
 
 #[derive(Deserialize)]
+pub(super) struct MessagePreviewRequest {
+    provider_id: String,
+}
+
+#[derive(Deserialize)]
 pub(super) struct CalendarPreviewRequest {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
@@ -877,6 +882,73 @@ pub(super) async fn mail_preview(
             record_account_event(
                 &state,
                 "mail_content_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
+}
+
+/// Read one owner-selected Apple message without changing its unread state.
+/// The IMAP response is parsed only by the network-denied tool worker.
+pub(super) async fn message_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+    Json(request): Json<MessagePreviewRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if request.provider_id.len() > 64 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    record_account_event(
+        &state,
+        "mail_message_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    let result = vak_core::mail_calendar::read_icloud_message_with_worker(
+        &ProviderReadClient::default(),
+        &account,
+        &vault,
+        &agent_id,
+        &format!("agent:{agent_id}"),
+        &request.provider_id,
+        &state.core.tool_worker_exe(),
+    )
+    .await;
+    match result {
+        Ok(message) => {
+            record_account_event(
+                &state,
+                "mail_message_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(message).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "mail_message_preview",
                 &agent_id,
                 &account_id,
                 account.provider,

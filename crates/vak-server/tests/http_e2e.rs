@@ -504,6 +504,29 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .await
         .unwrap();
     assert_eq!(unverified_preview.status(), reqwest::StatusCode::NOT_FOUND);
+    let message_preview_url =
+        format!("http://{addr}/mail-calendar/accounts/vak/{apple_account_id}/message-preview");
+    let unauthenticated_message_preview = reqwest::Client::new()
+        .post(&message_preview_url)
+        .json(&serde_json::json!({"provider_id":"1:1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated_message_preview.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let unverified_message_preview = reqwest::Client::new()
+        .post(&message_preview_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"provider_id":"1:1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unverified_message_preview.status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
 
     let duplicate_icloud = reqwest::Client::new()
         .post(&icloud_url)

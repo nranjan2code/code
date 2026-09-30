@@ -66,7 +66,7 @@ implementation.
 |---|---|---|
 | Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
 | Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Local app-specific password over fixed-host IMAP and CalDAV | Exactly `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata; exactly `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded calendar previews through worker-isolated discovery and parsing. Mail bodies, Apple free/busy, effects, and mixed capability selections are unavailable or `connected_unverified`. Apple documents broader third-party authorization for supported apps, but not a general-purpose server OAuth contract for iCloud Mail/Calendar. |
+| Apple iCloud | Local app-specific password over fixed-host IMAP and CalDAV | Exactly `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected plain-text message reads parsed in the worker; exactly `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded calendar previews through worker-isolated discovery and parsing. Apple free/busy, effects, HTML-only message bodies, and mixed capability selections are unavailable or `connected_unverified`. Apple documents broader third-party authorization for supported apps, but not a general-purpose server OAuth contract for iCloud Mail/Calendar. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -410,9 +410,13 @@ authorization and approval boundary on every execution path.
 - 2026-09-30: Added the isolated worker-side MIME parsing foundation needed
   for selected Apple Mail content. It extracts bounded explicit `text/plain`
   content, ignores HTML and attachment parts, and distinguishes HTML-only
-  messages from usable text. Unit and real-worker integration tests pass.
-  Apple IMAP message retrieval and the selected-message preview route are the
-  next integration step; the metadata-only preview remains unchanged.
+  messages from usable text. This is now wired to a fixed-host IMAP `UID FETCH`
+  using `BODY.PEEK[]`; the source UIDVALIDITY must match, and each message is
+  capped at 128 KiB within the 512 KiB transport budget. The owner preview and
+  Agent read tool can request one selected message, and the UI labels its
+  content untrusted. The UID parser, real-worker MIME path, owner-only/unverified
+  HTTP boundary, server check, and web build pass; no live Apple message fetch
+  has been performed.
 
 - 2026-09-30: Implemented a desktop-native OAuth return path for the Tauri
   bearer-authenticated UI. The owner-authenticated start creates a bounded,

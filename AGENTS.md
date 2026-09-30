@@ -119,12 +119,17 @@ Read before changing behaviour in these areas:
   single-use action claim. Provider acceptance is not delivery; unknown
   outcomes cannot be retried. Apple MailRead-only links verify sign-in against
   fixed-host IMAP and allow bounded inbox metadata reads through a read-only
-  session with a 512 KiB transport budget. CalendarRead-only links verify
+  session with a 512 KiB transport budget. A selected Apple message is fetched
+  by UID with `BODY.PEEK[]`, checked against UIDVALIDITY, capped at 128 KiB,
+  and parsed in the network-denied worker; only bounded plain text is returned.
+  Apple event changes remain unavailable, and mixed capability selections
+  remain unverified. CalendarRead-only links verify
   fixed-host CalDAV and expose bounded previews after worker-isolated discovery
   and parsing, followed by a local time-range overlap check; Apple free/busy,
-  Apple Mail bodies and Apple event changes are unavailable, and mixed
-  capability selections remain unverified. A worker-only bounded MIME parser
-  exists as groundwork but is not yet wired to IMAP message retrieval.
+  Apple Mail HTML bodies and Apple event changes are unavailable. Inbox
+  metadata and selected plain-text message reads are implemented; messages
+  without plain text are labelled. Mixed capability selections remain
+  unverified.
   Microsoft event update/cancel/RSVP, attachments, aliases, reply
   semantics, and model-initiated effects remain unavailable. Current 4.x
   session history cannot be selectively erased, so account-deletion erasure

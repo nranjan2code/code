@@ -329,6 +329,23 @@ impl ProviderReadClient {
             .collect())
     }
 
+    /// Fetch one selected Apple inbox message without setting `Seen`. Raw MIME
+    /// is returned only to the Core layer for worker-isolated parsing.
+    pub async fn icloud_message_mime(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        provider_id: &str,
+    ) -> Result<Vec<u8>, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if account.provider != Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        icloud_message_mime(account, vault, provider_id).await
+    }
+
     pub async fn calendar_events(
         &self,
         account: &ConnectedAccount,
@@ -1026,6 +1043,78 @@ async fn icloud_recent_mail_ids(
     result
 }
 
+fn parse_icloud_provider_id(provider_id: &str) -> Result<(u32, u32), ProviderReadError> {
+    let (validity, uid) = provider_id
+        .split_once(':')
+        .ok_or(ProviderReadError::InvalidResponse)?;
+    if validity.is_empty()
+        || uid.is_empty()
+        || !validity.bytes().all(|byte| byte.is_ascii_digit())
+        || !uid.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let validity = validity
+        .parse::<u32>()
+        .map_err(|_| ProviderReadError::InvalidResponse)?;
+    let uid = uid
+        .parse::<u32>()
+        .map_err(|_| ProviderReadError::InvalidResponse)?;
+    if validity == 0 || uid == 0 {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    Ok((validity, uid))
+}
+
+async fn icloud_message_mime(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    provider_id: &str,
+) -> Result<Vec<u8>, ProviderReadError> {
+    let (expected_validity, uid) = parse_icloud_provider_id(provider_id)?;
+    let (login, password) = vault
+        .icloud_imap_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let result = async {
+        let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        if mailbox.uid_validity != Some(expected_validity) {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let mut fetched = tokio::time::timeout(
+            StdDuration::from_secs(10),
+            session.uid_fetch(uid.to_string(), "UID RFC822.SIZE BODY.PEEK[]"),
+        )
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?;
+        use futures::TryStreamExt;
+        let mut raw = None;
+        while let Some(message) =
+            tokio::time::timeout(StdDuration::from_secs(10), fetched.try_next())
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?
+                .map_err(map_imap_error)?
+        {
+            if message.uid != Some(uid) {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+            let body = message.body().ok_or(ProviderReadError::InvalidResponse)?;
+            if body.is_empty() || body.len() > MAX_MESSAGE_BYTES {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+            raw = Some(body.to_vec());
+        }
+        raw.ok_or(ProviderReadError::InvalidResponse)
+    }
+    .await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
 async fn icloud_imap_session(
     login: &str,
     password: &str,
@@ -1597,6 +1686,14 @@ mod tests {
         let now = Utc::now();
         assert!(validate_range(now, now + Duration::days(32)).is_err());
         assert!(validate_range(now, now + Duration::days(30)).is_ok());
+    }
+
+    #[test]
+    fn icloud_message_ids_are_uidvalidity_scoped_and_numeric() {
+        assert_eq!(parse_icloud_provider_id("1234:56").unwrap(), (1234, 56));
+        for invalid in ["", "1234", "1234:0", "0:1", "1:2:3", "1:%2f", "-1:5"] {
+            assert!(parse_icloud_provider_id(invalid).is_err(), "{invalid}");
+        }
     }
 
     #[test]

@@ -1323,6 +1323,24 @@ export default function Settings() {
       if (requestGeneration === mailCalendarPreviewGeneration) setMailCalendarBusy(false);
     }
   };
+  const readAppleMailMessage = async (accountId: string, message: api.MailCalendarMailPreview) => {
+    if (mailCalendarBusy() || !message.provider_id) return;
+    const requestedAgentId = activeAgentId();
+    setMailCalendarBusy(true);
+    try {
+      const result = await api.previewMailCalendarMessage(requestedAgentId, accountId, message.provider_id);
+      if (requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+      setMailCalendarPreview((current) => current && current.accountId === accountId
+        ? { ...current, messages: current.messages?.map((item) => item.provider_id === result.provider_id
+          ? { ...item, body_text: result.body_text, body_status: result.body_status }
+          : item) }
+        : current);
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not open this message: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
   const buildMailCalendarDraftAction = (): api.MailCalendarDraftAction | null => {
     if (mailCalendarEditorKind() === "mail") {
       const recipients = mailCalendarDraftTo().split(/[;,]/).map((value) => value.trim()).filter(Boolean);
@@ -2478,7 +2496,7 @@ export default function Settings() {
                   <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? "Recent inbox" : preview.kind === "calendar" ? "Next two weeks" : "Availability for the next week"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
                   <Show when={preview.kind === "mail"}>
                     <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : "No recent inbox messages were returned."}</p>}>
-                      <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><p>{message.body_text || message.preview || "No plain-text preview was returned."}</p><Show when={message.has_attachments}><small>Has attachments · attachment preview is not available yet</small></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
+                      <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.has_attachments}><small>Has attachments · attachment preview is not available yet</small></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
                     </Show>
                   </Show>
                   <Show when={preview.kind === "calendar"}>
@@ -2494,7 +2512,7 @@ export default function Settings() {
                 </div>}</Show>
               </Group>
               <Group title="Working area">
-                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Email sends and Google updates are external effects: each requires an unchanged saved draft, the matching account grant, full preview, and your confirmation. Google updates are limited to standalone events with no attendees. Event creation does not invite attendees. Apple Mail currently provides inbox metadata and local reply drafts; sending is unavailable.</p>
+                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Email sends and Google updates are external effects: each requires an unchanged saved draft, the matching account grant, full preview, and your confirmation. Google updates are limited to standalone events with no attendees. Event creation does not invite attendees. Apple Mail supports bounded selected-message reading and local reply drafts; sending is unavailable.</p>
                 <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account to start a local draft.</p>}>
                   <div class="mail-calendar-work-actions">
                     <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple Mail" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
