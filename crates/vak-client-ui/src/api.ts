@@ -182,7 +182,7 @@ export interface MailCalendarMailPreview {
   has_attachments: boolean;
   attachments?: MailCalendarAttachmentPreview[];
 }
-export interface MailCalendarThread { provider_id: string; messages: MailCalendarMailPreview[] }
+export interface MailCalendarThread { provider_id: string; messages: MailCalendarMailPreview[]; next_cursor?: string | null }
 export interface MailCalendarAttachmentPreview {
   provider_id: string;
   filename: string;
@@ -221,9 +221,9 @@ export function previewMailCalendarMessage(agentId: string, accountId: string, p
     method: "POST", body: JSON.stringify({ provider_id: providerId }),
   });
 }
-export function previewMailCalendarThread(agentId: string, accountId: string, threadId: string): Promise<MailCalendarThread> {
+export function previewMailCalendarThread(agentId: string, accountId: string, threadId: string, cursor?: string): Promise<MailCalendarThread> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/thread-preview`, {
-    method: "POST", body: JSON.stringify({ thread_id: threadId }),
+    method: "POST", body: JSON.stringify({ thread_id: threadId, ...(cursor ? { cursor } : {}) }),
   });
 }
 export function previewMailCalendarAttachment(agentId: string, accountId: string, messageId: string, attachmentId: string): Promise<{ filename: string; mime_type: string | null; size_bytes: number; text: string }> {

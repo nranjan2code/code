@@ -3,7 +3,7 @@
 Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only
 bounded Google/Microsoft previews with selected Gmail labels and Microsoft
 top-level folders (Apple remains Inbox-only), explicit phrase search across all
-three providers, bounded Google/Microsoft conversation previews, a broker-owned
+three providers, paginated Google/Microsoft conversation previews, a broker-owned
 local-surface read tool, and an Agent-vault working area for local drafts are
 implemented. The work area supports saved candidates, exact-payload preview
 and Review, email send, Google standalone-event update, and limited event create
@@ -102,7 +102,7 @@ times are rendered in the device's time zone. Inbox navigation remains a
 bounded recent-message view and owner-submitted phrase search within the selected
 inbox. Owner mail previews can select Gmail labels and Microsoft top-level
 folders; Apple and Agent/watcher reads remain Inbox-only. Google and Microsoft
-owners can open one bounded thread preview with its separate messages; Apple
+owners can open a paginated thread preview with up to 20 messages per page; Apple
 supports a selected-message preview without conversation grouping. These
 results are transient and search phrases are not logged or retained. The owner
 can start a local email draft from any message in an opened Google or Microsoft

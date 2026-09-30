@@ -898,6 +898,8 @@ pub(super) struct MessagePreviewRequest {
 #[serde(deny_unknown_fields)]
 pub(super) struct ThreadPreviewRequest {
     thread_id: String,
+    #[serde(default)]
+    cursor: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1199,6 +1201,13 @@ pub(super) async fn thread_preview(
     {
         return StatusCode::BAD_REQUEST.into_response();
     }
+    if request
+        .cursor
+        .as_ref()
+        .is_some_and(|cursor| cursor.len() > 8192)
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
     let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
     let _operation_guard = operation_lock.lock().await;
     let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
@@ -1220,6 +1229,7 @@ pub(super) async fn thread_preview(
             &agent_id,
             &format!("agent:{agent_id}"),
             &request.thread_id,
+            request.cursor.as_deref(),
         )
         .await;
     match result {

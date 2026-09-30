@@ -17,7 +17,8 @@ zone date range up to 30 days, previous/next seven-day navigation, and a visible
 refresh time. Owner folder/label selection now covers Gmail labels and up to 100
 Microsoft top-level folders; Apple remains Inbox-only. Child-folder traversal,
 the full connected-account workspace and complete thread workspace remain
-open; Google and Microsoft now have a bounded owner thread preview.
+open; Google and Microsoft now have an owner thread preview paged in batches
+of at most 20 messages.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
 continuation cursor stored atomically in the encrypted Agent vault. A local
@@ -1343,3 +1344,12 @@ authorization and approval boundary on every execution path.
   unsupported. Design and implementation docs record this boundary. UI
   typecheck and production build pass; source-to-Review browser acceptance
   remains open.
+- 2026-09-30: Conversation previews now page in batches of at most 20. Gmail
+  continuation offsets are bounded and tied to the requested thread. Microsoft
+  continuation URLs are restricted to the fixed Graph origin, exact messages
+  path, unchanged conversation filter, selected fields, and page size; returned
+  messages are still checked for membership. The UI offers explicit “Load more”
+  and keeps each page transient. Cursor-tampering tests, two-page provider
+  fixtures, all 94 mail/calendar tests, server owner-authentication HTTP test,
+  UI typecheck, and production web build pass. Gmail fetches a response-capped
+  thread snapshot for each page; the full thread workspace remains open.
