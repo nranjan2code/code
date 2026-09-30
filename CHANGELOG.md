@@ -1,3 +1,10 @@
+## 5.3.2 — 2026-10-01
+
+- Turn the compact commitment arc upward from the right through the active
+  center to completed work on the left, while keeping the in-chat working
+  status visible during a response.
+- Avoid issuing duplicate progress requests when the arc is first revealed.
+
 ## 5.3.1 — 2026-10-01
 
 - Keep unrelated older turns out of the model's working context, bound history
