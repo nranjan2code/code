@@ -11,6 +11,10 @@ and Review, email send, Google standalone-event update, and limited event create
 for Google/Microsoft. Review requires opt-in provider scopes, owner confirmation,
 permission-engine evaluation, and a durable single-use claim. Event creation has
 no attendees, recurrence, or reminders and saves reviewed instants as UTC.
+Google also supports conditional cancellation of one unchanged public,
+standalone, timed event with no attendees when the connected owner is its
+organizer. It uses the event ETag precondition; the UI requires exact event
+review and a separate owner confirmation.
 Scheduled and one-minute continuous read-only routines use `TaskDef` and a
 bounded encrypted Agent-vault mail backlog with provider cursors. Starting a
 local draft from a selected conversation message preserves its source reference
@@ -65,9 +69,9 @@ effects require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain
 non-retryable and appear in the local candidate list. Google event update
 re-reads the source event and sends a conditional ETag update; stale versions
-conflict and require a fresh preview and candidate. Microsoft update, all
-cancellation and RSVP operations, Agent-initiated effects, and provider
-reconciliation are not implemented.
+conflict and require a fresh preview and candidate. Microsoft update,
+cancellation outside the single-event Google profile above, RSVP operations,
+Agent-initiated effects, and provider reconciliation are not implemented.
 Google and Microsoft calendar-write consent is broader than this limited
 create operation; the credential stays in the Agent vault and effects remain
 broker-only. OAuth authorization attempts are bounded and single-use;

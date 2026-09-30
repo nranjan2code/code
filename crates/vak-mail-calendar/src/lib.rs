@@ -654,13 +654,34 @@ fn validate_action(action: &ProposedAction) -> Result<(), ContractError> {
             }
             draft.validate()
         }
-        ProposedAction::CancelEvent { event_id, .. }
-        | ProposedAction::RespondToEvent { event_id, .. }
+        ProposedAction::CancelEvent {
+            event_id,
+            source_version,
+            occurrence_id,
+            whole_series,
+        } => {
+            if event_id.len() < 5
+                || event_id.len() > 1024
+                || !event_id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'v').contains(&byte))
+                || source_version.trim().is_empty()
+                || source_version.len() > 512
+                || source_version.chars().any(char::is_control)
+                || occurrence_id.is_some()
+                || *whole_series
+            {
+                Err(ContractError::InvalidEvent)
+            } else {
+                Ok(())
+            }
+        }
+        ProposedAction::RespondToEvent { event_id, .. }
             if event_id.trim().is_empty() || event_id.len() > 512 =>
         {
             Err(ContractError::InvalidEvent)
         }
-        ProposedAction::CancelEvent { .. } | ProposedAction::RespondToEvent { .. } => Ok(()),
+        ProposedAction::RespondToEvent { .. } => Ok(()),
     }
 }
 

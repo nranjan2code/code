@@ -207,6 +207,7 @@ export interface MailCalendarEventPreview {
   attendee_count: number;
   recurring: boolean;
   private: boolean;
+  can_cancel?: boolean;
 }
 export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
 
@@ -247,7 +248,8 @@ export function previewMailCalendarFreeBusy(agentId: string, accountId: string, 
 export type MailCalendarDraftAction =
   | { kind: "send_mail"; draft: { from_alias: string | null; to: Array<{ address: string; display_name: string | null }>; cc: Array<{ address: string; display_name: string | null }>; bcc: Array<{ address: string; display_name: string | null }>; subject: string; body_text: string; attachment_refs: string[]; reply_to_message_id: string | null; reply_to_thread_id: string | null } }
   | { kind: "create_event"; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } }
-  | { kind: "update_event"; event_id: string; source_version: string; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } };
+  | { kind: "update_event"; event_id: string; source_version: string; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } }
+  | { kind: "cancel_event"; event_id: string; source_version: string; occurrence_id: string | null; whole_series: boolean };
 export interface MailCalendarCandidate {
   id: string;
   account_id: string;
@@ -283,6 +285,12 @@ export function createMailCalendarEventCandidate(agentId: string, candidateId: s
 }
 export function updateMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/update-event`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
+export function cancelMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/cancel-event`, {
     method: "POST",
     body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
   });

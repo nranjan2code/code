@@ -341,6 +341,15 @@ pub(super) async fn save_candidate(
         )
             .into_response();
     };
+    if matches!(&request.action, ProposedAction::CancelEvent { .. })
+        && account.provider != Provider::Google
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Provider event cancellation is currently limited to Google Calendar.",
+        )
+            .into_response();
+    }
     let vault = match AccountVault::for_agent(&agent_id) {
         Ok(vault) => vault,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -545,13 +554,16 @@ pub(super) async fn send_mail_candidate(
     let send_route = uri.path().ends_with("/send");
     let create_route = uri.path().ends_with("/create-event");
     let update_route = uri.path().ends_with("/update-event");
+    let cancel_route = uri.path().ends_with("/cancel-event");
     match &candidate.action {
         ProposedAction::SendMail { draft } if send_route && vak_mail_calendar::effect::validate_mail_draft(draft).is_ok() => {},
         ProposedAction::CreateEvent { draft } if create_route && vak_mail_calendar::effect::validate_event_create(draft).is_ok() => {},
         ProposedAction::UpdateEvent { event_id, source_version, draft } if update_route && vak_mail_calendar::effect::validate_event_update(event_id, source_version, draft).is_ok() => {},
+        ProposedAction::CancelEvent { event_id, source_version, occurrence_id, whole_series } if cancel_route && vak_mail_calendar::effect::validate_event_cancel(event_id, source_version, occurrence_id.as_deref(), *whole_series).is_ok() => {},
         ProposedAction::SendMail { .. } => return (StatusCode::BAD_REQUEST, "This send profile supports plain text without attachments or sender aliases; replies require a selected message and conversation.").into_response(),
         ProposedAction::CreateEvent { .. } => return (StatusCode::BAD_REQUEST, "This event profile supports one timed event without attendees, recurrence, or reminders.").into_response(),
         ProposedAction::UpdateEvent { .. } => return (StatusCode::BAD_REQUEST, "This update profile supports one standalone timed Google event without attendees, recurrence, or reminders.").into_response(),
+        ProposedAction::CancelEvent { .. } => return (StatusCode::BAD_REQUEST, "Cancellation is limited to one unchanged public standalone Google event with no attendees.").into_response(),
         _ => return (StatusCode::BAD_REQUEST, "This action is not yet supported for provider changes.").into_response(),
     }
     if !candidate.source_refs.iter().all(|source| {
@@ -584,6 +596,15 @@ pub(super) async fn send_mail_candidate(
         )
             .into_response();
     };
+    if matches!(candidate.action, ProposedAction::CancelEvent { .. })
+        && account.provider != Provider::Google
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Provider event cancellation is currently limited to Google Calendar.",
+        )
+            .into_response();
+    }
     if account
         .access_token_expires_at
         .is_some_and(|expires| expires <= Utc::now())
@@ -631,6 +652,7 @@ pub(super) async fn send_mail_candidate(
                 ProposedAction::SendMail { .. } => "mail_calendar_send",
                 ProposedAction::CreateEvent { .. } => "mail_calendar_event_create",
                 ProposedAction::UpdateEvent { .. } => "mail_calendar_event_update",
+                ProposedAction::CancelEvent { .. } => "mail_calendar_event_cancel",
                 _ => "mail_calendar_event_create",
             },
             &permission_args,
@@ -715,13 +737,39 @@ pub(super) async fn send_mail_candidate(
                 )
                 .await
         }
+        ProposedAction::CancelEvent {
+            event_id,
+            source_version,
+            occurrence_id,
+            whole_series,
+        } => {
+            client
+                .cancel_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &candidate.audience_id,
+                    event_id,
+                    source_version,
+                    occurrence_id.as_deref(),
+                    *whole_series,
+                )
+                .await
+        }
         _ => Err(ProviderEffectError::Unsupported),
     };
     match result {
         Ok(accepted) => {
             receipt.state = ActionState::ProviderAccepted;
             receipt.provider_item_id = accepted.provider_item_id;
-            receipt.detail_code = Some("provider_accepted_not_delivery".into());
+            receipt.detail_code = Some(
+                if matches!(candidate.action, ProposedAction::CancelEvent { .. }) {
+                    "provider_accepted_event_removed"
+                } else {
+                    "provider_accepted_not_delivery"
+                }
+                .into(),
+            );
         }
         Err(error) => {
             receipt.state = match error {
@@ -754,6 +802,8 @@ pub(super) async fn send_mail_candidate(
             "mail_send_effect"
         } else if matches!(candidate.action, ProposedAction::UpdateEvent { .. }) {
             "calendar_event_update_effect"
+        } else if matches!(candidate.action, ProposedAction::CancelEvent { .. }) {
+            "calendar_event_cancel_effect"
         } else {
             "calendar_event_create_effect"
         },

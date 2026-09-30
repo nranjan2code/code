@@ -422,6 +422,17 @@ failures are never retried. Microsoft Graph update remains unavailable because
 the current verified contract does not establish an equivalent conditional
 write precondition; Apple remains unavailable.
 
+**Implemented increment (2026-09-30):** Google now supports owner-reviewed
+cancellation of one unchanged public, standalone, timed event with no attendees
+when the connected owner is the organizer. The cancellation candidate binds the
+event ID and ETag; the broker re-reads and validates the source, then sends a
+DELETE with `If-Match` and `sendUpdates=none`. Occurrence and whole-series
+cancellation are rejected. Stale events conflict; redirects and ambiguous
+provider failures remain non-retryable. Microsoft and Apple cancellations,
+events with guests, and recurring or all-day events remain unavailable. Tests
+must prove the exact conditional request and all eligibility boundaries before
+this increment is considered verified.
+
 **Security correction (2026-09-30):** Google Calendar previews now redact the
 title, location, description, and attendee count of private events, matching
 the existing Microsoft projection while preserving the busy interval. A
@@ -1392,3 +1403,10 @@ authorization and approval boundary on every execution path.
   metadata-only thread snapshot and full content only for the selected page's
   message IDs, each with per-message and aggregate byte caps; the full thread
   workspace remains open.
+- 2026-09-30: Added reviewed Google cancellation for one public, standalone,
+  timed event without attendees when the connected owner is its organizer.
+  The broker rechecks the source and conditionally deletes with the saved ETag;
+  series, occurrence, guest, private, and all-day cancellations are excluded.
+  The regression tests verify the exact `If-Match` header and `sendUpdates=none`
+  request, source eligibility and stale-version behavior. The mail/calendar
+  crate suite (101 tests), server check, permission test, and UI typecheck pass.

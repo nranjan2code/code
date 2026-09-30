@@ -10,6 +10,7 @@ interface Props {
   conflicts: Set<string>;
   primaryAccountId?: string;
   onDraftUpdate?: (event: MailCalendarEventPreview) => void;
+  onDraftCancel?: (event: MailCalendarEventPreview) => void;
 }
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -67,9 +68,10 @@ export function MailCalendarAgenda(props: Props) {
   };
   const conflictKey = (event: MailCalendarEventPreview) => event.account_id ? `${event.account_id}::${event.provider_id}` : event.provider_id;
   const eligibleUpdate = (event: MailCalendarEventPreview) => !!props.onDraftUpdate && (!event.account_id || event.account_id === props.primaryAccountId) && !!event.version && !event.private && !event.all_day && !event.recurring && event.attendee_count === 0 && !!event.starts_at && !!event.ends_at;
+  const eligibleCancel = (event: MailCalendarEventPreview) => !!props.onDraftCancel && (!event.account_id || event.account_id === props.primaryAccountId) && event.can_cancel === true && !!event.version;
   const renderEvent = (event: MailCalendarEventPreview, key: string) => <article class={`mail-calendar-event${props.conflicts.has(conflictKey(event)) ? " is-conflict" : ""}`}>
     <div class="mail-calendar-event-time">{labelTime(event, key)}</div>
-    <div class="mail-calendar-event-content"><strong>{event.title}</strong><Show when={event.account_name}><small>{event.account_name}</small></Show><Show when={props.conflicts.has(conflictKey(event))}><small>Overlaps another event in this preview.</small></Show><Show when={event.location}><span>{event.location}</span></Show><Show when={event.description}><p>{event.description}</p></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={() => props.onDraftUpdate?.(event)}>Draft update</button></Show></div>
+    <div class="mail-calendar-event-content"><strong>{event.title}</strong><Show when={event.account_name}><small>{event.account_name}</small></Show><Show when={props.conflicts.has(conflictKey(event))}><small>Overlaps another event in this preview.</small></Show><Show when={event.location}><span>{event.location}</span></Show><Show when={event.description}><p>{event.description}</p></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={() => props.onDraftUpdate?.(event)}>Draft update</button></Show><Show when={eligibleCancel(event)}><button class="settings-button danger" onClick={() => props.onDraftCancel?.(event)}>Review cancellation</button></Show></div>
   </article>;
 
   return <section class="mail-calendar-agenda" aria-label="Calendar events">
@@ -98,7 +100,7 @@ export function MailCalendarAgenda(props: Props) {
               const top = wallMinutes(clippedStart);
               const bottom = clippedEnd.getTime() === dayEnd.getTime() ? 1440 : wallMinutes(clippedEnd);
               const height = Math.max(30, bottom - top);
-              return <article class={`mail-calendar-grid-event${props.conflicts.has(conflictKey(event)) ? " is-conflict" : ""}`} style={{ top: `${top / 1440 * 100}%`, height: `${height / 1440 * 100}%` }} title={`${event.title} · ${labelTime(event, key)}`}><strong>{event.title}</strong><span>{labelTime(event, key)}</span><Show when={event.account_name}><small>{event.account_name}</small></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={() => props.onDraftUpdate?.(event)}>Draft update</button></Show></article>;
+              return <article class={`mail-calendar-grid-event${props.conflicts.has(conflictKey(event)) ? " is-conflict" : ""}`} style={{ top: `${top / 1440 * 100}%`, height: `${height / 1440 * 100}%` }} title={`${event.title} · ${labelTime(event, key)}`}><strong>{event.title}</strong><span>{labelTime(event, key)}</span><Show when={event.account_name}><small>{event.account_name}</small></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={() => props.onDraftUpdate?.(event)}>Draft update</button></Show><Show when={eligibleCancel(event)}><button class="settings-button danger" onClick={() => props.onDraftCancel?.(event)}>Review cancellation</button></Show></article>;
             }}</For>
           </div>
         </section>}</For>

@@ -1672,6 +1672,10 @@ export default function Settings() {
     setMailCalendarDirty(false);
   };
   const openMailCalendarDraft = (candidate: api.MailCalendarCandidate) => {
+    if (candidate.action.kind === "cancel_event") {
+      reviewAndCancelCalendarEvent(candidate);
+      return;
+    }
     setMailCalendarEditorAccount(candidate.account_id);
     setMailCalendarEditorKind(candidate.action.kind === "send_mail" ? "mail" : "calendar");
     setMailCalendarDraftPreviewOpen(false);
@@ -1849,6 +1853,68 @@ export default function Settings() {
         }
       },
     });
+  };
+  const reviewAndCancelCalendarEvent = (candidate: api.MailCalendarCandidate) => {
+    if (candidate.action.kind !== "cancel_event" || !candidate.candidate_digest || candidate.action.occurrence_id || candidate.action.whole_series) {
+      setNotice({ kind: "error", text: "Reload this event before reviewing its cancellation." });
+      return;
+    }
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === candidate.account_id);
+    const source = candidate.source_refs[0];
+    setConfirmConfig({
+      title: "Review this exact event cancellation",
+      description: "This removes one public, standalone event from the Google account. It has no attendees, and the provider will reject deletion if the event changed after this preview.",
+      reviewContent: <div class="mail-calendar-review-payload"><dl><dt>Account</dt><dd>Google{account?.identity_masked ? ` · ${account.identity_masked}` : ""}</dd><dt>Event</dt><dd>{source?.label ?? "Selected event"}</dd><dt>Attendees</dt><dd>None</dd><dt>Scope</dt><dd>This event only</dd></dl><p>The provider event is re-read and its version is checked atomically before deletion. If it changed, refresh the preview and prepare a new cancellation.</p></div>,
+      confirmLabel: "Cancel this event",
+      isDanger: true,
+      onConfirm: async () => {
+        if (account?.provider !== "google" || !account.capabilities.includes("calendar_write")) {
+          setNotice({ kind: "error", text: "This Google account no longer has permission to cancel calendar events." });
+          return;
+        }
+        setMailCalendarSendingDraft(true);
+        try {
+          const result = await api.cancelMailCalendarEventCandidate(activeAgentId(), candidate.id, candidate.revision, candidate.candidate_digest!);
+          const state = result.receipt?.state ?? result.state ?? "unknown";
+          setMailCalendarEditingCandidate({ ...candidate, action_state: state });
+          setNotice({
+            kind: state === "provider_accepted" ? "info" : "error",
+            text: state === "provider_accepted"
+              ? "The provider removed this event from the calendar."
+              : state === "unknown" || state === "dispatching"
+                ? "The cancellation outcome is unknown. Do not retry; refresh the provider calendar first."
+                : "The provider did not accept this cancellation. Refresh the event before preparing another attempt.",
+          });
+          await refreshMailCalendarCandidates();
+        } catch (error) {
+          setNotice({ kind: "error", text: `Could not cancel this event: ${error instanceof Error ? error.message : String(error)}. If an attempt already exists, do not retry it.` });
+        } finally {
+          setMailCalendarSendingDraft(false);
+        }
+      },
+    });
+  };
+  const prepareCalendarCancellation = async (accountId: string, event: api.MailCalendarEventPreview) => {
+    if (!event.can_cancel || !event.version || mailCalendarSavingDraft()) return;
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === accountId);
+    if (account?.provider !== "google" || !account.capabilities.includes("calendar_write")) {
+      setNotice({ kind: "error", text: "This event can be cancelled only from a Google account with calendar-write access." });
+      return;
+    }
+    setMailCalendarSavingDraft(true);
+    try {
+      const result = await api.saveMailCalendarCandidate(activeAgentId(), {
+        account_id: accountId,
+        source_refs: [{ item_id: event.provider_id, version: event.version, label: event.title }],
+        action: { kind: "cancel_event", event_id: event.provider_id, source_version: event.version, occurrence_id: null, whole_series: false },
+      });
+      await refreshMailCalendarCandidates();
+      reviewAndCancelCalendarEvent(result.candidate);
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not prepare this cancellation: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarSavingDraft(false);
+    }
   };
   const cancelMailCalendarDraftEditor = () => {
     if (mailCalendarDraftTimer) clearTimeout(mailCalendarDraftTimer);
@@ -2783,6 +2849,7 @@ export default function Settings() {
                           setMailCalendarDraftStarts(local(event.starts_at!));
                           setMailCalendarDraftEnds(local(event.ends_at!));
                         }}
+                        onDraftCancel={(event) => void prepareCalendarCancellation(preview.accountId, event)}
                       />
                     </Show>
                   </Show>
@@ -2805,8 +2872,10 @@ export default function Settings() {
                 <Show when={!mailCalendarCandidates.loading} fallback={<p class="settings-hint">Loading secure drafts…</p>}>
                   <div class="mail-calendar-drafts"><Show when={(mailCalendarCandidates()?.candidates.length ?? 0) > 0} fallback={<p class="settings-hint">No saved drafts yet.</p>}>
                     <For each={mailCalendarCandidates()?.candidates ?? []}>{(candidate) => {
-                      const summary = () => candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.draft.title || "Event draft";
-                      return <article class="mail-calendar-draft-row"><div><strong>{summary()}</strong><span>{candidate.action.kind === "send_mail" ? "Email" : "Calendar event"} · revision {candidate.revision} · {new Date(candidate.created_at).toLocaleDateString()}{candidate.action_state ? ` · ${candidate.action.kind === "send_mail" ? "send" : "create"} ${candidate.action_state.replaceAll("_", " ")}` : ""}</span></div><div class="settings-actions"><button class="settings-button" onClick={() => openMailCalendarDraft(candidate)}>Open</button><button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate)}>Delete</button></div></article>;
+                      const summary = () => candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.kind === "cancel_event" ? candidate.source_refs[0]?.label || "Event cancellation" : candidate.action.draft.title || "Event draft";
+                      const kind = () => candidate.action.kind === "send_mail" ? "Email" : candidate.action.kind === "cancel_event" ? "Event cancellation" : "Calendar event";
+                      const actionLabel = () => candidate.action.kind === "send_mail" ? "send" : candidate.action.kind === "cancel_event" ? "cancel" : candidate.action.kind === "update_event" ? "update" : "create";
+                      return <article class="mail-calendar-draft-row"><div><strong>{summary()}</strong><span>{kind()} · revision {candidate.revision} · {new Date(candidate.created_at).toLocaleDateString()}{candidate.action_state ? ` · ${actionLabel()} ${candidate.action_state.replaceAll("_", " ")}` : ""}</span></div><div class="settings-actions"><button class="settings-button" onClick={() => candidate.action.kind === "cancel_event" ? reviewAndCancelCalendarEvent(candidate) : openMailCalendarDraft(candidate)}>{candidate.action.kind === "cancel_event" ? "Review cancellation" : "Open"}</button><button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate)}>Delete</button></div></article>;
                     }}</For>
                   </Show></div>
                 </Show>

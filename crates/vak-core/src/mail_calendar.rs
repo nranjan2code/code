@@ -779,6 +779,7 @@ mod tests {
             attendee_count: 0,
             recurring: false,
             private: false,
+            can_cancel: false,
         };
         assert!(event_overlaps_range(
             &timed("2026-09-30T09:30:00Z", "2026-09-30T10:15:00Z"),
@@ -802,6 +803,7 @@ mod tests {
             attendee_count: 0,
             recurring: false,
             private: false,
+            can_cancel: false,
         };
         assert!(event_overlaps_range(&all_day, range));
     }

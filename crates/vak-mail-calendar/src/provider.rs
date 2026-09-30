@@ -203,6 +203,9 @@ pub struct CalendarItem {
     pub attendee_count: usize,
     pub recurring: bool,
     pub private: bool,
+    /// True only for a public standalone timed Google event organized by this
+    /// account with no attendees. Other providers never expose cancellation.
+    pub can_cancel: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -2940,6 +2943,22 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
     let start = value.get("start")?;
     let end = value.get("end")?;
     let private = value.get("visibility").and_then(Value::as_str) == Some("private");
+    let recurring = value.get("recurringEventId").is_some()
+        || value
+            .get("recurrence")
+            .and_then(Value::as_array)
+            .is_some_and(|rules| !rules.is_empty());
+    let all_day = start.get("date").is_some();
+    let has_attendees = value
+        .get("attendees")
+        .and_then(Value::as_array)
+        .is_some_and(|attendees| !attendees.is_empty());
+    let default_event = value
+        .get("eventType")
+        .and_then(Value::as_str)
+        .unwrap_or("default")
+        == "default";
+    let self_is_organizer = value.pointer("/organizer/self").and_then(Value::as_bool) == Some(true);
     let starts_at = start
         .get("dateTime")
         .and_then(Value::as_str)
@@ -2989,12 +3008,14 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len)
         },
-        recurring: value.get("recurringEventId").is_some()
-            || value
-                .get("recurrence")
-                .and_then(Value::as_array)
-                .is_some_and(|rules| !rules.is_empty()),
+        recurring,
         private,
+        can_cancel: !private
+            && !all_day
+            && !recurring
+            && !has_attendees
+            && default_event
+            && self_is_organizer,
     })
 }
 
@@ -3058,6 +3079,7 @@ fn parse_graph_event(value: &Value) -> Option<CalendarItem> {
             .and_then(Value::as_str)
             .is_some_and(|kind| kind != "singleInstance"),
         private,
+        can_cancel: false,
     })
 }
 
@@ -4123,6 +4145,30 @@ mod tests {
     }
 
     #[test]
+    fn only_organizer_owned_solo_google_events_are_cancelable() {
+        let base = json!({
+            "id":"event123", "etag":"\"version-1\"", "summary":"Team focus",
+            "eventType":"default", "visibility":"public", "organizer":{"self":true},
+            "start":{"dateTime":"2026-09-30T10:00:00Z"},
+            "end":{"dateTime":"2026-09-30T11:00:00Z"}, "attendees":[]
+        });
+        assert!(parse_google_event(&base).unwrap().can_cancel);
+        let mut invited = base.clone();
+        invited["attendees"] = json!([{"email":"guest@example.test"}]);
+        assert!(!parse_google_event(&invited).unwrap().can_cancel);
+        let mut not_organizer = base.clone();
+        not_organizer["organizer"]["self"] = json!(false);
+        assert!(!parse_google_event(&not_organizer).unwrap().can_cancel);
+        let mut recurring = base.clone();
+        recurring["recurrence"] = json!(["RRULE:FREQ=DAILY"]);
+        assert!(!parse_google_event(&recurring).unwrap().can_cancel);
+        let mut all_day = base.clone();
+        all_day["start"] = json!({"date":"2026-09-30"});
+        all_day["end"] = json!({"date":"2026-10-01"});
+        assert!(!parse_google_event(&all_day).unwrap().can_cancel);
+    }
+
+    #[test]
     fn private_google_event_suppresses_details_but_keeps_busy_time() {
         let value = json!({
             "id": "e1", "etag": "\"version-1\"", "summary": "Private title", "visibility": "private",
@@ -4132,6 +4178,7 @@ mod tests {
         });
         let parsed = parse_google_event(&value).unwrap();
         assert!(parsed.private);
+        assert!(!parsed.can_cancel);
         assert_eq!(parsed.version.as_deref(), Some("\"version-1\""));
         assert!(!parsed.recurring);
         assert_eq!(parsed.title, "Private event");
@@ -4153,6 +4200,7 @@ mod tests {
             "location": {"displayName": "Secret room"}, "body": {"content": "Secret"}
         });
         let parsed = parse_graph_event(&value).unwrap();
+        assert!(!parsed.can_cancel);
         assert_eq!(parsed.title, "Private event");
         assert_eq!(parsed.location, None);
         assert_eq!(parsed.description, None);

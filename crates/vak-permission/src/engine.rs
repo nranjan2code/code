@@ -66,12 +66,13 @@ const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
 /// — so the injection silently made `approval_mode = "auto-approve"` a
 /// no-op for exactly these two tools while working for every other one.
 /// A mode default must be sourced as a mode default.
-const NETWORK_TOOLS: [&str; 5] = [
+const NETWORK_TOOLS: [&str; 6] = [
     "webfetch",
     "browse",
     "mail_calendar_send",
     "mail_calendar_event_create",
     "mail_calendar_event_update",
+    "mail_calendar_event_cancel",
 ];
 
 impl PermissionEngine {
@@ -472,6 +473,15 @@ mod tests {
                 ),
                 Decision::Ask { .. }
             ));
+            assert!(matches!(
+                engine.evaluate(
+                    "mail_calendar_event_cancel",
+                    &serde_json::json!({"candidate_id":"candidate-v7"}),
+                    mode,
+                    Path::new("/workspace")
+                ),
+                Decision::Ask { .. }
+            ));
         }
         let denied = PermissionEngine::from_rule_strings(&["-mail_calendar_event_create".into()])
             .expect("valid rule");
@@ -490,6 +500,18 @@ mod tests {
         assert!(matches!(
             denied_update.evaluate(
                 "mail_calendar_event_update",
+                &serde_json::json!({}),
+                Mode::FullAccess,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+        let denied_cancel =
+            PermissionEngine::from_rule_strings(&["-mail_calendar_event_cancel".into()])
+                .expect("valid rule");
+        assert!(matches!(
+            denied_cancel.evaluate(
+                "mail_calendar_event_cancel",
                 &serde_json::json!({}),
                 Mode::FullAccess,
                 Path::new("/workspace")

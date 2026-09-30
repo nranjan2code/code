@@ -309,6 +309,72 @@ impl ProviderEffectClient {
             .map_err(|_| ProviderEffectError::Unknown)?;
         classify_updated_event_response(response).await
     }
+
+    /// Delete only an unchanged public, standalone, timed Google event with
+    /// no guests, when the connected user is its organizer. Google Calendar's
+    /// documented If-Match conditional modification closes the stale-source
+    /// race; other providers are deliberately unsupported here.
+    pub async fn cancel_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        event_id: &str,
+        source_version: &str,
+        occurrence_id: Option<&str>,
+        whole_series: bool,
+    ) -> Result<ProviderAcceptance, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider != Provider::Google {
+            return Err(ProviderEffectError::Unsupported);
+        }
+        validate_event_cancel(event_id, source_version, occurrence_id, whole_series)?;
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let url = format!(
+            "{}/calendars/primary/events/{event_id}",
+            self.google_calendar_base
+        );
+        let source_response = self
+            .http
+            .get(&url)
+            .bearer_auth(token.as_str())
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        match source_response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            StatusCode::NOT_FOUND | StatusCode::PRECONDITION_FAILED => {
+                return Err(ProviderEffectError::Conflict);
+            }
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let source = response_json(source_response).await?;
+        validate_google_cancel_source(&source, event_id, source_version)?;
+        let if_match = reqwest::header::HeaderValue::from_str(source_version)
+            .map_err(|_| ProviderEffectError::Rejected)?;
+        let response = self
+            .http
+            .delete(format!("{url}?sendUpdates=none"))
+            .bearer_auth(token.as_str())
+            .header(reqwest::header::IF_MATCH, if_match)
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        classify_deleted_event_response(response, event_id).await
+    }
 }
 
 /// Only create the semantics shown by the current event Review: one timed
@@ -344,6 +410,41 @@ pub fn validate_event_update(
         || reqwest::header::HeaderValue::from_str(source_version).is_err()
     {
         return Err(ProviderEffectError::Rejected);
+    }
+    Ok(())
+}
+
+pub fn validate_event_cancel(
+    event_id: &str,
+    source_version: &str,
+    occurrence_id: Option<&str>,
+    whole_series: bool,
+) -> Result<(), ProviderEffectError> {
+    if event_id.len() < 5
+        || event_id.len() > 1024
+        || !event_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'v').contains(&byte))
+        || source_version.trim().is_empty()
+        || source_version.len() > 512
+        || source_version.chars().any(char::is_control)
+        || reqwest::header::HeaderValue::from_str(source_version).is_err()
+        || occurrence_id.is_some()
+        || whole_series
+    {
+        return Err(ProviderEffectError::Rejected);
+    }
+    Ok(())
+}
+
+fn validate_google_cancel_source(
+    source: &Value,
+    event_id: &str,
+    source_version: &str,
+) -> Result<(), ProviderEffectError> {
+    validate_google_update_source(source, event_id, source_version)?;
+    if source.pointer("/organizer/self").and_then(Value::as_bool) != Some(true) {
+        return Err(ProviderEffectError::Unsupported);
     }
     Ok(())
 }
@@ -807,6 +908,27 @@ async fn classify_updated_event_response(
     })
 }
 
+async fn classify_deleted_event_response(
+    response: Response,
+    event_id: &str,
+) -> Result<ProviderAcceptance, ProviderEffectError> {
+    match response.status() {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            Err(ProviderEffectError::ReauthorizationRequired)
+        }
+        StatusCode::PRECONDITION_FAILED | StatusCode::NOT_FOUND => {
+            Err(ProviderEffectError::Conflict)
+        }
+        StatusCode::NO_CONTENT => Ok(ProviderAcceptance {
+            provider_item_id: Some(event_id.to_owned()),
+        }),
+        status if status.is_redirection() || status.is_server_error() => {
+            Err(ProviderEffectError::Unknown)
+        }
+        _ => Err(ProviderEffectError::Rejected),
+    }
+}
+
 async fn response_json(response: Response) -> Result<Value, ProviderEffectError> {
     if response
         .content_length()
@@ -1051,6 +1173,141 @@ mod tests {
             validate_google_update_source(&invited, "abcde", "\"v1\""),
             Err(ProviderEffectError::Unsupported)
         );
+    }
+
+    #[test]
+    fn google_cancel_requires_one_valid_standalone_event_and_organizer() {
+        let source = json!({
+            "id":"abcde", "etag":"\"v1\"", "eventType":"default",
+            "visibility":"default", "attendees":[], "organizer":{"self":true},
+            "start":{"dateTime":"2026-10-01T09:00:00Z"},
+            "end":{"dateTime":"2026-10-01T10:00:00Z"}
+        });
+        validate_event_cancel("abcde", "\"v1\"", None, false).unwrap();
+        validate_google_cancel_source(&source, "abcde", "\"v1\"").unwrap();
+        assert_eq!(
+            validate_event_cancel("abcde", "\"v1\"", Some("instance"), false),
+            Err(ProviderEffectError::Rejected)
+        );
+        assert_eq!(
+            validate_event_cancel("abcde", "\"v1\"", None, true),
+            Err(ProviderEffectError::Rejected)
+        );
+        let mut not_organizer = source.clone();
+        not_organizer["organizer"]["self"] = json!(false);
+        assert_eq!(
+            validate_google_cancel_source(&not_organizer, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+        let mut invited = source.clone();
+        invited["attendees"] = json!([{ "email": "guest@example.com" }]);
+        assert_eq!(
+            validate_google_cancel_source(&invited, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+        assert_eq!(
+            validate_google_cancel_source(&source, "abcde", "\"stale\""),
+            Err(ProviderEffectError::Conflict)
+        );
+    }
+
+    #[tokio::test]
+    async fn google_cancel_rechecks_source_and_uses_etag_and_no_guest_notifications() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-cancel-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                crate::vault::AccountSecretMaterial::new(
+                    "google:subject".into(),
+                    Some("owner@example.com".into()),
+                    None,
+                    Some("mock-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let account = ConnectedAccount {
+            id: account_id,
+            provider: Provider::Google,
+            status: crate::AccountStatus::Connected,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::CalendarRead, Capability::CalendarWrite]
+                .into_iter()
+                .collect(),
+            provider_scopes: ["https://www.googleapis.com/auth/calendar.events".into()]
+                .into_iter()
+                .collect(),
+            credential_ref: credential_ref.clone(),
+            principal_ref: credential_ref,
+            revision: 1,
+            connected_at: chrono::Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: false,
+            revoked_at: None,
+        };
+        let delete_observed = Arc::new(Mutex::new(None));
+        let delete_capture = delete_observed.clone();
+        let app = Router::new().route(
+            "/calendar/v3/calendars/primary/events/abcde",
+            get(|| async {
+                Json(json!({
+                    "id":"abcde", "etag":"\"v1\"", "eventType":"default",
+                    "visibility":"default", "attendees":[], "organizer":{"self":true},
+                    "start":{"dateTime":"2026-10-01T09:00:00Z"},
+                    "end":{"dateTime":"2026-10-01T10:00:00Z"}
+                }))
+            })
+            .delete(
+                move |headers: axum::http::HeaderMap, uri: axum::http::Uri| {
+                    let observed = delete_capture.clone();
+                    async move {
+                        *observed.lock().unwrap() = Some((
+                            headers
+                                .get(axum::http::header::IF_MATCH)
+                                .and_then(|v| v.to_str().ok())
+                                .map(str::to_owned),
+                            uri.query().map(str::to_owned),
+                        ));
+                        axum::http::StatusCode::NO_CONTENT
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.google_calendar_base = format!("http://{address}/calendar/v3");
+        let accepted = client
+            .cancel_event(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                "abcde",
+                "\"v1\"",
+                None,
+                false,
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.provider_item_id.as_deref(), Some("abcde"));
+        assert_eq!(
+            delete_observed.lock().unwrap().as_ref(),
+            Some(&(
+                Some("\"v1\"".to_owned()),
+                Some("sendUpdates=none".to_owned())
+            ))
+        );
+        server.abort();
     }
 
     #[test]
