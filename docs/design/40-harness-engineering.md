@@ -1,7 +1,7 @@
 # 40 — Harness engineering
 Status: implemented in 2.0.0
 
-VAK has two complementary regression lanes:
+VAK has four complementary regression lanes:
 
 * `scripts/harness_500.py` discovers library, binary, and integration tests,
   tags them by capability, runs a balanced matrix with isolated subprocesses,
@@ -13,6 +13,10 @@ VAK has two complementary regression lanes:
   fresh workspaces and verifies postconditions, scope, ledger evidence, and
   final output. Model mistakes are retained as failures rather than hidden by
   retries.
+* `vak eval` is the no-model continuous lane. Its scripted provider exercises
+  the production loop and brokered tools against fixed and generated generic
+  work scenarios. Seeded `(seed, index)` cases can be run in bounded batches,
+  while live-model quality remains a separate, opt-in measure.
 
 The deterministic runner discovers individual Rust tests at execution time. A
 balanced 500-case run is the default acceptance gate; it is a selected unique
@@ -162,6 +166,8 @@ under a duration and load budget, not as proof of indefinite availability.
 Example commands:
 
 ```text
+vak eval --generated 500 --seed 20260930 --offset 0 --report target/eval-0.json
+vak eval --generated 500 --seed 20260930 --offset 500 --report target/eval-500.json
 python3 scripts/harness_500.py --limit 500 --repeat 1 --workers 8
 python3 scripts/compound_regression.py --repeat 2 --live --provider ollama --model gemma4:e2b-mlx
 python3 scripts/prompt_scenarios.py --provider openrouter --model <free-model> --workers 2

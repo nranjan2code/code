@@ -451,7 +451,7 @@ async fn run_case_with_tools(
 
     let report = EvalReport {
         task_id: case.id.clone(),
-        passed: !verify_out.is_error,
+        passed: loop_error.is_none() && !verify_out.is_error,
         verify_exit: Some(if verify_out.is_error { 1 } else { 0 }),
         tokens_in,
         tokens_out,
