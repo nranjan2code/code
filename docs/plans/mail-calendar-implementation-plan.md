@@ -1,7 +1,8 @@
 # Plan — secure mail and calendar package
 
-Status: **Stage 0 and Stage 1A Agent/account linking complete on
-`codex/mail-calendar`; Stage 1B awaits the data-architecture M7 gate.** The
+Status: **Stage 0 complete; Stage 1A account linking implemented but security
+audit incomplete on `codex/mail-calendar`; Stage 1B awaits the data-architecture
+M7 gate.** The
 owner opened this feature branch on 2026-09-29. The design contract is
 `docs/design/80-mail-and-calendar.md`. This plan stages the work so a secure
 read path, exact preview, and provider actions can be reviewed as concrete
@@ -145,7 +146,14 @@ provider write scopes until Stage 3 has the reviewed effect path.
 rejection, wrong-principal rejection, scoped account/audience isolation,
 credential redaction, bounded OAuth responses, exact granted-scope handling,
 refresh grant-ceiling preservation, duplicate-principal rejection, and
-idempotent local disconnect. Each provider reports linked, unverified,
+idempotent disconnect. Disconnect must also durably fence OAuth starts across
+processes: process-local cancellation is insufficient because separate server
+processes share the account ledger but not `AuthorizationStore`. A callback
+started in process A must not create credentials after process B disconnects
+the Agent/provider. Persist and atomically check a provider generation or
+equivalent durable authorization fence before calling Stage 1A complete. Add
+a regression using independent authorization stores and ledger handles. Each
+provider reports linked, unverified,
 reauthentication-required, or explicitly unsupported status without implying
 that content access has been tested. Multiple distinct accounts per provider
 remain supported; pending links serialize per Agent/provider, and an active
@@ -783,3 +791,12 @@ authorization and approval boundary on every execution path.
   neither specifies a server-side iCloud Mail/Calendar client grant for
   unattended routines. Recorded this as a provider gate; Sign in with Apple is
   not a data-access grant. M7 remains the gate for all content reads.
+- 2026-09-30: Security audit found that disconnect cancellation is
+  process-local while account ledgers are cross-process. An OAuth callback
+  started in one server process can therefore outlive a disconnect handled by
+  another process; the callback appends its pending row only after redemption,
+  so the other process cannot tombstone that attempt. Stage 1A remains
+  incomplete until a durable provider authorization fence is checked
+  atomically with final vault persistence and covered by a two-process
+  regression. Content reads, previews, retained copies, and routines remain
+  disabled behind the M7 gate.
