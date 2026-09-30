@@ -117,3 +117,15 @@ export function sandboxedSrcdoc(html: string): string {
   const rest = doctype ? html.slice(doctype[0].length) : html;
   return `${doctype ? doctype[0].trim() : "<!doctype html>"}${PREVIEW_CSP_META}${rest}`;
 }
+
+/**
+ * The page a preview is opened in when it gets a window of its own. A `blob:`
+ * page takes the origin of the app that made it, so the preview cannot be the
+ * page: it is loaded into a sandboxed frame inside a bare wrapper that has no
+ * script, and keeps the opaque origin and the no-network policy it has in the
+ * Canvas.
+ */
+export function previewWindowDocument(page: string): string {
+  const attribute = page.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  return `<!doctype html><meta charset="utf-8"><style>html,body,iframe{margin:0;width:100%;height:100%;border:0}</style><iframe sandbox="${PREVIEW_SANDBOX.static}" srcdoc="${attribute}"></iframe>`;
+}

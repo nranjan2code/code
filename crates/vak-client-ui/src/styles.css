@@ -5398,6 +5398,50 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   flex-shrink: 0;
 }
 
+.artifact-canvas-tabs {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-4) 0;
+  background: var(--card-header-bg);
+  border-bottom: 1px solid var(--border-soft);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.artifact-canvas-tab {
+  display: inline-flex;
+  align-items: center;
+  max-width: 200px;
+  border: 1px solid transparent;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  color: var(--text-muted);
+}
+.artifact-canvas-tab.active {
+  background: var(--surface);
+  border-color: var(--border-soft);
+  color: var(--text);
+}
+.artifact-canvas-tab-label,
+.artifact-canvas-tab-close {
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-size: var(--fs-meta);
+  cursor: pointer;
+}
+.artifact-canvas-tab-label {
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-canvas-tab-close {
+  display: inline-flex;
+  padding: var(--space-1);
+  border-radius: 6px;
+}
+.artifact-canvas-tab-close:hover { background: var(--surface-hover); }
 .artifact-canvas-title-group {
   display: flex;
   align-items: center;

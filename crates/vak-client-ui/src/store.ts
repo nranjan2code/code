@@ -1,6 +1,8 @@
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
-import { fileSubject, isDocumentSubject, matchExecutionArtifact, subjectSessionId, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
+import { fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
+import { activateEntry, activeEntry, closeEntry, entriesOf, openEntry, updateEntry, type CanvasMode, type CanvasStacks } from "./canvasStack";
+import { freshEntry } from "./canvasViewers";
 import { displayFileName } from "./attachFiles";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import * as api from "./api";
@@ -292,15 +294,13 @@ export function hydrateWorkbenchExecutions(sessionId: string, events: Array<Reco
 
 /**
  * A Workbench is scoped to the currently selected task, never global app
- * history. A Canvas opened in `sessionId` stays open: showing the same
- * conversation again (the load-time route re-activates it) is not leaving it.
+ * history. The Canvas is scoped the same way, by holding one per conversation.
  */
-export function resetWorkbenchExecutions(sessionId: string) {
+export function resetWorkbenchExecutions() {
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
   setRequestedArtifact(null);
   setActiveComponentPreview(null);
-  if (canvasConversation !== sessionId) closeArtifactCanvas();
 }
 
 /** A component preview shown in the dock (`PreviewPane`); the Canvas shows a `CanvasSubject`. */
@@ -324,21 +324,30 @@ export function openComponentPreview(preview: ActiveComponentPreview) {
 // user-activated only, never auto-opens from tool/sandbox events).
 // ---------------------------------------------------------------------------
 
-export type CanvasMode = "split" | "focused";
+export type { CanvasMode };
 export type CanvasDevice = "desktop" | "tablet" | "mobile";
 
-const [canvasSubject, setCanvasSubject] = createSignal<CanvasSubject | null>(null);
-const [canvasMode, setCanvasMode] = createSignal<CanvasMode>("split");
+const [canvasStacks, setCanvasStacks] = createSignal<CanvasStacks>({});
 const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
-/** The conversation the open Canvas belongs to. */
-let canvasConversation: string | null = null;
+export { canvasDevice, setCanvasDevice };
 
-export { canvasSubject, canvasMode, canvasDevice, setCanvasDevice };
+/** Each conversation has its own Canvas; the one in front is the active conversation's. */
+const canvasConversation = () => activeId() ?? "";
 
-/** Whether the artifact canvas overlay is currently open. */
-export const canvasOpen = () => canvasSubject() !== null;
+/** What is open in the active conversation's Canvas, and which is in front. */
+export const canvasEntries = () => entriesOf(canvasStacks(), canvasConversation());
+export const canvasEntry = () => activeEntry(canvasStacks(), canvasConversation());
+export const canvasSubject = (): CanvasSubject | null => canvasEntry()?.subject ?? null;
+export const canvasMode = (): CanvasMode => canvasEntry()?.mode ?? "split";
 
-/** Open the artifact canvas with a smooth slide-in. User-initiated only. */
+/** Whether the active conversation has a Canvas showing. */
+export const canvasOpen = () => canvasEntry() !== null;
+
+/**
+ * Open a subject in the active conversation's Canvas, in front of what is
+ * already there. User-initiated only. The subject keeps its own identity for
+ * reading, so it can belong to another conversation than the one showing it.
+ */
 export function openArtifactCanvas(subject: CanvasSubject) {
   if (sidebarOpen()) {
     setSidebarOpen(false);
@@ -346,22 +355,33 @@ export function openArtifactCanvas(subject: CanvasSubject) {
   if (dockTab()) {
     setDockTab(null);
   }
-  canvasConversation = subjectSessionId(subject) ?? activeId();
-  // Documents need the whole application viewport for reading and review.
-  // Interactive previews can still open beside the conversation on wide screens.
-  setCanvasMode(isDocumentSubject(subject) || window.matchMedia("(max-width: 1100px)").matches ? "focused" : "split");
-  setCanvasSubject(subject);
+  const narrow = window.matchMedia("(max-width: 1100px)").matches;
+  setCanvasStacks((stacks) => openEntry(stacks, canvasConversation(), subject, (opened) => freshEntry(opened, narrow)));
 }
 
-/** Close the artifact canvas. */
+/** Close the one in front; the last one closed closes the Canvas. */
 export function closeArtifactCanvas() {
-  canvasConversation = null;
-  setCanvasSubject(null);
+  const entry = canvasEntry();
+  if (entry) closeCanvasEntry(entry.key);
+}
+
+export function closeCanvasEntry(key: string) {
+  setCanvasStacks((stacks) => closeEntry(stacks, canvasConversation(), key));
+}
+
+export function activateCanvasEntry(key: string) {
+  setCanvasStacks((stacks) => activateEntry(stacks, canvasConversation(), key));
+}
+
+/** Changes what the reader has done in the one in front (view, selection, note). */
+export function updateCanvasEntry(patch: Parameters<typeof updateEntry>[3], key = canvasEntry()?.key) {
+  if (key) setCanvasStacks((stacks) => updateEntry(stacks, canvasConversation(), key, patch));
 }
 
 /** Toggle between split and focused canvas modes. */
 export function toggleCanvasMode() {
-  setCanvasMode((m) => (m === "split" ? "focused" : "split"));
+  const entry = canvasEntry();
+  if (entry) updateCanvasEntry({ mode: entry.mode === "split" ? "focused" : "split" });
 }
 
 /** Check whether a path represents a directory or folder. */

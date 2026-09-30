@@ -2,6 +2,7 @@ import { render } from "solid-js/web";
 import ArtifactCanvas from "../src/components/ArtifactCanvas";
 import * as store from "../src/store";
 import { fileSubject } from "../src/canvasSubject";
+import { VIEWERS } from "../src/components/canvas/viewers";
 import "../src/styles.css";
 
 // Every route the Canvas can read a file through answers with its own marker,
@@ -37,7 +38,8 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 const frame = () => document.querySelector<HTMLIFrameElement>(".artifact-canvas iframe.artifact-canvas-frame");
 const shown = () => /<h1>([^<]*)<\/h1>/.exec(frame()?.srcdoc ?? "")?.[1];
 const check = (ok: unknown, message: string) => { if (!ok) throw new Error(message); return message; };
-const open = async (run: () => void) => { store.closeArtifactCanvas(); requests.length = 0; run(); await settle(); };
+const clear = () => { while (store.canvasOpen()) store.closeArtifactCanvas(); };
+const open = async (run: () => void) => { clear(); requests.length = 0; run(); await settle(); };
 const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bash", command: "", language: "", scratchDir: "", stdout: "", stderr: "", packages: [], artifacts: [{ path, mimeType: "text/html", sizeBytes: 1 }], status: "completed" as const, timestamp: "" });
 
 (window as any).runChecks = async () => {
@@ -72,6 +74,66 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   await open(() => store.openArtifactFile("report.html"));
   passed.push(check(!store.canvasOpen() && store.notices().some((notice) => /more than one run/.test(notice.text)), "A path made by several runs asks which one instead of choosing"));
 
-  store.closeArtifactCanvas();
+  // Several subjects share one Canvas as tabs, and each keeps what was done in it.
+  await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
+  store.openArtifactFile("data/table.csv", { sessionId: sid });
+  await settle();
+  const tabs = () => [...document.querySelectorAll<HTMLElement>(".artifact-canvas-tab-label")];
+  passed.push(check(tabs().length === 2 && tabs()[1].getAttribute("aria-selected") === "true", "A second subject opens as a tab in front of the first"));
+  tabs()[0].click();
+  await settle();
+  const seg = (label: string) => [...document.querySelectorAll<HTMLElement>(".artifact-canvas-seg-btn")].find((button) => button.textContent?.trim() === label);
+  seg("Code")!.click();
+  await settle();
+  const note = () => document.querySelector<HTMLTextAreaElement>(".artifact-canvas-feedback textarea")!;
+  note().value = "make the heading larger";
+  note().dispatchEvent(new Event("input", { bubbles: true }));
+  await settle();
+  tabs()[1].click();
+  await settle();
+  passed.push(check(!!document.querySelector(".artifact-canvas-table-preview"), "Another tab shows its own viewer"));
+  tabs()[0].click();
+  await settle();
+  passed.push(check(!!document.querySelector(".artifact-canvas-source") && note().value === "make the heading larger", "Coming back to a tab keeps its view and unsent note"));
+
+  // Each conversation has its own Canvas: leaving hides it, returning finds it as it was.
+  store.setActiveId("another-conversation");
+  await settle();
+  passed.push(check(!store.canvasOpen() && !document.querySelector(".artifact-canvas"), "Another conversation has no Canvas showing"));
+  store.setActiveId(sid);
+  await settle();
+  passed.push(check(!!document.querySelector(".artifact-canvas") && tabs().length === 2 && note().value === "make the heading larger", "Returning to a conversation finds its Canvas as it was"));
+
+  // Escape closes the one in front and leaves the other.
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  await settle();
+  passed.push(check(tabs().length === 0 && store.canvasEntries().length === 1 && store.canvasOpen(), "Escape closes only the tab in front"));
+
+  // A document opens on the whole viewport and can still be put beside the conversation.
+  await open(() => store.openArtifactFile("report.docx", { sessionId: sid }));
+  const panel = () => document.querySelector(".artifact-canvas")!;
+  passed.push(check(panel().classList.contains("canvas-focused"), "A document opens on the whole viewport"));
+  const layout = document.querySelector<HTMLElement>('.artifact-canvas-btn[aria-label="Show beside conversation"]');
+  passed.push(check(!!layout, "A document offers to sit beside the conversation"));
+  layout!.click();
+  await settle();
+  passed.push(check(panel().classList.contains("canvas-split"), "A document can be shown beside the conversation"));
+
+  // A viewer that fails is contained: the frame stays, and offers another go.
+  const original = VIEWERS.code;
+  let broken = true;
+  VIEWERS.code = ((props: any) => { if (broken) throw new Error("boom"); return original(props); }) as typeof original;
+  try {
+    await open(() => store.openArtifactFile("src/main.rs", { sessionId: sid }));
+    passed.push(check(/This view stopped working: boom/.test(document.querySelector(".artifact-canvas-error")?.textContent ?? "") && !!document.querySelector(".artifact-canvas-header"), "A failing viewer shows why and leaves the frame usable"));
+    broken = false;
+    [...document.querySelectorAll<HTMLElement>(".artifact-canvas-error button")].find((button) => button.textContent === "Try again")!.click();
+    await settle();
+    passed.push(check(!!document.querySelector(".artifact-canvas-source"), "Trying again draws the viewer"));
+  } finally {
+    VIEWERS.code = original;
+  }
+
+  clear();
   return passed;
 };

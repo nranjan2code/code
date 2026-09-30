@@ -29,3 +29,13 @@ assert.ok(typed.startsWith("<!DOCTYPE html><meta"));
 assert.equal(typed.match(/<!doctype/gi).length, 1);
 
 console.log("preview isolation ok");
+
+// A preview given a window of its own is a sandboxed frame inside a bare wrapper:
+// a blob page takes the app's origin, so the page itself can never be the preview.
+import { previewWindowDocument } from "../src/safeUrl.ts";
+const popped = previewWindowDocument(sandboxedSrcdoc('<p title="a&b">x</p><script>run()</script>'));
+assert.match(popped, /^<!doctype html><meta charset="utf-8"><style>[^<]*<\/style><iframe sandbox="allow-scripts allow-forms" srcdoc="/);
+assert.ok(!popped.replace(/srcdoc="[^"]*"/, "").includes("<script"), "the wrapper carries no script of its own");
+assert.ok(!popped.slice(popped.indexOf('srcdoc="') + 8, -"\"></iframe>".length).includes('"'), "the page cannot close the attribute");
+assert.ok(popped.includes("&amp;") && popped.includes("&quot;"));
+console.log("popout ok");

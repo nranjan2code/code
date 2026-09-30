@@ -20,6 +20,14 @@ When agents generate deliverables — web applications, prototypes, diagrams, re
 
 ## 2. Architecture & Reactive Decoupling
 
+### 0a. The frame, the viewers and the conversation's Canvas
+
+`ArtifactCanvas.tsx` is a frame: header, tab strip, comment area and footer. What each kind of subject can do (its views, whether it can be reloaded, shown at device widths or opened in its own window, where it opens, whether comments are always there) is data in `canvasViewers.ts`, and each kind is drawn by a viewer in `components/canvas/`. Each viewer reads its own content through `createLoader`, which discards a load that has been overtaken and releases what it allocated (a blob URL, a running dev server). A viewer that throws is contained by an error boundary and offers another go. A new subject kind is a registry entry and a viewer.
+
+Each conversation has its own Canvas (`canvasStack.ts`): the subjects opened in it are tabs, reopening one brings it forward and keeps the view, selection and unsent note the reader left in it, and at most eight are kept. Leaving a conversation hides its Canvas and coming back finds it as it was. Documents open on the whole viewport and can be placed beside the conversation; a phone always uses the whole viewport.
+
+A preview opened in a window of its own is a sandboxed frame inside a wrapper with no script (`previewWindowDocument`), never the page itself: a `blob:` page takes the app's origin.
+
 ### 0. What the Canvas shows: a subject
 
 The Canvas opens a `CanvasSubject` (`src/canvasSubject.ts`), which names what is shown by identity, not by path: a workspace `file`, an `execution_artifact` (a run's scratch file), a `draft_file` (one saved version, read through hash-checked candidate routes), `inline` markup from the conversation, or a `live_server`. Each kind is read through the one route its identity names, and there is no fallback between them: an unreadable file is an error, never replaced by text found elsewhere. `openArtifactFile(path, origin?)` is the entry point for files. A bare reference (a path in the Agent's text) is matched to a run only by an identical path made by exactly one run; if several runs made it, the reader is asked instead of a file being chosen.

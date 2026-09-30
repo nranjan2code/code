@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import {
   displayType,
   fileSubject,
-  isDocumentSubject,
   matchExecutionArtifact,
   runOrigin,
   subjectCandidateId,
@@ -45,9 +44,6 @@ assert.deepEqual(
 );
 assert.equal(displayType({ kind: "live_server", title: "app", serverName: "web", sessionId: "s" }), "server");
 
-assert.equal(isDocumentSubject(fileSubject("a.xlsx", {}, "a")), true);
-assert.equal(isDocumentSubject(fileSubject("a.html", {}, "a")), false);
-assert.equal(isDocumentSubject(inline), false);
 
 // A bare reference matches a run only by identical path.
 const runs = [

@@ -76,6 +76,26 @@ export function subjectExecutionId(subject: CanvasSubject): string | undefined {
   return subject.kind === "draft_file" || subject.kind === "execution_artifact" ? subject.executionId : undefined;
 }
 
+/**
+ * What makes two subjects the same thing to reopen. The anchor is left out on
+ * purpose: citing another place in an open file moves within it.
+ */
+export function subjectKey(subject: CanvasSubject): string {
+  switch (subject.kind) {
+    case "file": return `file:${subject.sessionId ?? ""}:${subject.path}`;
+    case "execution_artifact": return `run:${subject.sessionId}:${subject.executionId}:${subject.path}`;
+    case "draft_file": return `draft:${subject.sessionId}:${subject.candidateId}:${subject.path}`;
+    case "live_server": return `server:${subject.sessionId}:${subject.candidateId ?? ""}:${subject.serverName}`;
+    case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
+  }
+}
+
+function digest(text: string): string {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  return (hash >>> 0).toString(36);
+}
+
 const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/;
 
 /** How a subject is drawn. Files are told apart by extension; nothing else is guessed. */
@@ -89,11 +109,6 @@ export function displayType(subject: CanvasSubject): ArtifactDisplayType {
   if (IMAGE_EXTENSIONS.test(path)) return "image";
   if (/\.(html?|xhtml)$/.test(path)) return "html";
   return "code";
-}
-
-/** Whether the subject is a document that reads best with the whole viewport. */
-export function isDocumentSubject(subject: CanvasSubject): boolean {
-  return subject.kind !== "inline" && subject.kind !== "live_server" && /\.(docx|xlsx|pptx|pdf)(?:$|[?#])/i.test(subject.path);
 }
 
 const bare = (path: string) => path.trim().replace(/^\.\//, "");
