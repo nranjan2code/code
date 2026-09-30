@@ -1,6 +1,6 @@
 # 66 — Immersive Polyglot Artifact Canvas
 
-Status: **implemented and audited — September 14, 2026; slide-over overlay canvas, dual split/focused view modes, responsive viewport device switcher, polyglot format engine (HTML, Dev Server, PDF, Images, Code), automated dev-server lifecycle, and reactive atom decoupling landed in 3.0.85.**
+Status: **partially implemented — the viewer, split/focused modes, device switcher and polyglot formats shipped in 3.0.85; preview isolation (§3.1) is enforced from the K0 change. The dev-server path in the Canvas has no producer yet and the dock `PreviewPane` still exists; `docs/plans/canvas-plan.md` is the remaining work.**
 
 ## 1. Product Decision & Thesis
 
@@ -11,7 +11,7 @@ When agents generate deliverables — web applications, prototypes, diagrams, re
 ### Core Decisions
 - **User-Activated Only (Design-61 compliant)**: The canvas never opens automatically on tool execution or file generation. It is summoned explicitly via the prominent "Open Canvas" action on inline preview cards or Workbench items.
 - **Dual Display Modes**:
-  - **Split View (`68%` screen width, min `480px`)**: The canvas slides in smoothly from the right with spring bezier timing. Crucially, the backdrop has `pointer-events: none`, meaning the chat remains completely interactive and scrollable side-by-side. The operator can converse with the assistant while viewing and interacting with the live artifact.
+  - **Split View (`65%` screen width, min `440px`)**: The canvas slides in smoothly from the right with spring bezier timing. Crucially, the backdrop has `pointer-events: none`, meaning the chat remains completely interactive and scrollable side-by-side. The operator can converse with the assistant while viewing and interacting with the live artifact.
   - **Focused View (`100%` screen width)**: Takes over the full viewport for distraction-free deep work, testing, and presentation. The backdrop becomes active (`pointer-events: auto`), and clicking outside closes the focused view.
 - **Polyglot Content Engine**: Seamlessly presents HTML prototypes, live localhost dev servers, PDFs via authenticated streaming blobs, responsive raster/vector images, and formatted syntax-highlighted code.
 - **Automated Dev-Server Lifecycle**: When an artifact requires a backend process, the canvas starts the server (`api.startLaunch`), discovers the active port, binds the preview iframe, and automatically shuts down the server (`api.stopLaunch`) upon dismissal or navigation.
@@ -43,11 +43,22 @@ Closing uses a 220ms CSS slide-out animation via `isClosing()`. If an operator c
 
 | Format | Detection Strategy | Presentation Implementation | Security & Sandboxing |
 |---|---|---|---|
-| **HTML Prototypes** | `.html`, `.htm`, `.xhtml`, or inline HTML snippet without conflicting file path | Sandboxed `<iframe>` with `srcdoc` | Injected strict CSP meta (`sandboxedSrcdoc`), `sandbox="allow-scripts allow-forms"`, origin isolation |
-| **Dev Servers** | `artifact.serverName` or `artifact.serverUrl` | Live `<iframe>` pointing to `http://127.0.0.1:{port}` with auto-lifecycle | `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"` |
+| **HTML Prototypes** | `.html`, `.htm`, `.xhtml`, or inline HTML snippet without conflicting file path | Sandboxed `<iframe>` with `srcdoc` | `static` sandbox and no-network CSP (§3.1) |
+| **Dev Servers** | `artifact.serverName` or `artifact.serverUrl` | Live `<iframe>` pointing to `http://127.0.0.1:{port}` with auto-lifecycle | `live_server` sandbox (§3.1) |
 | **PDF Documents** | `.pdf` extension | Native browser PDF viewer in full-bleed `<iframe>` | Loaded via authenticated raw stream `api.readFileRaw()`, converted to managed blob URL, revoked on cleanup |
 | **Images** | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.ico`, `.bmp` | Responsive image viewport with checkerboard transparency grid | Blob URL streaming, containment sizing |
 | **Code & Config** | `.rs`, `.ts`, `.tsx`, `.py`, `.json`, `.toml`, `.yaml`, `.md`, `.sh`, etc. | Formatted `<pre><code>` block with one-click clipboard copy | Text content display, no script execution |
+
+### 3.1 Preview isolation
+
+A preview runs someone else's markup, so its isolation is decided by the client and never by the data that describes the preview.
+
+- **Sandbox.** `previewSandbox()` (`safeUrl.ts`) is the only source of an `iframe` `sandbox` value: `static` (`allow-scripts allow-forms`, opaque origin) for documents and saved drafts, `live_server` for a dev server that already has its own loopback origin. `allow-same-origin` on a `srcdoc` frame would give the previewed script the app's origin and its authenticated API, so it is never reachable from a card.
+- **Network.** `sandboxedSrcdoc()` always writes `connect-src 'none'`. There is no card field, prop or argument that widens it, so the chrome's "Safe preview, offline" is what the frame enforces. A preview that needs network access is a separate, user-granted setting, not built.
+- **CSP placement.** The policy is the first markup after the document's doctype, so no script (before `<head>`, or in a string or comment that mentions `<head>`) runs ahead of it.
+- **Server side.** `emit_ui_preview_card` has a closed schema, and `normalize_payload` drops `sandbox` and `connect_src` if a model sends them anyway. The client ignores them regardless, because the fence path does not go through the tool.
+
+Tests: `crates/vak-client-ui/tests/preview-isolation.mjs`, and `ui_preview_never_carries_isolation_settings_from_the_model` in `vak-core`.
 
 ---
 

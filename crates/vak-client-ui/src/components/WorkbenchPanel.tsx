@@ -178,11 +178,11 @@ export default function WorkbenchPanel() {
     if (!version || !path || content === null || !/\.html?$/i.test(path)) return;
     let current = true;
     onCleanup(() => { current = false; });
-    void artifactPreviewHtml(path, content, "'none'", {
+    void artifactPreviewHtml(path, content, {
       readFile: (file) => api.readSandboxCandidateFile(version.session_id, version.candidate.candidate_id, file),
       readFileRaw: (file) => api.readSandboxCandidateFileRaw(version.session_id, version.candidate.candidate_id, file),
     })
-      .catch(() => sandboxedSrcdoc(content, "'none'"))
+      .catch(() => sandboxedSrcdoc(content))
       .then((page) => { if (current) setDraftPage(page); });
   });
   const [reviewFileError, setReviewFileError] = createSignal<string | null>(null);
@@ -411,7 +411,7 @@ export default function WorkbenchPanel() {
       if (res.data_url) {
         setArtifactDataUrl(res.data_url);
       } else if (res.content !== undefined) {
-        const preview = /\.html?$/i.test(path) ? await artifactPreviewHtml(path, res.content, undefined, { readFile, readFileRaw: readRaw }) : "";
+        const preview = /\.html?$/i.test(path) ? await artifactPreviewHtml(path, res.content, { readFile, readFileRaw: readRaw }) : "";
         if (request !== artifactRequest) return;
         setArtifactContent(res.content);
         setArtifactPreview(preview);

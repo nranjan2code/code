@@ -309,8 +309,6 @@ export interface ActiveComponentPreview {
   html?: string;
   previewId?: string;
   timestamp?: number;
-  sandbox?: string;
-  connectSrc?: string;
   serverName?: string;
   serverUrl?: string;
   /** Durable conversation/result identity that produced this artifact. */

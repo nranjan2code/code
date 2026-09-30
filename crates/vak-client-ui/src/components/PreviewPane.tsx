@@ -2,7 +2,7 @@ import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import { activeId, activeComponentPreview, setActiveComponentPreview } from "../store";
 import * as api from "../api";
 import Icon from "./Icon";
-import { sandboxedSrcdoc } from "../safeUrl";
+import { previewSandbox, sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
 
 interface ServerCfg {
@@ -288,7 +288,7 @@ export default function PreviewPane() {
                   style="color: var(--faint); font-size: var(--fs-caption);"
                   title="Strict CSP network policy"
                 >
-                  net: {cp().connectSrc ?? "blocked"}
+                  net: blocked
                 </span>
               </div>
 
@@ -311,7 +311,7 @@ export default function PreviewPane() {
                     class="prev-frame"
                     srcdoc={componentHtml()}
                     title={cp().title}
-                    sandbox="allow-scripts"
+                    sandbox={previewSandbox("static")}
                   />
                 </div>
               </Show>
@@ -379,7 +379,7 @@ export default function PreviewPane() {
                 class="prev-frame"
                 src={url()}
                 title="preview"
-                sandbox="allow-scripts allow-forms allow-same-origin"
+                sandbox={previewSandbox("live_server")}
               />
             </Show>
           </div>

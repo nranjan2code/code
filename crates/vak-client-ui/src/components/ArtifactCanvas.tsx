@@ -16,7 +16,7 @@ import {
 import * as api from "../api";
 import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
-import { sandboxedSrcdoc } from "../safeUrl";
+import { previewSandbox, sandboxedSrcdoc } from "../safeUrl";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate, sendPrompt } from "../App";
@@ -401,7 +401,6 @@ export default function ArtifactCanvas() {
           ? await artifactPreviewHtml(
               artifact.artifactPath,
               content,
-              artifact.candidateId ? "'none'" : artifact.connectSrc,
               artifact.candidateId && artifact.sessionId
                 ? {
                     readFile: (path) => api.readSandboxCandidateFile(artifact.sessionId!, artifact.candidateId!, path),
@@ -409,10 +408,10 @@ export default function ArtifactCanvas() {
                   }
                 : api,
             )
-          : sandboxedSrcdoc(content, artifact.connectSrc ?? "'none'");
+          : sandboxedSrcdoc(content);
       } catch {
         // If relative asset resolution fails, fall back to pure sandboxed srcdoc
-        prepared = sandboxedSrcdoc(content, artifact.candidateId ? "'none'" : artifact.connectSrc ?? "'none'");
+        prepared = sandboxedSrcdoc(content);
       }
 
       if (generation !== request) return;
@@ -826,12 +825,7 @@ export default function ArtifactCanvas() {
                       src={serverSrc()}
                       srcdoc={serverSrc() ? undefined : html()}
                       title={title()}
-                      sandbox={
-                        canvasArtifact()?.sandbox ??
-                        (activeServerPort() || canvasArtifact()?.serverUrl
-                          ? "allow-scripts allow-same-origin allow-forms allow-popups"
-                          : "allow-scripts allow-forms")
-                      }
+                      sandbox={previewSandbox(activeServerPort() || canvasArtifact()?.serverUrl ? "live_server" : "static")}
                     />
                   </div>
                 </div>
@@ -924,7 +918,7 @@ export default function ArtifactCanvas() {
               when={activeServerPort() || canvasArtifact()?.serverUrl}
               fallback={
                 <>
-                  Safe preview, {canvasArtifact()?.connectSrc ? "online" : "offline"}
+                  Safe preview, offline
                 </>
               }
             >

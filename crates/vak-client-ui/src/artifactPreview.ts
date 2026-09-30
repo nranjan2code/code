@@ -8,7 +8,7 @@ export interface ArtifactPreviewReader {
 
 /** Resolve assets against the file, never the client app's origin. Reads still
  * cross the authenticated, workspace-confined filesystem endpoint. */
-export async function artifactPreviewHtml(path: string, html: string, connectSrc?: string, reader: ArtifactPreviewReader = api): Promise<string> {
+export async function artifactPreviewHtml(path: string, html: string, reader: ArtifactPreviewReader = api): Promise<string> {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("base").forEach((element) => element.remove());
   const resolve = (value: string, parent = path) => {
@@ -61,5 +61,5 @@ export async function artifactPreviewHtml(path: string, html: string, connectSrc
       element.removeAttribute("srcset");
     }
   }
-  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`, connectSrc);
+  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`);
 }

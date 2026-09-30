@@ -768,7 +768,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
       .then((file) => {
         const content = file.content;
         if (content == null) throw new Error("not text");
-        return artifactPreviewHtml(value.path, content, "'none'", value.reader).catch(() => sandboxedSrcdoc(content, "'none'"));
+        return artifactPreviewHtml(value.path, content, value.reader).catch(() => sandboxedSrcdoc(content));
       })
       .then((html) => { if (current) setPage(html); })
       .catch(() => { if (current) setFailed(true); });
