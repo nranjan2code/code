@@ -16,7 +16,7 @@ use std::{
 use vak_mail_calendar::{
     AccountStatus, Capability, Provider, RoutineOperation, RoutineScope,
     connection_ledger::ConnectionLedger,
-    provider::{CalendarItem, CalendarRange, ProviderReadClient},
+    provider::{BusySlot, CalendarItem, CalendarRange, ProviderReadClient},
     vault::AccountVault,
 };
 
@@ -118,61 +118,28 @@ pub async fn calendar_events_with_worker(
         events.truncate(range.limit.clamp(1, 100));
         return Ok(events);
     }
-    let entry = vak_mail_calendar::provider::IcloudCalDavPath::well_known()?;
-    let principal_xml = client
-        .icloud_caldav_current_principal_xml(account, vault, agent_id, audience)
-        .await?;
-    let principals = vak_tools::broker::parse_caldav_discovery(
+    let calendars = discover_icloud_calendars(
+        client,
+        account,
+        vault,
+        agent_id,
+        audience,
+        Capability::CalendarRead,
         worker_exe,
-        &principal_xml,
-        vak_tools::mail_calendar::DiscoveryMode::CurrentUserPrincipal,
     )
-    .await
-    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
-    let principal_href = first_href(&principals)?;
-    let principal =
-        vak_mail_calendar::provider::IcloudCalDavPath::from_href(&entry, principal_href)?;
-
-    let home_xml = client
-        .icloud_caldav_calendar_home_xml(account, vault, agent_id, audience, &principal)
-        .await?;
-    let homes = vak_tools::broker::parse_caldav_discovery(
-        worker_exe,
-        &home_xml,
-        vak_tools::mail_calendar::DiscoveryMode::CalendarHomeSet,
-    )
-    .await
-    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
-    let home_href = first_href(&homes)?;
-    let calendar_home =
-        vak_mail_calendar::provider::IcloudCalDavPath::from_href(&principal, home_href)?;
-
-    let collections_xml = client
-        .icloud_caldav_calendar_collections_xml(account, vault, agent_id, audience, &calendar_home)
-        .await?;
-    let collections = vak_tools::broker::parse_caldav_discovery(
-        worker_exe,
-        &collections_xml,
-        vak_tools::mail_calendar::DiscoveryMode::CalendarCollections,
-    )
-    .await
-    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
-    let calendars = collections
-        .as_array()
-        .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
-    if calendars.len() > MAX_ICLOUD_CALENDARS {
-        return Err(vak_mail_calendar::provider::ProviderReadError::InvalidResponse);
-    }
+    .await?;
     let mut events = Vec::new();
-    for collection in calendars {
-        let href = collection
-            .get("href")
-            .and_then(Value::as_str)
-            .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
-        let calendar =
-            vak_mail_calendar::provider::IcloudCalDavPath::from_href(&calendar_home, href)?;
+    for calendar in calendars {
         let response = client
-            .icloud_caldav_calendar_query_xml(account, vault, agent_id, audience, &calendar, range)
+            .icloud_caldav_calendar_query_xml(
+                account,
+                vault,
+                agent_id,
+                audience,
+                &calendar,
+                range,
+                Capability::CalendarRead,
+            )
             .await?;
         let parsed = vak_tools::broker::parse_icalendar(worker_exe, &response)
             .await
@@ -187,6 +154,125 @@ pub async fn calendar_events_with_worker(
     events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
     events.truncate(range.limit.clamp(1, 100));
     Ok(events)
+}
+
+/// Read availability for an Apple account using CalDAV's VFREEBUSY response,
+/// which omits event titles, locations, descriptions, and attendee data.
+pub async fn free_busy_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    range: CalendarRange,
+    worker_exe: &Path,
+) -> Result<Vec<BusySlot>, vak_mail_calendar::provider::ProviderReadError> {
+    vak_mail_calendar::provider::validate_range(range.from, range.to)?;
+    if account.provider != Provider::AppleIcloud {
+        return client
+            .free_busy(account, vault, agent_id, audience, range.from, range.to)
+            .await;
+    }
+    let calendars = discover_icloud_calendars(
+        client,
+        account,
+        vault,
+        agent_id,
+        audience,
+        Capability::CalendarFreeBusy,
+        worker_exe,
+    )
+    .await?;
+    let mut busy = Vec::new();
+    for calendar in calendars {
+        let response = client
+            .icloud_caldav_freebusy(account, vault, agent_id, audience, &calendar, range)
+            .await?;
+        let parsed = vak_tools::broker::parse_icalendar_freebusy(worker_exe, &response)
+            .await
+            .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+        let mut parsed: Vec<BusySlot> = serde_json::from_value(parsed)
+            .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+        busy.append(&mut parsed);
+    }
+    busy.retain(|slot| slot.starts_at < range.to && slot.ends_at > range.from);
+    busy.sort_by_key(|slot| slot.starts_at);
+    busy.truncate(range.limit.clamp(1, 100));
+    Ok(busy)
+}
+
+async fn discover_icloud_calendars(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    capability: Capability,
+    worker_exe: &Path,
+) -> Result<
+    Vec<vak_mail_calendar::provider::IcloudCalDavPath>,
+    vak_mail_calendar::provider::ProviderReadError,
+> {
+    let entry = vak_mail_calendar::provider::IcloudCalDavPath::well_known()?;
+    let principal_xml = client
+        .icloud_caldav_current_principal_xml(account, vault, agent_id, audience, capability)
+        .await?;
+    let principals = vak_tools::broker::parse_caldav_discovery(
+        worker_exe,
+        &principal_xml,
+        vak_tools::mail_calendar::DiscoveryMode::CurrentUserPrincipal,
+    )
+    .await
+    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let principal_href = first_href(&principals)?;
+    let principal =
+        vak_mail_calendar::provider::IcloudCalDavPath::from_href(&entry, principal_href)?;
+    let home_xml = client
+        .icloud_caldav_calendar_home_xml(account, vault, agent_id, audience, &principal, capability)
+        .await?;
+    let homes = vak_tools::broker::parse_caldav_discovery(
+        worker_exe,
+        &home_xml,
+        vak_tools::mail_calendar::DiscoveryMode::CalendarHomeSet,
+    )
+    .await
+    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let home_href = first_href(&homes)?;
+    let calendar_home =
+        vak_mail_calendar::provider::IcloudCalDavPath::from_href(&principal, home_href)?;
+    let collections_xml = client
+        .icloud_caldav_calendar_collections_xml(
+            account,
+            vault,
+            agent_id,
+            audience,
+            &calendar_home,
+            capability,
+        )
+        .await?;
+    let collections = vak_tools::broker::parse_caldav_discovery(
+        worker_exe,
+        &collections_xml,
+        vak_tools::mail_calendar::DiscoveryMode::CalendarCollections,
+    )
+    .await
+    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let calendars = collections
+        .as_array()
+        .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    if calendars.len() > MAX_ICLOUD_CALENDARS {
+        return Err(vak_mail_calendar::provider::ProviderReadError::InvalidResponse);
+    }
+    calendars
+        .iter()
+        .map(|collection| {
+            let href = collection
+                .get("href")
+                .and_then(Value::as_str)
+                .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+            vak_mail_calendar::provider::IcloudCalDavPath::from_href(&calendar_home, href)
+        })
+        .collect()
 }
 
 fn event_overlaps_range(event: &CalendarItem, range: CalendarRange) -> bool {
@@ -610,11 +696,18 @@ impl vak_tools::Tool for MailCalendarTool {
                         .routine_scope
                         .as_ref()
                         .map_or(100, |scope| usize::from(scope.max_items));
-                    client
-                        .free_busy(account, &vault, agent_id, &account_audience, from, to)
-                        .await
-                        .map_err(|error| error.to_string())
-                        .map(|items| json!(items.into_iter().take(limit).collect::<Vec<_>>()))
+                    free_busy_with_worker(
+                        &client,
+                        account,
+                        &vault,
+                        agent_id,
+                        &account_audience,
+                        CalendarRange { from, to, limit },
+                        &self.worker_exe,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                    .map(|items| json!(items.into_iter().take(limit).collect::<Vec<_>>()))
                 }
             }
             _ => return vak_tools::ToolOutput::error("Unsupported mail or calendar read."),

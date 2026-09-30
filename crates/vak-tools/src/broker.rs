@@ -76,6 +76,9 @@ enum WorkerTask {
     IcalendarParse {
         data: String,
     },
+    IcalendarFreeBusyParse {
+        data: String,
+    },
     MailMimeParse {
         data: Vec<u8>,
     },
@@ -623,6 +626,19 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::IcalendarFreeBusyParse { data } => {
+            let (content, is_error) = match crate::mail_calendar::parse_freebusy_data(&data) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::MailMimeParse { data } => {
             let (content, is_error) = match crate::mail_calendar::parse_mail_mime(&data) {
                 Ok(content) => (content, false),
@@ -812,6 +828,29 @@ pub async fn parse_icalendar(worker_exe: &Path, data: &str) -> Result<Value, Str
         let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
         serde_json::from_str(&content)
             .map_err(|_| "calendar worker returned an invalid result".to_owned())
+    }
+}
+
+/// Parse a provider VFREEBUSY response in the network-denied worker. The
+/// projection returns only UTC intervals; event properties never leave it.
+pub async fn parse_icalendar_freebusy(worker_exe: &Path, data: &str) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("free/busy response exceeds the parser input limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("free/busy parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-calendar-freebusy-")
+            .tempdir()
+            .map_err(|_| "free/busy parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::IcalendarFreeBusyParse {
+            data: data.to_owned(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "free/busy worker returned an invalid result".to_owned())
     }
 }
 

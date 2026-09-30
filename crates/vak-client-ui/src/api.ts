@@ -174,6 +174,13 @@ export async function connectGoogleAppPassword(agentId: string, email: string, a
   });
 }
 
+export async function connectMicrosoftAppPassword(agentId: string, email: string, appPassword: string): Promise<{ connected: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/microsoft-app-password`, {
+    method: "POST",
+    body: JSON.stringify({ email, app_specific_password: appPassword, capabilities: ["mail_read"] }),
+  });
+}
+
 export async function refreshMailCalendarAccount(agentId: string, accountId: string): Promise<{ account: MailCalendarAccount }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/refresh`, { method: "POST", body: "{}" });
 }

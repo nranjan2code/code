@@ -1280,6 +1280,8 @@ export default function Settings() {
   const [icloudAppPassword, setIcloudAppPassword] = createSignal("");
   const [googleAppEmail, setGoogleAppEmail] = createSignal("");
   const [googleAppPassword, setGoogleAppPassword] = createSignal("");
+  const [microsoftAppEmail, setMicrosoftAppEmail] = createSignal("");
+  const [microsoftAppPassword, setMicrosoftAppPassword] = createSignal("");
   const canAddLocalAppPassword = () => host.kind === "desktop"
     || (typeof window !== "undefined" && ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname));
   const connectMailCalendar = async (provider: api.MailCalendarProvider) => {
@@ -1327,7 +1329,7 @@ export default function Settings() {
       await api.connectIcloudAccount(activeAgentId(), email, appPassword, selectedCapabilities);
       appPassword = "";
       await refreshMailCalendarAccounts();
-      setNotice({ kind: "info", text: selectedCapabilities.length === 1 && selectedCapabilities[0] === "mail_read" ? "iCloud Mail sign-in was verified. Inbox previews show bounded message metadata; message bodies are not available." : selectedCapabilities.length === 1 && selectedCapabilities[0] === "calendar_read" ? "iCloud Calendar sign-in was verified. Calendar previews use bounded reads; event changes are not available." : "The iCloud credential is stored in this Agent's secure vault, but this capability combination remains unverified and unavailable." });
+      setNotice({ kind: "info", text: selectedCapabilities.length === 1 && selectedCapabilities[0] === "mail_read" ? "iCloud Mail sign-in was verified. Inbox previews show bounded message metadata; selected messages can be read as plain text." : selectedCapabilities.length === 1 && selectedCapabilities[0] === "calendar_read" ? "iCloud Calendar sign-in was verified. Calendar previews use bounded reads; event changes are not available." : selectedCapabilities.length === 1 && selectedCapabilities[0] === "calendar_free_busy" ? "iCloud availability access was verified. Only busy time intervals are returned; event details and changes are unavailable." : "The iCloud credential is stored in this Agent's secure vault, but this capability combination remains unverified and unavailable." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect the iCloud account: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -1348,6 +1350,24 @@ export default function Settings() {
       setNotice({ kind: "info", text: "Gmail sign-in was verified. This account can read bounded inbox metadata only. Revoke the App Password from your Google Account security settings." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect Gmail with an App Password: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      password = "";
+      setMailCalendarBusy(false);
+    }
+  };
+  const connectMicrosoftAppPassword = async () => {
+    const email = microsoftAppEmail();
+    let password = microsoftAppPassword();
+    setMicrosoftAppEmail("");
+    setMicrosoftAppPassword("");
+    setMailCalendarBusy(true);
+    try {
+      await api.connectMicrosoftAppPassword(activeAgentId(), email, password);
+      password = "";
+      await refreshMailCalendarAccounts();
+      setNotice({ kind: "info", text: "Outlook.com app-password sign-in was verified. This connection can read email only; calendar and provider changes are unavailable." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not connect the Outlook.com account: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       password = "";
       setMailCalendarBusy(false);
@@ -2815,14 +2835,20 @@ export default function Settings() {
                     <div class="settings-actions"><input type="email" autocomplete="username" value={googleAppEmail()} onInput={(event) => setGoogleAppEmail(event.currentTarget.value)} placeholder="name@gmail.com" /><input type="password" autocomplete="new-password" value={googleAppPassword()} onInput={(event) => setGoogleAppPassword(event.currentTarget.value)} placeholder="Google App Password" /><button class="settings-button" disabled={mailCalendarBusy() || !googleAppEmail() || !googleAppPassword()} onClick={() => void connectGoogleAppPassword()}>Connect Gmail</button></div>
                   </Row>
                 </Show>
-                <Row title="Microsoft · OAuth only" description="Outlook email and calendar through local delegated OAuth with PKCE. Configure VAK_MICROSOFT_OAUTH_CLIENT_ID with an Entra public client. No client secret is used."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("microsoft")}>Connect with Microsoft</button></Row>
-                <p class="settings-hint">Exchange Online has disabled Basic Authentication. Outlook.com/Live currently requires OAuth2 for IMAP; older app-password instructions rely on a legacy sign-in path, so Vakyartha does not offer that fallback. We only accept Microsoft sign-in through OAuth; never enter your Microsoft account password here.</p>
+                <Row title="Microsoft · OAuth (recommended)" description="Outlook email and calendar through local delegated OAuth with PKCE. Configure VAK_MICROSOFT_OAUTH_CLIENT_ID with an Entra public client. No client secret is used."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("microsoft")}>Connect with Microsoft</button></Row>
+                <p class="settings-hint">Exchange Online and Microsoft 365 accounts require OAuth. Never enter your regular Microsoft password here.</p>
+                <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">Outlook.com app-password setup is available only when Vakyartha and this browser run on the same device.</p>}>
+                  <Row title="Outlook.com · App password (email only)" description="For personal Outlook.com, Live, Hotmail, or MSN accounts only. Vakyartha verifies the fixed-host IMAP sign-in before saving it.">
+                    <p class="settings-hint">Security warning: this is a long-lived credential using Microsoft's legacy IMAP sign-in and is less secure than OAuth. Microsoft may reject it or disable this path. It grants email reading only; no calendar, send, or provider changes. Create a unique app password in Microsoft Account security settings, then revoke it there when disconnected. Do not use your regular Microsoft password or a work/school Exchange password.</p>
+                    <div class="settings-actions"><input type="email" autocomplete="username" value={microsoftAppEmail()} onInput={(event) => setMicrosoftAppEmail(event.currentTarget.value)} placeholder="name@outlook.com" /><input type="password" autocomplete="new-password" value={microsoftAppPassword()} onInput={(event) => setMicrosoftAppPassword(event.currentTarget.value)} placeholder="Microsoft app password" /><button class="settings-button" disabled={mailCalendarBusy() || !microsoftAppEmail() || !microsoftAppPassword()} onClick={() => void connectMicrosoftAppPassword()}>Connect Outlook.com</button></div>
+                  </Row>
+                </Show>
                 <Show when={canAddLocalAppPassword()} fallback={<p class="settings-hint">For security, add iCloud app-specific passwords only from Vakyartha running on this device. The credential form is unavailable on hosted servers.</p>}>
                   <Row title="Apple iCloud · App-specific password" description="This build uses a password generated at account.apple.com. Apple also documents account authorization for supported third-party apps, but Vakyartha has no verified integration for it yet.">
                     <p class="settings-hint">Security warning: this provider password can grant broader iCloud access than the single capability selected here. It is stored in this Agent's local credential vault, but Apple controls its scope. Use a unique app-specific password, select one access at a time, and revoke it at account.apple.com when you disconnect. Never enter your Apple Account password.</p>
                     <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
                   </Row>
-                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. For now, connect one verified access at a time: “Read email” provides bounded inbox metadata and separately selected plain-text message reads; “Read calendar events” provides a bounded calendar preview. Availability checks and provider changes are unavailable. Other capability combinations remain unverified. Remove the password at Apple to revoke it.</p>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. Connect one verified access at a time: “Read email” provides bounded inbox metadata and separately selected plain-text message reads; “Check availability” returns busy intervals only; “Read calendar events” provides a bounded calendar preview. Provider changes and combinations of these accesses are unavailable. Remove the password at Apple to revoke it.</p>
                 </Show>
                 <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
               </Group>
@@ -2929,7 +2955,7 @@ export default function Settings() {
                 <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Sending, creating, updating, or cancelling an event changes provider data: each action requires an unchanged saved draft, the matching account grant, a full preview, and your confirmation. Google updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Event creation does not invite attendees. Apple Mail supports bounded selected-message reading and local reply drafts; provider changes are unavailable.</p>
                 <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account to start a local draft.</p>}>
                   <div class="mail-calendar-work-actions">
-                    <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple Mail" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
+                    <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple iCloud" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
                     <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount()} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "mail")}>New email draft</button>
                     <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount() || mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditorAccount())?.provider === "apple_icloud"} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "calendar")}>New event draft</button>
                   </div>
@@ -2993,7 +3019,7 @@ export default function Settings() {
                 <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account with read access to schedule a routine.</p>}>
                   <div class="mail-calendar-editor">
                     <label>Routine name<input value={mailCalendarRoutineName()} onInput={(event) => setMailCalendarRoutineName(event.currentTarget.value)} /></label>
-                    <label>Account<select aria-label="Routine account" value={mailCalendarEditorAccount()} onChange={(event) => { const accountId = event.currentTarget.value; setMailCalendarEditorAccount(accountId); if (mailCalendarAccounts()?.accounts.find((account) => account.id === accountId)?.provider === "apple_icloud") setMailCalendarRoutineOperations((current) => current.filter((operation) => operation !== "mail_thread")); }}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{(account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple Mail" : "Microsoft") + (account.identity_masked ? " · " + account.identity_masked : "")}</option>}</For></select></label>
+                    <label>Account<select aria-label="Routine account" value={mailCalendarEditorAccount()} onChange={(event) => { const accountId = event.currentTarget.value; setMailCalendarEditorAccount(accountId); if (mailCalendarAccounts()?.accounts.find((account) => account.id === accountId)?.provider === "apple_icloud") setMailCalendarRoutineOperations((current) => current.filter((operation) => operation !== "mail_thread")); }}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{(account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple iCloud" : "Microsoft") + (account.identity_masked ? " · " + account.identity_masked : "")}</option>}</For></select></label>
                     <Show when={mailCalendarRoutineOperations().includes("recent_mail")}>
                       <label>Mail folder or label<select aria-label="Routine mail folder" value={mailCalendarRoutineFolderId()} disabled={mailCalendarWatchNewMail()} onChange={(event) => setMailCalendarRoutineFolderId(event.currentTarget.value)}><For each={mailCalendarRoutineFolders()}>{(folder) => <option value={folder.provider_id}>{folder.name}</option>}</For></select></label>
                       <p class="settings-hint">The routine reads only this folder or label. New-mail watches remain limited to Inbox.</p>

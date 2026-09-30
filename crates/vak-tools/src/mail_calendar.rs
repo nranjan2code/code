@@ -131,6 +131,71 @@ pub(crate) fn parse_calendar_data(data: &str) -> Result<String, String> {
     serde_json::to_string(&events).map_err(|_| "calendar results could not be encoded".into())
 }
 
+/// Project an iCalendar VFREEBUSY response to busy intervals only. Provider
+/// event metadata never leaves the isolated parser for this operation.
+pub(crate) fn parse_freebusy_data(data: &str) -> Result<String, String> {
+    if data.is_empty() || data.len() > MAX_CALENDAR_BYTES || data.contains('\0') {
+        return Err("free/busy response is empty or exceeds its size limit".into());
+    }
+    let mut calendars = IcalParser::new(Cursor::new(data.as_bytes()));
+    let calendar = calendars
+        .next()
+        .ok_or_else(|| "free/busy response has no VCALENDAR".to_owned())?
+        .map_err(|_| "free/busy response is invalid".to_owned())?;
+    if calendar.free_busys.is_empty() {
+        return Err("free/busy response has no VFREEBUSY component".into());
+    }
+    let mut slots = Vec::new();
+    for freebusy in calendar.free_busys {
+        for property in freebusy.properties {
+            if !property.name.eq_ignore_ascii_case("FREEBUSY") {
+                continue;
+            }
+            let fbtype = property
+                .params
+                .as_ref()
+                .and_then(|params| {
+                    params
+                        .iter()
+                        .find(|(name, _)| name.eq_ignore_ascii_case("FBTYPE"))
+                })
+                .and_then(|(_, values)| values.first())
+                .map(String::as_str)
+                .unwrap_or("BUSY");
+            if fbtype.eq_ignore_ascii_case("FREE") {
+                continue;
+            }
+            let periods = property
+                .value
+                .as_deref()
+                .ok_or_else(|| "free/busy period is empty".to_owned())?;
+            for period in periods.split(',') {
+                let (start, end) = period
+                    .split_once('/')
+                    .ok_or_else(|| "free/busy period is malformed".to_owned())?;
+                let start = parse_utc_basic_datetime(start)
+                    .ok_or_else(|| "free/busy period start is unsupported".to_owned())?;
+                let end = parse_utc_basic_datetime(end)
+                    .ok_or_else(|| "free/busy period end is unsupported".to_owned())?;
+                if end <= start {
+                    return Err("free/busy period ends before it starts".into());
+                }
+                if slots.len() >= MAX_EVENTS {
+                    return Err("free/busy response contains too many periods".into());
+                }
+                slots.push(json!({ "starts_at": start, "ends_at": end }));
+            }
+        }
+    }
+    serde_json::to_string(&slots).map_err(|_| "free/busy results could not be encoded".into())
+}
+
+fn parse_utc_basic_datetime(value: &str) -> Option<DateTime<Utc>> {
+    let value = value.strip_suffix('Z')?;
+    let naive = NaiveDateTime::parse_from_str(value, "%Y%m%dT%H%M%S").ok()?;
+    Some(DateTime::from_naive_utc_and_offset(naive, Utc))
+}
+
 /// Decode only an explicit, non-attachment `text/plain` MIME part. This is
 /// called only inside the isolated tool worker; HTML and attachment payloads
 /// are never promoted to model-visible message text.
@@ -560,6 +625,54 @@ mod tests {
         let floating = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260930T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         assert!(parse_calendar_data(floating).is_err());
         assert!(parse_calendar_data(&"x".repeat(MAX_CALENDAR_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn freebusy_parser_returns_only_valid_busy_intervals() {
+        let data = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VFREEBUSY\r\nFREEBUSY;FBTYPE=BUSY:20260930T100000Z/20260930T110000Z,20260930T120000Z/20260930T123000Z\r\nFREEBUSY;FBTYPE=FREE:20260930T130000Z/20260930T140000Z\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n";
+        let parsed: Value = serde_json::from_str(&parse_freebusy_data(data).unwrap()).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+        assert_eq!(parsed[0]["starts_at"], "2026-09-30T10:00:00Z");
+        assert_eq!(parsed[1]["ends_at"], "2026-09-30T12:30:00Z");
+        assert_eq!(parsed[0].as_object().unwrap().len(), 2);
+        assert!(!parsed.to_string().contains("FREE"));
+    }
+
+    #[test]
+    fn freebusy_parser_rejects_bad_periods_and_unbounded_responses() {
+        let malformed = "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\nFREEBUSY:private\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n";
+        assert!(parse_freebusy_data(malformed).is_err());
+        assert!(parse_freebusy_data(&"x".repeat(MAX_CALENDAR_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn freebusy_parser_handles_the_full_bounded_simulated_agenda() {
+        let periods = (0..MAX_EVENTS)
+            .map(|minute| {
+                let hour = minute / 60;
+                let minute = minute % 60;
+                format!("20261001T{hour:02}{minute:02}00Z/20261001T{hour:02}{minute:02}30Z")
+            })
+            .collect::<Vec<_>>();
+        let data = format!(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VFREEBUSY\r\nFREEBUSY:{}\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n",
+            periods.join(",")
+        );
+        let parsed: Value = serde_json::from_str(&parse_freebusy_data(&data).unwrap()).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), MAX_EVENTS);
+        assert!(
+            parsed
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|period| period.as_object().is_some_and(|fields| fields.len() == 2))
+        );
+
+        let excessive = format!("{},{}", periods.join(","), periods[0]);
+        let excessive = format!(
+            "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\nFREEBUSY:{excessive}\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n"
+        );
+        assert!(parse_freebusy_data(&excessive).is_err());
     }
 
     #[test]

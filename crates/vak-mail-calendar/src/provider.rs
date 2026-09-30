@@ -33,6 +33,7 @@ const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
 const GMAIL_IMAP_HOST: &str = "imap.gmail.com";
+const OUTLOOK_IMAP_HOST: &str = "outlook.office365.com";
 const ICLOUD_IMAP_PORT: u16 = 993;
 const ICLOUD_CALDAV_URL: &str = "https://caldav.icloud.com/.well-known/caldav";
 const ICLOUD_CALDAV_ORIGIN: &str = "https://caldav.icloud.com";
@@ -314,7 +315,9 @@ impl ProviderReadClient {
                 name: "Inbox".into(),
             }]);
         }
-        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+        if matches!(account.provider, Provider::Google | Provider::Microsoft)
+            && vault.has_app_password(&account.id)
+        {
             return Ok(vec![MailFolder {
                 provider_id: "INBOX".into(),
                 name: "Inbox".into(),
@@ -414,7 +417,9 @@ impl ProviderReadClient {
             }
             return icloud_recent_mail(account, vault, limit).await;
         }
-        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+        if matches!(account.provider, Provider::Google | Provider::Microsoft)
+            && vault.has_app_password(&account.id)
+        {
             if folder_id.is_some_and(|folder| folder != "INBOX") {
                 return Err(ProviderReadError::Unsupported);
             }
@@ -470,7 +475,9 @@ impl ProviderReadClient {
             return icloud_search_mail(account, vault, &query, limit.clamp(1, MAX_MAIL_ITEMS))
                 .await;
         }
-        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+        if matches!(account.provider, Provider::Google | Provider::Microsoft)
+            && vault.has_app_password(&account.id)
+        {
             if folder_id.is_some_and(|folder| folder != "INBOX") {
                 return Err(ProviderReadError::Unsupported);
             }
@@ -519,7 +526,9 @@ impl ProviderReadClient {
             return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_WATCH_SCAN_ITEMS))
                 .await;
         }
-        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+        if matches!(account.provider, Provider::Google | Provider::Microsoft)
+            && vault.has_app_password(&account.id)
+        {
             return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_WATCH_SCAN_ITEMS))
                 .await;
         }
@@ -797,7 +806,9 @@ impl ProviderReadClient {
         if account.provider == Provider::AppleIcloud {
             return icloud_mail_by_ids(account, vault, item_ids).await;
         }
-        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+        if matches!(account.provider, Provider::Google | Provider::Microsoft)
+            && vault.has_app_password(&account.id)
+        {
             return icloud_mail_by_ids(account, vault, item_ids).await;
         }
         let token = vault
@@ -1199,7 +1210,8 @@ impl ProviderReadClient {
     ) -> Result<Vec<u8>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
         if account.provider != Provider::AppleIcloud
-            && !(account.provider == Provider::Google && vault.has_app_password(&account.id))
+            && !(matches!(account.provider, Provider::Google | Provider::Microsoft)
+                && vault.has_app_password(&account.id))
         {
             return Err(ProviderReadError::Unsupported);
         }
@@ -1276,6 +1288,7 @@ impl ProviderReadClient {
         vault: &AccountVault,
         agent_id: &str,
         audience: &str,
+        capability: Capability,
     ) -> Result<String, ProviderReadError> {
         self.icloud_caldav_propfind(
             account,
@@ -1285,6 +1298,7 @@ impl ProviderReadClient {
             &IcloudCalDavPath::well_known()?,
             "0",
             "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:current-user-principal/></d:prop></d:propfind>",
+            capability,
         )
         .await
     }
@@ -1296,6 +1310,7 @@ impl ProviderReadClient {
         agent_id: &str,
         audience: &str,
         principal: &IcloudCalDavPath,
+        capability: Capability,
     ) -> Result<String, ProviderReadError> {
         self.icloud_caldav_propfind(
             account,
@@ -1305,6 +1320,7 @@ impl ProviderReadClient {
             principal,
             "0",
             "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><c:calendar-home-set/></d:prop></d:propfind>",
+            capability,
         )
         .await
     }
@@ -1316,6 +1332,7 @@ impl ProviderReadClient {
         agent_id: &str,
         audience: &str,
         calendar_home: &IcloudCalDavPath,
+        capability: Capability,
     ) -> Result<String, ProviderReadError> {
         self.icloud_caldav_propfind(
             account,
@@ -1325,6 +1342,7 @@ impl ProviderReadClient {
             calendar_home,
             "1",
             "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><d:displayname/><d:resourcetype/></d:prop></d:propfind>",
+            capability,
         )
         .await
     }
@@ -1337,8 +1355,15 @@ impl ProviderReadClient {
         audience: &str,
         calendar: &IcloudCalDavPath,
         range: CalendarRange,
+        capability: Capability,
     ) -> Result<String, ProviderReadError> {
-        admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
+        if !matches!(
+            capability,
+            Capability::CalendarRead | Capability::CalendarFreeBusy
+        ) {
+            return Err(ProviderReadError::NotAdmitted);
+        }
+        admit(account, vault, agent_id, audience, capability)?;
         if account.provider != Provider::AppleIcloud {
             return Err(ProviderReadError::Unsupported);
         }
@@ -1358,6 +1383,49 @@ impl ProviderReadClient {
             &body,
             login.as_str(),
             password.as_str(),
+            StatusCode::MULTI_STATUS,
+            None,
+        )
+        .await
+    }
+
+    pub async fn icloud_caldav_freebusy(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        calendar: &IcloudCalDavPath,
+        range: CalendarRange,
+    ) -> Result<String, ProviderReadError> {
+        admit(
+            account,
+            vault,
+            agent_id,
+            audience,
+            Capability::CalendarFreeBusy,
+        )?;
+        if account.provider != Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        validate_range(range.from, range.to)?;
+        let (login, password) = vault
+            .icloud_imap_credentials(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let body = format!(
+            "<c:free-busy-query xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><c:time-range start=\"{}\" end=\"{}\"/></c:free-busy-query>",
+            range.from.format("%Y%m%dT%H%M%SZ"),
+            range.to.format("%Y%m%dT%H%M%SZ"),
+        );
+        self.icloud_caldav_request(
+            "REPORT",
+            calendar,
+            Some("0"),
+            &body,
+            login.as_str(),
+            password.as_str(),
+            StatusCode::OK,
+            Some("text/calendar"),
         )
         .await
     }
@@ -1371,8 +1439,15 @@ impl ProviderReadClient {
         path: &IcloudCalDavPath,
         depth: &str,
         body: &str,
+        capability: Capability,
     ) -> Result<String, ProviderReadError> {
-        admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
+        if !matches!(
+            capability,
+            Capability::CalendarRead | Capability::CalendarFreeBusy
+        ) {
+            return Err(ProviderReadError::NotAdmitted);
+        }
+        admit(account, vault, agent_id, audience, capability)?;
         if account.provider != Provider::AppleIcloud {
             return Err(ProviderReadError::Unsupported);
         }
@@ -1386,6 +1461,8 @@ impl ProviderReadClient {
             body,
             login.as_str(),
             password.as_str(),
+            StatusCode::MULTI_STATUS,
+            None,
         )
         .await
     }
@@ -1398,6 +1475,8 @@ impl ProviderReadClient {
         body: &str,
         login: &str,
         password: &str,
+        success_status: StatusCode,
+        accept: Option<&str>,
     ) -> Result<String, ProviderReadError> {
         if path.0.origin().ascii_serialization() != ICLOUD_CALDAV_ORIGIN {
             return Err(ProviderReadError::InvalidResponse);
@@ -1411,8 +1490,11 @@ impl ProviderReadClient {
             .header(
                 reqwest::header::CONTENT_TYPE,
                 "application/xml; charset=utf-8",
-            )
-            .body(body.to_owned());
+            );
+        if let Some(accept) = accept {
+            request = request.header(reqwest::header::ACCEPT, accept);
+        }
+        request = request.body(body.to_owned());
         if let Some(depth) = depth {
             request = request.header("Depth", depth);
         }
@@ -1420,7 +1502,7 @@ impl ProviderReadClient {
             .send()
             .await
             .map_err(|_| ProviderReadError::Unavailable)?;
-        read_caldav_multistatus(response).await
+        read_caldav_response(response, success_status).await
     }
 
     async fn google_mail(
@@ -1770,6 +1852,20 @@ pub async fn verify_google_imap_credentials(
         .map_err(|_| ProviderReadError::Unavailable)?
         .map_err(map_imap_error)
         .map(|_| ());
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+pub async fn verify_microsoft_imap_credentials(
+    login: &str,
+    password: &str,
+) -> Result<(), ProviderReadError> {
+    let mut session = imap_session(OUTLOOK_IMAP_HOST, login, password).await?;
+    let result = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map(|_| ())
+        .map_err(map_imap_error);
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
 }
@@ -2373,7 +2469,7 @@ fn imap_host(provider: Provider) -> Result<&'static str, ProviderReadError> {
     match provider {
         Provider::Google => Ok(GMAIL_IMAP_HOST),
         Provider::AppleIcloud => Ok(ICLOUD_IMAP_HOST),
-        Provider::Microsoft => Err(ProviderReadError::Unsupported),
+        Provider::Microsoft => Ok(OUTLOOK_IMAP_HOST),
     }
 }
 
@@ -2454,7 +2550,7 @@ fn imap_body_has_attachments(body: &async_imap::imap_proto::types::BodyStructure
         || nested.is_some_and(|parts| parts.iter().any(imap_body_has_attachments))
 }
 
-fn validate_range(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), ProviderReadError> {
+pub fn validate_range(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), ProviderReadError> {
     if to <= from
         || to - from > Duration::days(31)
         || from < Utc::now() - Duration::days(365)
@@ -2734,9 +2830,16 @@ fn google_history_inbox_ids(value: &Value, limit: usize) -> Result<Vec<String>, 
     Ok(ids)
 }
 
-async fn read_caldav_multistatus(mut response: Response) -> Result<String, ProviderReadError> {
+async fn read_caldav_multistatus(response: Response) -> Result<String, ProviderReadError> {
+    read_caldav_response(response, StatusCode::MULTI_STATUS).await
+}
+
+async fn read_caldav_response(
+    mut response: Response,
+    success_status: StatusCode,
+) -> Result<String, ProviderReadError> {
     match response.status() {
-        StatusCode::MULTI_STATUS => {}
+        status if status == success_status => {}
         StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
             return Err(ProviderReadError::ReauthenticationRequired);
         }
@@ -4038,16 +4141,16 @@ mod tests {
     }
 
     #[test]
-    fn imap_hosts_are_fixed_per_supported_password_provider() {
+    fn imap_hosts_are_fixed_per_password_provider() {
         assert_eq!(imap_host(Provider::Google).unwrap(), "imap.gmail.com");
         assert_eq!(
             imap_host(Provider::AppleIcloud).unwrap(),
             "imap.mail.me.com"
         );
-        assert!(matches!(
-            imap_host(Provider::Microsoft),
-            Err(ProviderReadError::Unsupported)
-        ));
+        assert_eq!(
+            imap_host(Provider::Microsoft).unwrap(),
+            "outlook.office365.com"
+        );
     }
 
     #[tokio::test]
@@ -4451,6 +4554,18 @@ mod tests {
             .route(
                 "/unauthorized",
                 axum::routing::any(|| async { StatusCode::UNAUTHORIZED }),
+            )
+            .route(
+                "/freebusy",
+                axum::routing::any(|| async {
+                    axum::http::Response::builder()
+                        .status(StatusCode::OK)
+                        .header(reqwest::header::CONTENT_TYPE, "text/calendar")
+                        .body(axum::body::Body::from(
+                            "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n",
+                        ))
+                        .unwrap()
+                }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -4515,6 +4630,20 @@ mod tests {
             read_caldav_multistatus(unauthorized).await,
             Err(ProviderReadError::ReauthenticationRequired)
         ));
+        let freebusy = http
+            .request(
+                reqwest::Method::from_bytes(b"REPORT").unwrap(),
+                format!("http://{address}/freebusy"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            read_caldav_response(freebusy, StatusCode::OK)
+                .await
+                .unwrap(),
+            "BEGIN:VCALENDAR\r\nBEGIN:VFREEBUSY\r\nEND:VFREEBUSY\r\nEND:VCALENDAR\r\n"
+        );
         task.abort();
     }
 

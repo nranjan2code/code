@@ -23,18 +23,19 @@ Apple conversation grouping/effects, event update/cancellation beyond the
 Google standalone profiles, RSVP, complete
 provider reconciliation, live provider checks, and the 24-hour service recovery
 acceptance remain open, 2026-09-30.**
-iCloud links now verify fixed-host IMAP MailRead-only or CalDAV CalendarRead-only
-access as separate account selections. Apple inbox previews expose bounded
+iCloud links now verify fixed-host IMAP MailRead-only, CalDAV CalendarFreeBusy-only,
+or CalDAV CalendarRead-only access as separate account selections. Apple inbox previews expose bounded
 metadata, and the person or Agent can request one selected message body through
 a fixed-UID, read-only fetch parsed in the isolated worker. Calendar previews perform fixed-origin CalDAV discovery and
 range-bounded event reads; provider XML and iCalendar content are parsed in the
 network-denied worker. CalDAV results are filtered locally against the
 requested time range after worker parsing. A bounded worker-side MIME parser
-selects bounded plain-text parts and skips HTML and attachments. Apple free/busy,
-event changes, and mixed capability selections remain unavailable or
-unverified. No credentialed live
-Apple Calendar request has been made, so authenticated provider discovery
-semantics still need live verification.**
+selects bounded plain-text parts and skips HTML and attachments. Apple free/busy
+uses CalDAV `free-busy-query`; the worker returns only busy intervals without
+event details. Apple event changes and mixed capability selections remain
+unavailable or unverified. No credentialed live Apple Calendar request has
+been made, so authenticated provider discovery and free/busy semantics still
+need live verification.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -42,7 +43,7 @@ Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
 connection Settings panel with masked display identities, local-only Apple
 app-specific-password enrollment, and a broker-owned read tool for the local
 owner surface are implemented in that
-branch. OAuth, Apple, and Google App Password activation hold the shared connection-ledger lock
+branch. OAuth and all provider App Password activations hold the shared connection-ledger lock
 across the Agent-vault credential write and pending-to-connected event, so a
 concurrent disconnect either prevents the new credential write or runs after
 activation and removes it. Apple enrollment records only read capabilities
@@ -66,6 +67,21 @@ Calendar, sending, and all provider writes are unavailable for this sign-in
 method. The UI warns that the long-lived App Password is less secure than
 OAuth and identifies provider-side revocation. Microsoft Exchange Online has
 no app-password alternative; its connection remains OAuth-only.
+Microsoft personal Outlook.com/Live/Hotmail/MSN accounts also have an optional
+local-only app-password path, separately from OAuth. It accepts only those
+consumer address domains, verifies a fixed-host IMAP sign-in to
+`outlook.office365.com:993` over TLS with read-only `EXAMINE`, and grants only
+MailRead. Inbox metadata, selected message bodies, and bounded scheduled
+message-ID watches use the same fixed-host IMAP adapter and isolated MIME
+worker as the other password-based read paths. It offers no calendar, send,
+conversation, attachment, or provider-write access. Microsoft documents app
+passwords for personal accounts and legacy clients while its current Outlook.com
+IMAP setup requires OAuth2; Basic Authentication retirement and current
+provider enforcement mean this fallback may stop working or be rejected. The
+connect action verifies the credential before storing it. Microsoft 365 and
+work/school Exchange accounts stay OAuth-only. The app password is never the
+ordinary Microsoft password. It is local-device only, Agent-vault stored,
+zeroized on disconnect, and warned as less secure before entry.
 Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
 share grant. Provider previews redact private-event titles, locations,
@@ -170,9 +186,11 @@ remain unavailable. Attachments are not copied into Agent history unless a
 person separately asks the Agent to read or use that content.
 No crypto-shred guarantee is made. Apple Mail is available only for a verified
 Mail-only account; inbox listing returns bounded metadata and a separately
-selected message can return bounded plain text. Apple Calendar is available for a separately verified CalendarRead-only
-account through fixed-origin CalDAV discovery and worker-isolated parsing;
-free/busy and provider effects remain unavailable. No live credentialed Apple
+selected message can return bounded plain text. Apple Calendar event previews
+and availability checks require separately verified CalendarRead-only and
+CalendarFreeBusy-only accounts, respectively. Availability uses a CalDAV
+`free-busy-query` and worker-side VFREEBUSY projection that exposes only busy
+intervals. Provider effects remain unavailable. No live credentialed Apple
 Calendar verification has been performed.
 Provider-specific API details and consent requirements must be rechecked
 against current provider documentation before each implementation milestone.
@@ -334,12 +352,13 @@ uses `UID FETCH BODY.PEEK[]`, checks UIDVALIDITY, caps the full message at
 128 KiB within the 512 KiB IMAP session budget, and sends raw MIME directly to
 the network-denied worker. It returns only bounded `text/plain`; HTML and
 attachments are not exposed, and HTML-only messages are labelled as lacking a
-plain-text body. Calendar access requires a separate CalendarRead-only
-selection and a successful fixed-host CalDAV authentication probe. That path
-performs bounded discovery and range queries, validates every provider href
-against the fixed Apple origin, and parses returned XML/iCalendar inside the
-network-denied worker. Mixed capability selections remain
-`connected_unverified`; Apple free/busy and effects are unavailable.
+plain-text body. Calendar event access and availability each require a separate
+capability selection and a successful fixed-host CalDAV authentication probe.
+Both paths perform bounded discovery, validate every provider href against
+the fixed Apple origin, and parse provider responses inside the network-denied
+worker. The availability path uses CalDAV `free-busy-query` and returns only
+busy intervals. Mixed capability selections remain `connected_unverified`;
+Apple effects are unavailable.
 Apple's developer OAuth service is Account & Organizational Data Sharing; its
 documented scopes are for the Apple School Manager Roster API
 (`edu.users.read`, `edu.classes.read`), not iCloud Mail or Calendar
@@ -350,9 +369,9 @@ grant for unattended routines ([EventKit access](https://developer.apple.com/doc
 **Do not treat Sign in with Apple as this permission:** it authenticates a
 person to Vakyartha, rather than granting access to their iCloud Mail or
 Calendar ([Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
-The current fixed-host IMAP and CalDAV read paths are implemented, but
-credentialed live Apple Calendar conformance, provider revocation behavior,
-Apple free/busy, and all Apple write operations remain unverified or
+The current fixed-host IMAP, CalDAV event-read, and free/busy paths are
+implemented, but credentialed live Apple Calendar conformance, provider
+revocation behavior, and all Apple write operations remain unverified or
 unsupported. No generic arbitrary-URL, raw-HTTP, or model-selected MCP call is
 an escape hatch to the account. Custom IMAP/CalDAV hosts are out of initial
 scope.
@@ -806,8 +825,8 @@ permissions. Never accept an ordinary account password as a fallback.
 | Provider | Preferred method | Additional method | Boundary and warning |
 | --- | --- | --- | --- |
 | Google | Local OAuth authorization with PKCE | Google App Password over fixed-host Gmail IMAP | App Password is a long-lived account credential and is less secure than OAuth. The local-only enrollment path verifies it against `imap.gmail.com:993`, stores it only in the owning Agent's credential vault, supports bounded Inbox metadata and selected worker-parsed message reads, and grants MailRead only. No Calendar, send, or provider-write access. Never request the user's ordinary Google password. |
-| Microsoft | Local delegated OAuth authorization with PKCE | None offered | Exchange Online disables Basic Authentication for IMAP/POP/SMTP. Outlook.com/Live's current IMAP settings require OAuth2; Microsoft still documents app passwords for some legacy apps while retiring Basic Authentication. That conflicting legacy path is not offered because it is not a reliable secure integration contract. Never collect the ordinary Microsoft password. OAuth setup requires a public-client registration. |
-| Apple iCloud | Apple documents account authorization for supported third-party apps, but Vak has no verified integration path for it yet | Current: Apple app-specific password over fixed-host IMAP and CalDAV | The app-specific password is broader and longer-lived than OAuth and its scope is controlled by Apple, not Vak. It is stored only in the owning Agent's credential vault; show the warning before entry and revocation steps after connection. Current support is read-only and separately verified as MailRead or CalendarRead. Never request the Apple Account password. |
+| Microsoft | Local delegated OAuth authorization with PKCE | Local app password for personal Outlook.com/Live/Hotmail/MSN accounts, IMAP MailRead only | Microsoft 365 and work/school Exchange remain OAuth-only. Microsoft documents app passwords for personal accounts and legacy clients, while Outlook.com's current IMAP setup requires OAuth2 and Microsoft is retiring Basic Authentication. This fallback may be rejected; it verifies the fixed-host IMAP connection before storing. It is a long-lived, less-secure credential and grants email reading only. Never collect the ordinary Microsoft password. OAuth setup requires a public-client registration. |
+| Apple iCloud | Apple documents account authorization for supported third-party apps, but Vak has no verified integration path for it yet | Current: Apple app-specific password over fixed-host IMAP and CalDAV | The app-specific password is broader and longer-lived than OAuth and its scope is controlled by Apple, not Vak. It is stored only in the owning Agent's credential vault; show the warning before entry and revocation steps after connection. Current support is read-only and separately verified as MailRead, CalendarFreeBusy, or CalendarRead. Never request the Apple Account password. |
 
 Password-based alternatives are local-device setup only: refuse them on a
 public/hosted listener, do not put values in the connection ledger, logs,
@@ -817,9 +836,9 @@ revocation instruction after connection. Do not broaden a password-based
 account's capabilities just because its protocol technically permits writes.
 The supported choices are intentionally provider-specific: Google offers
 OAuth and its limited Gmail-only App Password fallback; Microsoft offers
-delegated OAuth only (Exchange Online disables Basic Authentication, and
-Outlook.com/Live's current IMAP contract requires OAuth2 despite legacy app-
-password instructions);
+delegated OAuth plus a verified, read-only personal Outlook.com/Live/Hotmail/MSN
+app-password fallback that may be rejected under its changing legacy-auth
+policy (Microsoft 365 and work/school Exchange stay OAuth-only);
 iCloud currently uses an Apple app-specific password for the supported
 protocols; Apple's account authorization for supported third-party apps is a
 candidate to investigate, not a Vakyartha connection option until its grant

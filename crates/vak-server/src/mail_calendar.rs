@@ -65,13 +65,12 @@ pub(crate) async fn validate_routine_scope(
     if !vault.credential_available(&scope.account_id) {
         return Err("the selected account's saved credential is unavailable".into());
     }
-    if account.provider == Provider::Google
+    if matches!(account.provider, Provider::Google | Provider::Microsoft)
         && vault.has_app_password(&account.id)
         && scope.operations.contains(&RoutineOperation::MailThread)
     {
         return Err(
-            "Gmail App Password accounts support selected-message reads, not conversation reads"
-                .into(),
+            "App Password accounts support selected-message reads, not conversation reads".into(),
         );
     }
     if let Some(folder_id) = scope.mail_folder_id.as_deref() {
@@ -1481,16 +1480,20 @@ pub(super) async fn free_busy_preview(
         &account.capabilities,
         "requested",
     );
-    match vak_mail_calendar::provider::ProviderReadClient::default()
-        .free_busy(
-            &account,
-            &vault,
-            &agent_id,
-            &format!("agent:{agent_id}"),
-            request.from,
-            request.to,
-        )
-        .await
+    match vak_core::mail_calendar::free_busy_with_worker(
+        &vak_mail_calendar::provider::ProviderReadClient::default(),
+        &account,
+        &vault,
+        &agent_id,
+        &format!("agent:{agent_id}"),
+        vak_mail_calendar::provider::CalendarRange {
+            from: request.from,
+            to: request.to,
+            limit: 100,
+        },
+        &state.core.tool_worker_exe(),
+    )
+    .await
     {
         Ok(busy) => {
             record_account_event(
@@ -1619,7 +1622,8 @@ fn same_provider_principal(
     right: &AccountSecretMaterial,
 ) -> bool {
     if provider == Provider::AppleIcloud
-        || (provider == Provider::Google && (left.uses_app_password() || right.uses_app_password()))
+        || (matches!(provider, Provider::Google | Provider::Microsoft)
+            && (left.uses_app_password() || right.uses_app_password()))
     {
         left.has_same_display_identity_ignoring_ascii_case(right)
     } else {
@@ -1844,6 +1848,8 @@ pub(super) async fn connect_app_password(
 ) -> Response {
     let provider = if uri.path().ends_with("/google-app-password") {
         Provider::Google
+    } else if uri.path().ends_with("/microsoft-app-password") {
+        Provider::Microsoft
     } else {
         Provider::AppleIcloud
     };
@@ -1893,13 +1899,13 @@ pub(super) async fn connect_app_password(
                         Capability::CalendarFreeBusy | Capability::CalendarRead
                     ))
         });
+    let microsoft_personal_email =
+        provider != Provider::Microsoft || valid_microsoft_personal_email(&email);
     let audit_capabilities = capabilities.clone();
     let verified_mail_only =
         capabilities.len() == 1 && capabilities.contains(&Capability::MailRead);
-    let verified_calendar_only = provider == Provider::AppleIcloud
-        && capabilities.len() == 1
-        && capabilities.contains(&Capability::CalendarRead);
-    if !valid_email || !valid_password || !supported_read_only {
+    let verified_calendar_only = verified_icloud_calendar_selection(provider, &capabilities);
+    if !valid_email || !valid_password || !supported_read_only || !microsoft_personal_email {
         request.app_specific_password.0.zeroize();
         return (
             StatusCode::BAD_REQUEST,
@@ -1985,20 +1991,31 @@ pub(super) async fn connect_app_password(
             }
         }
     }
-    if verified_mail_only && provider == Provider::Google {
+    if verified_mail_only && matches!(provider, Provider::Google | Provider::Microsoft) {
         let (imap_login, imap_password) = match material.icloud_imap_credentials() {
             Ok(credentials) => credentials,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         };
-        if vak_mail_calendar::provider::verify_google_imap_credentials(
-            imap_login.as_str(),
-            imap_password.as_str(),
-        )
-        .await
-        .is_err()
-        {
-            return (StatusCode::UNAUTHORIZED,
-                "Gmail App Password sign-in could not be verified. Check the email and app password.").into_response();
+        let verification = if provider == Provider::Google {
+            vak_mail_calendar::provider::verify_google_imap_credentials(
+                imap_login.as_str(),
+                imap_password.as_str(),
+            )
+            .await
+        } else {
+            vak_mail_calendar::provider::verify_microsoft_imap_credentials(
+                imap_login.as_str(),
+                imap_password.as_str(),
+            )
+            .await
+        };
+        if verification.is_err() {
+            let message = if provider == Provider::Google {
+                "Gmail App Password sign-in could not be verified. Check the email and app password."
+            } else {
+                "Outlook.com app-password sign-in could not be verified. Check that this is a personal Outlook.com, Live, Hotmail, or MSN account and that its provider still permits IMAP app-password sign-in."
+            };
+            return (StatusCode::UNAUTHORIZED, message).into_response();
         }
     } else if verified_mail_only {
         let (imap_login, imap_password) = match material.icloud_imap_credentials() {
@@ -2215,6 +2232,16 @@ fn valid_provider_email(email: &str) -> bool {
     valid_local && valid_domain
 }
 
+fn verified_icloud_calendar_selection(
+    provider: Provider,
+    capabilities: &BTreeSet<Capability>,
+) -> bool {
+    provider == Provider::AppleIcloud
+        && capabilities.len() == 1
+        && (capabilities.contains(&Capability::CalendarRead)
+            || capabilities.contains(&Capability::CalendarFreeBusy))
+}
+
 fn valid_provider_app_password(provider: Provider, password: &str) -> bool {
     match provider {
         Provider::Google => {
@@ -2229,8 +2256,20 @@ fn valid_provider_app_password(provider: Provider, password: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         }
-        Provider::Microsoft => false,
+        Provider::Microsoft => {
+            (8..=64).contains(&password.len())
+                && password.bytes().all(|byte| byte.is_ascii_graphic())
+        }
     }
+}
+
+fn valid_microsoft_personal_email(email: &str) -> bool {
+    email.rsplit_once('@').is_some_and(|(_, domain)| {
+        matches!(
+            domain.to_ascii_lowercase().as_str(),
+            "outlook.com" | "hotmail.com" | "live.com" | "msn.com"
+        )
+    })
 }
 
 fn record_account_event(
@@ -2264,11 +2303,13 @@ mod tests {
     use super::{
         OAUTH_CALLBACK_COOKIE, is_loopback_request, oauth_callback_cookie, oauth_callback_page,
         oauth_callback_set_cookie, oauth_callback_uri, registered_agent, same_provider_principal,
-        valid_agent, valid_provider_app_password, valid_provider_email,
+        valid_agent, valid_microsoft_personal_email, valid_provider_app_password,
+        valid_provider_email, verified_icloud_calendar_selection,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-    use vak_mail_calendar::Provider;
+    use std::collections::BTreeSet;
     use vak_mail_calendar::vault::AccountSecretMaterial;
+    use vak_mail_calendar::{Capability, Provider};
 
     #[test]
     fn app_password_validation_is_provider_specific_and_accepts_google_display_spacing() {
@@ -2292,14 +2333,40 @@ mod tests {
             Provider::AppleIcloud,
             "abcd-efgh-ijkl-mnop"
         ));
+        assert!(valid_provider_app_password(
+            Provider::Microsoft,
+            "a1b2c3d4e5f6g7h8"
+        ));
+        assert!(!valid_provider_app_password(Provider::Microsoft, "short"));
         assert!(!valid_provider_app_password(
             Provider::Microsoft,
-            "app-password-123456"
+            "not safe\npassword"
+        ));
+        assert!(valid_microsoft_personal_email("person@live.com"));
+        assert!(valid_microsoft_personal_email("person@outlook.com"));
+        assert!(!valid_microsoft_personal_email("person@company.com"));
+    }
+
+    #[test]
+    fn icloud_calendar_read_and_freebusy_are_individually_verified_but_not_combined() {
+        for capability in [Capability::CalendarRead, Capability::CalendarFreeBusy] {
+            assert!(verified_icloud_calendar_selection(
+                Provider::AppleIcloud,
+                &BTreeSet::from([capability]),
+            ));
+        }
+        assert!(!verified_icloud_calendar_selection(
+            Provider::AppleIcloud,
+            &BTreeSet::from([Capability::CalendarRead, Capability::CalendarFreeBusy]),
+        ));
+        assert!(!verified_icloud_calendar_selection(
+            Provider::Google,
+            &BTreeSet::from([Capability::CalendarFreeBusy]),
         ));
     }
 
     #[test]
-    fn google_oauth_and_app_password_links_for_same_email_are_duplicates() {
+    fn oauth_and_app_password_links_for_same_email_are_duplicates() {
         let oauth = AccountSecretMaterial::new(
             "google:opaque-subject".into(),
             Some("owner@gmail.com".into()),
@@ -2325,7 +2392,7 @@ mod tests {
             &oauth,
             &app_password
         ));
-        assert!(!same_provider_principal(
+        assert!(same_provider_principal(
             Provider::Microsoft,
             &oauth,
             &app_password

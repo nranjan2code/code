@@ -751,6 +751,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/mail-calendar/accounts/{agent_id}/oauth", post(mail_calendar::begin_oauth))
         .route("/mail-calendar/accounts/{agent_id}/icloud", post(mail_calendar::connect_app_password))
         .route("/mail-calendar/accounts/{agent_id}/google-app-password", post(mail_calendar::connect_app_password))
+        .route("/mail-calendar/accounts/{agent_id}/microsoft-app-password", post(mail_calendar::connect_app_password))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/refresh", post(mail_calendar::refresh_account))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-preview", post(mail_calendar::mail_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-folders", get(mail_calendar::mail_folders))
