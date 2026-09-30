@@ -26,6 +26,7 @@ const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
 const ICLOUD_IMAP_PORT: u16 = 993;
+const ICLOUD_CALDAV_URL: &str = "https://caldav.icloud.com/.well-known/caldav";
 const MAX_IMAP_SESSION_BYTES: usize = 512 * 1024;
 type IcloudSession =
     async_imap::Session<BudgetIo<async_native_tls::TlsStream<tokio::net::TcpStream>>>;
@@ -629,6 +630,51 @@ pub async fn verify_icloud_mail_credentials(
         .map(|_| ());
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
+}
+
+/// Verify an iCloud app-specific password against Apple's fixed CalDAV
+/// endpoint without following redirects or parsing provider-controlled XML.
+/// This is only an authentication probe: callers must not mark calendar
+/// capabilities usable until discovery, bounded event reads, and worker-side
+/// iCalendar parsing are implemented.
+pub async fn verify_icloud_calendar_credentials(
+    login: &str,
+    password: &str,
+) -> Result<(), ProviderReadError> {
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(StdDuration::from_secs(15))
+        .build()
+        .map_err(|_| ProviderReadError::Unavailable)?;
+    verify_icloud_calendar_credentials_at(&client, ICLOUD_CALDAV_URL, login, password).await
+}
+
+async fn verify_icloud_calendar_credentials_at(
+    client: &reqwest::Client,
+    endpoint: &str,
+    login: &str,
+    password: &str,
+) -> Result<(), ProviderReadError> {
+    let method =
+        reqwest::Method::from_bytes(b"PROPFIND").map_err(|_| ProviderReadError::Unavailable)?;
+    let response = client
+        .request(method, endpoint)
+        .basic_auth(login, Some(password))
+        .header("Depth", "0")
+        .header(reqwest::header::CONTENT_TYPE, "application/xml; charset=utf-8")
+        .body("<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:prop><d:current-user-principal/></d:prop></d:propfind>")
+        .send()
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?;
+    match response.status() {
+        StatusCode::MULTI_STATUS => Ok(()),
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            Err(ProviderReadError::ReauthenticationRequired)
+        }
+        status if status.is_redirection() => Err(ProviderReadError::InvalidResponse),
+        _ => Err(ProviderReadError::Unavailable),
+    }
 }
 
 fn admit(
@@ -1404,6 +1450,72 @@ mod tests {
         assert!(matches!(
             parse_response(redirect, 64).await,
             Err(ProviderReadError::Unavailable)
+        ));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn icloud_caldav_probe_authenticates_only_to_fixed_endpoint_and_rejects_redirects() {
+        use axum::http::Request;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let saw_authorization = Arc::new(AtomicBool::new(false));
+        let captured = Arc::clone(&saw_authorization);
+        let app = axum::Router::new()
+            .route(
+                "/caldav",
+                axum::routing::any(move |request: Request<axum::body::Body>| {
+                    let captured = Arc::clone(&captured);
+                    async move {
+                        captured.store(
+                            request
+                                .headers()
+                                .contains_key(reqwest::header::AUTHORIZATION),
+                            Ordering::SeqCst,
+                        );
+                        axum::http::StatusCode::MULTI_STATUS
+                    }
+                }),
+            )
+            .route(
+                "/redirect",
+                axum::routing::any(|| async {
+                    axum::http::Response::builder()
+                        .status(StatusCode::TEMPORARY_REDIRECT)
+                        .header(reqwest::header::LOCATION, "/caldav")
+                        .body(axum::body::Body::empty())
+                        .unwrap()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+
+        assert!(
+            verify_icloud_calendar_credentials_at(
+                &client,
+                &format!("http://{address}/caldav"),
+                "owner@icloud.com",
+                "test-app-password",
+            )
+            .await
+            .is_ok()
+        );
+        assert!(saw_authorization.load(Ordering::SeqCst));
+        assert!(matches!(
+            verify_icloud_calendar_credentials_at(
+                &client,
+                &format!("http://{address}/redirect"),
+                "owner@icloud.com",
+                "test-app-password",
+            )
+            .await,
+            Err(ProviderReadError::InvalidResponse)
         ));
         task.abort();
     }

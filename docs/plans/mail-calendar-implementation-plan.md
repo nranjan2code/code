@@ -29,6 +29,15 @@ mail view does not provide message body text. Calendar selections remain
 unverified. This increment still uses the current storage model and therefore
 does not provide selective erasure of copied session content.
 
+A CalDAV groundwork increment adds only a fixed-endpoint, no-redirect authenticated
+PROPFIND probe. It is deliberately not wired into account admission: a valid
+credential response alone does not establish safe calendar discovery or event
+reads. Apple Calendar remains unavailable until bounded CalDAV discovery and
+event retrieval, capability checks, and worker-isolated iCalendar parsing are
+implemented together. An unauthenticated probe of `caldav.icloud.com` received
+an Apple 401 Basic challenge; this is endpoint evidence, not proof of valid
+credentials or a supported Apple API contract.
+
 ## Scope and provider matrix
 
 The first three provider targets are Google Workspace/Gmail, Microsoft
@@ -1061,3 +1070,12 @@ authorization and approval boundary on every execution path.
   available. Verification: 74 mail-calendar tests pass, including the state
   registry test; `cargo check -p vak-server` and formatting pass. End-to-end
   behavior has not been tested against Apple's live IMAP service.
+- 2026-09-30: Added a fixed-host Apple CalDAV credential probe using TLS,
+  Basic authentication, no proxy, and redirects disabled. It accepts only a
+  `207 Multi-Status` response and maps authentication rejection separately.
+  The probe is not used to activate calendar capabilities; CalDAV discovery,
+  bounded event reads, and worker-side iCalendar parsing are still required.
+  A local HTTP fixture verifies authorization is sent to the selected endpoint
+  and a redirect is rejected. `cargo test -p vak-mail-calendar` passes (75
+  unit tests plus the state-registry test). No credentialed live Apple request
+  was made.
