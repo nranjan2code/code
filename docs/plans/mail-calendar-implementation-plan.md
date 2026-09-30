@@ -813,3 +813,10 @@ authorization and approval boundary on every execution path.
   `connected_unverified` account status instead of `connected`. Settings shows
   that it is not verified or available to Agents. Ledger activation accepts
   this status without making it admissible; disconnect remains available.
+- 2026-09-30: Rechecked Apple's published iCloud Mail settings: manual access
+  uses IMAP and an app-specific password. Documented that current enrollment
+  stores but does not authenticate that credential. A future mail-only login
+  probe must not select a mailbox or fetch messages, and cannot verify
+  Calendar/CalDAV; Apple remains unavailable to Agents until both services
+  have reviewed verification and authorization contracts. All 52 domain tests,
+  the state-registry test, and all 16 server HTTP tests pass.

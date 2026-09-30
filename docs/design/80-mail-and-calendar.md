@@ -179,6 +179,16 @@ The current Vakyartha branch implements only the app-specific-password
 fallback with IMAP/SMTP and CalDAV; the credential has broader protocol access
 than Vak's selected capabilities and must be disclosed as such. Apple's
 support guide describes the user authorization and revocation experience.
+Apple's manual iCloud Mail configuration documents IMAP at
+`imap.mail.me.com:993` and an app-specific password
+([server settings](https://support.apple.com/en-us/102525)). The current
+enrollment only stores the credential: it does not perform an IMAP login or
+verify that the supplied identity/password are valid. A future credential
+probe must authenticate without selecting a mailbox, listing messages, or
+fetching content, and must report mail verification separately from calendar
+verification; a successful IMAP login says nothing about CalDAV access. Until
+both account services have a reviewed verification and authorization contract,
+Apple stays `connected_unverified` and unavailable to Agents.
 Apple's developer OAuth service is Account & Organizational Data Sharing; its
 documented scopes are for the Apple School Manager Roster API
 (`edu.users.read`, `edu.classes.read`), not iCloud Mail or Calendar
