@@ -10,7 +10,7 @@ pub mod parse;
 pub mod planner;
 pub mod types;
 
-pub use exec::{Executor, ExecutorDeps, FlowOutcome, FlowWorkContext};
+pub use exec::{Executor, ExecutorDeps, FlowOutcome, FlowWorkContext, NodePrompt};
 pub use parse::{ParseError, parse_flow};
 pub use planner::{
     PLANNER_SYSTEM, PlanOutcome, ToolCatalogEntry, build_planner_prompt, extract_toml,

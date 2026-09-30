@@ -126,6 +126,13 @@ pub enum Command {
     GoalFix {
         text: String,
     },
+    /// `/until-done …`: work on `text` and keep going past each apparent
+    /// finish until the person says `done` or `stop`. The one way to hold
+    /// completion for the person: a phrase in free text ("keep going until
+    /// the tests pass") names a condition, not a hold.
+    UntilDone {
+        text: String,
+    },
     /// `/approve <gate>` — matched to a raised gate by id, never by prose.
     Approve {
         gate_id: String,
@@ -148,6 +155,8 @@ impl Command {
             Command::Reprioritize { .. } => InterventionKind::Reprioritize,
             // Goal edits ride the same re-plan path.
             Command::GoalReplace { .. } | Command::GoalFix { .. } => InterventionKind::Replan,
+            // Sent into a running turn, the hold's text is steering.
+            Command::UntilDone { .. } => InterventionKind::Steer,
             Command::Approve { .. } => InterventionKind::Approve,
             Command::Reject { .. } => InterventionKind::Reject,
         }
@@ -161,7 +170,8 @@ impl Command {
             | Command::RemoveRequirement { text }
             | Command::Reprioritize { text }
             | Command::GoalReplace { text }
-            | Command::GoalFix { text } => Some(text),
+            | Command::GoalFix { text }
+            | Command::UntilDone { text } => Some(text),
             _ => None,
         }
     }
@@ -201,6 +211,9 @@ pub fn parse_command(text: &str) -> Option<Command> {
                     ("fix", Some(text)) => Some(Command::GoalFix { text }),
                     _ => None,
                 }
+            }
+            "until-done" | "until_done" | "untildone" => {
+                needs_arg(&arg).map(|text| Command::UntilDone { text })
             }
             "approve" => needs_arg(&arg).map(|gate_id| Command::Approve { gate_id }),
             "reject" => needs_arg(&arg).map(|gate_id| Command::Reject { gate_id }),
@@ -1473,6 +1486,13 @@ mod tests {
                 text: "ship the index only".into()
             })
         );
+        assert_eq!(
+            parse_command("/until-done tighten the essay"),
+            Some(Command::UntilDone {
+                text: "tighten the essay".into()
+            })
+        );
+        assert_eq!(parse_command("/until-done"), None);
         assert_eq!(
             parse_command("/approve gate-7"),
             Some(Command::Approve {

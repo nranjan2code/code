@@ -567,22 +567,36 @@ Fixed, each with a test:
 | F15 | Identity says Vakyartha, general verification rule, language line, standing authorization, one unusable-capability preamble allowing same-purpose alternatives | `default_prompt_documents_identity_and_dynamic_tool_boundaries` |
 | F16 | Built-in roles phrased as focus; blank Agent fields omitted; neutral examples | `role_prompts` test |
 
-Not changed, deliberately or for later:
+Fixed in the follow-up after 5.2.10:
 
-- The `[empty-step]` and `[grounding-check]` nudges keep quoting the request.
-  The maintainer added that on 2026-09-24 with tests and the "(this is
-  context, not a new request)" framing, after doc 68's warning, so it is a
-  decision, not an oversight.
-- The `office_apply` description is still about 4,400 tokens. Splitting it
-  by format needs its own measured change.
-- The MCP `last_failure` text still sits in the prefix.
-- Nudge appends still ignore write errors.
-- Additive instructions are still recorded under the `operating-rules`
-  descriptor.
-- Flow agent nodes (D04) still copy the parent prompt.
-- The `Note:` rule for prose after a card is unchanged.
-- The "until I say done" user-completion gate is still English phrases,
-  narrowed to phrases that name the person.
+- The `office_apply` description carries only the shared contract, and each
+  format's styles, layouts and default sheet live in the op fields that use
+  them: 17,454 → 15,009 characters (about 4,360 → 3,750 tokens). What
+  remains is the structure of 30 typed ops under the one tool invariant 39
+  requires.
+- An MCP server's last failure left the cached prefix; the `mcp` tool
+  reports it, with the fix, when the server is used
+  (`a_server_failure_does_not_change_the_prefix`).
+- A runtime nudge the ledger cannot record fails the turn instead of
+  running the redo without its correction (`nudge_write_failed`). No test
+  can make an open ledger's write fail, so this path is source-verified
+  only.
+- Additive Agent instructions are recorded under their own `instructions`
+  descriptor (`agent_instructions_have_their_own_provenance`).
+- Flow agent nodes get a prompt composed for the Worker surface and their
+  own tools, and UUIDv7 session ids (`flow_node_prompts_follow_the_node`).
+- The two Bedrock override tests no longer race each other.
+- The user-completion hold is the explicit `/until-done …` command instead
+  of English phrases (invariant 32); "keep working until the tests pass"
+  names a condition and no longer holds a turn open.
+
+Still open, as product decisions rather than defects:
+
+- The `[empty-step]` and `[grounding-check]` nudges keep quoting the
+  request (added deliberately on 2026-09-24 with tests).
+- Prose after a card is shown only when it begins with `Note:`, a
+  documented delivery contract in `vak_delivery::supplemental_card_note`;
+  the maintainer chose on 2026-09-30 to keep it.
 
 None of this was checked against a live model. The changes are
 deterministic, and the remaining question — whether models behave better with

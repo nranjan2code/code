@@ -2172,12 +2172,14 @@ impl Agent {
                     .await;
                 // Never quotes the directive back: an echo after a tool result
                 // reads as the user asking again (docs/design/68 §6).
-                let _ = self.session.lock().await.append_message(MessageRecord::control(
+                if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(
                     vak_intent::control::ControlKind::SteeringDrift,
                     format!(
                         "[steering-drift]: {drift_reason}. Refocus your next step on the user's latest message."
                     ),
-                ));
+                )) {
+ return nudge_write_failed(error);
+ }
                 if calls.is_empty() {
                     // A drifted final answer is not accepted as the turn's
                     // answer: redo it, same as the other repair nudges.
@@ -2221,7 +2223,7 @@ impl Agent {
                     if turn + 1 >= self.config.max_turns {
                         return TurnOutcome::MaxTurnsReached;
                     }
-                    let _ = self
+                    if let Err(error) = self
                         .session
                         .lock()
                         .await
@@ -2233,7 +2235,9 @@ impl Agent {
                              Make the tool call you planned, or write the answer as text.",
                             prompt_owned.chars().take(600).collect::<String>()
                         ),
-                    ));
+                    )) {
+ return nudge_write_failed(error);
+ }
                     let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                     turn += 1;
                     continue;
@@ -2258,13 +2262,15 @@ impl Agent {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let available = freshness_retrieval_hint(&tool_defs);
-                        let _ = self.session.lock().await.append_message(MessageRecord::control(
+                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(
                             vak_intent::control::ControlKind::FreshnessCheck,
                             format!("[freshness-check]: This asks for a value as it stands now, but nothing was \
                              retrieved on this turn — a number carried over from an earlier answer is \
                              stale. {available} Retrieve a current reading and answer from what it \
                              returns (a card is fine). If retrieval fails, say what failed."),
-                        ));
+                        )) {
+ return nudge_write_failed(error);
+ }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2293,12 +2299,14 @@ impl Agent {
                         }
                         let tool_list = tool_names.join(", ");
                         let target = prompt_owned.chars().take(600).collect::<String>();
-                        let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
+                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
                                 "[grounding-check]: Your last answer does not use what {tool_list} just returned. \
                                  Complete this already-admitted target (this is context, not a new request): {target:?}. \
                                  Answer from those results and name the sources you used, or, if they do not \
                                  answer the target, say so plainly instead of answering from memory."
-                            )));
+                            ))) {
+ return nudge_write_failed(error);
+ }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2319,12 +2327,14 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::FenceCheck, format!(
+                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::FenceCheck, format!(
                                 "[fence-check]: The ```vak card block in your last answer has invalid JSON and failed to parse \
                                  ({parse_error}). Resend the same answer with a syntactically valid JSON body this time — \
                                  double-check every object/array is closed and every key is quoted. If you can't produce \
                                  valid JSON for it, drop the fence and answer in plain prose instead."
-                            )));
+                            ))) {
+ return nudge_write_failed(error);
+ }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2348,12 +2358,14 @@ impl Agent {
                         if turn + 1 >= self.config.max_turns {
                             return TurnOutcome::MaxTurnsReached;
                         }
-                        let _ = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::DuplicateCardCheck, format!(
+                        if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::DuplicateCardCheck, format!(
                                 "[duplicate-card-check]: You already emitted a `{dup_type}` card via the matching \
                                  emit_*_card tool call above, and the user already sees it. Resend your answer \
                                  WITHOUT the ```vak fence that repeats it — just the short narration around the \
                                  card is needed, no restated JSON."
-                            )));
+                            ))) {
+ return nudge_write_failed(error);
+ }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2402,14 +2414,17 @@ impl Agent {
                                 response.usage.prompt_tokens(),
                             )
                             .await;
-                            let _ =
+                            if let Err(error) =
                                 self.session
                                     .lock()
                                     .await
                                     .append_message(MessageRecord::control(
                                         vak_intent::control::ControlKind::PresentationCheck,
                                         nudge.text,
-                                    ));
+                                    ))
+                            {
+                                return nudge_write_failed(error);
+                            }
                             let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                             turn += 1;
                             continue;
@@ -2454,14 +2469,17 @@ impl Agent {
                                 reason: reason.clone(),
                             })
                             .await;
-                        let _ = self
-                            .session
-                            .lock()
-                            .await
-                            .append_message(MessageRecord::control(
-                                vak_intent::control::ControlKind::StopHook,
-                                format!("[stop-hook]: {reason}\nPlease continue."),
-                            ));
+                        if let Err(error) =
+                            self.session
+                                .lock()
+                                .await
+                                .append_message(MessageRecord::control(
+                                    vak_intent::control::ControlKind::StopHook,
+                                    format!("[stop-hook]: {reason}\nPlease continue."),
+                                ))
+                        {
+                            return nudge_write_failed(error);
+                        }
                         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                         turn += 1;
                         continue;
@@ -2483,25 +2501,34 @@ impl Agent {
                     // requirement (§1, §6).
                     self.record_capacity_instruction_failure(response.usage.prompt_tokens())
                         .await;
-                    if self.guard_continue(reason, &events, turn).await {
-                        turn += 1;
-                        continue;
+                    match self.guard_continue(reason, &events, turn).await {
+                        Ok(true) => {
+                            turn += 1;
+                            continue;
+                        }
+                        Ok(false) => return TurnOutcome::MaxTurnsReached,
+                        Err(error) => return nudge_write_failed(error),
                     }
-                    return TurnOutcome::MaxTurnsReached;
                 }
                 if let Some(rejection) = self.goal_gate(&response, &cancel, &events).await {
-                    if self.guard_continue(rejection, &events, turn).await {
-                        turn += 1;
-                        continue;
+                    match self.guard_continue(rejection, &events, turn).await {
+                        Ok(true) => {
+                            turn += 1;
+                            continue;
+                        }
+                        Ok(false) => return TurnOutcome::MaxTurnsReached,
+                        Err(error) => return nudge_write_failed(error),
                     }
-                    return TurnOutcome::MaxTurnsReached;
                 }
                 if let Some(rejection) = self.managed_work_gate(&cancel, &events).await {
-                    if self.guard_continue(rejection, &events, turn).await {
-                        turn += 1;
-                        continue;
+                    match self.guard_continue(rejection, &events, turn).await {
+                        Ok(true) => {
+                            turn += 1;
+                            continue;
+                        }
+                        Ok(false) => return TurnOutcome::MaxTurnsReached,
+                        Err(error) => return nudge_write_failed(error),
                     }
-                    return TurnOutcome::MaxTurnsReached;
                 }
                 // Fence-path presentations (docs/design/68-context-engine.md
                 // §10): only for the answer actually being accepted — every
@@ -4262,31 +4289,31 @@ impl Agent {
     }
 
     /// Appends the continue nudge (model-visible => logged) and reports
-    /// whether the loop may continue within max_turns.
+    /// whether the loop may continue within max_turns. A nudge the ledger
+    /// could not record ends the turn (`nudge_write_failed`).
     async fn guard_continue(
         &mut self,
         reason: String,
         events: &mpsc::Sender<AgentEvent>,
         turn: usize,
-    ) -> bool {
+    ) -> Result<bool, vak_session::SessionError> {
         if turn + 1 >= self.config.max_turns {
-            return false;
+            return Ok(false);
         }
         let _ = events
             .send(AgentEvent::StopHookContinuation {
                 reason: reason.clone(),
             })
             .await;
-        let _ = self
-            .session
+        self.session
             .lock()
             .await
             .append_message(MessageRecord::control(
                 vak_intent::control::ControlKind::StopGuard,
                 format!("[stop-guard]: {reason}\nPlease continue."),
-            ));
+            ))?;
         let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
-        true
+        Ok(true)
     }
 
     /// Recovers the session ledger after a run (server/API consumers).
@@ -6480,7 +6507,9 @@ async fn reconcile_repair_budget(
         // turns: a text hint is no longer enough. The loop takes over and
         // resurfaces the exact admitted schema for the rejected tools so the
         // repair is no longer a guess.
-        inject_repair_directive(agent, failed_correctable).await;
+        if let Err(error) = inject_repair_directive(agent, failed_correctable).await {
+            return Some(nudge_write_failed(error));
+        }
     }
 
     if agent.repair.consecutive_failed_turns > MAX_REPAIR_TURNS {
@@ -6495,7 +6524,10 @@ async fn reconcile_repair_budget(
 /// schema for each tool the model could not get right. Unlike the per-call
 /// `[recovery]` hint, this is issued by the loop itself (not the model)
 /// when the model has demonstrated it cannot repair the failure unprompted.
-async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind)]) {
+async fn inject_repair_directive(
+    agent: &Agent,
+    failed: &[(String, ToolErrorKind)],
+) -> Result<(), vak_session::SessionError> {
     let remaining = MAX_REPAIR_TURNS.saturating_sub(agent.repair.consecutive_failed_turns - 1);
     let mut parts: Vec<String> = vec![format!(
         "{} The run is stuck on correctable tool failures that \
@@ -6546,14 +6578,15 @@ async fn inject_repair_directive(agent: &Agent, failed: &[(String, ToolErrorKind
     }
     // Runtime-authored, so tagged: it must never read as the person's words,
     // to the model or to any client (AGENTS.md, "typed, never sniffed").
-    let _ = agent
+    agent
         .session
         .lock()
         .await
         .append_message(MessageRecord::control(
             vak_intent::control::ControlKind::RepairDirective,
             parts.join("\n\n"),
-        ));
+        ))
+        .map(|_| ())
 }
 
 /// Build the degraded, honest completion returned when the repair budget is
@@ -7695,5 +7728,15 @@ mod contract_author_tests {
             let _: vak_session::types::WorkOwner = serde_json::from_str(owner).unwrap();
         }
         assert!(parse_authored_contract("no object here").is_err());
+    }
+}
+
+/// A runtime nudge the ledger could not record never reaches the model
+/// (invariant 1: model-visible means logged), so the redo it asks for would
+/// run without its correction. The turn fails instead, as it does when the
+/// user's own message cannot be recorded.
+fn nudge_write_failed(error: vak_session::SessionError) -> TurnOutcome {
+    TurnOutcome::Failed {
+        error: LlmError::Network(format!("session write failed: {error}")),
     }
 }

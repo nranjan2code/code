@@ -53,10 +53,19 @@ use vak_tools::{Tool, ToolContext};
 use crate::parse::layers;
 use crate::types::{FlowDef, FlowState, NodeDef, NodeResult, NodeStatus};
 
+/// `(node tool names) -> system prompt` for an agent node, composed by the
+/// host's one prompt resolver.
+pub type NodePrompt = Arc<dyn Fn(&[&str]) -> String + Send + Sync>;
+
 #[derive(Clone)]
 pub struct ExecutorDeps {
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,
+    /// Composes an agent node's prompt for the node's own tools and for a
+    /// reader that is the flow, not a person — the parent's prompt names the
+    /// parent's surface and tools, which a read-only node does not have.
+    /// `None` (deterministic fixtures) runs every node under `system_prompt`.
+    pub node_prompt: Option<NodePrompt>,
     pub prompt_layers: Vec<vak_session::types::PromptLayerDescriptor>,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
@@ -515,13 +524,11 @@ async fn execute_node(
             };
             let mode = if readonly { Mode::ReadOnly } else { deps.mode };
 
-            let session_id = format!(
-                "flow-{}-{}",
-                node.id,
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos()
+            let session_id = format!("flow-{}-{}", node.id, uuid::Uuid::now_v7().simple());
+            let tool_names: Vec<&str> = tools.iter().map(|tool| tool.name()).collect();
+            let system_prompt = deps.node_prompt.as_ref().map_or_else(
+                || deps.system_prompt.clone(),
+                |compose| compose(&tool_names),
             );
             let header = vak_session::types::SessionHeader {
                 agent: deps.agent_identity.clone().or_else(|| {
@@ -555,7 +562,7 @@ async fn execute_node(
                     route_ladder: Vec::new(),
                     route_objective: String::new(),
                     route_annotations: Vec::new(),
-                    system_prompt: deps.system_prompt.clone(),
+                    system_prompt: system_prompt.clone(),
                     permission_mode: match mode {
                         Mode::ReadOnly => "read-only",
                         Mode::WorkspaceWrite => "workspace-write",
@@ -570,7 +577,7 @@ async fn execute_node(
             let log = SessionLog::create(path, header)
                 .map_err(|e| format!("cannot create node session: {e}"))?;
 
-            let mut cfg = AgentConfig::new(deps.system_prompt.clone());
+            let mut cfg = AgentConfig::new(system_prompt);
             cfg.outcome = deps.outcome.clone();
             cfg.max_retries = deps.max_retries;
             cfg.retry_base_backoff_ms = deps.retry_base_backoff_ms;

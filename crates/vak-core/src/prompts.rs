@@ -254,14 +254,19 @@ impl LayerContent {
 /// through the module that produces it.
 pub use vak_session::types::PromptLayerDescriptor;
 
+/// The descriptor block name for additive Agent instructions. Not a
+/// `PromptBlock`: instructions come from an Agent's saved definition, never
+/// from a prompt-file edit, so no API can name them as an editable block.
+pub const INSTRUCTIONS_BLOCK: &str = "instructions";
+
 fn descriptor(
-    block: PromptBlock,
+    block: &str,
     layer: PromptLayer,
     source: Option<String>,
     text: &str,
 ) -> PromptLayerDescriptor {
     PromptLayerDescriptor {
-        block: block.slug().to_string(),
+        block: block.to_string(),
         layer: layer.wire_name().to_string(),
         source,
         digest: digest_of(text),
@@ -461,7 +466,12 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
     let mut pick = |block: PromptBlock| -> Option<String> {
         for input in layers.iter().rev() {
             if let Some(text) = input.content.block(block) {
-                descriptors.push(descriptor(block, input.layer, input.source.clone(), &text));
+                descriptors.push(descriptor(
+                    block.slug(),
+                    input.layer,
+                    input.source.clone(),
+                    &text,
+                ));
                 return Some(text);
             }
         }
@@ -480,7 +490,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
         {
             instructions.push(value.trim().to_string());
             descriptors.push(descriptor(
-                PromptBlock::OperatingRules,
+                INSTRUCTIONS_BLOCK,
                 input.layer,
                 input.source.clone(),
                 value,
@@ -514,7 +524,7 @@ pub fn resolve(layers: &[LayerInput], runtime: &RuntimeSections) -> Resolution {
             }
             if !added.is_empty() {
                 descriptors.push(descriptor(
-                    block,
+                    block.slug(),
                     input.layer,
                     input.source.clone(),
                     &render_guardrails(&added),
@@ -1095,6 +1105,37 @@ mod tests {
         };
         content.demote_untrusted();
         assert!(content.is_empty(), "{content:?}");
+    }
+
+    /// Additive Agent instructions are recorded as what they are, so an
+    /// operator reading provenance does not see them as operating rules.
+    #[test]
+    fn agent_instructions_have_their_own_provenance() {
+        let layers = vec![
+            LayerInput::new(PromptLayer::Seed, Some("shipped".into()), seed_content()),
+            LayerInput::new(
+                PromptLayer::Agent,
+                Some("agent:newsy@1".into()),
+                LayerContent {
+                    instructions: Some("Lead with the headline.".into()),
+                    ..Default::default()
+                },
+            ),
+        ];
+        let out = resolve(&layers, &RuntimeSections::default());
+        let recorded: Vec<_> = out
+            .descriptors
+            .iter()
+            .filter(|d| d.block == INSTRUCTIONS_BLOCK)
+            .collect();
+        assert_eq!(recorded.len(), 1, "{:?}", out.descriptors);
+        assert_eq!(recorded[0].layer, "agent");
+        assert!(
+            out.descriptors
+                .iter()
+                .filter(|d| d.block == "operating-rules")
+                .all(|d| d.layer == "seed")
+        );
     }
 
     #[test]

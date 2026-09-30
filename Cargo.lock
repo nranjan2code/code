@@ -7669,6 +7669,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml 0.8.2",
+ "uuid",
  "vak-agent",
  "vak-intent",
  "vak-llm",

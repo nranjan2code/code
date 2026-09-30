@@ -122,6 +122,7 @@ fn make_deps(provider: Arc<ScriptedPlanner>) -> Arc<ExecutorDeps> {
         prompt_layers: Vec::new(),
         provider,
         system_prompt: "sys".into(),
+        node_prompt: None,
         model: "test-model".into(),
         tools: vec![Arc::new(BashTool)],
         read_only_tools: vec![],

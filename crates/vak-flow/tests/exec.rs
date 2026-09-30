@@ -112,6 +112,7 @@ fn make_executor_with_outcome(
         prompt_layers: Vec::new(),
         provider,
         system_prompt: "sys".into(),
+        node_prompt: None,
         model: "test-model".into(),
         tools: vec![Arc::new(BashTool)],
         read_only_tools: vec![],

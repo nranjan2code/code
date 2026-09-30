@@ -146,7 +146,7 @@ pub fn mcp_failure(capability: &super::snapshot::Capability) -> Option<&str> {
 
 /// What an operator can change when a server fails.
 pub fn mcp_remedy(server: &str) -> String {
-    format!("check the `{server}` entry under [mcp.servers] — command, args, and any required env")
+    vak_mcp::tool::remedy(server)
 }
 
 /// The model-facing standing section: what is configured but not usable on

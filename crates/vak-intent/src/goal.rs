@@ -132,6 +132,7 @@ pub fn goal_relation(command: Option<&Command>, goal: Option<&GoalState>) -> Goa
         | Some(Command::Reprioritize { .. })
         | Some(Command::Approve { .. })
         | Some(Command::Reject { .. })
+        | Some(Command::UntilDone { .. })
         | None => if_live(GoalRelation::AddsTo),
     }
 }

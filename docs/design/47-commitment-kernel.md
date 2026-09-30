@@ -614,6 +614,7 @@ Three sources, typed by the transport, never parsed from a body
 explicit command (`parse_command`): a leading slash command — `/stop`,
 `/cancel`, `/pause`, `/resume`, `/status`, `/replan …`, `/add …`,
 `/drop …`, `/prioritize …`, `/goal replace …`, `/goal fix …`,
+`/until-done …` (hold completion until the person says `done`),
 `/approve <gate>`, `/reject <gate>` — or a whole message that is exactly
 `stop`, `cancel`, `pause`, `resume` or `status`. "Stop using semicolons in
 the output" steers the running loop between steps; before this it cancelled

@@ -176,27 +176,20 @@ impl Default for StopPolicy {
 }
 
 impl StopPolicy {
-    /// The request hands completion to the person: work continues until
-    /// they release it with a `done`/`stop` message. Only phrases that name
-    /// the person as the one who ends it count — "keep working until the
-    /// tests pass" names a condition the runtime evaluates, and reading it
-    /// as a user hold kept such turns running to `max_turns`.
+    /// The request hands completion to the person with the explicit
+    /// `/until-done …` command: work continues until they release it with a
+    /// `done`/`stop` message. Control comes from a command, never from
+    /// phrases in free text (invariant 32); a phrase list only ever spoke
+    /// English and read "keep working until the tests pass" as a hold.
     pub fn requires_user_completion(prompt: &str) -> bool {
-        let p = prompt.to_lowercase();
-        [
-            "until i say done",
-            "until i say so",
-            "until i say stop",
-            "until i tell you to stop",
-            "until i tell you you're done",
-            "until i tell you i'm done",
-        ]
-        .iter()
-        .any(|marker| p.contains(marker))
+        matches!(
+            vak_intent::parse_command(prompt),
+            Some(vak_intent::Command::UntilDone { .. })
+        )
     }
 
     pub fn is_done_message(message: &str) -> bool {
-        let normalized = message.trim().to_ascii_lowercase();
+        let normalized = message.trim().to_lowercase();
         [
             "done",
             "stop",
@@ -573,12 +566,12 @@ mod tests {
     fn explicit_until_done_request_requires_user_release() {
         let p = StopPolicy::default();
         assert!(matches!(
-            p.evaluate(
-                "Keep improving the project until I say done.",
-                "Improved it.",
-                1
-            ),
+            p.evaluate("/until-done keep improving the project", "Improved it.", 1),
             Some(BlockReason::UserCompletionRequired)
+        ));
+        // A phrase is not the command, in any language.
+        assert!(!StopPolicy::requires_user_completion(
+            "Keep improving the project until I say done."
         ));
         assert!(!StopPolicy::requires_user_completion(
             "keep working until the tests pass"

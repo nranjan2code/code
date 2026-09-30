@@ -195,7 +195,10 @@ impl McpTool {
                     None => out.push_str(&format!("- {server}\n")),
                 }
                 if let Some(failure) = known.and_then(|o| o.failure.as_deref()) {
-                    out.push_str(&format!("  last attempt failed: {failure}\n"));
+                    out.push_str(&format!(
+                        "  last attempt failed: {failure}. {}\n",
+                        unavailable_guidance(server)
+                    ));
                 }
             }
             return ToolOutput::ok(out);
@@ -208,7 +211,12 @@ impl McpTool {
         }
         let tools = match self.manager.list_tools(server).await {
             Ok(tools) => tools,
-            Err(reason) => return ToolOutput::error(format!("mcp list failed: {reason}")),
+            Err(reason) => {
+                return ToolOutput::error(format!(
+                    "mcp list failed: {reason}. {}",
+                    unavailable_guidance(server)
+                ));
+            }
         };
         let visible: Vec<_> = tools
             .into_iter()
@@ -270,10 +278,30 @@ impl McpTool {
                     record(server, tool, false, started.elapsed().as_millis() as u64);
                 }
                 ToolOutput::error(format!(
-                    "mcp call failed: {}",
-                    self.manager.redact(e.to_string())
+                    "mcp call failed: {}. {}",
+                    self.manager.redact(e.to_string()),
+                    unavailable_guidance(server)
                 ))
             }
         }
     }
+}
+
+/// The operator's fix for a server that cannot be reached. One copy, used by
+/// this tool's errors and by the capability report.
+pub fn remedy(server: &str) -> String {
+    format!("check the `{server}` entry under [mcp.servers] — command, args, and any required env")
+}
+
+/// What the model is told when a server fails: it is still callable (the
+/// pool retries on the next demand after its backoff), so one retry is
+/// reasonable, and otherwise the person hears that it is unavailable and
+/// how to fix it. Told here, where the failure is observed, rather than in
+/// the cached system prompt, which a changing failure text would churn.
+fn unavailable_guidance(server: &str) -> String {
+    format!(
+        "If the request needs this server, try once more; otherwise tell the person it is \
+         unavailable and that the fix is to {}",
+        remedy(server)
+    )
 }

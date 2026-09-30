@@ -156,7 +156,8 @@ pub struct TurnCapabilitiesRef {
 /// One layer's contribution to the assembled system prompt.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptLayerDescriptor {
-    /// "identity" | "operating-rules" | "guardrails".
+    /// "identity" | "operating-rules" | "guardrails" | "surface-note" |
+    /// "instructions" (an Agent's additive instructions).
     pub block: String,
     /// "seed" | "shared" | "project" | "surface" | "bot" | "chat" | "agent".
     pub layer: String,

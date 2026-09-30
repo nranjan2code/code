@@ -92,6 +92,7 @@ struct CoreFlowDispatcher {
     core: Core,
     tools: Vec<Arc<dyn vak_tools::Tool>>,
     system_prompt: String,
+    descriptors: Vec<CapabilityDescriptor>,
 }
 
 #[async_trait::async_trait]
@@ -205,6 +206,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
                 Err(error) => return vak_tools::ToolOutput::error(error.to_string()),
             },
             system_prompt: self.system_prompt.clone(),
+            node_prompt: Some(self.core.flow_node_prompt(self.descriptors.clone())),
             prompt_layers: inherited_prompt_layers,
             model: self.core.effective_model(),
             tools: self.tools.clone(),
@@ -3487,6 +3489,25 @@ impl Core {
         layers
     }
 
+    /// The prompt builder for a flow's agent nodes: the Worker surface (the
+    /// reader is the flow), the same Agent, and only the tools the node has,
+    /// plus the admitted skills and MCP servers.
+    pub fn flow_node_prompt(&self, descriptors: Vec<CapabilityDescriptor>) -> vak_flow::NodePrompt {
+        let worker = self.clone().with_surface(Surface::Worker);
+        Arc::new(move |tools: &[&str]| {
+            let capabilities: Vec<CapabilityDescriptor> = descriptors
+                .iter()
+                .filter(|capability| match capability.kind {
+                    CapabilityKind::Tool => tools.contains(&capability.name.as_str()),
+                    CapabilityKind::Skill | CapabilityKind::McpServer => true,
+                    CapabilityKind::Hook | CapabilityKind::Command => false,
+                })
+                .cloned()
+                .collect();
+            worker.system_prompt_for_capabilities(&capabilities)
+        })
+    }
+
     /// Roles defined for this workspace, shared layer first so a project can
     /// shadow a shared role by name — the same name-keyed shadowing MCP
     /// servers already use.
@@ -6749,6 +6770,7 @@ impl Core {
                 core: self.clone(),
                 tools: cfg.tools.clone(),
                 system_prompt: cfg.system_prefix.clone(),
+                descriptors: turn_capabilities.descriptors.clone(),
             }));
         }
         let selected_ids: std::collections::BTreeSet<String> = turn_capabilities
@@ -8094,8 +8116,15 @@ mod channel_mcp_network_tests {
         assert_eq!(auth.credential_id.as_deref(), Some(expected.as_str()));
     }
 
+    /// The Bedrock tests set process-wide overrides the others read; run
+    /// them one at a time or one sees the other's endpoint.
+    static BEDROCK_OVERRIDES: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn bedrock_uses_the_shared_bearer_key_and_mantle_endpoint() {
+        let _serial = BEDROCK_OVERRIDES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         vak_config::set_override("AWS_BEARER_TOKEN_BEDROCK", "bedrock-test-key");
         vak_config::set_override(
             "VAK_BEDROCK_BASE_URL",
@@ -8122,6 +8151,9 @@ mod channel_mcp_network_tests {
 
     #[test]
     fn saved_bedrock_region_changes_the_live_mantle_endpoint() {
+        let _serial = BEDROCK_OVERRIDES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         vak_config::paths::isolate_home_for_tests();
         vak_config::set_override("AWS_BEARER_TOKEN_BEDROCK", "bedrock-test-key");
         let directory = tempfile::tempdir().unwrap();
@@ -8426,6 +8458,31 @@ mod channel_mcp_network_tests {
         assert!(chat.contains("may be in another time zone"), "{chat}");
         let scheduled = crate::temporal_context(&Surface::Background, now);
         assert!(scheduled.contains("scheduled run"), "{scheduled}");
+    }
+
+    /// A flow's agent node is told about its own tools and reader, not the
+    /// parent's: a read-only node never hears about `bash`.
+    #[test]
+    fn flow_node_prompts_follow_the_node() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true)
+            .unwrap()
+            .with_surface(crate::Surface::Desktop);
+        let tool = |name: &str| crate::CapabilityDescriptor {
+            name: name.into(),
+            kind: crate::CapabilityKind::Tool,
+            invocation: vak_session::types::CapabilityInvocation::ModelTool,
+            description: String::new(),
+            source: None,
+            digest: None,
+            provenance: None,
+            configuration: serde_json::Value::Null,
+        };
+        let compose = core.flow_node_prompt(vec![tool("read"), tool("bash")]);
+        let read_only = compose(&["read"]);
+        assert!(read_only.contains("Surface: worker"), "{read_only}");
+        assert!(!read_only.contains("execution sandbox"), "{read_only}");
+        assert!(compose(&["read", "bash"]).contains("execution sandbox"));
     }
 
     /// The layered blocks are the one way to set identity (invariant 30):
@@ -9294,8 +9351,9 @@ struct ToolScope {
 /// turn did not admit.
 ///
 /// Each server is named with the tool *names* the on-demand pool last
-/// observed (none before its first use; `configuration.tools`) and, when its
-/// last attempt failed, that reason. No descriptions or schemas: `mcp` `list`
+/// observed (none before its first use; `configuration.tools`). Not its last
+/// failure, which the `mcp` tool reports when used. No descriptions or
+/// schemas: `mcp` `list`
 /// with a server returns those right before the call that needs them
 /// (docs/design/68-context-engine.md §5).
 fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
@@ -9322,18 +9380,10 @@ fn mcp_config_section(servers: &[&CapabilityDescriptor]) -> String {
         } else {
             section.push_str(&format!("- {}: {}\n", capability.name, tools.join(", ")));
         }
-        // Still callable — the pool retries on the next demand after its
-        // backoff — so the model is told, not denied.
-        if let Some(failure) = capability
-            .configuration
-            .get("last_failure")
-            .and_then(|f| f.as_str())
-        {
-            section.push_str(&format!(
-                "  last attempt failed: {failure}. If the request needs it, try once more and otherwise tell the user it is unavailable and how to fix it: {}.\n",
-                capability::report::mcp_remedy(&capability.name)
-            ));
-        }
+        // A server's last failure is not rendered here: it changes as the
+        // pool observes it, and this section is part of the cached prefix.
+        // The `mcp` tool reports it, with the fix, when the model reaches
+        // for the server (`vak_mcp::tool`).
     }
     section
 }
@@ -9424,6 +9474,21 @@ mod mcp_section_tests {
             !section.contains("Search the web"),
             "descriptions come with the schema from `mcp list`, not in every prompt"
         );
+    }
+
+    /// An observed failure never enters the cached prefix: it changes as the
+    /// pool observes it, and the `mcp` tool reports it when the model uses
+    /// the server.
+    #[test]
+    fn a_server_failure_does_not_change_the_prefix() {
+        let healthy = [server("tavily", serde_json::json!({}))];
+        let failing = [server(
+            "tavily",
+            serde_json::json!({"last_failure": "connection refused"}),
+        )];
+        let healthy: Vec<_> = healthy.iter().collect();
+        let failing: Vec<_> = failing.iter().collect();
+        assert_eq!(mcp_config_section(&healthy), mcp_config_section(&failing));
     }
 
     /// Schemas stay out of the prompt (docs/design/68 §5): a model reaches

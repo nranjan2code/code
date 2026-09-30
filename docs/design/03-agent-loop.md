@@ -159,10 +159,11 @@ max_blocks`; unknown keys warn, `enabled = false` restores old behavior.
 External Stop hooks still run first and keep their own `[stop-hook]`
 prefix, so operator logs can tell them apart.
 
-An explicit continuation request that names the person as the one who ends
-it, such as “keep improving until I say done”, uses a separate
-user-completion gate ("keep working until the tests pass" names a condition
-and is not one). It continues across ordinary model
+The explicit `/until-done …` command (`vak_intent::Command::UntilDone`)
+uses a separate user-completion gate. It is the only way to hold completion
+for the person: control comes from commands, never from phrases in free
+text (invariant 32), so "keep working until the tests pass" names a
+condition and is not a hold. It continues across ordinary model
 completion claims without consuming the diagnostic `max_blocks` budget, until
 an exact user steering message such as `done` or `stop` releases it. The
 configured `max_turns` remains a hard safety ceiling; reaching it returns

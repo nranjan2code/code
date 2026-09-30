@@ -150,6 +150,8 @@ pub fn resolve_turn(
         Some(vak_intent::Command::GoalReplace { text }) => {
             (text, Some(vak_intent::LineageHint::Replaces))
         }
+        // The hold is control, not content: the request is its text.
+        Some(vak_intent::Command::UntilDone { text }) => (text, None),
         _ => (text.to_string(), None),
     };
     let request = Request {
