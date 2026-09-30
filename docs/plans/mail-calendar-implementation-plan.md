@@ -364,6 +364,13 @@ and restart/recovery acceptance are not implemented yet. Current-storage session
 history is append-only and cannot be selectively erased; M7 remains the
 deletion gate.
 
+Missed scheduled slots now use each task's configured IANA timezone during
+startup catch-up, with instant-based comparison across daylight-saving gaps
+and folds. A server regression covers a New York fall-back slot missed while
+the process was down. This corrects the shared `TaskDef` scheduler; it does
+not provide provider-native cursors or turn best-effort polling into a 24/7
+availability guarantee.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and

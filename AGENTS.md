@@ -110,7 +110,9 @@ Read before changing behaviour in these areas:
   provider IDs and skips model dispatch when unchanged. An Agent-vault OS
   lease prevents duplicate runs of one routine across local server processes
   through child completion; native provider cursors and multi-host fencing
-  remain outstanding. Disconnect removes credentials and unsent
+  remain outstanding. Startup catch-up now evaluates cron slots in the task's
+  configured IANA timezone and compares absolute instants across DST changes.
+  Disconnect removes credentials and unsent
   drafts for that account and fences future reads, but cannot erase
   content already recorded in append-only Agent sessions; disclose this until
   lifecycle erasure ships. A first Stage 3 increment enables explicitly

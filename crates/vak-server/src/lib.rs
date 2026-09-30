@@ -18968,11 +18968,17 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
 fn cron_slot_missed(
     expr: &str,
     last_run_at: chrono::DateTime<Utc>,
-    now: chrono::DateTime<chrono::Local>,
+    now: chrono::DateTime<Utc>,
+    timezone: Option<&str>,
 ) -> bool {
-    let last_local = last_run_at.with_timezone(&chrono::Local);
-    match vak_core::tasks::cron_next_after(expr, last_local) {
-        // Instant comparison: correct across DST folds and gaps.
+    let next_due = match timezone {
+        Some(timezone) => vak_core::tasks::cron_next_after_timezone(expr, last_run_at, timezone),
+        None => vak_core::tasks::cron_next_after(expr, last_run_at.with_timezone(&chrono::Local))
+            .map(|value| value.with_timezone(&Utc)),
+    };
+    match next_due {
+        // Compare instants, including when the named zone crosses a DST fold
+        // or gap while the service is offline.
         Ok(next_due) => next_due <= now,
         Err(_) => false,
     }
@@ -19071,7 +19077,7 @@ async fn catch_up_missed_tasks(state: &AppState) {
     if !state.core.config().automation.catch_up_missed {
         return;
     }
-    let now_local = chrono::Local::now();
+    let now_utc = chrono::Utc::now();
     let due: Vec<String> = {
         let tasks = state
             .tasks
@@ -19083,7 +19089,9 @@ async fn catch_up_missed_tasks(state: &AppState) {
             .filter_map(|t| {
                 let expr = t.schedule.as_deref()?;
                 t.last_run_at
-                    .is_some_and(|l| cron_slot_missed(expr, l, now_local))
+                    .is_some_and(|last_run| {
+                        cron_slot_missed(expr, last_run, now_utc, t.timezone.as_deref())
+                    })
                     .then(|| t.id.clone())
             })
             .collect()
@@ -20245,31 +20253,52 @@ mod scheduler_pure_tests {
         assert!(!cron_slot_missed(
             every_min,
             utc(local(2026, 8, 24, 10, 30)),
-            local(2026, 8, 24, 10, 30),
+            utc(local(2026, 8, 24, 10, 30)),
+            None,
         ));
         // Ran yesterday; today's slot already passed → missed.
         assert!(cron_slot_missed(
             "0 12 * * *",
             utc(local(2026, 8, 23, 12, 0)),
-            local(2026, 8, 24, 13, 0),
+            utc(local(2026, 8, 24, 13, 0)),
+            None,
         ));
         // Ran after the latest slot (manual run-now covers it) → not missed.
         assert!(!cron_slot_missed(
             "0 12 * * *",
             utc(local(2026, 8, 24, 12, 30)),
-            local(2026, 8, 24, 13, 0),
+            utc(local(2026, 8, 24, 13, 0)),
+            None,
         ));
         // The slot exactly one step after the last run is due right now.
         assert!(cron_slot_missed(
             "*/15 * * * *",
             utc(local(2026, 8, 24, 10, 30)),
-            local(2026, 8, 24, 10, 45),
+            utc(local(2026, 8, 24, 10, 45)),
+            None,
         ));
         // Bad expression never reports a miss (parked markers handle it).
         assert!(!cron_slot_missed(
             "99 * * * *",
             utc(local(2026, 8, 23, 12, 0)),
-            local(2026, 8, 24, 13, 0),
+            utc(local(2026, 8, 24, 13, 0)),
+            None,
+        ));
+    }
+
+    #[test]
+    fn named_timezone_catchup_finds_a_missed_slot_across_dst_fallback() {
+        let last_run = chrono::DateTime::parse_from_rfc3339("2026-11-01T04:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-01T06:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert!(cron_slot_missed(
+            "30 1 * * *",
+            last_run,
+            now,
+            Some("America/New_York"),
         ));
     }
 
