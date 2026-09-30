@@ -627,6 +627,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         })
         .unwrap();
     assert!(apple["access_token_expires_at"].is_null());
+    assert_eq!(apple["status"], "connected_unverified");
     assert_eq!(apple["credential_available"], true);
     let google = accounts["accounts"]
         .as_array()
@@ -698,7 +699,10 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .iter()
         .find(|account| account["id"] == apple_id)
         .unwrap();
-    assert_eq!(apple_after_unsupported_refresh["status"], "connected");
+    assert_eq!(
+        apple_after_unsupported_refresh["status"],
+        "connected_unverified"
+    );
 
     let disconnected = reqwest::Client::new()
         .post(format!(
@@ -828,7 +832,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .as_array()
         .unwrap()
         .iter()
-        .find(|account| account["status"] == "connected")
+        .find(|account| account["status"] == "connected_unverified")
         .unwrap()["id"]
         .as_str()
         .unwrap()

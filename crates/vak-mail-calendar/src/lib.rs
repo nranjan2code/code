@@ -38,6 +38,7 @@ pub enum Provider {
 pub enum AccountStatus {
     Pending,
     Connected,
+    ConnectedUnverified,
     ReauthenticationRequired,
 }
 
@@ -753,6 +754,7 @@ mod contract_tests {
 
         let mut unverified_icloud = account.clone();
         unverified_icloud.provider = Provider::AppleIcloud;
+        unverified_icloud.status = AccountStatus::ConnectedUnverified;
         assert!(!unverified_icloud.admits("agent-a", "conversation-a", Capability::MailRead));
 
         let mut pending = account;
@@ -813,6 +815,7 @@ mod contract_tests {
 
         let mut unverified_icloud = account.clone();
         unverified_icloud.provider = Provider::AppleIcloud;
+        unverified_icloud.status = AccountStatus::ConnectedUnverified;
         assert_eq!(
             candidate.authorize_effect(&unverified_icloud, &approval, now),
             Err(ContractError::AccountDenied)

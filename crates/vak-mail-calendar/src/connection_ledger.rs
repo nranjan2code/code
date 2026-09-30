@@ -304,6 +304,9 @@ impl ConnectionLedger {
         expected_fence: &str,
         operation: impl FnOnce() -> Result<(), E>,
     ) -> Result<(), ConditionalUpdateError<E>> {
+        if account.status != AccountStatus::Connected {
+            return Err(ConditionalUpdateError::Ledger(LedgerError::InvalidRecord));
+        }
         self.append_connected_if_state(
             account,
             AccountStatus::Pending,
@@ -321,8 +324,15 @@ impl ConnectionLedger {
         expected_fence: Option<(crate::Provider, &str)>,
         operation: impl FnOnce() -> Result<(), E>,
     ) -> Result<(), ConditionalUpdateError<E>> {
+        let valid_status = (expected_status == AccountStatus::Pending
+            && matches!(
+                account.status,
+                AccountStatus::Connected | AccountStatus::ConnectedUnverified
+            ))
+            || (expected_status == AccountStatus::Connected
+                && account.status == AccountStatus::Connected);
         if !valid_account_record(&account, &self.agent_id)
-            || account.status != AccountStatus::Connected
+            || !valid_status
             || expected_revision.checked_add(1) != Some(account.revision)
         {
             return Err(ConditionalUpdateError::Ledger(LedgerError::InvalidRecord));
@@ -577,7 +587,10 @@ impl ConnectionLedger {
             ConnectionEvent::Connected { record_id, account } => {
                 if !is_uuid_v7(record_id)
                     || !valid_account_record(account, &self.agent_id)
-                    || account.status != AccountStatus::Connected
+                    || !matches!(
+                        account.status,
+                        AccountStatus::Connected | AccountStatus::ConnectedUnverified
+                    )
                 {
                     return Err(LedgerError::InvalidRecord);
                 }
@@ -590,6 +603,7 @@ impl ConnectionLedger {
                     || !matches!(
                         (current.status, account.status),
                         (AccountStatus::Pending, AccountStatus::Connected)
+                            | (AccountStatus::Pending, AccountStatus::ConnectedUnverified)
                             | (AccountStatus::Connected, AccountStatus::Connected)
                     )
                 {
@@ -689,6 +703,8 @@ fn provider_fence_in_bytes(bytes: &[u8], provider: crate::Provider) -> Result<St
 fn valid_account_record(account: &ConnectedAccount, agent_id: &str) -> bool {
     is_uuid_v7(&account.id)
         && account.owner_agent_id == agent_id
+        && (account.status != AccountStatus::ConnectedUnverified
+            || account.provider == crate::Provider::AppleIcloud)
         && crate::vault::AccountVault::credential_ref(&account.id)
             .ok()
             .as_deref()
@@ -801,7 +817,7 @@ fn is_uuid_v7(value: &str) -> bool {
 mod tests {
     use super::{
         ConditionalAppendError, ConditionalUpdateError, ConnectionEvent, ConnectionLedger,
-        LedgerError,
+        LedgerError, valid_account_record,
     };
     use crate::{AccountStatus, Capability, ConnectedAccount, Provider};
     use chrono::Utc;
@@ -1424,6 +1440,20 @@ mod tests {
             },
         );
         assert!(matches!(result, Err(LedgerError::InvalidRecord)));
+    }
+
+    #[test]
+    fn connected_unverified_is_reserved_for_icloud_accounts() {
+        let agent_id = "agent-1";
+        let mut apple = connected_account(agent_id, &Uuid::now_v7().to_string(), 2);
+        apple.provider = Provider::AppleIcloud;
+        apple.provider_scopes.clear();
+        apple.status = AccountStatus::ConnectedUnverified;
+        assert!(valid_account_record(&apple, agent_id));
+
+        let mut google = connected_account(agent_id, &Uuid::now_v7().to_string(), 2);
+        google.status = AccountStatus::ConnectedUnverified;
+        assert!(!valid_account_record(&google, agent_id));
     }
 
     #[cfg(unix)]

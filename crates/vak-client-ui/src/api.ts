@@ -132,7 +132,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export type MailCalendarProvider = "google" | "microsoft" | "apple_icloud";
-export type MailCalendarAccountStatus = "pending" | "connected" | "reauthentication_required";
+export type MailCalendarAccountStatus = "pending" | "connected" | "connected_unverified" | "reauthentication_required";
 export type MailCalendarCapability = "mail_read" | "mail_prepare" | "mail_send" | "calendar_free_busy" | "calendar_read" | "calendar_write";
 export interface MailCalendarAccount {
   id: string;

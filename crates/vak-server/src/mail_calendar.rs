@@ -479,7 +479,9 @@ pub(super) async fn connect_icloud(
             }
             if !matches!(
                 linked.status,
-                AccountStatus::Connected | AccountStatus::ReauthenticationRequired
+                AccountStatus::Connected
+                    | AccountStatus::ConnectedUnverified
+                    | AccountStatus::ReauthenticationRequired
             ) {
                 continue;
             }
@@ -518,7 +520,7 @@ pub(super) async fn connect_icloud(
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     }
-    account.status = AccountStatus::Connected;
+    account.status = AccountStatus::ConnectedUnverified;
     account.revision = 2;
     let linked_account_id = account_id.clone();
     if ledger
@@ -1199,7 +1201,10 @@ pub(super) async fn refresh_account(
     let account = match ledger.read_all() {
         Ok(accounts) => accounts.into_iter().find(|account| {
             account.id == account_id
-                && account.status == AccountStatus::Connected
+                && matches!(
+                    account.status,
+                    AccountStatus::Connected | AccountStatus::ConnectedUnverified
+                )
                 && account.revoked_at.is_none()
         }),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),

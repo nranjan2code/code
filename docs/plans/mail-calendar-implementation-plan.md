@@ -804,8 +804,12 @@ authorization and approval boundary on every execution path.
   persistence. Regressions use independent ledger handles to prove that a
   disconnect in one invalidates a callback in the other before its
   credential-write closure runs, and that the captured fence follows the
-  consumed OAuth grant. All 51 mail/calendar domain tests, the state-registry
+  consumed OAuth grant. All 52 mail/calendar domain tests, the state-registry
   test, and all 16 server HTTP tests pass. The account-admission contract also
   rejects unverified Apple iCloud credentials even when the stored account
   lists a read capability. Content reads, previews, retained copies, and
   routines remain disabled behind the M7 gate.
+- 2026-09-30: Apple credential enrollment now persists and returns the explicit
+  `connected_unverified` account status instead of `connected`. Settings shows
+  that it is not verified or available to Agents. Ledger activation accepts
+  this status without making it admissible; disconnect remains available.

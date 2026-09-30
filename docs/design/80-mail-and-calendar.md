@@ -10,8 +10,9 @@ branch. OAuth and Apple activation hold the shared connection-ledger lock
 across the Agent-vault credential write and pending-to-connected event, so a
 concurrent disconnect either prevents the new credential write or runs after
 activation and removes it. Apple enrollment records only read capabilities,
-stores the password in the Agent vault, and reports no token expiry; it does not verify the
-credential with Apple or enable provider content access. Provider-content
+stores the password in the Agent vault, reports `connected_unverified`, and
+reports no token expiry; it does not verify the credential with Apple or
+enable provider content access. Provider-content
 reads, routines, local content drafts, previews, and provider effects remain
 unimplemented. OAuth authorization attempts are bounded and single-use;
 disconnect serializes with new links and atomically advances a durable,
@@ -21,9 +22,10 @@ checks it under the same cross-process ledger lock as the vault write. A
 disconnect in another server process therefore invalidates a callback already
 in flight. The separate in-memory callback fence table is capped so eviction
 invalidates stale commits instead of authorizing them.
-The generic account admission contract also refuses every Apple iCloud
-connection while that credential path remains unverified, even if the record
-stores a read capability. A future reviewed verifier must explicitly change
+The account API and Settings surface the unverified state directly. The
+generic account admission contract also refuses every Apple iCloud connection
+while that credential path remains unverified, even if the record stores a
+read capability. A future reviewed verifier must explicitly change
 this gate before an iCloud adapter can use the credential.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented

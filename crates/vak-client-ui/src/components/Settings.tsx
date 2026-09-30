@@ -1976,7 +1976,7 @@ export default function Settings() {
                   <Row title="Apple iCloud email" description="Enter your iCloud email and an app-specific password generated at account.apple.com. Your Apple Account password is never requested.">
                     <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
                   </Row>
-                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. Vakyartha restricts this connection to read-only capabilities; provider content stays disabled until deletion tracking is ready. Remove the password at Apple to revoke it.</p>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. It is stored for owner-managed cleanup, but it is not verified or available to Agents. Provider content stays disabled until a supported access path and deletion tracking are ready. Remove the password at Apple to revoke it.</p>
                 </Show>
                 <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
               </Group>
@@ -1990,19 +1990,19 @@ export default function Settings() {
                         && !account.superseded_by_active_link;
                       const connectionState = account.revoked_at
                         ? "Disconnected"
-                        : account.status === "pending"
-                          ? "Connection incomplete · cleanup needed"
-                          : !account.credential_available
-                            ? "Saved sign-in details are unavailable · disconnect this entry, then connect again"
-                            : account.status === "reauthentication_required"
+                          : account.status === "pending"
+                            ? "Connection incomplete · cleanup needed"
+                            : !account.credential_available
+                              ? "Saved sign-in details are unavailable · disconnect this entry, then connect again"
+                              : account.status === "connected_unverified"
+                                ? "Credential saved · not verified or available to Agents"
+                              : account.status === "reauthentication_required"
                             ? account.superseded_by_active_link
                                 ? "Reconnected · remove this old entry"
                                 : "New sign-in required · connect again, then remove this entry"
                               : account.status === "connected" && !account.refresh_token_available
                                 ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
-                              : account.provider === "apple_icloud"
-                                ? "Credential saved · not verified"
-                                : "Connected";
+                              : "Connected";
                       return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.provider === "apple_icloud" ? "App-specific password" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><span class="settings-actions"><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span></Row>;
                     }}</For>
                   </Show>
