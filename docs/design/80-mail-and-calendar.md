@@ -20,6 +20,11 @@ attendees, recurrence, or reminders. A draft from a selected Google or
 Microsoft conversation message preserves its source and can create a
 provider-threaded reply.
 
+Routine history is stored as bounded, content-free metadata in the owning
+Agent's encrypted vault. It records run, routine, account, optional session IDs,
+trigger, status, and timestamps. Run content remains in the Agent's append-only
+session; deleting an account or routine removes its matching vault history.
+
 Scheduled and one-minute continuous read-only routines use `TaskDef`, start
 paused for a one-off preview, and store a bounded encrypted mail backlog with
 provider cursors in the Agent vault. Continuous watches show an overdue warning

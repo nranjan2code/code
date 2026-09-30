@@ -761,6 +761,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview", post(mail_calendar::calendar_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview", post(mail_calendar::free_busy_preview))
         .route("/mail-calendar/accounts/{agent_id}/candidates", get(mail_calendar::list_candidates).post(mail_calendar::save_candidate))
+        .route("/mail-calendar/accounts/{agent_id}/routines/{routine_id}/history", get(mail_calendar::routine_history))
         .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/send", post(mail_calendar::send_mail_candidate))
         .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/create-event", post(mail_calendar::send_mail_candidate))
         .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/update-event", post(mail_calendar::send_mail_candidate))
@@ -17877,6 +17878,24 @@ fn load_tasks(state: &AppState) {
     }
     *map = tasks_vec.into_iter().map(|t| (t.id.clone(), t)).collect();
     if recover_interrupted_tasks(&mut map) {
+        for task in map
+            .values()
+            .filter(|task| task.last_run_status.as_deref() == Some("interrupted"))
+        {
+            if let (Some(agent_id), Some(scope), Some(session_id)) = (
+                task.agent_id.as_deref(),
+                task.mail_calendar_scope.as_ref(),
+                task.last_session_id.as_deref(),
+            ) && let Ok(vault) = vak_mail_calendar::vault::AccountVault::for_agent(agent_id)
+            {
+                let _ = vault.interrupt_routine_run_session(
+                    &scope.routine_id,
+                    &scope.account_id,
+                    session_id,
+                    chrono::Utc::now(),
+                );
+            }
+        }
         write_tasks_file(state, &map);
     }
 }
@@ -18362,6 +18381,12 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
         {
             return StatusCode::INTERNAL_SERVER_ERROR;
         }
+        if vault
+            .remove_routine_history(&scope.routine_id, &scope.account_id)
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
         Some(lease)
     } else {
         None
@@ -18588,7 +18613,7 @@ async fn fire_task_with_force(
     // Agent routine from separate server processes. Hold an OS-backed lease
     // through RunFinished so another process cannot launch a duplicate watch
     // or duplicate the model run for the same routine.
-    let mut routine_lease = if snapshot.mail_calendar_scope.is_some() {
+    let (routine_vault, mut routine_lease) = if snapshot.mail_calendar_scope.is_some() {
         let Some(agent_id) = snapshot.agent_id.as_deref() else {
             return Err(refuse_task(
                 state,
@@ -18604,13 +18629,39 @@ async fn fire_task_with_force(
             )
         })?;
         match vault.try_acquire_routine_lease(id) {
-            Ok(Some(lease)) => Some(lease),
+            Ok(Some(lease)) => (Some(vault), Some(lease)),
             Ok(None) => return Err(NotFired::Busy),
             Err(_) => {
                 return Err(refuse_task(
                     state,
                     &snapshot,
                     "The routine could not claim its cross-process run lease.".into(),
+                ));
+            }
+        }
+    } else {
+        (None, None)
+    };
+    let routine_run = if let (Some(vault), Some(scope)) = (
+        routine_vault.as_ref(),
+        snapshot.mail_calendar_scope.as_ref(),
+    ) {
+        match vault.start_routine_run(
+            &scope.routine_id,
+            &scope.account_id,
+            if force_mail_watch_run {
+                vak_mail_calendar::vault::RoutineRunTrigger::Manual
+            } else {
+                vak_mail_calendar::vault::RoutineRunTrigger::Scheduled
+            },
+            chrono::Utc::now(),
+        ) {
+            Ok(run) => Some(run),
+            Err(_) => {
+                return Err(refuse_task(
+                    state,
+                    &snapshot,
+                    "The routine could not safely record its run history.".into(),
                 ));
             }
         }
@@ -18638,6 +18689,26 @@ async fn fire_task_with_force(
         .await
         {
             Ok(Some(false)) => {
+                if let (Some(vault), Some(run), Some(scope)) = (
+                    routine_vault.as_ref(),
+                    routine_run.as_ref(),
+                    snapshot.mail_calendar_scope.as_ref(),
+                ) && vault
+                    .finish_routine_run(
+                        &scope.routine_id,
+                        &scope.account_id,
+                        &run.run_id,
+                        vak_mail_calendar::vault::RoutineRunStatus::NoChanges,
+                        chrono::Utc::now(),
+                    )
+                    .is_err()
+                {
+                    return Err(refuse_task(
+                        state,
+                        &snapshot,
+                        "The routine could not settle its run history.".into(),
+                    ));
+                }
                 update_tasks(state, |tasks| {
                     mark_mail_calendar_check_succeeded(tasks, id, chrono::Utc::now());
                     if let Some(task) = tasks.get_mut(id) {
@@ -18656,12 +18727,40 @@ async fn fire_task_with_force(
                 });
             }
             Ok(None) => {}
-            Err(error) => return Err(refuse_task(state, &snapshot, error)),
+            Err(error) => {
+                if let (Some(vault), Some(run), Some(scope)) = (
+                    routine_vault.as_ref(),
+                    routine_run.as_ref(),
+                    snapshot.mail_calendar_scope.as_ref(),
+                ) {
+                    let _ = vault.finish_routine_run(
+                        &scope.routine_id,
+                        &scope.account_id,
+                        &run.run_id,
+                        vak_mail_calendar::vault::RoutineRunStatus::Failed,
+                        chrono::Utc::now(),
+                    );
+                }
+                return Err(refuse_task(state, &snapshot, error));
+            }
         }
     }
     let provider = match state.core.provider() {
         Ok(provider) => provider,
         Err(error) => {
+            if let (Some(vault), Some(run), Some(scope)) = (
+                routine_vault.as_ref(),
+                routine_run.as_ref(),
+                snapshot.mail_calendar_scope.as_ref(),
+            ) {
+                let _ = vault.finish_routine_run(
+                    &scope.routine_id,
+                    &scope.account_id,
+                    &run.run_id,
+                    vak_mail_calendar::vault::RoutineRunStatus::Failed,
+                    chrono::Utc::now(),
+                );
+            }
             return Err(refuse_task(
                 state,
                 &snapshot,
@@ -18731,11 +18830,46 @@ async fn fire_task_with_force(
     )
     .await
     .map_err(|error| {
+        if let (Some(vault), Some(run), Some(scope)) = (
+            routine_vault.as_ref(),
+            routine_run.as_ref(),
+            snapshot.mail_calendar_scope.as_ref(),
+        ) {
+            let _ = vault.finish_routine_run(
+                &scope.routine_id,
+                &scope.account_id,
+                &run.run_id,
+                vak_mail_calendar::vault::RoutineRunStatus::Failed,
+                chrono::Utc::now(),
+            );
+        }
         if temporary_worktree {
             let _ = vak_core::worktree::remove(&snapshot.cwd, &wt);
         }
         refuse_task(state, &snapshot, format!("It could not start: {error}."))
     })?;
+
+    if let (Some(vault), Some(run), Some(scope)) = (
+        routine_vault.as_ref(),
+        routine_run.as_ref(),
+        snapshot.mail_calendar_scope.as_ref(),
+    ) && vault
+        .attach_routine_run_session(&scope.routine_id, &scope.account_id, &run.run_id, &child_id)
+        .is_err()
+    {
+        let _ = vault.finish_routine_run(
+            &scope.routine_id,
+            &scope.account_id,
+            &run.run_id,
+            vak_mail_calendar::vault::RoutineRunStatus::Failed,
+            chrono::Utc::now(),
+        );
+        return Err(refuse_task(
+            state,
+            &snapshot,
+            "The routine could not link its private run history to the Agent session.".into(),
+        ));
+    }
 
     update_tasks(state, |map| {
         if let Some(t) = map.get_mut(id) {
@@ -18767,6 +18901,9 @@ async fn fire_task_with_force(
         let task_name = snapshot.name.clone();
         let deliver_to = snapshot.deliver_to.clone();
         let mail_calendar_task = snapshot.mail_calendar_scope.is_some();
+        let routine_history_vault = routine_vault.clone();
+        let routine_history_run = routine_run.clone();
+        let routine_history_scope = snapshot.mail_calendar_scope.clone();
         let routine_lease = routine_lease.take();
         let rx = h.events_tx.subscribe();
         tokio::spawn(async move {
@@ -18778,6 +18915,23 @@ async fn fire_task_with_force(
             let mut stream = BroadcastStream::new(rx);
             while let Some(Ok(ev)) = stream.next().await {
                 if let AgentEvent::RunFinished { summary, is_error } = ev.event {
+                    if let (Some(vault), Some(run), Some(scope)) = (
+                        routine_history_vault.as_ref(),
+                        routine_history_run.as_ref(),
+                        routine_history_scope.as_ref(),
+                    ) {
+                        let _ = vault.finish_routine_run(
+                            &scope.routine_id,
+                            &scope.account_id,
+                            &run.run_id,
+                            if is_error {
+                                vak_mail_calendar::vault::RoutineRunStatus::Failed
+                            } else {
+                                vak_mail_calendar::vault::RoutineRunStatus::Complete
+                            },
+                            chrono::Utc::now(),
+                        );
+                    }
                     let text = if mail_calendar_task {
                         None
                     } else {

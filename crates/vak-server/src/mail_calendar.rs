@@ -355,6 +355,48 @@ pub(super) async fn list_candidates(
     }
 }
 
+/// Return content-free run metadata for one routine, scoped to its owning
+/// Agent. Run output itself remains in the Agent's session history.
+pub(super) async fn routine_history(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, routine_id)): Path<(String, String)>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !registered_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let task = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&routine_id)
+        .filter(|task| {
+            task.cwd.as_path() == state.core.cwd().as_path()
+                && task.agent_id.as_deref() == Some(agent_id.as_str())
+                && task
+                    .mail_calendar_scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.routine_id == routine_id)
+        })
+        .cloned();
+    let Some(task) = task else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(scope) = task.mail_calendar_scope else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(vault) = AccountVault::for_agent(&agent_id) else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    match vault.list_routine_runs(&routine_id, &scope.account_id) {
+        Ok(runs) => Json(serde_json::json!({ "runs": runs })).into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
 pub(super) async fn save_candidate(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,

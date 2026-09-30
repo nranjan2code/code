@@ -1134,6 +1134,8 @@ export default function Settings() {
     () => page() === "mail-calendar" ? activeAgentId() : null,
     async () => (await api.listTasks()).tasks.filter((task) => !!task.mail_calendar_scope),
   );
+  const [mailCalendarRunHistory, setMailCalendarRunHistory] = createSignal<Record<string, api.MailCalendarRoutineRun[]>>({});
+  const [mailCalendarRunHistoryLoading, setMailCalendarRunHistoryLoading] = createSignal<string | null>(null);
   const [mailCalendarClockNow, setMailCalendarClockNow] = createSignal(Date.now());
   createEffect(() => {
     if (page() !== "mail-calendar") return;
@@ -2095,6 +2097,18 @@ export default function Settings() {
       await refreshMailCalendarTasks();
     } catch (error) {
       setNotice({ kind: "error", text: `Could not run routine: ${error instanceof Error ? error.message : String(error)}` });
+    }
+  };
+  const loadMailCalendarRoutineHistory = async (task: TaskDef) => {
+    if (!task.agent_id || !task.mail_calendar_scope) return;
+    setMailCalendarRunHistoryLoading(task.id);
+    try {
+      const result = await api.listMailCalendarRoutineRuns(task.agent_id, task.id);
+      setMailCalendarRunHistory((current) => ({ ...current, [task.id]: result.runs }));
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not load routine history: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarRunHistoryLoading((current) => current === task.id ? null : current);
     }
   };
   const toggleMailCalendarRoutine = async (task: TaskDef) => {
@@ -3132,7 +3146,20 @@ export default function Settings() {
                         ? `last successful check ${relTime(task.mail_calendar_last_check_at)}${watchFreshness === "overdue" ? " · check overdue; the service may be asleep or disconnected" : ""}`
                         : "no successful check yet"
                       : task.last_run_at ? `last run ${relTime(task.last_run_at)}` : "not run yet";
-                    return <article class="mail-calendar-draft-row"><div><strong>{task.name}</strong><span>{status} · {frequency} · {lastActivity}{task.enabled && task.next_run_at ? ` · next ${new Date(task.next_run_at).toLocaleString()}` : ""}</span></div><div class="settings-actions"><Show when={task.last_session_id}><button class="settings-button" onClick={() => setTranscriptViewId(task.last_session_id!)}>Open latest run</button></Show><button class="settings-button" disabled={!task.enabled && mailCalendarAccounts()?.accounts.some((account) => account.id === task.mail_calendar_scope?.account_id && !!account.revoked_at)} onClick={() => void runMailCalendarRoutine(task)}>{!task.enabled && !task.last_session_id ? "Preview run" : "Run now"}</button><button class="settings-button" onClick={() => void toggleMailCalendarRoutine(task)}>{task.enabled ? "Pause" : "Resume"}</button><button class="settings-button danger" onClick={() => deleteMailCalendarRoutine(task)}>Delete</button></div></article>;
+                    const runs = mailCalendarRunHistory()[task.id] ?? [];
+                    return <article class="mail-calendar-draft-row"><div>
+                      <strong>{task.name}</strong>
+                      <span>{status} · {frequency} · {lastActivity}{task.enabled && task.next_run_at ? ` · next ${new Date(task.next_run_at).toLocaleString()}` : ""}</span>
+                      <details class="mail-calendar-routine-history" onToggle={(event) => { if (event.currentTarget.open) void loadMailCalendarRoutineHistory(task); }}>
+                        <summary>Run history</summary>
+                        <Show when={mailCalendarRunHistoryLoading() === task.id}><span role="status">Loading run history…</span></Show>
+                        <Show when={mailCalendarRunHistoryLoading() !== task.id}>
+                          <Show when={runs.length > 0} fallback={<span>No recorded runs yet.</span>}>
+                            <ul><For each={runs}>{(run) => <li><time dateTime={run.started_at}>{new Date(run.started_at).toLocaleString()}</time><span>{run.trigger === "manual" ? "Manual preview/run" : "Scheduled"} · {run.status.replaceAll("_", " ")}</span><Show when={run.session_id}><button class="settings-button" onClick={() => setTranscriptViewId(run.session_id!)}>Open result</button></Show></li>}</For></ul>
+                          </Show>
+                        </Show>
+                      </details>
+                    </div><div class="settings-actions"><Show when={task.last_session_id}><button class="settings-button" onClick={() => setTranscriptViewId(task.last_session_id!)}>Open latest run</button></Show><button class="settings-button" disabled={!task.enabled && mailCalendarAccounts()?.accounts.some((account) => account.id === task.mail_calendar_scope?.account_id && !!account.revoked_at)} onClick={() => void runMailCalendarRoutine(task)}>{!task.enabled && !task.last_session_id ? "Preview run" : "Run now"}</button><button class="settings-button" onClick={() => void toggleMailCalendarRoutine(task)}>{task.enabled ? "Pause" : "Resume"}</button><button class="settings-button danger" onClick={() => deleteMailCalendarRoutine(task)}>Delete</button></div></article>;
                   }}</For>
                 </Show></div>}>
                   <p class="settings-hint">Loading scheduled routines…</p>

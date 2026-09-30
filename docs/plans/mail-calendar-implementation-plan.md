@@ -609,7 +609,25 @@ UUIDv7 IDs. Model-visible inputs must be append-only session entries, logs
 must not carry content, and all provider effects must pass the same broker
 authorization and approval boundary on every execution path.
 
+**Implemented increment (2026-10-01):** bounded run history is persisted as
+content-free metadata in each owning Agent's encrypted vault and shown under
+each routine in Settings. Entries identify the routine/account, trigger,
+status, timestamps, and optional Agent session ID; message content and model
+output stay in the append-only Agent session. The history endpoint verifies
+the owner Agent and workspace routine scope. Account and routine deletion
+remove their matching history. Vault lifecycle tests cover isolation, bounds,
+restart persistence, settlement, interruption, and deletion. This metadata
+cleanup does not erase content already copied into append-only sessions; M7
+remains the deletion gate.
+
 ## Progress log
+
+- 2026-10-01: Added owner-visible routine run history backed by bounded,
+  content-free records in the encrypted Agent vault. The server verifies Agent
+  ownership and workspace scope; account or routine deletion removes matching
+  history. All 112 mail/calendar unit tests, the durable state-registry test,
+  14 focused server tests, the production web build, formatting, and diff
+  checks pass. No provider content is duplicated into this index.
 
 - 2026-10-01: Added persisted, backward-compatible source-check timestamps for
   continuous mail watches. Successful provider cursor polls update the field;

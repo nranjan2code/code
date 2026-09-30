@@ -227,6 +227,20 @@ export interface MailCalendarEventPreview {
   can_cancel?: boolean;
 }
 export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
+export interface MailCalendarRoutineRun {
+  run_id: string;
+  routine_id: string;
+  account_id: string;
+  session_id: string | null;
+  trigger: "manual" | "scheduled";
+  status: "running" | "complete" | "failed" | "no_changes" | "interrupted";
+  started_at: string;
+  finished_at: string | null;
+}
+
+export function listMailCalendarRoutineRuns(agentId: string, routineId: string): Promise<{ runs: MailCalendarRoutineRun[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/routines/${encodeURIComponent(routineId)}/history`);
+}
 
 export function listMailCalendarFolders(agentId: string, accountId: string): Promise<{ folders: MailCalendarFolder[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-folders`);
