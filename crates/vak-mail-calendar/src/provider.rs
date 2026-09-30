@@ -3185,6 +3185,9 @@ mod tests {
                     assert_eq!(request.headers().get(reqwest::header::AUTHORIZATION)
                         .and_then(|value| value.to_str().ok()), Some("Bearer delta-token"));
                     let query = request.uri().query().unwrap_or_default();
+                    if query.contains("deltatoken=expired") {
+                        return axum::http::StatusCode::GONE.into_response();
+                    }
                     if query.contains("skiptoken=page-2") {
                         return axum::Json(json!({
                             "value":[{"id":"created-2"},{"id":"deleted-row","@removed":{"reason":"deleted"}}],
@@ -3246,6 +3249,18 @@ mod tests {
             decode_graph_watch_cursor(cursor.as_deref().unwrap(), &base).unwrap(),
             expected_final_link
         );
+
+        let expired = encode_graph_watch_cursor(
+            &format!("{base}/me/mailFolders/inbox/messages/delta?$deltatoken=expired"),
+            &base,
+        )
+        .unwrap();
+        assert!(matches!(
+            client
+                .mail_watch_page(&account, &vault, &agent_id, &audience, Some(&expired), 100,)
+                .await,
+            Err(ProviderReadError::WatchCursorReset)
+        ));
 
         let foreign = "microsoft-graph:https://attacker.invalid/graph/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=x";
         assert!(matches!(
