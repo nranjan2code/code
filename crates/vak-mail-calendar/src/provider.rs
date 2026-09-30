@@ -21,6 +21,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
 const MAX_THREAD_MESSAGES: usize = 20;
+const MAX_THREAD_PAGE_BYTES: usize = 512 * 1024;
 const MAX_MAIL_FOLDERS: usize = 100;
 pub const MAX_MAIL_ATTACHMENTS: usize = 20;
 pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
@@ -858,7 +859,15 @@ impl ProviderReadClient {
                     .http
                     .get(url)
                     .bearer_auth(token.as_str())
-                    .query(&[("format", "full")])
+                    .query(&[
+                        ("format", "metadata"),
+                        ("metadataHeaders", "From"),
+                        ("metadataHeaders", "Subject"),
+                        ("metadataHeaders", "Date"),
+                        ("metadataHeaders", "Message-ID"),
+                        ("metadataHeaders", "In-Reply-To"),
+                        ("metadataHeaders", "References"),
+                    ])
                     .send()
                     .await
                     .map_err(|_| ProviderReadError::Unavailable)?;
@@ -867,15 +876,50 @@ impl ProviderReadClient {
                     .get("messages")
                     .and_then(Value::as_array)
                     .ok_or(ProviderReadError::InvalidResponse)?;
-                let mut messages = Vec::new();
                 let page = rows
                     .iter()
                     .skip(offset)
                     .take(MAX_THREAD_MESSAGES)
                     .collect::<Vec<_>>();
+                let mut messages = Vec::with_capacity(page.len());
+                let mut page_bytes = 0usize;
                 for row in &page {
-                    let item = parse_google_message(row);
-                    if item.thread_id.as_deref() != Some(thread_id) || item.provider_id.is_empty() {
+                    let message_id = row
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .filter(|id| valid_google_label_id(id))
+                        .ok_or(ProviderReadError::InvalidResponse)?;
+                    if row.get("threadId").and_then(Value::as_str) != Some(thread_id) {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    let message_url = graph_url_segments(
+                        &self.google_gmail_base,
+                        &["users", "me", "messages", message_id],
+                    )?;
+                    let response = self
+                        .http
+                        .get(message_url)
+                        .bearer_auth(token.as_str())
+                        .query(&[("format", "full")])
+                        .send()
+                        .await
+                        .map_err(|_| ProviderReadError::Unavailable)?;
+                    let message_value = parse_response(response, MAX_MESSAGE_BYTES).await?;
+                    if message_value.get("id").and_then(Value::as_str) != Some(message_id)
+                        || message_value.get("threadId").and_then(Value::as_str) != Some(thread_id)
+                    {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    page_bytes = page_bytes.saturating_add(
+                        serde_json::to_vec(&message_value)
+                            .map_err(|_| ProviderReadError::InvalidResponse)?
+                            .len(),
+                    );
+                    if page_bytes > MAX_THREAD_PAGE_BYTES {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    let item = parse_google_message(&message_value);
+                    if item.provider_id != message_id {
                         return Err(ProviderReadError::InvalidResponse);
                     }
                     messages.push(item);
@@ -3279,13 +3323,16 @@ mod tests {
         let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
         let mismatch = Arc::new(AtomicBool::new(false));
         let app_mismatch = Arc::clone(&mismatch);
+        let message_mismatch = Arc::clone(&mismatch);
         let app = axum::Router::new().route(
             "/gmail/v1/users/me/threads/thread_1",
             axum::routing::get(move |request: Request<axum::body::Body>| {
                 let mismatch = Arc::clone(&app_mismatch);
                 async move {
                     assert_eq!(request.headers().get(reqwest::header::AUTHORIZATION).and_then(|value| value.to_str().ok()), Some("Bearer access-token"));
-                    assert!(request.uri().query().unwrap_or_default().contains("format=full"));
+                    let query = request.uri().query().unwrap_or_default();
+                    assert!(query.contains("format=metadata"));
+                    assert!(query.contains("metadataHeaders=From"));
                     let rows = (0..21)
                         .map(|index| {
                             let thread_id = if mismatch.load(Ordering::SeqCst) && index == 1 {
@@ -3293,14 +3340,28 @@ mod tests {
                             } else {
                                 "thread_1"
                             };
-                            json!({
-                                "id":format!("msg-{index}"),
-                                "threadId":thread_id,
-                                "payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":format!("Message {index}")}],"body":{}}
-                            })
+                            json!({"id":format!("msg-{index}"),"threadId":thread_id})
                         })
                         .collect::<Vec<_>>();
                     axum::Json(json!({"messages":rows})).into_response()
+                }
+            }),
+        ).route(
+            "/gmail/v1/users/me/messages/{message_id}",
+            axum::routing::get(move |axum::extract::Path(message_id): axum::extract::Path<String>, request: Request<axum::body::Body>| {
+                let mismatch = Arc::clone(&message_mismatch);
+                async move {
+                    assert_eq!(request.headers().get(reqwest::header::AUTHORIZATION).and_then(|value| value.to_str().ok()), Some("Bearer access-token"));
+                    assert!(request.uri().query().unwrap_or_default().contains("format=full"));
+                    let thread_id = if mismatch.load(Ordering::SeqCst) && message_id == "msg-1" { "other-thread" } else { "thread_1" };
+                    let index = message_id.strip_prefix("msg-").unwrap().parse::<usize>().unwrap();
+                    let body = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(format!("Body {index}"));
+                    axum::Json(json!({
+                        "id":message_id,
+                        "threadId":thread_id,
+                        "internalDate":"1780000000000",
+                        "payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":format!("Message {index}")},{"name":"From","value":"alice@example.com"}],"body":{"data":body}}
+                    })).into_response()
                 }
             }),
         );

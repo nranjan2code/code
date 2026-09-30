@@ -102,8 +102,10 @@ times are rendered in the device's time zone. Inbox navigation remains a
 bounded recent-message view and owner-submitted phrase search within the selected
 inbox. Owner mail previews can select Gmail labels and Microsoft top-level
 folders; Apple and Agent/watcher reads remain Inbox-only. Google and Microsoft
-owners can open a paginated thread preview with up to 20 messages per page; Apple
-supports a selected-message preview without conversation grouping. These
+owners can open a paginated thread preview with up to 20 messages per page; Gmail
+loads a bounded metadata-only thread snapshot and fetches full content only for
+the selected page, while Microsoft follows a validated provider continuation.
+Apple supports a selected-message preview without conversation grouping. These
 results are transient and search phrases are not logged or retained. The owner
 can start a local email draft from any message in an opened Google or Microsoft
 conversation; the candidate retains that selected provider message as its

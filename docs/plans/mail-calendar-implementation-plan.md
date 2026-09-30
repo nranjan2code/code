@@ -1351,5 +1351,7 @@ authorization and approval boundary on every execution path.
   messages are still checked for membership. The UI offers explicit “Load more”
   and keeps each page transient. Cursor-tampering tests, two-page provider
   fixtures, all 94 mail/calendar tests, server owner-authentication HTTP test,
-  UI typecheck, and production web build pass. Gmail fetches a response-capped
-  thread snapshot for each page; the full thread workspace remains open.
+  UI typecheck, and production web build pass. Gmail now fetches a bounded
+  metadata-only thread snapshot and full content only for the selected page's
+  message IDs, each with per-message and aggregate byte caps; the full thread
+  workspace remains open.
