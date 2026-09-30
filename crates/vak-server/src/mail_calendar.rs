@@ -113,7 +113,7 @@ pub(crate) async fn mail_watch_has_unseen(
         .await
         .map_err(|error| match error {
             vak_mail_calendar::provider::ProviderReadError::WatchCursorReset => {
-                "the Apple mailbox changed its UID validity; delete and recreate this watch to establish a fresh cursor, which may leave a gap".to_string()
+                "the provider watch cursor expired or reset; delete and recreate this watch to establish a fresh cursor, which may leave a gap".to_string()
             }
             _ => "the mail watch could not check its bounded provider window".to_string(),
         })?;

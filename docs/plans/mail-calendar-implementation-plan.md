@@ -356,10 +356,11 @@ the routine's configured batch by explicit IDs. The content-free poll does
 not fetch message bodies. Fetched IDs remain staged until the scheduler
 observes a completed run; failed or interrupted runs requeue them, preserving
 at-least-once recovery across local restarts. Apple now advances a bounded
-UIDVALIDITY/UID cursor so arrivals beyond one page can be drained on later
-checks. Gmail and Microsoft still use the latest 100 IDs per check, so a larger
-arrival burst can push older mail outside that window; backlog overflow fails
-closed. An Agent-vault OS
+UIDVALIDITY/UID cursor, and Gmail follows bounded history pages from its stored
+history ID, so arrivals beyond one page can be drained on later checks.
+Microsoft still uses the latest 100 IDs per check, so a larger arrival burst
+can push older mail outside that window; backlog overflow fails closed. An
+Agent-vault OS
 advisory lease now prevents duplicate polls or dispatches by
 local server processes; it is held through child completion
 and released by the OS on process exit. It does not coordinate separate hosts
@@ -1197,4 +1198,13 @@ authorization and approval boundary on every execution path.
   visibly instead of comparing unrelated mailbox IDs; the owner must recreate
   that routine to establish a new baseline. Local protocol, cursor, vault
   restart, worker, HTTP, formatting, and diff checks pass. Gmail and Microsoft
-  remain on the latest-100 scan and still need native history/delta pagination.
+  remained on the latest-100 scan at that checkpoint.
+- 2026-09-30: Added Gmail history-based watcher pagination. Initial admission
+  captures Gmail's mailbox history ID and a bounded inbox snapshot; subsequent
+  polls follow opaque `nextPageToken` values and atomically advance the encrypted
+  cursor with the IDs from each page. Only message additions and inbox-label
+  additions enter the queue. An expired Gmail history ID or an overfull history
+  page fails visibly rather than advancing past unqueued mail. Test doubles
+  verify inbox filtering, page continuation, cursor advancement, expired-token
+  handling, and bearer-token scope. Microsoft Graph delta pagination and live
+  Gmail verification remain open.

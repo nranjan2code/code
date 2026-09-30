@@ -132,7 +132,7 @@ pub enum ProviderReadError {
     #[error("provider response was invalid or exceeded its size limit")]
     InvalidResponse,
     #[error(
-        "the Apple mailbox UIDVALIDITY changed; delete and recreate the routine to establish a new cursor, which may leave a gap"
+        "the provider watch cursor expired or reset; delete and recreate the routine to establish a new cursor, which may leave a gap"
     )]
     WatchCursorReset,
     #[error("requested time range is outside the allowed window")]
@@ -361,9 +361,114 @@ impl ProviderReadClient {
         if account.provider == Provider::AppleIcloud {
             return icloud_mail_watch_page(account, vault, cursor, limit).await;
         }
+        if account.provider == Provider::Google {
+            let token = vault
+                .access_token(&account.id)
+                .map_err(|_| ProviderReadError::Vault)?;
+            return self
+                .google_mail_watch_page(
+                    token.as_str(),
+                    account,
+                    vault,
+                    agent_id,
+                    audience,
+                    cursor,
+                    limit,
+                )
+                .await;
+        }
         self.recent_mail_ids(account, vault, agent_id, audience, limit)
             .await
             .map(|ids| (ids, None))
+    }
+
+    async fn google_mail_watch_page(
+        &self,
+        token: &str,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<String>, Option<String>), ProviderReadError> {
+        let Some(cursor) = cursor else {
+            let profile = self
+                .http
+                .get(format!("{}/users/me/profile", self.google_gmail_base))
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?;
+            let profile = parse_response(profile, MAX_RESPONSE_BYTES).await?;
+            let history_id = profile
+                .get("historyId")
+                .and_then(Value::as_str)
+                .filter(|id| valid_google_history_id(id))
+                .ok_or(ProviderReadError::InvalidResponse)?;
+            // Take an initial bounded snapshot, then use the profile's history
+            // ID to catch arrivals racing that snapshot on the next poll.
+            let ids = self
+                .recent_mail_ids(account, vault, agent_id, audience, limit)
+                .await?;
+            return Ok((
+                ids,
+                Some(encode_google_watch_cursor(&GoogleWatchCursor {
+                    start_history_id: history_id.to_owned(),
+                    page_token: None,
+                })?),
+            ));
+        };
+        let cursor = decode_google_watch_cursor(cursor)?;
+        let mut request = self
+            .http
+            .get(format!("{}/users/me/history", self.google_gmail_base))
+            .bearer_auth(token)
+            .query(&[
+                ("startHistoryId", cursor.start_history_id.as_str()),
+                ("labelId", "INBOX"),
+                ("maxResults", "100"),
+            ])
+            .query(&[
+                ("historyTypes", "messageAdded"),
+                ("historyTypes", "labelAdded"),
+            ]);
+        if let Some(page_token) = cursor.page_token.as_deref() {
+            request = request.query(&[("pageToken", page_token)]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Err(ProviderReadError::WatchCursorReset);
+        }
+        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+        let ids = google_history_inbox_ids(&value, limit)?;
+        let next_cursor =
+            if let Some(page_token) = value.get("nextPageToken").and_then(Value::as_str) {
+                if page_token.is_empty()
+                    || page_token.len() > 1024
+                    || page_token.chars().any(char::is_control)
+                {
+                    return Err(ProviderReadError::WatchCursorReset);
+                }
+                Some(encode_google_watch_cursor(&GoogleWatchCursor {
+                    start_history_id: cursor.start_history_id,
+                    page_token: Some(page_token.to_owned()),
+                })?)
+            } else {
+                let history_id = value
+                    .get("historyId")
+                    .and_then(Value::as_str)
+                    .filter(|id| valid_google_history_id(id))
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                Some(encode_google_watch_cursor(&GoogleWatchCursor {
+                    start_history_id: history_id.to_owned(),
+                    page_token: None,
+                })?)
+            };
+        Ok((ids, next_cursor))
     }
 
     /// Fetch a small explicit set of message IDs. Scheduled watches use this
@@ -1560,6 +1665,103 @@ async fn parse_response(mut response: Response, limit: usize) -> Result<Value, P
     serde_json::from_slice(&body).map_err(|_| ProviderReadError::InvalidResponse)
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GoogleWatchCursor {
+    start_history_id: String,
+    #[serde(default)]
+    page_token: Option<String>,
+}
+
+fn valid_google_history_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn encode_google_watch_cursor(cursor: &GoogleWatchCursor) -> Result<String, ProviderReadError> {
+    if !valid_google_history_id(&cursor.start_history_id)
+        || cursor.page_token.as_ref().is_some_and(|token| {
+            token.is_empty() || token.len() > 1024 || token.chars().any(char::is_control)
+        })
+    {
+        return Err(ProviderReadError::WatchCursorReset);
+    }
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(cursor).map_err(|_| ProviderReadError::InvalidResponse)?);
+    let value = format!("gmail-v1:{encoded}");
+    if value.len() > 2048 {
+        return Err(ProviderReadError::WatchCursorReset);
+    }
+    Ok(value)
+}
+
+fn decode_google_watch_cursor(value: &str) -> Result<GoogleWatchCursor, ProviderReadError> {
+    let encoded = value
+        .strip_prefix("gmail-v1:")
+        .filter(|encoded| !encoded.is_empty() && encoded.len() <= 2040)
+        .ok_or(ProviderReadError::WatchCursorReset)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| ProviderReadError::WatchCursorReset)?;
+    let cursor: GoogleWatchCursor =
+        serde_json::from_slice(&bytes).map_err(|_| ProviderReadError::WatchCursorReset)?;
+    if !valid_google_history_id(&cursor.start_history_id)
+        || cursor.page_token.as_ref().is_some_and(|token| {
+            token.is_empty() || token.len() > 1024 || token.chars().any(char::is_control)
+        })
+    {
+        return Err(ProviderReadError::WatchCursorReset);
+    }
+    Ok(cursor)
+}
+
+fn google_history_inbox_ids(value: &Value, limit: usize) -> Result<Vec<String>, ProviderReadError> {
+    let mut ids = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let history = value
+        .get("history")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    for record in history {
+        for change_kind in ["messagesAdded", "labelsAdded"] {
+            let Some(changes) = record.get(change_kind).and_then(Value::as_array) else {
+                continue;
+            };
+            for change in changes {
+                let message = change.get("message").unwrap_or(&Value::Null);
+                let in_inbox = message
+                    .get("labelIds")
+                    .and_then(Value::as_array)
+                    .is_some_and(|labels| {
+                        labels.iter().any(|label| label.as_str() == Some("INBOX"))
+                    })
+                    || change
+                        .get("labelIds")
+                        .and_then(Value::as_array)
+                        .is_some_and(|labels| {
+                            labels.iter().any(|label| label.as_str() == Some("INBOX"))
+                        });
+                if !in_inbox {
+                    continue;
+                }
+                let Some(id) = message.get("id").and_then(Value::as_str) else {
+                    continue;
+                };
+                if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) {
+                    return Err(ProviderReadError::InvalidResponse);
+                }
+                if seen.insert(id.to_owned()) {
+                    ids.push(id.to_owned());
+                    if ids.len() > limit {
+                        return Err(ProviderReadError::WatchCursorReset);
+                    }
+                }
+            }
+        }
+    }
+    Ok(ids)
+}
+
 async fn read_caldav_multistatus(mut response: Response) -> Result<String, ProviderReadError> {
     match response.status() {
         StatusCode::MULTI_STATUS => {}
@@ -2677,6 +2879,164 @@ mod tests {
                 )
                 .await,
             Err(ProviderReadError::NotAdmitted)
+        ));
+        vault.remove(&account_id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn google_watch_uses_bounded_history_pages_and_recovers_expired_cursor() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-gmail-history-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                AccountSecretMaterial::new(
+                    "google:history-subject".into(),
+                    Some("owner@example.test".into()),
+                    Some("client".into()),
+                    Some("history-token".into()),
+                    Some("refresh-token".into()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let app = axum::Router::new()
+            .route(
+                "/gmail/v1/users/me/profile",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer history-token")
+                    );
+                    axum::Json(json!({"historyId":"100"}))
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/messages",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert!(request.uri().query().unwrap_or_default().contains("labelIds=INBOX"));
+                    axum::Json(json!({"messages":[{"id":"initial-message"}]}))
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/history",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer history-token")
+                    );
+                    let query = request.uri().query().unwrap_or_default();
+                    if query
+                        .split('&')
+                        .any(|part| part == "startHistoryId=1")
+                    {
+                        return axum::http::StatusCode::NOT_FOUND.into_response();
+                    }
+                    if query.contains("pageToken=page-2") {
+                        assert!(query.contains("startHistoryId=100"));
+                        return axum::Json(json!({
+                            "historyId":"110",
+                            "history":[{"messagesAdded":[{"message":{"id":"message-3","labelIds":["INBOX"]}}]}]
+                        })).into_response();
+                    }
+                    assert!(query.contains("startHistoryId=100"));
+                    if query.contains("pageToken=page-1") {
+                        return axum::Json(json!({
+                            "historyId":"110",
+                            "history":[{"messagesAdded":[{"message":{"id":"message-3","labelIds":["INBOX"]}}]}]
+                        })).into_response();
+                    }
+                    axum::Json(json!({
+                        "historyId":"105",
+                        "nextPageToken":"page-2",
+                        "history":[
+                            {"messagesAdded":[
+                                {"message":{"id":"message-1","labelIds":["INBOX"]}},
+                                {"message":{"id":"sent-message","labelIds":["SENT"]}}
+                            ]},
+                            {"labelsAdded":[{"message":{"id":"message-2"},"labelIds":["INBOX"]}]}
+                        ]
+                    })).into_response()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let account = ConnectedAccount {
+            id: account_id.clone(),
+            provider: Provider::Google,
+            status: AccountStatus::Connected,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: BTreeSet::new(),
+            credential_ref: AccountVault::credential_ref(&account_id).unwrap(),
+            principal_ref: "opaque".into(),
+            revision: 1,
+            connected_at: Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: true,
+            revoked_at: None,
+        };
+        let audience = format!("agent:{agent_id}");
+        let (initial, cursor) = client
+            .mail_watch_page(&account, &vault, &agent_id, &audience, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(initial, ["initial-message"]);
+        let cursor = cursor.unwrap();
+        let (first_page, cursor) = client
+            .mail_watch_page(&account, &vault, &agent_id, &audience, Some(&cursor), 100)
+            .await
+            .unwrap();
+        assert_eq!(first_page, ["message-1", "message-2"]);
+        let cursor = cursor.unwrap();
+        let (second_page, cursor) = client
+            .mail_watch_page(&account, &vault, &agent_id, &audience, Some(&cursor), 100)
+            .await
+            .unwrap();
+        assert_eq!(second_page, ["message-3"]);
+        assert_eq!(
+            decode_google_watch_cursor(cursor.as_deref().unwrap())
+                .unwrap()
+                .start_history_id,
+            "110"
+        );
+        let expired = encode_google_watch_cursor(&GoogleWatchCursor {
+            start_history_id: "1".into(),
+            page_token: None,
+        })
+        .unwrap();
+        assert!(matches!(
+            client
+                .mail_watch_page(&account, &vault, &agent_id, &audience, Some(&expired), 100)
+                .await,
+            Err(ProviderReadError::WatchCursorReset)
         ));
         vault.remove(&account_id).unwrap();
         task.abort();
