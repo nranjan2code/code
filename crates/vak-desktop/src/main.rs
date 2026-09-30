@@ -740,10 +740,10 @@ fn install_backend(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(running);
-    if let Some(previous) = previous {
-        if let Some(shutdown) = previous.backend.shutdown {
-            let _ = shutdown.send(true);
-        }
+    if let Some(previous) = previous
+        && let Some(shutdown) = previous.backend.shutdown
+    {
+        let _ = shutdown.send(true);
     }
     let _ = app.emit("backend-ready", &info);
     info
