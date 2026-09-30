@@ -597,7 +597,7 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
         println!();
         let code = crate::run_exec(
             cwd.clone(),
-            FIRST_TASK_PROMPT.to_string(),
+            vak_core::onboarding::FIRST_TASK_PROMPT.to_string(),
             None,
             None,
             None,
@@ -625,10 +625,6 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
     println!();
     run_status(cwd, None, false)
 }
-
-/// The starter task, identical to the one the web wizard runs.
-const FIRST_TASK_PROMPT: &str = "Map this codebase and explain its architecture, key flows, \
-     and highest-risk areas. Do not modify files or run any destructive command.";
 
 /// `vak self state [--verify <snapshot>]`.
 ///

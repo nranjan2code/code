@@ -132,14 +132,23 @@ Small models frequently end their turn mid-plan. The loop consults an
 internal `StopPolicy` (vak-agent) at every completion point, BEFORE
 returning `Completed`:
 
-- **marker gate**: final text ends with a bare plan marker, a non-heading
-  trailing `:` line, or an unclosed fenced code block → looks truncated;
-- **verify gate**: the run's initial prompt demanded executed verification
-  ("must pass", "run it", "prove that"…) and ZERO bash commands ran all run;
-  it also fires whenever the resolved outcome's `requires_execution()` is
-  true (an effectful act, `Verify`, or a request that names a file
-  deliverable — `Author` alone never demands a receipt) and no execution
-  receipt exists, independent of the keyword heuristic.
+- **marker gate**: for work whose reading needs a tool, final text ends
+  with a bare plan marker, a non-heading trailing `:` line, or an unclosed
+  fenced code block → looks truncated. A letter or an agenda is never
+  checked: its last line is the deliverable;
+- **verify gate**: what completion needs comes from the admitted
+  `OutcomeSpec`, never from phrases in the request. A `verification` stop
+  profile needs an execution receipt, and changed code must have been run;
+  an effectful act or a named file deliverable needs an execution receipt;
+  a `locate`/`verify` act needs an inspection or tool receipt unless the
+  answer is substantive (the material came with the request); and a check
+  that ran before code changed must run again. The phrase lists this
+  replaced read "run a quick grammar check" as a demand for a shell command
+  and only spoke English;
+- **unresolved failure**: a tool error the run never cleared blocks
+  completion unless the answer quotes it — a distinctive identifier or a
+  pair of adjacent words from the error. Keywords such as "no issues" were
+  once accepted as a report and let a false success through.
 
 On a hit, the gate reuses the stop-hook continuation machinery: emits
 `StopHookContinuation`, appends `[stop-guard]: <reason> / Please continue.`
@@ -150,8 +159,10 @@ max_blocks`; unknown keys warn, `enabled = false` restores old behavior.
 External Stop hooks still run first and keep their own `[stop-hook]`
 prefix, so operator logs can tell them apart.
 
-An explicit continuation request such as “keep improving until I say done”
-uses a separate user-completion gate. It continues across ordinary model
+An explicit continuation request that names the person as the one who ends
+it, such as “keep improving until I say done”, uses a separate
+user-completion gate ("keep working until the tests pass" names a condition
+and is not one). It continues across ordinary model
 completion claims without consuming the diagnostic `max_blocks` budget, until
 an exact user steering message such as `done` or `stop` releases it. The
 configured `max_turns` remains a hard safety ceiling; reaching it returns

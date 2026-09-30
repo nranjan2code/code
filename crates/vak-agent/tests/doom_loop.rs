@@ -127,6 +127,9 @@ async fn third_identical_call_is_blocked_with_reason() {
             cfg.permission = Some(Arc::new(PermissionEngine::default()));
             // AutoDeny makes the doom-loop Ask observable as a typed denial.
             cfg.approver = Some(Arc::new(vak_agent::AutoDeny));
+            // About what the guard recorded; the stop gate's handling of an
+            // unquoted failure is tested in stop_policy.rs.
+            cfg.stop_policy = None;
             cfg
         },
     );

@@ -8630,12 +8630,6 @@ async fn onboarding_trust(
     }
 }
 
-/// The starter task. Read-only by construction, and deliberately not
-/// something the caller supplies: a prompt this endpoint accepted would be
-/// a way to run arbitrary work under the onboarding path.
-const FIRST_TASK_PROMPT: &str = "Map this codebase and explain its architecture, key flows, \
-     and highest-risk areas. Do not modify files or run any destructive command.";
-
 /// `POST /onboarding/first-task` — create the guided starter session.
 ///
 /// Capped to read-only **regardless of the workspace's configured mode**
@@ -8688,7 +8682,7 @@ async fn onboarding_first_task(State(state): State<AppState>) -> axum::response:
 
     Json(serde_json::json!({
         "session_id": id,
-        "prompt": FIRST_TASK_PROMPT,
+        "prompt": vak_core::onboarding::FIRST_TASK_PROMPT,
         "permission_mode": format!("{:?}", capped.effective_permission_mode()),
     }))
     .into_response()
@@ -18419,13 +18413,10 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
             ));
         }
     };
-    let fired_at_utc = chrono::Utc::now();
-    let scheduled_prompt = format!(
-        "{}\n\n[Scheduled-run context: fired at UTC {}; local system time {}. Re-evaluate relative dates against this run time unless the request explicitly established a specific date.]",
-        snapshot.prompt,
-        fired_at_utc.to_rfc3339(),
-        fired_at_utc.with_timezone(&chrono::Local).to_rfc3339(),
-    );
+    // The run's own clock reaches the model through the Background
+    // surface's typed time context (`vak_core::temporal_context`), never as
+    // text appended to the stored request.
+    let scheduled_prompt = snapshot.prompt.clone();
     let child_id = spawn_isolated_run(
         state,
         provider.clone(),

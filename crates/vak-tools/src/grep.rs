@@ -27,7 +27,7 @@ impl Tool for GrepTool {
     }
 
     fn description(&self) -> &str {
-        "Search file contents with a regular expression. Returns file:line:text matches. Use include to filter by glob (e.g. \"*.rs\")."
+        "Search file contents with a regular expression. Returns file:line:text matches. Use include to filter by glob (e.g. \"*.md\" or \"*.csv\")."
     }
 
     fn schema(&self) -> Value {
@@ -36,7 +36,7 @@ impl Tool for GrepTool {
             "properties": {
                 "pattern": {"type": "string", "description": "Regular expression to search for"},
                 "path": {"type": "string", "description": "File or directory to search (default: cwd)"},
-                "include": {"type": "string", "description": "Glob filter for filenames, e.g. *.ts"}
+                "include": {"type": "string", "description": "Glob filter for filenames, e.g. *.md"}
             },
             "required": ["pattern"]
         })

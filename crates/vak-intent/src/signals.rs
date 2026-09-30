@@ -1622,17 +1622,7 @@ pub(crate) fn prepare(raw: &str) -> Prepared {
 /// Strip prompt scaffolding and runner control blocks before extracting
 /// intent. Delegates to [`crate::control`], which owns the tag vocabulary.
 pub(crate) fn clean_request_text(raw: &str) -> String {
-    let mut text = crate::control::strip_control_blocks(raw);
-    while let Some(start) = text.find("[Scheduled-run context:") {
-        if let Some(end_offset) = text[start..].find(']') {
-            let end = start + end_offset + 1;
-            text.replace_range(start..end, "");
-        } else {
-            text.truncate(start);
-            break;
-        }
-    }
-    text.trim().to_string()
+    crate::control::strip_control_blocks(raw).trim().to_string()
 }
 
 // ------------------------------------------------------------- digest ---

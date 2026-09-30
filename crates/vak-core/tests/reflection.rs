@@ -118,3 +118,20 @@ fn parser_accepts_invariant_notes() {
     assert_eq!(p.notes[0].kind, "invariant");
     assert_eq!(p.notes[0].tag, "schema");
 }
+
+/// A conversation longer than the reflection budget whose cut falls inside
+/// a multi-byte character (the 2026-09-30 prompt audit's probe: it panicked
+/// on a byte slice).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reflection_survives_a_long_non_ascii_conversation() {
+    let transcript = format!("user: {}नमस्ते, कल की बैठक याद रखना", "a".repeat(11_993));
+    let proposals = propose(
+        scripted("{}"),
+        "m",
+        &transcript,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(proposals.notes.is_empty());
+}

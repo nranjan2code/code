@@ -265,7 +265,7 @@ async fn the_stop_guard_nudge_reaches_the_actual_next_request() {
 }
 
 #[tokio::test]
-async fn verify_gate_blocks_when_prompt_demands_and_no_bash_ran() {
+async fn verify_gate_blocks_when_the_reading_demands_proof_and_nothing_ran() {
     let mut h = harness(
         Some(StopPolicy {
             marker_gate: false,
@@ -277,6 +277,16 @@ async fn verify_gate_blocks_when_prompt_demands_and_no_bash_ran() {
             ScriptedResponse::Message(text_msg("Ran it — output verified.")),
         ],
     );
+    let mut reading = vak_intent::Reading::general();
+    reading.act = vak_intent::Act::Author;
+    reading.evidence = vak_intent::Evidence::Verified;
+    let mut spec = vak_intent::OutcomeSpec::from_reading(
+        "Create fizzbuzz.py and run it to prove that it works.",
+        &reading,
+        1,
+    );
+    spec.stop = vak_intent::StopProfile::Verification;
+    h.agent.as_mut().expect("agent").config.outcome = Some(spec);
     let outcome = h
         .agent
         .as_mut()
@@ -299,7 +309,7 @@ async fn verify_gate_blocks_when_prompt_demands_and_no_bash_ran() {
         })
         .collect();
     assert_eq!(guards.len(), 1);
-    assert!(guards[0].contains("verification"), "reason: {}", guards[0]);
+    assert!(guards[0].contains("proves it"), "reason: {}", guards[0]);
 }
 
 #[tokio::test]

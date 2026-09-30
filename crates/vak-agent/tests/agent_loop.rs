@@ -515,6 +515,9 @@ async fn malformed_tool_input_is_rejected_by_the_admitted_schema() {
         vec![Arc::new(WriteTool)],
     );
     let mut agent = h.agent;
+    // About what the failed call recorded, not whether "recovered" may end
+    // the turn: the stop gate is tested in stop_guard.rs.
+    agent.config.stop_policy = None;
     let outcome = agent
         .run(
             "write it",
@@ -551,6 +554,7 @@ async fn unknown_tool_becomes_error_value_not_crash() {
         vec![Arc::new(BashTool)],
     );
     let mut agent = h.agent;
+    agent.config.stop_policy = None;
     let outcome = agent
         .run(
             "go",
@@ -587,6 +591,7 @@ async fn skill_name_tool_call_returns_typed_loader_recovery() {
         ],
         vec![Arc::new(BashTool)],
     );
+    h.agent.config.stop_policy = None;
     let outcome = h
         .agent
         .run(
@@ -781,4 +786,58 @@ async fn projection_invariant_every_request_message_is_logged() {
             );
         }
     }
+}
+
+/// Invariant 1: the host-supplied tail (clock and stance) reaches the model
+/// only after its exact bytes are in the ledger.
+#[tokio::test]
+async fn the_turn_context_the_model_reads_is_recorded_first() {
+    let mut h = harness(
+        vec![ScriptedResponse::Message(assistant_text("hi"))],
+        vec![],
+    );
+    h.agent.config.tail = vak_agent::TailInput {
+        temporal: "Current time: 2026-09-30 10:00 UTC.".into(),
+        stance: "Answer directly.".into(),
+    };
+    let outcome = h
+        .agent
+        .run(
+            "hello",
+            &Default::default(),
+            CancellationToken::new(),
+            h.events_tx.clone(),
+        )
+        .await;
+    assert!(matches!(outcome, TurnOutcome::Completed { .. }));
+    let session = h.agent.session.lock().await;
+    let recorded = session
+        .chain_to_root()
+        .iter()
+        .find_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Activity(activity)
+                if activity.data.get("section").map(String::as_str)
+                    == Some(SessionLog::TURN_CONTEXT_SECTION) =>
+            {
+                Some(activity.clone())
+            }
+            _ => None,
+        })
+        .expect("turn context recorded");
+    assert_eq!(
+        recorded.detail.as_deref(),
+        Some("Current time: 2026-09-30 10:00 UTC.")
+    );
+    assert_eq!(
+        recorded.data.get("stance").map(String::as_str),
+        Some("Answer directly.")
+    );
+    drop(session);
+    let request = h.requests.lock().unwrap()[0].clone();
+    let sent = request
+        .messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .any(|block| matches!(block, ContentBlock::Text { text } if text.contains("Current time: 2026-09-30 10:00 UTC.")));
+    assert!(sent, "the recorded text is what the model received");
 }

@@ -595,8 +595,9 @@ in progress, and the rest of V4 follows it.
     replacing it. File presence is the inheritance switch: there is
     deliberately no way to spell `guardrails.inherit = false`. A project layer
     is untrusted config until the workspace is trusted — its identity, rules,
-    and surface notes are demoted exactly like `hooks`/`allow`/`mcp.servers`,
-    while its **guardrails still apply**, because a guardrail can only narrow.
+    surface notes **and guardrails** are demoted exactly like
+    `hooks`/`allow`/`mcp.servers`: free text can say anything, so restriction
+    that must hold without trust is a structured `deny`/`ask` rule.
     Guardrail text instructs and never enforces; `PermissionEngine`, the
     broker, and the sandbox are the boundary, and no surface may word it
     otherwise. Every winning contribution is recorded in

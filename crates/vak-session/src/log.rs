@@ -1677,6 +1677,11 @@ impl SessionLog {
     /// The value used by the `workspace_delta` activity's `data` key.
     pub const WORKSPACE_DELTA_SECTION: &'static str = "workspace_delta";
 
+    /// The value used by the turn-context activity's `data` key: the host's
+    /// `<turn_context>` text in `detail` and its `<stance>` text in
+    /// `data["stance"]`, recorded before the turn's first request.
+    pub const TURN_CONTEXT_SECTION: &'static str = "turn_context";
+
     /// The workspace delta recorded for the current turn, tagged — only
     /// when the turn's reading asked for it (`working` / `full`), and only
     /// the activity written after this turn's intent entry, so a previous

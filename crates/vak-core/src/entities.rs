@@ -177,8 +177,9 @@ impl vak_tools::Tool for EntityRecordTool {
 
     fn description(&self) -> &str {
         "Record or update a domain entity in the semantic knowledge graph. \
-         Entities represent durable systems, concepts, people, datasets, or components \
-         with typed attributes and directed relations (e.g. depends_on, hosted_on, owns)."
+         Entities represent durable people, places, projects, documents, datasets, systems \
+         or concepts with typed attributes and directed relations (e.g. works_with, part_of, \
+         owns)."
     }
 
     fn schema(&self) -> serde_json::Value {
@@ -187,7 +188,7 @@ impl vak_tools::Tool for EntityRecordTool {
             "properties": {
                 "id": {
                     "type": "string",
-                    "description": "Unique slug identifier (e.g. 'db-primary' or 'auth-service'). If omitted, slug is derived from name."
+                    "description": "Unique slug identifier (e.g. 'asha-rao' or 'kitchen-renovation'). If omitted, slug is derived from name."
                 },
                 "name": {
                     "type": "string",

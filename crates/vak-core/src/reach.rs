@@ -251,6 +251,17 @@ pub fn blocked_skills(standings: &[Standing]) -> Vec<String> {
         .collect()
 }
 
+/// The preamble of every "configured but not usable" list the model reads.
+/// One copy: the prompt, the reach section and the capability report all
+/// say the same thing. An alternative that serves the same purpose within
+/// the same permissions (another search tool when one integration is down)
+/// is legitimate; pretending to have data is not.
+pub const UNUSABLE_PREAMBLE: &str = "\nConfigured but NOT usable on this turn. These are not in \
+     your tool schemas and calling them will fail. If the request needs one, say so plainly, \
+     name the capability, and give the operator the fix. Use another available tool only when \
+     it serves the same purpose within the same permissions, and never answer as though you \
+     had the data:\n";
+
 /// The model-visible section. Stating this is the point: a model that
 /// knows a capability is configured but unreachable can say so, and say
 /// what would fix it, instead of spending the turn discovering it one
@@ -263,13 +274,7 @@ pub fn prompt_section(standings: &[Standing]) -> String {
     if blocked.is_empty() {
         return String::new();
     }
-    let mut section = String::from(
-        "\nConfigured but NOT usable on this turn. These are not in your tool \
-         schemas and calling them will fail. If the request needs one, say so \
-         plainly, name the capability, and give the operator the fix — do not \
-         substitute a different tool and do not answer as though you had the \
-         data:\n",
-    );
+    let mut section = String::from(UNUSABLE_PREAMBLE);
     for standing in blocked {
         section.push_str(&format!("- {}: {}.", standing.label, standing.reason));
         if !standing.remedy.is_empty() {

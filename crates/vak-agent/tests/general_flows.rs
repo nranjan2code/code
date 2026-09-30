@@ -286,7 +286,19 @@ async fn stop_gate_blocks_premature_report_until_verified() {
             text_msg("Verified. Q1 total recorded as 4200 in report.md."),
         ],
         vec![Arc::new(BashTool)],
-        |_| {},
+        |cfg| {
+            // What the reading of this request admits: proof is demanded.
+            let mut reading = vak_intent::Reading::general();
+            reading.act = vak_intent::Act::Author;
+            reading.evidence = vak_intent::Evidence::Verified;
+            let mut spec = vak_intent::OutcomeSpec::from_reading(
+                "Compute the totals into report.md and verify the number appears in the file before you finish.",
+                &reading,
+                1,
+            );
+            spec.stop = vak_intent::StopProfile::Verification;
+            cfg.outcome = Some(spec);
+        },
     );
 
     let (ev_tx, ev_rx) = mpsc::channel(256);

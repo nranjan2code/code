@@ -3872,7 +3872,7 @@ mod tests {
         // The repair nudge: same logical answer, not a new user request.
         log.append_message(MessageRecord {
             message: Message::user_text(
-                "[fence-check]: The vak-fence in your last answer has invalid JSON and failed to parse. Resend it.",
+                "[fence-check]: The ```vak card block in your last answer has invalid JSON and failed to parse. Resend it.",
             ),
             meta: Some(vak_session::MessageMeta {
                 control: Some(vak_intent::control::ControlKind::FenceCheck),

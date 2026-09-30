@@ -203,6 +203,8 @@ fn task_tool(dir: &tempfile::TempDir, provider: Arc<Scripted>, parent: &str) -> 
         role_prompts: Default::default(),
         provider,
         system_prompt: "child-sys".into(),
+        child_prompt: None,
+        trust_project: false,
         tail: Default::default(),
         model: "test-model".into(),
         tools: vec![Arc::new(FakeEmitChartCard)],
