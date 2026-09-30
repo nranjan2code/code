@@ -267,6 +267,11 @@ than this package currently exposes, so credentials remain private and the
 broker enforces the narrower action. Event updates, cancellations, RSVP, and
 provider reconciliation remain disabled.
 
+**Security correction (2026-09-30):** Google Calendar previews now redact the
+title, location, description, and attendee count of private events, matching
+the existing Microsoft projection while preserving the busy interval. A
+provider-parser regression test verifies the private fields do not escape.
+
 ## Stage 4 — scheduled and continuous routines
 
 Use `TaskDef` and the existing service manager for on-demand, scheduled, and

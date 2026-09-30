@@ -676,6 +676,7 @@ fn parse_graph_message(value: &Value) -> Option<MailItem> {
 fn parse_google_event(value: &Value) -> Option<CalendarItem> {
     let start = value.get("start")?;
     let end = value.get("end")?;
+    let private = value.get("visibility").and_then(Value::as_str) == Some("private");
     let starts_at = start
         .get("dateTime")
         .and_then(Value::as_str)
@@ -686,29 +687,45 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
         .and_then(parse_datetime);
     Some(CalendarItem {
         provider_id: bounded_text(value.get("id")?.as_str()?),
-        title: value
-            .get("summary")
-            .and_then(Value::as_str)
-            .map(bounded_text)
-            .unwrap_or_else(|| "(untitled event)".into()),
+        title: if private {
+            "Private event".into()
+        } else {
+            value
+                .get("summary")
+                .and_then(Value::as_str)
+                .map(bounded_text)
+                .unwrap_or_else(|| "(untitled event)".into())
+        },
         starts_at,
         ends_at,
         starts_on: start.get("date").and_then(Value::as_str).map(bounded_text),
         ends_on: end.get("date").and_then(Value::as_str).map(bounded_text),
         all_day: start.get("date").is_some(),
-        location: value
-            .get("location")
-            .and_then(Value::as_str)
-            .map(bounded_text),
-        description: value
-            .get("description")
-            .and_then(Value::as_str)
-            .map(bounded_text),
-        attendee_count: value
-            .get("attendees")
-            .and_then(Value::as_array)
-            .map_or(0, Vec::len),
-        private: value.get("visibility").and_then(Value::as_str) == Some("private"),
+        location: if private {
+            None
+        } else {
+            value
+                .get("location")
+                .and_then(Value::as_str)
+                .map(bounded_text)
+        },
+        description: if private {
+            None
+        } else {
+            value
+                .get("description")
+                .and_then(Value::as_str)
+                .map(bounded_text)
+        },
+        attendee_count: if private {
+            0
+        } else {
+            value
+                .get("attendees")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        },
+        private,
     })
 }
 
@@ -821,7 +838,7 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
-    fn private_google_event_keeps_private_marker_and_bounded_fields() {
+    fn private_google_event_suppresses_details_but_keeps_busy_time() {
         let value = json!({
             "id": "e1", "summary": "Private title", "visibility": "private",
             "start": {"dateTime": "2026-09-30T10:00:00Z"},
@@ -830,8 +847,14 @@ mod tests {
         });
         let parsed = parse_google_event(&value).unwrap();
         assert!(parsed.private);
-        assert_eq!(parsed.title, "Private title");
-        assert_eq!(parsed.attendee_count, 1);
+        assert_eq!(parsed.title, "Private event");
+        assert_eq!(parsed.location, None);
+        assert_eq!(parsed.description, None);
+        assert_eq!(parsed.attendee_count, 0);
+        assert_eq!(
+            parsed.starts_at,
+            Some(parse_datetime("2026-09-30T10:00:00Z").unwrap())
+        );
     }
 
     #[test]

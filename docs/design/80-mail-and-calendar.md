@@ -26,8 +26,10 @@ stores the password in the Agent vault, reports `connected_unverified`, and
 reports no token expiry; it does not verify the credential with Apple or
 enable provider content access. Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
-share grant. Reads supplied to the model are retained in current append-only
-session history. Local drafts and scheduled read-only routines are implemented.
+share grant. Provider previews redact private-event titles, locations,
+descriptions, and attendee counts while preserving only the busy time. Reads
+supplied to the model are retained in current append-only session history.
+Local drafts and scheduled read-only routines are implemented.
 The first plain-text email effect and one timed event-create profile are
 implemented for Google and Microsoft. Both require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain
