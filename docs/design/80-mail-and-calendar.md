@@ -22,7 +22,7 @@ and can create a provider-threaded reply on Google or Microsoft. The full conver
 Apple conversation grouping/effects, event update/cancellation beyond the
 Google standalone profiles, RSVP, complete
 provider reconciliation, live provider checks, and the 24-hour service recovery
-acceptance remain open, 2026-09-30.**
+acceptance remain open, 2026-10-01.**
 Mail previews and conversation pages also carry bounded sender, To, and Cc
 fields from Google, Microsoft Graph, and Apple IMAP. Bcc is not requested from
 Microsoft and is never projected into the owner or Agent result.

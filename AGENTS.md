@@ -134,9 +134,20 @@ Read before changing behaviour in these areas:
   without plain text are labelled. Mixed capability selections remain
   unverified.
   Microsoft event update/cancel/RSVP, attachments, aliases, reply
-  semantics, and model-initiated effects remain unavailable. Current 4.x
-  session history cannot be selectively erased, so account-deletion erasure
-  remains incomplete);
+  semantics, and model-initiated effects remain unavailable. Google supports
+  OAuth plus an explicitly warned, local-only App Password fallback for
+  MailRead. Microsoft supports OAuth plus a warned, local-only App Password
+  fallback for personal Outlook.com/Live/Hotmail/MSN MailRead; Microsoft 365
+  and work/school Exchange stay OAuth-only. Apple uses a warned app-specific
+  password for separately verified MailRead, CalendarRead, or
+  CalendarFreeBusy; Apple's newer account authorization is not yet a verified
+  integration path for Vakyartha. The owner preview projects bounded From, To,
+  and Cc fields for all three providers and never exposes Bcc. Synthetic load
+  tests cover 5,000 listed Gmail messages and 1,000 calendar events while
+  enforcing the preview limits. Live provider checks, source-to-Review browser
+  acceptance, full conversation workspace, and the 24-hour service recovery
+  test remain open. Current 4.x session history cannot be selectively erased,
+  so account-deletion erasure remains incomplete);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
