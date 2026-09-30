@@ -495,10 +495,15 @@ automation history. Multi-host watchers remain off until fencing is present.
 calendar event start/end boundary, signed offset, bounded catch-up window, and
 opaque occurrence key. Event triggers are wired to bounded TaskDef polling,
 the Agent-vault occurrence queue, brokered matching reads, and owner settings.
-Remaining checks include provider pagination/truncation reconciliation, live
-provider behavior, complete scheduled-run browser acceptance, and sustained
-sleep/restart/outage recovery. Local polling is best effort while the service
-host is awake; it is not a 24/7 freshness guarantee.
+Google and Microsoft event reads follow bounded continuation pages up to the
+requested result limit, deduplicate repeated event IDs, reject cursor loops,
+and reject Microsoft continuation URLs outside the configured Graph origin
+and calendar-view path. Each page is response-size limited; a provider that
+continues beyond the five-page work budget fails visibly instead of returning
+an apparently complete short result. Live provider behavior, complete
+scheduled-run browser acceptance, and sustained sleep/restart/outage recovery
+remain open. Local polling is best effort while the service host is awake; it
+is not a 24/7 freshness guarantee.
 
 **Implemented increment (2026-09-30):** owner Settings can create, pause,
 resume, run once, inspect, and delete a scheduled read-only routine using the
@@ -678,6 +683,12 @@ remains open.
   all-day events are rejected; occurrence keys contain no event title. Added
   an Agent-vault overflow test proving a 101-item reconciliation fails without
   partially replacing the queue.
+- 2026-10-01: Google Calendar `nextPageToken` and Microsoft Graph `@odata.nextLink`
+  are now followed within a five-page budget and the caller's event limit.
+  Duplicate IDs and cursor cycles are rejected/deduplicated, and Graph links
+  must stay on the configured origin and exact calendar-view path before the
+  bearer token is sent. Simulated two-page provider tests cover both paths and
+  off-origin/wrong-path Graph rejection.
 
 - 2026-10-01: Conversation citations now follow at most 20 additional
   same-thread pages (420 messages total) to locate a cited message. Provider

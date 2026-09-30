@@ -150,7 +150,9 @@ Read before changing behaviour in these areas:
   so account-deletion erasure remains incomplete. Calendar event-relative
   routines use the existing `TaskDef` cadence, a bounded provider poll, opaque
   encrypted Agent-vault occurrence keys, and brokered reads of matching events;
-  live-provider, browser, and 24-hour recovery acceptance remain open);
+  Google and Graph calendar reads follow bounded continuation pages with
+  same-origin Graph validation; live-provider, browser, and 24-hour recovery
+  acceptance remain open);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,

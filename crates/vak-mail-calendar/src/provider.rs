@@ -26,6 +26,7 @@ pub const MAX_MAIL_ATTACHMENTS: usize = 20;
 pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
 const MAX_WATCH_SCAN_ITEMS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
 const MAX_EVENT_ITEMS: usize = 100;
+const MAX_CALENDAR_PAGES: usize = 5;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_GRAPH_WATCH_CURSOR_BYTES: usize = 8192;
 const MAX_SELECTED_MESSAGE_RESPONSE_BYTES: usize = 256 * 1024;
@@ -1665,33 +1666,69 @@ impl ProviderReadClient {
         limit: usize,
     ) -> Result<Vec<CalendarItem>, ProviderReadError> {
         let max_items = limit.min(MAX_EVENT_ITEMS);
-        let query_limit = max_items.to_string();
-        let response = self
-            .http
-            .get(format!(
-                "{}/calendars/primary/events",
-                self.google_calendar_base
-            ))
-            .bearer_auth(token)
-            .query(&[("timeMin", from.to_rfc3339()), ("timeMax", to.to_rfc3339())])
-            .query(&[
-                ("singleEvents", "true".to_string()),
-                ("orderBy", "startTime".to_string()),
-                ("maxResults", query_limit),
-            ])
-            .send()
-            .await
-            .map_err(|_| ProviderReadError::Unavailable)?;
-        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
-        let items = value
-            .get("items")
-            .and_then(Value::as_array)
-            .ok_or(ProviderReadError::InvalidResponse)?;
-        Ok(items
-            .iter()
-            .take(max_items)
-            .filter_map(parse_google_event)
-            .collect())
+        let mut output = Vec::with_capacity(max_items);
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut seen_tokens = std::collections::HashSet::new();
+        let mut page_token: Option<String> = None;
+        for page in 0..MAX_CALENDAR_PAGES {
+            let mut request = self
+                .http
+                .get(format!(
+                    "{}/calendars/primary/events",
+                    self.google_calendar_base
+                ))
+                .bearer_auth(token)
+                .query(&[("timeMin", from.to_rfc3339()), ("timeMax", to.to_rfc3339())])
+                .query(&[
+                    ("singleEvents", "true".to_string()),
+                    ("orderBy", "startTime".to_string()),
+                    ("maxResults", max_items.to_string()),
+                ]);
+            if let Some(token) = &page_token {
+                request = request.query(&[("pageToken", token)]);
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?;
+            let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+            let items = value
+                .get("items")
+                .and_then(Value::as_array)
+                .ok_or(ProviderReadError::InvalidResponse)?;
+            for item in items {
+                if output.len() >= max_items {
+                    break;
+                }
+                let Some(event) = parse_google_event(item) else {
+                    continue;
+                };
+                if seen_ids.insert(event.provider_id.clone()) {
+                    output.push(event);
+                }
+            }
+            if output.len() >= max_items {
+                return Ok(output);
+            }
+            page_token = value
+                .get("nextPageToken")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            let Some(token) = &page_token else {
+                return Ok(output);
+            };
+            if token.is_empty()
+                || token.len() > 4096
+                || token.chars().any(char::is_control)
+                || !seen_tokens.insert(token.clone())
+            {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+            if page + 1 == MAX_CALENDAR_PAGES {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+        }
+        Ok(output)
     }
 
     async fn microsoft_events(
@@ -1701,37 +1738,74 @@ impl ProviderReadClient {
         to: DateTime<Utc>,
         limit: usize,
     ) -> Result<Vec<CalendarItem>, ProviderReadError> {
-        let limit = limit.to_string();
-        let response = self
-            .http
-            .get(format!("{}/me/calendarView", self.microsoft_graph_base))
-            .bearer_auth(token)
-            .query(&[
-                ("startDateTime", from.to_rfc3339()),
-                ("endDateTime", to.to_rfc3339()),
-            ])
-            .query(&[("$top", limit.as_str()), ("$orderby", "start/dateTime")])
-            .query(&[(
-                "$select",
-                "id,subject,start,end,isAllDay,location,body,attendees,sensitivity",
-            )])
-            .header(
-                "Prefer",
-                "outlook.timezone=\"UTC\", outlook.body-content-type=\"text\"",
-            )
-            .send()
-            .await
-            .map_err(|_| ProviderReadError::Unavailable)?;
-        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
-        let items = value
-            .get("value")
-            .and_then(Value::as_array)
-            .ok_or(ProviderReadError::InvalidResponse)?;
-        Ok(items
-            .iter()
-            .take(limit.parse().unwrap_or(1))
-            .filter_map(parse_graph_event)
-            .collect())
+        let mut output = Vec::with_capacity(limit);
+        let mut seen_ids = std::collections::HashSet::new();
+        let mut next_url: Option<url::Url> = None;
+        let mut seen_urls = std::collections::HashSet::new();
+        for page in 0..MAX_CALENDAR_PAGES {
+            let url = if let Some(url) = next_url.take() {
+                validate_graph_calendar_url(url.as_str(), &self.microsoft_graph_base)?
+            } else {
+                let mut url =
+                    graph_url_segments(&self.microsoft_graph_base, &["me", "calendarView"])?;
+                url.query_pairs_mut()
+                    .append_pair("startDateTime", &from.to_rfc3339())
+                    .append_pair("endDateTime", &to.to_rfc3339())
+                    .append_pair("$top", &limit.to_string())
+                    .append_pair("$orderby", "start/dateTime")
+                    .append_pair(
+                        "$select",
+                        "id,subject,start,end,isAllDay,location,body,attendees,sensitivity",
+                    );
+                url
+            };
+            if !seen_urls.insert(url.as_str().to_owned()) {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+            let response = self
+                .http
+                .get(url)
+                .bearer_auth(token)
+                .header(
+                    "Prefer",
+                    "outlook.timezone=\"UTC\", outlook.body-content-type=\"text\"",
+                )
+                .send()
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?;
+            let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+            let items = value
+                .get("value")
+                .and_then(Value::as_array)
+                .ok_or(ProviderReadError::InvalidResponse)?;
+            for item in items {
+                if output.len() >= limit {
+                    break;
+                }
+                let Some(event) = parse_graph_event(item) else {
+                    continue;
+                };
+                if seen_ids.insert(event.provider_id.clone()) {
+                    output.push(event);
+                }
+            }
+            if output.len() >= limit {
+                return Ok(output);
+            }
+            next_url = value
+                .get("@odata.nextLink")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .map(|value| validate_graph_calendar_url(&value, &self.microsoft_graph_base))
+                .transpose()?;
+            if next_url.is_none() {
+                return Ok(output);
+            }
+            if page + 1 == MAX_CALENDAR_PAGES {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+        }
+        Ok(output)
     }
 
     async fn google_free_busy(
@@ -2739,6 +2813,28 @@ fn validate_graph_delta_url(value: &str, graph_base: &str) -> Result<(), Provide
         return Err(ProviderReadError::WatchCursorReset);
     }
     Ok(())
+}
+
+fn validate_graph_calendar_url(
+    value: &str,
+    graph_base: &str,
+) -> Result<url::Url, ProviderReadError> {
+    let base = url::Url::parse(graph_base).map_err(|_| ProviderReadError::InvalidResponse)?;
+    let next = url::Url::parse(value).map_err(|_| ProviderReadError::InvalidResponse)?;
+    let expected_path = format!("{}/me/calendarView", base.path().trim_end_matches('/'));
+    if value.len() > MAX_GRAPH_WATCH_CURSOR_BYTES
+        || next.scheme() != base.scheme()
+        || next.host_str() != base.host_str()
+        || next.port_or_known_default() != base.port_or_known_default()
+        || next.path() != expected_path
+        || next.username() != ""
+        || next.password().is_some()
+        || next.fragment().is_some()
+        || next.query().is_none()
+    {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    Ok(next)
 }
 
 fn encode_google_thread_cursor(thread_id: &str, limit: usize, offset: usize) -> String {
@@ -5597,6 +5693,123 @@ mod tests {
                     .starts_at
                     .is_some_and(|start| start >= from && start < to)
         }));
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn calendar_reads_follow_bounded_provider_pages_and_reject_foreign_graph_links() {
+        let (vault, mut google, agent_id, audience) = linked_test_account(Provider::Google);
+        google.capabilities.insert(Capability::CalendarRead);
+        let (graph_vault, mut graph, graph_agent_id, graph_audience) =
+            linked_test_account(Provider::Microsoft);
+        graph.capabilities.insert(Capability::CalendarRead);
+        let from = Utc::now();
+        let to = from + Duration::days(1);
+        let start = from.to_rfc3339();
+        let end = (from + Duration::minutes(30)).to_rfc3339();
+        let graph_start = start.clone();
+        let graph_end = end.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let graph_next = format!("http://{address}/graph/v1.0/me/calendarView?$skiptoken=second");
+        let app = axum::Router::new()
+            .route(
+                "/calendar/v3/calendars/primary/events",
+                axum::routing::get(
+                    move |axum::extract::Query(query): axum::extract::Query<
+                        std::collections::HashMap<String, String>,
+                    >| {
+                        let start = start.clone();
+                        let end = end.clone();
+                        async move {
+                            let item = |id: &str| json!({
+                                "id": id,
+                                "summary": "Synthetic paged event",
+                                "start": {"dateTime": start},
+                                "end": {"dateTime": end}
+                            });
+                            if query.get("pageToken").map(String::as_str) == Some("second") {
+                                axum::Json(json!({"items": [item("google-second")] }))
+                            } else {
+                                axum::Json(json!({"items": [item("google-first")], "nextPageToken": "second"}))
+                            }
+                        }
+                    },
+                ),
+            )
+            .route(
+                "/graph/v1.0/me/calendarView",
+                axum::routing::get(
+                    move |axum::extract::Query(query): axum::extract::Query<
+                        std::collections::HashMap<String, String>,
+                    >| {
+                        let start = graph_start.clone();
+                        let end = graph_end.clone();
+                        let graph_next = graph_next.clone();
+                        async move {
+                            let item = |id: &str| json!({
+                                "id": id,
+                                "subject": "Synthetic paged event",
+                                "start": {"dateTime": start, "timeZone": "UTC"},
+                                "end": {"dateTime": end, "timeZone": "UTC"},
+                                "isAllDay": false,
+                                "sensitivity": "normal"
+                            });
+                            if query.get("$skiptoken").map(String::as_str) == Some("second") {
+                                axum::Json(json!({"value": [item("graph-second")] }))
+                            } else {
+                                axum::Json(json!({"value": [item("graph-first")], "@odata.nextLink": graph_next}))
+                            }
+                        }
+                    },
+                ),
+            );
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let range = CalendarRange { from, to, limit: 2 };
+        let google_events = client
+            .calendar_events(&google, &vault, &agent_id, &audience, range.clone())
+            .await
+            .unwrap();
+        assert_eq!(google_events.len(), 2);
+        assert_eq!(google_events[1].provider_id, "google-second");
+        let graph_events = client
+            .calendar_events(
+                &graph,
+                &graph_vault,
+                &graph_agent_id,
+                &graph_audience,
+                range,
+            )
+            .await
+            .unwrap();
+        assert_eq!(graph_events.len(), 2);
+        assert_eq!(graph_events[1].provider_id, "graph-second");
+        assert!(
+            validate_graph_calendar_url(
+                "https://attacker.example/me/calendarView?$skiptoken=x",
+                &format!("http://{address}/graph/v1.0")
+            )
+            .is_err()
+        );
+        assert!(
+            validate_graph_calendar_url(
+                &format!("http://{address}/graph/v1.0/me/messages?$skiptoken=x"),
+                &format!("http://{address}/graph/v1.0")
+            )
+            .is_err()
+        );
         task.abort();
     }
 
