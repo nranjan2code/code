@@ -1,18 +1,22 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only bounded
-Google/Microsoft previews with owner-selected Gmail labels and Microsoft
-top-level folders (Apple remains Inbox-only), explicit phrase search within
-the selected inbox across Google, Microsoft, and Apple, a broker-owned local-surface read tool, a bounded
-Agent-vault working area for local drafts, and the first scheduled read-only
-`TaskDef` routines with best-effort encrypted bounded email-ID deduplication
-implemented. Stage 3 has exact-candidate email send and one limited timed event
-create profile for Google/Microsoft, plus conditional update of standalone timed
-Google events without attendees. These require opt-in provider scopes, owner
-confirmation, permission-engine evaluation, and a durable single-use claim.
-Event creation has no attendees, recurrence, or reminders and saves the
-reviewed instants as UTC. Other event update/cancel/RSVP, full provider
-reconciliation and reliable continuous routines remain open, 2026-09-30.
+Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only
+bounded Google/Microsoft previews with selected Gmail labels and Microsoft
+top-level folders (Apple remains Inbox-only), explicit phrase search across all
+three providers, bounded Google/Microsoft conversation previews, a broker-owned
+local-surface read tool, and an Agent-vault working area for local drafts are
+implemented. The work area supports saved candidates, exact-payload preview
+and Review, email send, Google standalone-event update, and limited event create
+for Google/Microsoft. Review requires opt-in provider scopes, owner confirmation,
+permission-engine evaluation, and a durable single-use claim. Event creation has
+no attendees, recurrence, or reminders and saves reviewed instants as UTC.
+Scheduled and one-minute continuous read-only routines use `TaskDef` and a
+bounded encrypted Agent-vault mail backlog with provider cursors. Starting a
+local draft from a selected conversation message preserves its source reference
+but creates a new email, not a threaded reply. The full conversation workspace,
+Apple conversation grouping/effects, other event update/cancel/RSVP, complete
+provider reconciliation, live provider checks, and the 24-hour service recovery
+acceptance remain open, 2026-09-30.**
 iCloud links now verify fixed-host IMAP MailRead-only or CalDAV CalendarRead-only
 access as separate account selections. Apple inbox previews expose bounded
 metadata, and the person or Agent can request one selected message body through
