@@ -255,6 +255,13 @@ pub(super) async fn begin_oauth(
         oauth_callback_cookie(&headers)
     };
     let audience = format!("agent:{agent_id}");
+    let Ok(ledger) = ConnectionLedger::for_agent(&agent_id) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let durable_fence = match ledger.provider_fence(request.provider) {
+        Ok(fence) => fence,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
     let result = if native {
         state
             .mail_calendar_oauth
@@ -266,7 +273,7 @@ pub(super) async fn begin_oauth(
                 &client_id,
                 callback_uri.as_str(),
             )
-            .map(|(url, _account_id)| (url, None))
+            .map(|(url, account_id)| (url, account_id, None))
     } else {
         state
             .mail_calendar_oauth
@@ -280,10 +287,16 @@ pub(super) async fn begin_oauth(
                 callback_uri.as_str(),
                 existing_callback_binding,
             )
-            .map(|(url, _account_id, binding)| (url, Some(binding)))
+            .map(|(url, account_id, binding)| (url, account_id, Some(binding)))
     };
     match result {
-        Ok((authorization_url, binding)) => {
+        Ok((authorization_url, account_id, binding)) => {
+            if !state
+                .mail_calendar_oauth
+                .set_durable_fence(&account_id, durable_fence)
+            {
+                return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
             let mut response =
                 Json(serde_json::json!({ "authorization_url": authorization_url })).into_response();
             if let Some(binding) = binding {
@@ -1068,9 +1081,9 @@ pub(super) async fn oauth_callback(
     let persisted = if redeemed.account_id != account_id {
         None
     } else {
-        state
-            .mail_calendar_oauth
-            .with_current(&grant, || redeemed.persist(&vault, &ledger))
+        state.mail_calendar_oauth.with_current(&grant, || {
+            redeemed.persist_fenced(&vault, &ledger, grant.durable_fence())
+        })
     };
     match persisted {
         None => {
@@ -1383,7 +1396,7 @@ pub(super) async fn disconnect_account(
     let mut already_disconnected = account.revoked_at.is_some();
     if !already_disconnected {
         if ledger
-            .append_revoked(&account_id, chrono::Utc::now())
+            .append_disconnected(&account_id, account.provider, chrono::Utc::now())
             .is_err()
         {
             // A concurrent disconnect may have written the tombstone after

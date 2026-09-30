@@ -1,8 +1,7 @@
 # Plan — secure mail and calendar package
 
-Status: **Stage 0 complete; Stage 1A account linking implemented but security
-audit incomplete on `codex/mail-calendar`; Stage 1B awaits the data-architecture
-M7 gate.** The
+Status: **Stage 0 and Stage 1A Agent/account linking complete on
+`codex/mail-calendar`; Stage 1B awaits the data-architecture M7 gate.** The
 owner opened this feature branch on 2026-09-29. The design contract is
 `docs/design/80-mail-and-calendar.md`. This plan stages the work so a secure
 read path, exact preview, and provider actions can be reviewed as concrete
@@ -146,14 +145,13 @@ provider write scopes until Stage 3 has the reviewed effect path.
 rejection, wrong-principal rejection, scoped account/audience isolation,
 credential redaction, bounded OAuth responses, exact granted-scope handling,
 refresh grant-ceiling preservation, duplicate-principal rejection, and
-idempotent disconnect. Disconnect must also durably fence OAuth starts across
-processes: process-local cancellation is insufficient because separate server
-processes share the account ledger but not `AuthorizationStore`. A callback
-started in process A must not create credentials after process B disconnects
-the Agent/provider. Persist and atomically check a provider generation or
-equivalent durable authorization fence before calling Stage 1A complete. Add
-a regression using independent authorization stores and ledger handles. Each
-provider reports linked, unverified,
+idempotent disconnect. The append-only connection ledger carries a durable
+Agent/provider OAuth fence. Each OAuth attempt captures its value at
+initiation, and the callback checks it while holding the cross-process ledger
+lock across its vault write and account activation. A disconnect therefore
+invalidates older callbacks even when it runs in another server process. A
+regression using independent ledger handles proves a stale callback cannot run
+its credential-write operation. Each provider reports linked, unverified,
 reauthentication-required, or explicitly unsupported status without implying
 that content access has been tested. Multiple distinct accounts per provider
 remain supported; pending links serialize per Agent/provider, and an active
@@ -791,12 +789,20 @@ authorization and approval boundary on every execution path.
   neither specifies a server-side iCloud Mail/Calendar client grant for
   unattended routines. Recorded this as a provider gate; Sign in with Apple is
   not a data-access grant. M7 remains the gate for all content reads.
-- 2026-09-30: Security audit found that disconnect cancellation is
+- 2026-09-30: Security audit found that disconnect cancellation was
   process-local while account ledgers are cross-process. An OAuth callback
   started in one server process can therefore outlive a disconnect handled by
   another process; the callback appends its pending row only after redemption,
   so the other process cannot tombstone that attempt. Stage 1A remains
-  incomplete until a durable provider authorization fence is checked
-  atomically with final vault persistence and covered by a two-process
-  regression. Content reads, previews, retained copies, and routines remain
-  disabled behind the M7 gate.
+  incomplete until a durable provider authorization fence was checked
+  atomically with final vault persistence.
+- 2026-09-30: Added an opaque per-provider fence event to the append-only
+  Agent account ledger. OAuth start captures the current fence; disconnect
+  appends its account tombstone and advances that fence as one locked ledger
+  transaction. Callback activation compares the captured fence while holding
+  the same cross-process lock through vault persistence. A regression uses
+  independent ledger handles to prove that a disconnect in one invalidates a
+  callback in the other before its credential-write closure runs. All 50
+  mail/calendar domain tests and the focused server account/OAuth HTTP tests
+  pass. Content reads, previews, retained copies, and routines remain disabled
+  behind the M7 gate.

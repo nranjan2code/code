@@ -130,6 +130,24 @@ impl RedeemedAuthorization {
         vault: &AccountVault,
         ledger: &ConnectionLedger,
     ) -> Result<ConnectedAccount, OAuthExchangeError> {
+        self.persist_inner(vault, ledger, None)
+    }
+
+    pub fn persist_fenced(
+        self,
+        vault: &AccountVault,
+        ledger: &ConnectionLedger,
+        durable_fence: &str,
+    ) -> Result<ConnectedAccount, OAuthExchangeError> {
+        self.persist_inner(vault, ledger, Some(durable_fence))
+    }
+
+    fn persist_inner(
+        self,
+        vault: &AccountVault,
+        ledger: &ConnectionLedger,
+        durable_fence: Option<&str>,
+    ) -> Result<ConnectedAccount, OAuthExchangeError> {
         if vault.agent_id() != self.agent_id {
             return Err(OAuthExchangeError::AgentMismatch);
         }
@@ -180,12 +198,17 @@ impl RedeemedAuthorization {
         account.status = AccountStatus::Connected;
         account.revision = 2;
         let account_id = account.id.clone();
-        if ledger
-            .append_connected_if_pending(account.clone(), || {
-                vault.store(&account_id, self.secret_material)
-            })
-            .is_err()
-        {
+        let activate = || vault.store(&account_id, self.secret_material);
+        let activation = match durable_fence {
+            Some(expected) => ledger.append_connected_if_pending_fenced(
+                account.clone(),
+                account.provider,
+                expected,
+                activate,
+            ),
+            None => ledger.append_connected_if_pending(account.clone(), activate),
+        };
+        if activation.is_err() {
             let _ = ledger.append_revoked(&account.id, Utc::now());
             let _ = vault.remove(&account.id);
             return Err(OAuthExchangeError::Persistence);
@@ -223,6 +246,7 @@ struct PendingAuthorization {
     nonce: Zeroizing<String>,
     state: Zeroizing<String>,
     fence: u128,
+    durable_fence: String,
     expires_at: Instant,
 }
 
@@ -239,9 +263,32 @@ pub struct AuthorizationGrant {
     verifier: Zeroizing<String>,
     nonce: Zeroizing<String>,
     fence: u128,
+    durable_fence: String,
+}
+
+impl AuthorizationStore {
+    pub fn set_durable_fence(&self, account_id: &str, durable_fence: String) -> bool {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(attempt) = state
+            .attempts
+            .values_mut()
+            .find(|attempt| attempt.account_id == account_id)
+        else {
+            return false;
+        };
+        attempt.durable_fence = durable_fence;
+        true
+    }
 }
 
 impl AuthorizationGrant {
+    pub fn durable_fence(&self) -> &str {
+        &self.durable_fence
+    }
+
     /// The verifier must be sent only to the fixed provider token endpoint
     /// associated with `provider`; never return it to a browser or log it.
     pub fn code_verifier(&self) -> &str {
@@ -461,6 +508,7 @@ impl AuthorizationStore {
                 nonce,
                 state,
                 fence,
+                durable_fence: String::new(),
                 expires_at: Instant::now() + ATTEMPT_LIFETIME,
             },
         );
@@ -521,6 +569,7 @@ impl AuthorizationStore {
             verifier: attempt.verifier,
             nonce: attempt.nonce,
             fence: attempt.fence,
+            durable_fence: attempt.durable_fence,
         })
     }
 

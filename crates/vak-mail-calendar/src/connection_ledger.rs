@@ -65,6 +65,13 @@ enum ConnectionEvent {
         account_id: String,
         required_at: DateTime<Utc>,
     },
+    Disconnected {
+        record_id: String,
+        account_id: String,
+        provider: crate::Provider,
+        fence: String,
+        revoked_at: DateTime<Utc>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -158,6 +165,59 @@ impl ConnectionLedger {
         Ok(accounts.into_values().collect())
     }
 
+    pub fn provider_fence(&self, provider: crate::Provider) -> Result<String, LedgerError> {
+        let _ = self.read_all()?;
+        if !self.path.exists() {
+            return Ok(String::new());
+        }
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(&self.path)?;
+        file.lock_shared()?;
+        let mut bytes = Vec::new();
+        (&file)
+            .take(MAX_LEDGER_BYTES.saturating_add(1))
+            .read_to_end(&mut bytes)?;
+        FileExt::unlock(&file)?;
+        if bytes.len() as u64 > MAX_LEDGER_BYTES {
+            return Err(LedgerError::TooLarge);
+        }
+        provider_fence_in_bytes(&bytes, provider)
+    }
+
+    pub fn append_disconnected(
+        &self,
+        account_id: &str,
+        provider: crate::Provider,
+        revoked_at: DateTime<Utc>,
+    ) -> Result<(), LedgerError> {
+        let event = ConnectionEvent::Disconnected {
+            record_id: Uuid::now_v7().to_string(),
+            account_id: account_id.to_owned(),
+            provider,
+            fence: Uuid::now_v7().to_string(),
+            revoked_at,
+        };
+        self.append_with_check(&event, |accounts| {
+            if !accounts.iter().any(|account| {
+                account.id == account_id
+                    && account.provider == provider
+                    && account.revoked_at.is_none()
+            }) {
+                return Err(LedgerError::Conflict);
+            }
+            Ok::<(), LedgerError>(())
+        })
+        .map_err(|error| match error {
+            ConditionalAppendError::Ledger(error) | ConditionalAppendError::Check(error) => error,
+        })
+    }
+
     pub fn append_pending(&self, account: ConnectedAccount) -> Result<(), LedgerError> {
         if !valid_account_record(&account, &self.agent_id)
             || account.status != AccountStatus::Pending
@@ -221,6 +281,7 @@ impl ConnectionLedger {
             account,
             AccountStatus::Connected,
             expected_revision,
+            None,
             operation,
         )
     }
@@ -233,7 +294,23 @@ impl ConnectionLedger {
         account: ConnectedAccount,
         operation: impl FnOnce() -> Result<(), E>,
     ) -> Result<(), ConditionalUpdateError<E>> {
-        self.append_connected_if_state(account, AccountStatus::Pending, 1, operation)
+        self.append_connected_if_state(account, AccountStatus::Pending, 1, None, operation)
+    }
+
+    pub fn append_connected_if_pending_fenced<E>(
+        &self,
+        account: ConnectedAccount,
+        provider: crate::Provider,
+        expected_fence: &str,
+        operation: impl FnOnce() -> Result<(), E>,
+    ) -> Result<(), ConditionalUpdateError<E>> {
+        self.append_connected_if_state(
+            account,
+            AccountStatus::Pending,
+            1,
+            Some((provider, expected_fence)),
+            operation,
+        )
     }
 
     fn append_connected_if_state<E>(
@@ -241,6 +318,7 @@ impl ConnectionLedger {
         account: ConnectedAccount,
         expected_status: AccountStatus,
         expected_revision: u64,
+        expected_fence: Option<(crate::Provider, &str)>,
         operation: impl FnOnce() -> Result<(), E>,
     ) -> Result<(), ConditionalUpdateError<E>> {
         if !valid_account_record(&account, &self.agent_id)
@@ -289,6 +367,13 @@ impl ConnectionLedger {
         }
         if current.len() as u64 > MAX_LEDGER_BYTES {
             return Err(ConditionalUpdateError::Ledger(LedgerError::TooLarge));
+        }
+        if let Some((provider, expected)) = expected_fence {
+            let current_fence = provider_fence_in_bytes(&current, provider)
+                .map_err(ConditionalUpdateError::Ledger)?;
+            if current_fence != expected {
+                return Err(ConditionalUpdateError::Conflict);
+            }
         }
         let mut accounts = self
             .decode_state(&current)
@@ -549,9 +634,56 @@ impl ConnectionLedger {
                 account.status = AccountStatus::ReauthenticationRequired;
                 account.revision = revision;
             }
+            ConnectionEvent::Disconnected {
+                record_id,
+                account_id,
+                fence,
+                provider,
+                revoked_at,
+                ..
+            } => {
+                if !is_uuid_v7(record_id) || !is_uuid_v7(fence) || !is_uuid_v7(account_id) {
+                    return Err(LedgerError::InvalidRecord);
+                }
+                let Some(account) = accounts.get_mut(account_id) else {
+                    return Err(LedgerError::Conflict);
+                };
+                if account.provider != *provider || account.revoked_at.is_some() {
+                    return Err(LedgerError::Conflict);
+                }
+                account.revoked_at = Some(*revoked_at);
+                account.revision = account.revision.saturating_add(1);
+            }
         }
         Ok(())
     }
+}
+
+fn provider_fence_in_bytes(bytes: &[u8], provider: crate::Provider) -> Result<String, LedgerError> {
+    let mut fence = String::new();
+    for line in bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        let event: ConnectionEvent =
+            serde_json::from_slice(line).map_err(|_| LedgerError::InvalidRecord)?;
+        if let ConnectionEvent::Disconnected {
+            record_id,
+            account_id,
+            provider: event_provider,
+            fence: event_fence,
+            ..
+        } = event
+        {
+            if !is_uuid_v7(&record_id) || !is_uuid_v7(&account_id) || !is_uuid_v7(&event_fence) {
+                return Err(LedgerError::InvalidRecord);
+            }
+            if event_provider == provider {
+                fence = event_fence;
+            }
+        }
+    }
+    Ok(fence)
 }
 
 fn valid_account_record(account: &ConnectedAccount, agent_id: &str) -> bool {
@@ -1018,6 +1150,61 @@ mod tests {
         let latest = ledger.read_all().unwrap().remove(0);
         assert!(latest.revoked_at.is_some());
         assert_eq!(latest.revision, 2);
+    }
+
+    #[test]
+    fn provider_disconnect_fence_blocks_callback_across_ledger_handles() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-fence-{}", Uuid::now_v7());
+        let initiating_process = ConnectionLedger::for_agent(&agent_id).unwrap();
+        let disconnecting_process = ConnectionLedger::for_agent(&agent_id).unwrap();
+
+        let owner_id = Uuid::now_v7().to_string();
+        let mut owner_pending = connected_account(&agent_id, &owner_id, 1);
+        owner_pending.status = AccountStatus::Pending;
+        initiating_process
+            .append_pending(owner_pending.clone())
+            .unwrap();
+        let mut owner_connected = owner_pending;
+        owner_connected.status = AccountStatus::Connected;
+        owner_connected.revision = 2;
+        initiating_process
+            .append_connected_if_pending(owner_connected, || Ok::<(), ()>(()))
+            .unwrap();
+
+        let callback_fence = initiating_process.provider_fence(Provider::Google).unwrap();
+        let callback_id = Uuid::now_v7().to_string();
+        let mut callback_pending = connected_account(&agent_id, &callback_id, 1);
+        callback_pending.status = AccountStatus::Pending;
+        initiating_process
+            .append_pending(callback_pending.clone())
+            .unwrap();
+
+        disconnecting_process
+            .append_disconnected(&owner_id, Provider::Google, Utc::now())
+            .unwrap();
+
+        let mut callback_connected = callback_pending;
+        callback_connected.status = AccountStatus::Connected;
+        callback_connected.revision = 2;
+        let mut credential_write_ran = false;
+        let result = initiating_process.append_connected_if_pending_fenced(
+            callback_connected,
+            Provider::Google,
+            &callback_fence,
+            || {
+                credential_write_ran = true;
+                Ok::<(), ()>(())
+            },
+        );
+        assert!(matches!(result, Err(ConditionalUpdateError::Conflict)));
+        assert!(!credential_write_ran);
+        assert!(
+            !initiating_process
+                .provider_fence(Provider::Google)
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]

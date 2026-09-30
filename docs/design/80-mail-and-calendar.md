@@ -14,8 +14,13 @@ stores the password in the Agent vault, and reports no token expiry; it does not
 credential with Apple or enable provider content access. Provider-content
 reads, routines, local content drafts, previews, and provider effects remain
 unimplemented. OAuth authorization attempts are bounded and single-use;
-disconnect serializes with new links, and the in-flight callback fence table
-is capped so eviction invalidates stale commits instead of authorizing them.
+disconnect serializes with new links and atomically advances a durable,
+Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
+attempt captures that fence at initiation; callback credential persistence
+checks it under the same cross-process ledger lock as the vault write. A
+disconnect in another server process therefore invalidates a callback already
+in flight. The separate in-memory callback fence table is capped so eviction
+invalidates stale commits instead of authorizing them.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Account erasure remains
