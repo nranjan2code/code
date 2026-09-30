@@ -4,14 +4,12 @@
 // the rules are testable without the UI (docs/plans/canvas-plan.md K2).
 
 import { subjectKey, type CanvasSubject } from "./canvasSubject.ts";
+import type { Selection } from "./canvasSelection.ts";
 
 export type CanvasMode = "split" | "focused";
 
-/** A place in the source text a comment would be about. */
-export interface LineSelection {
-  start: number;
-  end?: number;
-}
+/** Which of the comment area's tabs is open. */
+export type ContextPanel = "discussion" | "activity" | "changes";
 
 export interface CanvasEntry {
   key: string;
@@ -19,10 +17,14 @@ export interface CanvasEntry {
   mode: CanvasMode;
   /** Which of the viewer's views is showing; null when it has only one. */
   view: string | null;
-  selection: LineSelection | null;
+  /** What the reader has pointed at, which a comment would be about. */
+  selection: Selection | null;
   /** The note being written for the Agent, not yet sent. */
   draft: string;
   feedbackOpen: boolean;
+  panel: ContextPanel;
+  /** The newest version whose arrival the reader has dismissed. */
+  dismissedVersion: number;
 }
 
 export interface ConversationCanvas {

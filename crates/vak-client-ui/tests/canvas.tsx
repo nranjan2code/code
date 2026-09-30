@@ -12,7 +12,12 @@ const requests: string[] = [];
 const previewCalls: string[] = [];
 /** Whether the stub server can give a page an origin of its own (`POST /previews`). */
 let previews: "origin" | "none" = "none";
-const page = (source: string) => `<!doctype html><html><head><title>${source}</title></head><body><h1>${source}</h1></body></html>`;
+/** What the stub server has saved for a draft: comments, versions, and what was asked of the Agent. */
+const comments: Record<string, unknown>[] = [];
+const commentBodies: Record<string, unknown>[] = [];
+const revisions: string[] = [];
+let records: unknown[] = [];
+const page = (source: string) => `<!doctype html>\n<html>\n<head><title>${source}</title></head>\n<body>\n<h1>${source}</h1>\n</body>\n</html>`;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 window.fetch = async (input, init) => {
   const url = new URL(String(input), location.origin);
@@ -45,6 +50,20 @@ window.fetch = async (input, init) => {
     requests.push(`draft:${version[1]}:${path}`);
     return json({ kind: "text", content: page(`draft ${version[1]}`) });
   }
+  const commentsRoute = /\/sandbox\/candidates\/([^/]+)\/comments$/.exec(url.pathname);
+  if (commentsRoute && init?.method === "POST") {
+    const body = JSON.parse(String(init.body));
+    commentBodies.push(body);
+    comments.push({ comment_id: `cm${comments.length + 1}`, actor_id: "operator", text: body.text, path: body.path, line_start: body.line_start, line_end: body.line_end, anchor: body.anchor, created_at: "2026-09-30T10:00:00Z" });
+    return json({ comment_id: `cm${comments.length}`, intervention: false });
+  }
+  const revise = /\/sandbox\/candidates\/([^/]+)\/comments\/([^/]+)\/request-revision$/.exec(url.pathname);
+  if (revise) {
+    revisions.push(`${revise[1]}:${revise[2]}`);
+    return json({});
+  }
+  if (commentsRoute) return json({ comments });
+  if (url.pathname.endsWith("/sandbox/records")) return json({ records });
   return json({ comments: [], records: [] });
 };
 
@@ -53,6 +72,8 @@ render(() => <ArtifactCanvas />, document.getElementById("root")!);
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 250));
 const frame = () => document.querySelector<HTMLIFrameElement>(".artifact-canvas iframe.artifact-canvas-frame");
+const tabs = () => [...document.querySelectorAll<HTMLElement>(".artifact-canvas-tab-label")];
+const seg = (label: string) => [...document.querySelectorAll<HTMLElement>(".artifact-canvas-seg-btn")].find((item) => item.textContent?.trim() === label);
 const shown = () => /<h1>([^<]*)<\/h1>/.exec(frame()?.srcdoc ?? "")?.[1];
 const check = (ok: unknown, message: string) => { if (!ok) throw new Error(message); return message; };
 const clear = () => { while (store.canvasOpen()) store.closeArtifactCanvas(); };
@@ -61,6 +82,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
 
 (window as any).runChecks = async () => {
   const passed: string[] = [];
+  (window as any).__passed = passed;
 
   await open(() => store.openArtifactCanvas({ kind: "inline", title: "Probe", html: "<h1>inline</h1><script>1</script>" }));
   passed.push(check(shown() === "inline" && requests.length === 0, "Inline markup renders without reading any file"));
@@ -107,15 +129,74 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   passed.push(check(previewCalls.join() === "close:p1", "Closing the Canvas ends the preview origin"));
   previews = "none";
 
+  // Pointing at lines, and what a comment and asking the Agent each do with them.
+  const version = (id: string, files = [{ path: "site/index.html", base_hash: "h" }]) => ({ kind: "Candidate", record: { execution_id: "e1", session_id: sid, updated_at: "2026-09-30T09:00:00Z", candidate: { candidate_id: id, files } } });
+  records = [version("c1")];
+  const draftOpen = (candidate: string) => store.openArtifactCanvas(fileSubject("site/index.html", { sessionId: sid, candidateId: candidate, executionId: "e1", resultId: "r1" }, "index.html"));
+  const button = (label: string) => { const found = [...document.querySelectorAll<HTMLElement>("button")].find((item) => item.textContent?.trim() === label); if (!found) throw new Error(`no button "${label}"; have: ${[...document.querySelectorAll("button")].map((item) => item.textContent?.trim()).filter(Boolean).join(", ")}`); return found; };
+  const type = (value: string) => { const box = document.querySelector<HTMLTextAreaElement>(".artifact-canvas-feedback textarea")!; box.value = value; box.dispatchEvent(new Event("input", { bubbles: true })); };
+  const lineButton = (line: number) => { const found = document.querySelector<HTMLElement>(`.artifact-canvas-line-number[aria-label="Select line ${line}"]`); if (!found) throw new Error(`no line ${line}`); return found; };
+  comments.length = 0; commentBodies.length = 0; revisions.length = 0;
+  await open(() => draftOpen("c1"));
+  seg("Code")!.click();
+  await settle();
+  const pane = document.querySelector(".artifact-canvas-source");
+  lineButton(3).click();
+  await settle();
+  passed.push(check(!!pane && pane.isConnected && document.querySelector(".artifact-canvas-source") === pane, "Pointing at a line does not reload the page being read"));
+  lineButton(5).dispatchEvent(new MouseEvent("click", { bubbles: true, shiftKey: true }));
+  await settle();
+  passed.push(check(document.querySelector(".artifact-canvas-selection")?.textContent?.includes("Lines 3–5"), "Pointing at lines says which, in the discussion"));
+  type("tighten this block");
+  button("Comment")!.click();
+  await settle();
+  passed.push(check(commentBodies.length === 1 && commentBodies[0].line_start === 3 && commentBodies[0].line_end === 5 && revisions.length === 0, "Comment saves it on the version at those lines and asks nobody"));
+  type("and make it faster");
+  button("Ask Agent")!.click();
+  await settle();
+  passed.push(check(commentBodies.length === 2 && revisions.length === 1 && revisions[0].startsWith("c1:"), "Ask Agent saves the comment and asks the Agent to act on it"));
+  passed.push(check(document.querySelectorAll(".artifact-canvas-comments article").length === 2 && document.querySelector(".artifact-canvas-comments")?.textContent?.includes("Lines 3–5") === true, "Comments show the place they were written at"));
+  seg("Preview")!.click();
+  await settle();
+  passed.push(check(!document.querySelector(".artifact-canvas-selection"), "A preview page has no place to point at, so nothing is selected there"));
+  type("whole page feels dark");
+  button("Comment")!.click();
+  await settle();
+  passed.push(check(commentBodies.length === 3 && commentBodies[2].line_start === undefined, "A comment made in a preview is about the whole file"));
+  [...document.querySelectorAll<HTMLElement>(".artifact-canvas-comments article button")][0].click();
+  await settle();
+  passed.push(check(!!document.querySelector(".artifact-canvas-source") && document.querySelector(".artifact-canvas-selection")?.textContent?.includes("Lines 3–5") === true, "Show where puts the reader back on the lines of a comment"));
+
+  // What has happened to a draft, and which files a version changes.
+  button("Activity")!.click();
+  await settle();
+  passed.push(check(document.querySelector(".artifact-canvas-activity")?.textContent?.includes("Version 1 saved") === true, "Activity lists what the records show"));
+  button("Changes")!.click();
+  await settle();
+  passed.push(check(document.querySelector(".artifact-canvas-changes")?.textContent?.includes("Changed") === true, "Changes lists the files this version changes"));
+
+  // A newer version is announced and never takes over the one being read.
+  records = [version("c1"), version("c2")];
+  await open(() => draftOpen("c1"));
+  const notice = () => document.querySelector(".artifact-canvas-notice")?.textContent ?? "";
+  passed.push(check(notice().includes("Version 2 is ready") && notice().includes("reading version 1") && document.querySelector(".artifact-canvas-badge")?.textContent?.includes("Version 1") === true, "A newer version is announced while the one being read stays in front"));
+  button("Read version 2")!.click();
+  await settle();
+  passed.push(check(store.canvasEntries().length === 2 && document.querySelector(".artifact-canvas-badge")?.textContent?.includes("Version 2") === true && !notice(), "Reading the newer version opens it as another tab"));
+  tabs()[0].click();
+  await settle();
+  button("Dismiss")!.click();
+  await settle();
+  passed.push(check(!notice(), "Dismissing the notice keeps it away"));
+  records = [version("c1")];
+
   // Several subjects share one Canvas as tabs, and each keeps what was done in it.
   await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
   store.openArtifactFile("data/table.csv", { sessionId: sid });
   await settle();
-  const tabs = () => [...document.querySelectorAll<HTMLElement>(".artifact-canvas-tab-label")];
   passed.push(check(tabs().length === 2 && tabs()[1].getAttribute("aria-selected") === "true", "A second subject opens as a tab in front of the first"));
   tabs()[0].click();
   await settle();
-  const seg = (label: string) => [...document.querySelectorAll<HTMLElement>(".artifact-canvas-seg-btn")].find((button) => button.textContent?.trim() === label);
   seg("Code")!.click();
   await settle();
   const note = () => document.querySelector<HTMLTextAreaElement>(".artifact-canvas-feedback textarea")!;

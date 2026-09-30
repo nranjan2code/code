@@ -69,4 +69,11 @@ assert.equal(viewerSpec(file("a.csv")).views.length, 2);
 assert.equal(viewerSpec({ kind: "live_server", title: "app", serverName: "web", sessionId: "s" }).devices, true);
 assert.equal(viewerSpec(file("a.png")).devices, false);
 
+// A routine has no comments to make and nothing to point at.
+const automation = viewerSpec({ kind: "automation", title: "r", taskId: "t1" });
+assert.equal(automation.feedback, "none");
+assert.equal(automation.selects(null), null);
+assert.equal(automation.reloadable, true);
+assert.equal(freshEntry({ kind: "automation", title: "r", taskId: "t1" }, false).feedbackOpen, false);
+
 console.log("canvas stack ok");

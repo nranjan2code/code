@@ -8,6 +8,7 @@ import {
   runOrigin,
   subjectCandidateId,
   subjectExecutionId,
+  subjectKey,
   subjectPath,
   subjectSessionId,
 } from "../src/canvasSubject.ts";
@@ -75,5 +76,14 @@ assert.equal(liveServerOrigin("localhost", 5173), "http://127.0.0.1:5173");
 assert.equal(liveServerOrigin("LOCALHOST", 5173), "http://127.0.0.1:5173");
 assert.equal(liveServerOrigin("vak.example.com", 5173), null);
 assert.equal(liveServerOrigin("192.168.1.20", 5173), null);
+
+// A routine is a subject with no file, no conversation and nothing to serve.
+const routine = { kind: "automation", title: "Morning summary", taskId: "t1" };
+assert.equal(displayType(routine), "automation");
+assert.equal(subjectPath(routine), "");
+assert.equal(subjectSessionId(routine), undefined);
+assert.equal(previewSource(routine), null);
+assert.equal(subjectKey(routine), "task:t1");
+assert.notEqual(subjectKey(routine), subjectKey({ ...routine, taskId: "t2" }));
 
 console.log("canvas subject ok");

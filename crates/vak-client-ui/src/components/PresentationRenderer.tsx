@@ -666,7 +666,8 @@ function openFile(item: OutputItem, sessionId?: string) {
   const context = {
     sessionId: sessionId ?? item.provenance?.session_id ?? undefined,
     resultId: item.outcome?.result_id ?? undefined,
-    executionId: item.provenance?.tool_call_id ?? undefined,
+    // A file already in the folder is read from the folder: the call that wrote it left nothing in scratch.
+    executionId: status?.state === "in_folder" ? undefined : item.provenance?.tool_call_id ?? undefined,
   };
   if (saved && context.sessionId) {
     openArtifactCanvas(fileSubject(saved.path, { ...runOrigin(context), sessionId: context.sessionId, candidateId: saved.version_id }, artifact.name));

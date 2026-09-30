@@ -1,24 +1,25 @@
 import { createSignal, For } from "solid-js";
 import Icon from "../Icon";
-import type { LineSelection } from "../../canvasStack";
+import type { Selection } from "../../canvasSelection";
 
 /** Source text with selectable lines; a selection is what a comment is about. */
 export default function SourcePane(props: {
   text: string;
   label: string;
-  selection: LineSelection | null;
-  onSelect: (selection: LineSelection | null) => void;
+  selection: Selection | null;
+  onSelect: (selection: Selection | null) => void;
 }) {
   const [copied, setCopied] = createSignal(false);
   const lines = () => props.text.split("\n");
+  const range = () => (props.selection?.kind === "lines" ? props.selection : null);
   const selected = (line: number) => {
-    const range = props.selection;
-    return !!range && line >= range.start && line <= (range.end ?? range.start);
+    const current = range();
+    return !!current && line >= current.start && line <= (current.end ?? current.start);
   };
   const select = (line: number, extend: boolean) => {
-    const range = props.selection;
-    if (extend && range) props.onSelect({ start: Math.min(range.start, line), end: Math.max(range.end ?? range.start, line) });
-    else props.onSelect({ start: line });
+    const current = range();
+    if (extend && current) props.onSelect({ kind: "lines", start: Math.min(current.start, line), end: Math.max(current.end ?? current.start, line) });
+    else props.onSelect({ kind: "lines", start: line });
   };
   const copy = async () => {
     try {

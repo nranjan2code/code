@@ -10,7 +10,7 @@
 
 import { isOfficePath } from "./officeFiles.ts";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation";
 
 interface SubjectBase {
   title: string;
@@ -30,6 +30,8 @@ export type CanvasSubject =
   /** Markup shown from the conversation itself, with no file behind it. */
   | (SubjectBase & { kind: "inline"; html: string; basePath?: string })
   /** A dev server the session's launch configuration names. */
+  /** A scheduled routine, read from the task list. */
+  | (SubjectBase & { kind: "automation"; taskId: string })
   | (SubjectBase & { kind: "live_server"; serverName: string; sessionId: string; candidateId?: string; path?: string });
 
 /** The identity a file was opened from; the shape decides which route reads it. */
@@ -72,6 +74,7 @@ export function previewSource(subject: CanvasSubject): PreviewSource | null {
     case "execution_artifact": return { kind: "execution", session_id: subject.sessionId, execution_id: subject.executionId, path: subject.path };
     case "draft_file": return { kind: "candidate", session_id: subject.sessionId, candidate_id: subject.candidateId, path: subject.path };
     case "inline":
+    case "automation":
     case "live_server": return null;
   }
 }
@@ -95,12 +98,13 @@ export function subjectPath(subject: CanvasSubject): string {
   switch (subject.kind) {
     case "inline": return subject.basePath ?? "";
     case "live_server": return subject.path ?? "";
+    case "automation": return "";
     default: return subject.path;
   }
 }
 
 export function subjectSessionId(subject: CanvasSubject): string | undefined {
-  return subject.kind === "inline" ? undefined : subject.sessionId;
+  return subject.kind === "inline" || subject.kind === "automation" ? undefined : subject.sessionId;
 }
 
 export function subjectCandidateId(subject: CanvasSubject): string | undefined {
@@ -121,6 +125,7 @@ export function subjectKey(subject: CanvasSubject): string {
     case "execution_artifact": return `run:${subject.sessionId}:${subject.executionId}:${subject.path}`;
     case "draft_file": return `draft:${subject.sessionId}:${subject.candidateId}:${subject.path}`;
     case "live_server": return `server:${subject.sessionId}:${subject.candidateId ?? ""}:${subject.serverName}`;
+    case "automation": return `task:${subject.taskId}`;
     case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
   }
 }
@@ -137,6 +142,7 @@ const IMAGE_EXTENSIONS = /\.(png|jpe?g|gif|webp|svg|ico|bmp)$/;
 export function displayType(subject: CanvasSubject): ArtifactDisplayType {
   if (subject.kind === "live_server") return "server";
   if (subject.kind === "inline") return "html";
+  if (subject.kind === "automation") return "automation";
   const path = subject.path.toLowerCase();
   if (path.endsWith(".pdf")) return "pdf";
   if (path.endsWith(".csv") || path.endsWith(".tsv")) return "table";

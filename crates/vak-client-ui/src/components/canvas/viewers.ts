@@ -6,6 +6,7 @@ import OfficeViewer from "./OfficeViewer";
 import PdfViewer from "./PdfViewer";
 import ServerViewer from "./ServerViewer";
 import SourceViewer from "./SourceViewer";
+import AutomationViewer from "./AutomationViewer";
 import TableViewer from "./TableViewer";
 import type { ViewerProps } from "./types";
 
@@ -18,4 +19,5 @@ export const VIEWERS: Record<ArtifactDisplayType, Component<ViewerProps>> = {
   image: ImageViewer,
   pdf: PdfViewer,
   office: OfficeViewer,
+  automation: AutomationViewer,
 };

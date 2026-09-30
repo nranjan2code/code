@@ -16,6 +16,7 @@ export default function OfficeViewer(props: ViewerProps) {
       canEdit={true}
       canStart={!!sessionId() && !!candidateId()}
       collaborators={coworkingPresence(sessionId() ?? activeId())}
+      onSelect={(anchor) => props.onSelect(anchor ? { kind: "anchor", anchor } : null)}
       onReview={subjectExecutionId(props.subject) ? props.onReview : undefined}
     />
   );

@@ -1,6 +1,6 @@
 # Plan — the Canvas as a multi-surface workspace
 
-Status: **K0, K1, K2 and K3 done (2026-09-30), K3 for a Canvas on this computer; K4 and K5 proposed, none started.** Review of the
+Status: **K0–K4 done and K5 done for scheduled routines (2026-09-30), K3 for a Canvas on this computer; the mail and calendar viewers wait for their API (K5b).** Review of the
 Canvas at `61393a37` against `66-immersive-artifact-canvas.md`,
 `80-mail-and-calendar.md` ("Preview and working area", on
 `codex/mail-calendar`), `72-openxml-documents.md` and
@@ -27,14 +27,15 @@ Canvas at `61393a37` against `66-immersive-artifact-canvas.md`,
 8. ~~The viewer was chosen by file extension and there was one global slot that
    closed on conversation switch.~~ **Fixed in K2:** a viewer registry and a
    Canvas per conversation with tabs. Mail, calendar and automation viewers are
-   K5.
+   K5 (K5b for mail and calendar).
 9. ~~Documents were forced full-screen.~~ **Fixed in K2:** they open on the whole
    viewport and can be put beside the conversation. (Feedback on a non-draft
    still closes the Canvas so its live controls are visible.)
 10. ~~Two preview surfaces (Canvas, dock) and a dead `/canvas/preview`.~~
     **Fixed in K3:** the dock keeps only the server list; `/canvas/preview` and
     `/fs/preview` are gone.
-11. Selection anchors are source line numbers only.
+11. ~~Selection anchors were source line numbers only.~~ **Fixed in K4:** lines or a
+    document place, per view.
 
 ## Stages
 
@@ -45,8 +46,9 @@ Canvas at `61393a37` against `66-immersive-artifact-canvas.md`,
 | K2 — frame and viewer registry (done) | Frame (`ArtifactCanvas.tsx`) plus one viewer per kind in `components/canvas/`; what each can do is data in `canvasViewers.ts`; a Canvas per conversation with tabs (`canvasStack.ts`); an error boundary; documents can sit beside the conversation; a preview opened in its own window is a sandboxed frame in a bare wrapper | `tests/canvas-stack.mjs`; `tests/canvas.html` (21 checks at 1440 px); a phone width opens full width with no toggle and no sideways scroll |
 | K3 — preview origin (done, loopback) | `POST /previews` opens an origin of its own on a loopback port for a saved version, a run or a workspace page (`preview.rs`); dev servers are framed directly under the other loopback name; the dock `PreviewPane`, `/canvas/preview` and `/fs/preview` are removed and the dock keeps a Live preview list | `preview::tests` (scope, traversal, dotfiles, token, Host, method, eviction, handler); `tests/canvas.html` origin checks; run against a real server: a module script, relative CSS and `fetch` load, `parent.document` and the app's API and cookie are unreachable from a real cross-origin frame, and a dev server starts, frames and stops with the Canvas |
 | K3b — previews for a remote browser (not built) | A distinct preview host name and fixed port range (or a proxy with a wildcard preview domain) so a browser on another machine can reach a preview origin and a dev server | A multi-file app and a dev server preview from a browser on another machine |
-| K4 — selection and context panel | Selection → Comment / Ask Agent per viewer; Changes, Discussion and Activity panel; new-version notice | Collaboration journeys 3 and 7 |
-| K5 — subjects that are not files | Mail thread, calendar and automation viewers on the registry | Doc 80's source → edit → preview → Review → receipt in the running browser |
+| K4 — selection and context panel (done) | `canvasSelection.ts`, per-view `selects`; `CanvasContext` (Discussion with Comment / Ask Agent, Activity, Changes); `NewVersionNotice`; `draftVersions.ts` | `tests/canvas-selection.mjs`; 38 checks in `tests/canvas.html`; against a real server and model: a real page opens from a real result in the real Canvas, lines are picked, and Ask for revision carries the place to the real Agent, which edits the file. Comment/Activity/Changes/new-version on a saved draft ran only against the stub: no saved draft could be produced in this setup |
+| K5 — subjects that are not files (done for routines) | The `automation` subject and `AutomationViewer` on the registry, with shared task wording (`taskWords.ts`); the task list opens one | `tests/task-words.mjs`, `canvas-subject.mjs`, `canvas-stack.mjs`; against a real server: a real script routine ran, appeared in the inbox, opened in the Canvas from the task list, ran again with Run now and paused with Pause (the server confirmed `enabled:false`) |
+| K5b — mail thread and calendar viewers (not built) | Viewers on the same registry once `codex/mail-calendar` has the reader and working-area API and has merged; its Stage 2 working area is still in Settings there and it has no Canvas subject | Doc 80's source → edit → preview → Review → receipt in the running browser |
 
 K3 took a loopback port per preview and removed the dock preview outright. K3b
 needs a design decision on how a remote deployment names and reaches the
