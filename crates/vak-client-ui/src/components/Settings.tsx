@@ -1990,10 +1990,10 @@ export default function Settings() {
                         && !account.superseded_by_active_link;
                       const connectionState = account.revoked_at
                         ? "Disconnected"
-                        : !account.credential_available
-                          ? "Saved sign-in details are unavailable · disconnect this entry, then connect again"
-                          : account.status === "pending"
-                            ? "Connection incomplete · cleanup needed"
+                        : account.status === "pending"
+                          ? "Connection incomplete · cleanup needed"
+                          : !account.credential_available
+                            ? "Saved sign-in details are unavailable · disconnect this entry, then connect again"
                             : account.status === "reauthentication_required"
                             ? account.superseded_by_active_link
                                 ? "Reconnected · remove this old entry"

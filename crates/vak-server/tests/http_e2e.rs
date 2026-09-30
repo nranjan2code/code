@@ -762,6 +762,8 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .find(|account| account["id"] == apple_id)
         .unwrap();
     assert!(!revoked["revoked_at"].is_null());
+    assert_eq!(revoked["credential_available"], false);
+    assert!(revoked["identity_masked"].is_null());
 
     // Pausing an Agent stops new connections and refreshes, but owner-only
     // inventory and disconnect remain available to clean up its credentials.
@@ -808,6 +810,8 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .find(|account| account["id"] == pending_id)
         .unwrap();
     assert_eq!(interrupted_account["status"], "pending");
+    assert_eq!(interrupted_account["credential_available"], false);
+    assert!(interrupted_account["identity_masked"].is_null());
     let interrupted_cleanup = reqwest::Client::new()
         .post(format!(
             "http://{addr}/mail-calendar/accounts/mail-paused/{pending_id}/disconnect"

@@ -74,7 +74,13 @@ pub(super) async fn list_accounts(
             };
             let credentials = accounts
                 .iter()
-                .map(|account| vault.load(&account.id))
+                .map(|account| {
+                    if account.revoked_at.is_some() || account.status == AccountStatus::Pending {
+                        Err(vak_mail_calendar::vault::VaultError::Unavailable)
+                    } else {
+                        vault.load(&account.id)
+                    }
+                })
                 .collect::<Vec<_>>();
             let account_views = accounts
                 .iter()

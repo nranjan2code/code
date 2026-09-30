@@ -771,6 +771,11 @@ authorization and approval boundary on every execution path.
   would be rejected. Missing or nonrenewable credentials direct the owner to
   disconnect before relinking. The HTTP test checks the flag without exposing
   principal data; the Settings typecheck and production web build pass.
+- 2026-09-30: Account inventory skips vault reads for disconnected and pending
+  entries, and returns neither masked identity nor credential availability
+  for those rows. Settings prioritizes pending cleanup guidance. The HTTP
+  lifecycle assertions, complete server HTTP target, and all 49 domain tests
+  pass.
 - 2026-09-30: Rechecked Apple's documented third-party account authorization.
   Apple Support describes Apple Account authorization and revocation for
   supported apps. The developer OAuth flow reviewed applies to the Apple School
