@@ -811,6 +811,13 @@ mod contract_tests {
         };
         assert_eq!(candidate.authorize_effect(&account, &approval, now), Ok(()));
 
+        let mut unverified_icloud = account.clone();
+        unverified_icloud.provider = Provider::AppleIcloud;
+        assert_eq!(
+            candidate.authorize_effect(&unverified_icloud, &approval, now),
+            Err(ContractError::AccountDenied)
+        );
+
         let mut wrong_account = account.clone();
         wrong_account.id = "other-account".into();
         assert_eq!(
