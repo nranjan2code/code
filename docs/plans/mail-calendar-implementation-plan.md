@@ -744,6 +744,10 @@ authorization and approval boundary on every execution path.
   and not-retried provider-revocation outcomes in its response and audit entry.
   Settings gives provider-specific guidance for unsupported revocation and
   does not imply that a cleanup retry reattempted provider revocation.
+- 2026-09-30: Added a server regression for account churn proving idle
+  per-account serialization locks are reclaimed from the shared weak-reference
+  table as new accounts are handled. This protects long-lived service memory;
+  the focused test and workspace formatting check pass.
 - 2026-09-30: Rechecked Apple's documented third-party account authorization.
   Apple Support describes Apple Account authorization and revocation for
   supported apps. The developer OAuth flow reviewed applies to the Apple School

@@ -735,6 +735,25 @@ mod tests {
             .unwrap();
     }
 
+    #[test]
+    fn idle_account_operation_locks_are_reclaimed_after_account_churn() {
+        let state = crate::test_support::state();
+        for index in 0..128 {
+            let account_id = format!("account-{index}");
+            drop(state.mail_calendar_account_lock("agent-a", &account_id));
+        }
+
+        // Acquiring the next lock prunes every prior weak entry whose last
+        // operation has finished. A long-lived server therefore does not
+        // retain one map entry per account it has ever seen.
+        drop(state.mail_calendar_account_lock("agent-a", "account-final"));
+        let locks = state
+            .mail_calendar_account_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(locks.len(), 1);
+    }
+
     #[tokio::test]
     async fn account_link_admission_rechecks_agent_after_provider_lock_wait() {
         vak_config::paths::isolate_home_for_tests();
