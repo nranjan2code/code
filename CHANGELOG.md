@@ -1,3 +1,14 @@
+## 5.2.10 — 2026-09-30
+
+- Make every prompt universal and true to the runtime, from a full audit of every model-facing text (`docs/audits/prompts-universal-2026-09-30.md`): the assistant introduces itself as Vakyartha, replies in the person's language, checks work the way each result can be checked, and knows which blocks come from the runtime rather than the person.
+- Stop sending ordinary writing back for a shell command: what a turn needs before it can end now comes from its reading, not English phrase lists, and a failed step passes only when the answer names the failure.
+- Make Word, Excel, PowerPoint and PDF files only through the reviewed draft path, and say up front when a PDF cannot hold non-Latin text.
+- Record the time and stance the model was given in the session log, name the time zone, and give scheduled runs their own time context.
+- Make the managed-work contract prompt describe the JSON it is parsed as, stop reflection failing on long non-English conversations, and keep corrections, approvals and open failures through compaction and handoff.
+- Apply an untrusted project's prompt text, guardrails included, only once the workspace is trusted, and retire the `.vak/SYSTEM.md` override.
+- Offer a general-purpose first task instead of a codebase walkthrough.
+- Restore a clean clippy and test gate.
+
 ## 5.2.9 — 2026-09-29
 
 - Enhance Office document viewing and editing: render merged cells with accurate keyboard navigation, support text alignment and wrapping in workbook grids, bind image previews to source anchors, and render common chart variants including scaled scatter charts.
