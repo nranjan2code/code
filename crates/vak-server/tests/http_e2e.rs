@@ -394,6 +394,20 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .unwrap();
     assert_eq!(unauthorized_scope.status(), reqwest::StatusCode::NOT_FOUND);
 
+    let folders_url = format!("http://{addr}/mail-calendar/accounts/vak/account-a/mail-folders");
+    let unauthenticated_folders = reqwest::get(&folders_url).await.unwrap();
+    assert_eq!(
+        unauthenticated_folders.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let non_owner_folders = reqwest::Client::new()
+        .get(folders_url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(non_owner_folders.status(), reqwest::StatusCode::NOT_FOUND);
+
     let attachment_preview_url =
         format!("http://{addr}/mail-calendar/accounts/vak/account-a/attachment-preview");
     let attachment_request = serde_json::json!({

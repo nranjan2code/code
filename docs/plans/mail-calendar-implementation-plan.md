@@ -13,8 +13,10 @@ email send and a
 limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
 Calendar and availability previews now support an owner-selected, device-time-
-zone date range up to 30 days, previous/next seven-day navigation, and a visible refresh time. Folder selection and
-the complete connected-account workspace remain open.
+zone date range up to 30 days, previous/next seven-day navigation, and a visible
+refresh time. Owner folder/label selection now covers Gmail labels and up to 100
+Microsoft top-level folders; Apple remains Inbox-only. Child-folder traversal,
+the full connected-account workspace, and thread workspace remain open.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
 continuation cursor stored atomically in the encrypted Agent vault. A local
@@ -310,6 +312,15 @@ not attachment bytes. Inline content, Apple attachments, images, HTML, archives,
 and unsupported or oversized files are unavailable. Local staging, source
 version citations, attachment selection during compose, and send-with-attachment
 remain open.
+
+**Implemented increment (2026-09-30):** owner mail previews can list and select
+Gmail labels or up to 100 Microsoft top-level folders, and inbox phrase search
+is scoped to the selected label/folder. Gmail label IDs are allowlist-validated;
+Microsoft opaque folder IDs are validated and encoded as one fixed-host path
+segment. Folder inventory and reads remain owner-only and pass through the
+existing MailRead account/audience admission. Apple exposes its Inbox only;
+scheduled Agent tools and mail watches remain Inbox-scoped. Nested folders,
+pagination beyond the bounded list, and full thread navigation remain open.
 
 ## Stage 3 — reviewed provider effects
 
@@ -1291,3 +1302,10 @@ authorization and approval boundary on every execution path.
   pass. UI TypeScript and production web build pass. Apple attachments, image
   rendering, attachment composition, and source-to-Review browser acceptance
   remain open.
+- 2026-09-30: Added owner-only folder/label listing and selection to mail
+  previews. Gmail uses validated label IDs; Microsoft uses validated opaque
+  top-level folder IDs in encoded Graph path segments; Apple remains Inbox-only.
+  Selected-folder searches stay provider-scoped. Agent tools and scheduled
+  watches continue using Inbox. Google and Microsoft request fixtures, owner
+  HTTP boundary coverage, UI typecheck, and production web build pass. Child
+  folder traversal, folder pagination, and full thread navigation remain open.

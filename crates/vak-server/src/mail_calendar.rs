@@ -828,9 +828,65 @@ pub(super) async fn delete_candidate(
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct MailPreviewRequest {
     limit: Option<usize>,
     query: Option<String>,
+    folder_id: Option<String>,
+}
+
+pub(super) async fn mail_folders(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    record_account_event(
+        &state,
+        "mail_folders_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    let folders = vak_mail_calendar::provider::ProviderReadClient::default()
+        .list_mail_folders(&account, &vault, &agent_id, &format!("agent:{agent_id}"))
+        .await;
+    match folders {
+        Ok(folders) => {
+            record_account_event(
+                &state,
+                "mail_folders_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(serde_json::json!({"folders": folders})).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "mail_folders_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -894,22 +950,24 @@ pub(super) async fn mail_preview(
         .is_some_and(|query| !query.trim().is_empty())
     {
         client
-            .search_mail(
+            .search_mail_in_folder(
                 &account,
                 &vault,
                 &agent_id,
                 &format!("agent:{agent_id}"),
                 request.query.as_deref().unwrap_or_default(),
+                request.folder_id.as_deref(),
                 request.limit.unwrap_or(10),
             )
             .await
     } else {
         client
-            .recent_mail(
+            .recent_mail_in_folder(
                 &account,
                 &vault,
                 &agent_id,
                 &format!("agent:{agent_id}"),
+                request.folder_id.as_deref(),
                 request.limit.unwrap_or(10),
             )
             .await

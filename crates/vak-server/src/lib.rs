@@ -752,6 +752,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/mail-calendar/accounts/{agent_id}/icloud", post(mail_calendar::connect_icloud))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/refresh", post(mail_calendar::refresh_account))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-preview", post(mail_calendar::mail_preview))
+        .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-folders", get(mail_calendar::mail_folders))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/attachment-preview", post(mail_calendar::attachment_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/message-preview", post(mail_calendar::message_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview", post(mail_calendar::calendar_preview))

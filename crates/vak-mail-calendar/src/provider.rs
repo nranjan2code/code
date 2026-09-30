@@ -20,6 +20,7 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
+const MAX_MAIL_FOLDERS: usize = 100;
 pub const MAX_MAIL_ATTACHMENTS: usize = 20;
 pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
 const MAX_WATCH_SCAN_ITEMS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
@@ -161,6 +162,13 @@ pub struct MailItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailFolder {
+    /// Provider opaque folder/label ID, validated again before use.
+    pub provider_id: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailAttachmentRef {
     /// Opaque provider attachment ID. Never use as a path or URL host.
     pub provider_id: String,
@@ -275,17 +283,130 @@ impl ProviderReadClient {
         audience: &str,
         limit: usize,
     ) -> Result<Vec<MailItem>, ProviderReadError> {
+        self.recent_mail_in_folder(account, vault, agent_id, audience, None, limit)
+            .await
+    }
+
+    pub async fn list_mail_folders(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+    ) -> Result<Vec<MailFolder>, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if account.provider == Provider::AppleIcloud {
+            return Ok(vec![MailFolder {
+                provider_id: "INBOX".into(),
+                name: "Inbox".into(),
+            }]);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        match account.provider {
+            Provider::Google => {
+                let response = self
+                    .http
+                    .get(format!("{}/users/me/labels", self.google_gmail_base))
+                    .bearer_auth(token.as_str())
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+                let labels = value
+                    .get("labels")
+                    .and_then(Value::as_array)
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                let mut folders = Vec::new();
+                for label in labels.iter().take(MAX_MAIL_FOLDERS) {
+                    let (Some(id), Some(name)) = (
+                        label.get("id").and_then(Value::as_str),
+                        label.get("name").and_then(Value::as_str),
+                    ) else {
+                        continue;
+                    };
+                    if valid_google_label_id(id) && !name.trim().is_empty() {
+                        folders.push(MailFolder {
+                            provider_id: id.to_owned(),
+                            name: bounded_label_name(name),
+                        });
+                    }
+                }
+                if folders.is_empty() {
+                    return Err(ProviderReadError::InvalidResponse);
+                }
+                Ok(folders)
+            }
+            Provider::Microsoft => {
+                let response = self
+                    .http
+                    .get(format!("{}/me/mailFolders", self.microsoft_graph_base))
+                    .bearer_auth(token.as_str())
+                    .query(&[
+                        ("$top", MAX_MAIL_FOLDERS.to_string()),
+                        ("$select", "id,displayName".to_owned()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+                let folders = value
+                    .get("value")
+                    .and_then(Value::as_array)
+                    .ok_or(ProviderReadError::InvalidResponse)?
+                    .iter()
+                    .take(MAX_MAIL_FOLDERS)
+                    .filter_map(|folder| {
+                        let id = folder.get("id").and_then(Value::as_str)?;
+                        let name = folder.get("displayName").and_then(Value::as_str)?;
+                        valid_graph_folder_id(id).then(|| MailFolder {
+                            provider_id: id.to_owned(),
+                            name: bounded_label_name(name),
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                if folders.is_empty() {
+                    return Err(ProviderReadError::InvalidResponse);
+                }
+                Ok(folders)
+            }
+            Provider::AppleIcloud => Ok(vec![MailFolder {
+                provider_id: "INBOX".into(),
+                name: "Inbox".into(),
+            }]),
+        }
+    }
+
+    pub async fn recent_mail_in_folder(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        folder_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MailItem>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
         let limit = limit.clamp(1, MAX_MAIL_ITEMS);
         if account.provider == Provider::AppleIcloud {
+            if folder_id.is_some_and(|folder| folder != "INBOX") {
+                return Err(ProviderReadError::Unsupported);
+            }
             return icloud_recent_mail(account, vault, limit).await;
         }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
         match account.provider {
-            Provider::Google => self.google_mail(token.as_str(), limit, None).await,
-            Provider::Microsoft => self.microsoft_mail(token.as_str(), limit, None).await,
+            Provider::Google => {
+                self.google_mail(token.as_str(), limit, None, folder_id)
+                    .await
+            }
+            Provider::Microsoft => {
+                self.microsoft_mail(token.as_str(), limit, None, folder_id)
+                    .await
+            }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
     }
@@ -301,9 +422,26 @@ impl ProviderReadClient {
         query: &str,
         limit: usize,
     ) -> Result<Vec<MailItem>, ProviderReadError> {
+        self.search_mail_in_folder(account, vault, agent_id, audience, query, None, limit)
+            .await
+    }
+
+    pub async fn search_mail_in_folder(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        query: &str,
+        folder_id: Option<&str>,
+        limit: usize,
+    ) -> Result<Vec<MailItem>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
         let query = validate_mail_search_query(query)?;
         if account.provider == Provider::AppleIcloud {
+            if folder_id.is_some_and(|folder| folder != "INBOX") {
+                return Err(ProviderReadError::Unsupported);
+            }
             return icloud_search_mail(account, vault, &query, limit.clamp(1, MAX_MAIL_ITEMS))
                 .await;
         }
@@ -312,12 +450,22 @@ impl ProviderReadClient {
             .map_err(|_| ProviderReadError::Vault)?;
         match account.provider {
             Provider::Google => {
-                self.google_mail(&token, limit.clamp(1, MAX_MAIL_ITEMS), Some(&query))
-                    .await
+                self.google_mail(
+                    &token,
+                    limit.clamp(1, MAX_MAIL_ITEMS),
+                    Some(&query),
+                    folder_id,
+                )
+                .await
             }
             Provider::Microsoft => {
-                self.microsoft_mail(&token, limit.clamp(1, MAX_MAIL_ITEMS), Some(&query))
-                    .await
+                self.microsoft_mail(
+                    &token,
+                    limit.clamp(1, MAX_MAIL_ITEMS),
+                    Some(&query),
+                    folder_id,
+                )
+                .await
             }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
@@ -1064,14 +1212,19 @@ impl ProviderReadClient {
         token: &str,
         limit: usize,
         query: Option<&str>,
+        folder_id: Option<&str>,
     ) -> Result<Vec<MailItem>, ProviderReadError> {
+        let label_id = folder_id.unwrap_or("INBOX");
+        if !valid_google_label_id(label_id) {
+            return Err(ProviderReadError::InvalidSearch);
+        }
         let mut request = self
             .http
             .get(format!("{}/users/me/messages", self.google_gmail_base))
             .bearer_auth(token)
-            .query(&[("labelIds", "INBOX"), ("maxResults", &limit.to_string())]);
+            .query(&[("labelIds", label_id), ("maxResults", &limit.to_string())]);
         if let Some(query) = query {
-            request = request.query(&[("q", format!(r#"in:inbox "{query}""#))]);
+            request = request.query(&[("q", format!(r#""{query}""#))]);
         }
         let response = request
             .send()
@@ -1116,14 +1269,19 @@ impl ProviderReadClient {
         token: &str,
         limit: usize,
         query: Option<&str>,
+        folder_id: Option<&str>,
     ) -> Result<Vec<MailItem>, ProviderReadError> {
+        let folder_id = folder_id.unwrap_or("inbox");
+        if !valid_graph_folder_id(folder_id) {
+            return Err(ProviderReadError::InvalidSearch);
+        }
         let limit = limit.to_string();
         let mut request = self
             .http
-            .get(format!(
-                "{}/me/mailFolders/inbox/messages",
-                self.microsoft_graph_base
-            ))
+            .get(graph_url_segments(
+                &self.microsoft_graph_base,
+                &["me", "mailFolders", folder_id, "messages"],
+            )?)
             .bearer_auth(token)
             .header(
                 "Prefer",
@@ -2446,6 +2604,30 @@ fn parse_graph_attachment_ref(value: &Value) -> Option<MailAttachmentRef> {
     })
 }
 
+fn valid_google_label_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_' || byte == b'-')
+}
+
+fn valid_graph_folder_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 1024
+        && value != "."
+        && value != ".."
+        && value.bytes().all(|byte| byte.is_ascii_graphic())
+}
+
+fn bounded_label_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(128)
+        .collect()
+}
+
 fn graph_url_segments(base: &str, segments: &[&str]) -> Result<url::Url, ProviderReadError> {
     let mut url = url::Url::parse(&format!("{}/", base.trim_end_matches('/')))
         .map_err(|_| ProviderReadError::InvalidResponse)?;
@@ -2690,6 +2872,160 @@ mod tests {
         };
         let audience = format!("agent:{agent_id}");
         (vault, account, agent_id, audience)
+    }
+
+    #[tokio::test]
+    async fn google_folder_preview_uses_only_a_valid_selected_label() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
+        let labels_app = axum::Router::new()
+            .route(
+                "/gmail/v1/users/me/labels",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer access-token")
+                    );
+                    axum::Json(json!({"labels":[
+                        {"id":"INBOX","name":"INBOX"},
+                        {"id":"Label_Project","name":"Project"},
+                        {"id":"Label/bad","name":"Invalid label"}
+                    ]}))
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/messages",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer access-token")
+                    );
+                    let query = request.uri().query().unwrap_or_default();
+                    assert!(
+                        query.contains("labelIds=Label_Project"),
+                        "selected label must scope the request: {query}"
+                    );
+                    assert!(!query.contains("labelIds=INBOX"));
+                    axum::Json(json!({"messages":[]})).into_response()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, labels_app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let folders = client
+            .list_mail_folders(&account, &vault, &agent_id, &audience)
+            .await
+            .unwrap();
+        assert_eq!(
+            folders
+                .iter()
+                .map(|folder| folder.provider_id.as_str())
+                .collect::<Vec<_>>(),
+            ["INBOX", "Label_Project"]
+        );
+        let messages = client
+            .recent_mail_in_folder(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                Some(&folders[1].provider_id),
+                5,
+            )
+            .await
+            .unwrap();
+        assert!(messages.is_empty());
+        assert!(
+            client
+                .recent_mail_in_folder(&account, &vault, &agent_id, &audience, Some("Label/bad"), 5)
+                .await
+                .is_err()
+        );
+        vault.remove(&account.id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn microsoft_folder_preview_uses_selected_encoded_folder_path() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Microsoft);
+        let app = axum::Router::new()
+            .route(
+                "/graph/v1.0/me/mailFolders",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer access-token")
+                    );
+                    axum::Json(json!({"value":[{"id":"folder-123","displayName":"Archive"}] }))
+                }),
+            )
+            .route(
+                "/graph/v1.0/me/mailFolders/folder-123/messages",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok()),
+                        Some("Bearer access-token")
+                    );
+                    axum::Json(json!({"value":[]})).into_response()
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let folders = client
+            .list_mail_folders(&account, &vault, &agent_id, &audience)
+            .await
+            .unwrap();
+        assert_eq!(folders[0].name, "Archive");
+        let messages = client
+            .recent_mail_in_folder(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                Some(&folders[0].provider_id),
+                5,
+            )
+            .await
+            .unwrap();
+        assert!(messages.is_empty());
+        vault.remove(&account.id).unwrap();
+        task.abort();
     }
 
     #[tokio::test]

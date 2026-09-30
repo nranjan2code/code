@@ -1151,6 +1151,8 @@ export default function Settings() {
     toDate?: string;
     refreshedAt?: string;
     query?: string;
+    folderId?: string;
+    folderName?: string;
   } | null>(null);
   const [mailAttachmentPreview, setMailAttachmentPreview] = createSignal<{
     accountId: string;
@@ -1166,6 +1168,8 @@ export default function Settings() {
     return preview?.kind === "calendar" ? overlappingMailCalendarEventIds(preview.events ?? []) : new Set<string>();
   });
   const [mailCalendarSearchQuery, setMailCalendarSearchQuery] = createSignal("");
+  const [mailCalendarFolderState, setMailCalendarFolderState] = createSignal<{ accountId: string; folders: api.MailCalendarFolder[] } | null>(null);
+  const [mailCalendarFolderId, setMailCalendarFolderId] = createSignal("");
   let mailCalendarPreviewGeneration = 0;
   const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
   const [mailCalendarEditorKind, setMailCalendarEditorKind] = createSignal<"mail" | "calendar" | null>(null);
@@ -1325,6 +1329,7 @@ export default function Settings() {
     kind: "mail" | "calendar" | "freebusy",
     selectedRange?: { from: string; to: string },
     searchQuery?: string,
+    selectedFolderId?: string,
   ) => {
     const requestedAgentId = activeAgentId();
     const requestGeneration = ++mailCalendarPreviewGeneration;
@@ -1332,11 +1337,26 @@ export default function Settings() {
     setMailCalendarPreview({ accountId: account.id, kind, loading: true });
     try {
       if (kind === "mail") {
+        let folderState = mailCalendarFolderState();
+        if (folderState?.accountId !== account.id) {
+          const folders = await api.listMailCalendarFolders(requestedAgentId, account.id);
+          if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+          folderState = { accountId: account.id, folders: folders.folders };
+          setMailCalendarFolderState(folderState);
+        }
+        const cachedFolder = folderState.folders.some((folder) => folder.provider_id === mailCalendarFolderId()) ? mailCalendarFolderId() : "";
+        const folderId = selectedFolderId ?? (cachedFolder
+          || folderState.folders.find((folder) => folder.provider_id === "INBOX")?.provider_id
+          || folderState.folders[0]?.provider_id
+          || "");
+        const folderName = folderState.folders.find((folder) => folder.provider_id === folderId)?.name ?? "Selected folder";
+        if (!folderId) throw new Error("No mail folder is available for this account.");
+        setMailCalendarFolderId(folderId);
         const query = searchQuery?.trim() || undefined;
         setMailCalendarSearchQuery(query ?? "");
-        const result = await api.previewMailCalendarMail(requestedAgentId, account.id, 20, query);
+        const result = await api.previewMailCalendarMail(requestedAgentId, account.id, 20, query, folderId);
         if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages, refreshedAt: new Date().toISOString(), query });
+        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages, refreshedAt: new Date().toISOString(), query, folderId, folderName });
       } else {
         const fromDate = selectedRange?.from || mailCalendarRangeFrom();
         const toDate = selectedRange?.to || mailCalendarRangeTo();
@@ -2577,7 +2597,7 @@ export default function Settings() {
               </Group>
               <Group title="Preview, routines and deletion">
                 <Show when={mailCalendarPreview()} keyed>{(preview) => <div class="settings-preview" aria-live="polite">
-                  <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? "Recent inbox" : preview.kind === "calendar" ? "Calendar preview" : "Availability preview"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
+                  <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? `${preview.folderName ?? "Mail"} preview` : preview.kind === "calendar" ? "Calendar preview" : "Availability preview"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
                   <Show when={preview.kind === "calendar" || preview.kind === "freebusy"}>
                     <div class="mail-calendar-work-actions" aria-label="Calendar preview date range">
                       <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, -7)}>Previous 7 days</button>
@@ -2595,16 +2615,20 @@ export default function Settings() {
                     <form class="mail-calendar-work-actions" onSubmit={(event) => {
                       event.preventDefault();
                       const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-                      if (account) void loadMailCalendarPreview(account, "mail", undefined, mailCalendarSearchQuery());
+                      if (account) void loadMailCalendarPreview(account, "mail", undefined, mailCalendarSearchQuery(), mailCalendarFolderId());
                     }}>
-                      <label>Search this inbox<input aria-label="Search this inbox" type="search" maxlength="128" value={mailCalendarSearchQuery()} onInput={(event) => setMailCalendarSearchQuery(event.currentTarget.value)} placeholder="Phrase in sender, subject or message" /></label>
-                      <button class="settings-button" type="submit" disabled={mailCalendarBusy()}>{mailCalendarBusy() ? "Searching…" : "Search inbox"}</button>
+                      <label>Folder or label<select aria-label="Mail folder or label" value={preview.folderId ?? mailCalendarFolderId()} disabled={mailCalendarBusy()} onChange={(event) => {
+                        const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
+                        if (account) void loadMailCalendarPreview(account, "mail", undefined, mailCalendarSearchQuery(), event.currentTarget.value);
+                      }}><For each={mailCalendarFolderState()?.accountId === preview.accountId ? mailCalendarFolderState()?.folders ?? [] : []}>{(folder) => <option value={folder.provider_id}>{folder.name}</option>}</For></select></label>
+                      <label>Search this folder<input aria-label="Search this folder" type="search" maxlength="128" value={mailCalendarSearchQuery()} onInput={(event) => setMailCalendarSearchQuery(event.currentTarget.value)} placeholder="Phrase in sender, subject or message" /></label>
+                      <button class="settings-button" type="submit" disabled={mailCalendarBusy()}>{mailCalendarBusy() ? "Searching…" : "Search folder"}</button>
                     </form>
-                    <p class="settings-hint">Search runs only when you submit it and only in this account’s inbox. Results are a temporary preview.</p>
+                    <p class="settings-hint">Search runs only when you submit it and only in this selected folder or label. Results are a temporary preview.</p>
                   </Show>
                   <Show when={preview.refreshedAt}><p class="settings-hint">Updated {relTime(preview.refreshedAt!)}{preview.kind !== "mail" && preview.from && preview.to ? ` · ${new Date(preview.from).toLocaleDateString()} through ${new Date(new Date(preview.to).getTime() - 1).toLocaleDateString()}` : ""}</p></Show>
                   <Show when={preview.kind === "mail"}>
-                    <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : preview.query ? "No inbox messages matched that phrase." : "No recent inbox messages were returned."}</p>}>
+                    <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading mail…" : preview.query ? "No messages in this folder matched that phrase." : "No recent messages were returned for this folder."}</p>}>
                       <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.has_attachments}><section aria-label="Message attachments"><strong>Attachments</strong><Show when={(message.attachments?.length ?? 0) > 0} fallback={<small>Attachment listing is unavailable for this provider.</small>}><For each={message.attachments ?? []}>{(attachment) => <div class="mail-calendar-attachment"><span>{attachment.filename} · {attachment.size_bytes < 1024 ? `${attachment.size_bytes} B` : `${Math.ceil(attachment.size_bytes / 1024)} KB`}</span><Show when={attachment.previewable} fallback={<small>Preview unavailable for this file type or size.</small>}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readMailAttachment(preview.accountId, message.provider_id, attachment)}>{mailCalendarBusy() ? "Opening…" : "Preview attachment"}</button></Show><Show when={mailAttachmentPreview()?.accountId === preview.accountId && mailAttachmentPreview()?.messageId === message.provider_id && mailAttachmentPreview()?.attachmentId === attachment.provider_id}><div class="mail-calendar-attachment-preview"><small>Attachment contents are untrusted. Review before using them.</small><pre>{mailAttachmentPreview()?.text}</pre></div></Show></div>}</For></Show></section></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
                     </Show>
                   </Show>

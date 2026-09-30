@@ -1,8 +1,9 @@
 # 80 — Mail and calendar: governed account work
 
 Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only bounded
-Google/Microsoft previews and explicit phrase search within the selected inbox across
-Google, Microsoft, and Apple, a broker-owned local-surface read tool, a bounded
+Google/Microsoft previews with owner-selected Gmail labels and Microsoft
+top-level folders (Apple remains Inbox-only), explicit phrase search within
+the selected inbox across Google, Microsoft, and Apple, a broker-owned local-surface read tool, a bounded
 Agent-vault working area for local drafts, and the first scheduled read-only
 `TaskDef` routines with best-effort encrypted bounded email-ID deduplication
 implemented. Stage 3 has exact-candidate email send and one limited timed event
@@ -702,6 +703,14 @@ entries by local date. This is an incremental preview surface, not the complete
 calendar workspace in the table: source selection, cross-calendar conflicts,
 event attendee editing, proposed slots, and event occurrence/series choices
 remain open.
+
+Owner mail previews can select among Gmail labels and up to 100 Microsoft
+top-level mail folders, then search only inside the selected label or folder.
+Apple iCloud currently exposes only Inbox. Google labels are labels and may
+contain the same message in more than one label; the UI names this choice
+"Folder or label" instead of implying identical provider semantics. Child
+folder traversal, paging beyond the bounded folder list, and the full thread
+workspace remain open. Agent tools and scheduled watches remain Inbox-scoped.
 
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized

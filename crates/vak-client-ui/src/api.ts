@@ -189,6 +189,7 @@ export interface MailCalendarAttachmentPreview {
   size_bytes: number;
   previewable: boolean;
 }
+export interface MailCalendarFolder { provider_id: string; name: string }
 export interface MailCalendarEventPreview {
   provider_id: string;
   version: string | null;
@@ -206,9 +207,12 @@ export interface MailCalendarEventPreview {
 }
 export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
 
-export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10, query?: string): Promise<{ messages: MailCalendarMailPreview[] }> {
+export function listMailCalendarFolders(agentId: string, accountId: string): Promise<{ folders: MailCalendarFolder[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-folders`);
+}
+export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10, query?: string, folderId?: string): Promise<{ messages: MailCalendarMailPreview[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-preview`, {
-    method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}) }),
+    method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}), ...(folderId ? { folder_id: folderId } : {}) }),
   });
 }
 export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "no_plain_text" }> {
