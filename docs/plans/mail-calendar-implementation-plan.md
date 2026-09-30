@@ -639,6 +639,12 @@ remains open.
   further pages remain manually loadable. Five focused client tests pass;
   browser verification requires an unlocked local session.
 
+- 2026-10-01: Strengthened routine duplicate-trigger coverage with 16
+  independent Agent-vault handles contending at once for one routine lease.
+  Exactly one may dispatch at a time, and the lease can be reacquired after
+  the winner exits. This checks local process contention, not multi-host
+  coordination or the sustained 24-hour recovery gate.
+
 - 2026-10-01: Added owner-visible routine run history backed by bounded,
   content-free records in the encrypted Agent vault. The server verifies Agent
   ownership and workspace scope; account or routine deletion removes matching

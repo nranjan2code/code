@@ -1867,6 +1867,59 @@ mod tests {
     }
 
     #[test]
+    fn routine_lease_admits_only_one_concurrent_trigger() {
+        use std::sync::{Arc, Barrier, mpsc};
+
+        const CONTENDERS: usize = 16;
+        let agent_id = format!("mailcal-lease-race-{}", Uuid::now_v7());
+        let routine_id = Uuid::now_v7().to_string();
+        let vaults = (0..CONTENDERS)
+            .map(|_| AccountVault::for_agent(&agent_id).unwrap())
+            .collect::<Vec<_>>();
+        let start = Arc::new(Barrier::new(CONTENDERS + 1));
+        let release = Arc::new(Barrier::new(2));
+        let (tx, rx) = mpsc::channel();
+        let workers = vaults
+            .into_iter()
+            .map(|vault| {
+                let start = start.clone();
+                let release = release.clone();
+                let tx = tx.clone();
+                let routine_id = routine_id.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    let lease = vault.try_acquire_routine_lease(&routine_id).unwrap();
+                    tx.send(lease.is_some()).unwrap();
+                    if lease.is_some() {
+                        release.wait();
+                    }
+                    drop(lease);
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(tx);
+
+        start.wait();
+        let winners = (0..CONTENDERS)
+            .filter(|_| rx.recv().expect("every contender reports its result"))
+            .count();
+        release.wait();
+        for worker in workers {
+            worker.join().unwrap();
+        }
+        assert_eq!(winners, 1, "one trigger must own the run lease");
+
+        assert!(
+            AccountVault::for_agent(&agent_id)
+                .unwrap()
+                .try_acquire_routine_lease(&routine_id)
+                .unwrap()
+                .is_some(),
+            "the lease must be released after its owner exits"
+        );
+    }
+
+    #[test]
     fn action_claim_is_durable_single_use_and_disconnect_scoped() {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-action-{}", Uuid::now_v7());
