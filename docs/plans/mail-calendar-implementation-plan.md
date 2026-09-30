@@ -1491,3 +1491,13 @@ authorization and approval boundary on every execution path.
   Apple IMAP now also presents a synthetic 2,000-message mailbox and verifies
   that only the newest 20 metadata records are fetched. Apple CalDAV retains
   separate protocol/parser budget fixtures.
+- 2026-10-01: Reverified the current branch: all 109 mail/calendar unit tests
+  and its state-registry test pass; all 11 Core mail/calendar boundary tests,
+  13 server mail/calendar unit tests, 4 owner-authenticated HTTP tests, 5
+  isolated parser-worker tests, and the interrupted-watch restart recovery
+  test pass. The production web build, workspace formatting check, and
+  `git diff --check` pass. This verifies synthetic/provider-double behavior,
+  not live provider conformance or the sustained 24-hour service acceptance;
+  those remain open. The local preview uses an empty workspace under the
+  installed `~/vak-home` and an isolated `VAK_HOME` profile under the local
+  application-support directory. No account or credential has been connected.
