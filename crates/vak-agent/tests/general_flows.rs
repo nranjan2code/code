@@ -394,18 +394,20 @@ async fn compaction_during_long_research_session() {
         header,
     )
     .unwrap();
-    // Big enough on their own to already be over the trigger threshold
-    // before the real research turn starts, so incremental compaction
-    // (docs/design/68-context-engine.md §4) fires on the very first plan —
-    // consuming the FIRST scripted response below (the compaction summary)
-    // rather than one meant for the real turn. Each seeded turn gets a
-    // real `TurnCard` (as the turn-close hook would write): the planner
-    // only ever collapses carded turns into a packet.
+    // These relevant, carded turns collectively exceed the small history
+    // budget even at card fidelity, so incremental compaction (docs/design/
+    // 68-context-engine.md §4) fires on the first plan. Each seeded turn
+    // gets a real `TurnCard`, as the turn-close hook would write; only
+    // carded turns can be collapsed into a packet.
     let seed_filler = "prior research finding ".repeat(220);
-    for i in 0..3 {
+    for i in 0..30 {
         let turn_id = log
             .append_message(vak_session::types::MessageRecord {
-                message: vak_llm::types::Message::user_text(format!("earlier note {i}")),
+                message: vak_llm::types::Message::user_text(format!(
+                    "Research climate data and energy market shifts, round {i}: {}",
+                    "compare retained climate and energy evidence across the relevant earlier research. "
+                        .repeat(12)
+                )),
                 meta: None,
             })
             .unwrap()
@@ -467,7 +469,7 @@ async fn compaction_during_long_research_session() {
 
     let outcome = agent
         .run(
-            "Read both source files and write digest.txt summarizing their key facts.",
+            "Read both source files and write digest.txt summarizing their climate and energy facts.",
             &Default::default(),
             CancellationToken::new(),
             ev_tx,
@@ -495,7 +497,10 @@ async fn compaction_during_long_research_session() {
         _ => None,
     });
     let (before, after) = compacted.expect("compacted event");
-    assert!(after < before, "compaction must shrink the estimate");
+    assert!(
+        after < before,
+        "compaction must shrink the estimate: before={before}, after={after}"
+    );
 
     // The summarizer ran as its own model call against the transcript
     // BEFORE the real research turn dispatched at all (the seeded prior
