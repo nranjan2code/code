@@ -5515,4 +5515,107 @@ mod tests {
         }));
         task.abort();
     }
+
+    #[tokio::test]
+    async fn large_simulated_graph_mail_and_calendar_stay_within_page_budgets() {
+        let (vault, mut account, agent_id, audience) = linked_test_account(Provider::Microsoft);
+        account.capabilities.insert(Capability::CalendarRead);
+        let starts_at = Utc::now();
+        let ends_at = starts_at + Duration::minutes(30);
+        let start_text = starts_at.to_rfc3339();
+        let end_text = ends_at.to_rfc3339();
+        let app = axum::Router::new()
+            .route(
+                "/graph/v1.0/me/mailFolders/inbox/messages",
+                axum::routing::get(
+                    |axum::extract::Query(query): axum::extract::Query<
+                        std::collections::HashMap<String, String>,
+                    >| async move {
+                        assert_eq!(query.get("$top").map(String::as_str), Some("20"));
+                        axum::Json(json!({
+                            "value": (0..1_000).map(|i| json!({
+                                "id": format!("synthetic-message-{i:04}"),
+                                "conversationId": format!("synthetic-conversation-{i:04}"),
+                                "subject": "Synthetic message",
+                                "bodyPreview": "Simulated preview",
+                                "hasAttachments": false
+                            })).collect::<Vec<_>>()
+                        }))
+                    },
+                ),
+            )
+            .route(
+                "/graph/v1.0/me/calendarView",
+                axum::routing::get(
+                    move |axum::extract::Query(query): axum::extract::Query<
+                        std::collections::HashMap<String, String>,
+                    >| {
+                        let start_text = start_text.clone();
+                        let end_text = end_text.clone();
+                        async move {
+                            assert_eq!(query.get("$top").map(String::as_str), Some("100"));
+                            axum::Json(json!({
+                                "value": (0..1_000).map(|i| json!({
+                                    "id": format!("synthetic-event-{i:04}"),
+                                    "subject": "Synthetic event",
+                                    "start": {"dateTime": start_text, "timeZone": "UTC"},
+                                    "end": {"dateTime": end_text, "timeZone": "UTC"},
+                                    "isAllDay": false,
+                                    "sensitivity": "normal"
+                                })).collect::<Vec<_>>()
+                            }))
+                        }
+                    },
+                ),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+
+        let messages = client
+            .recent_mail(&account, &vault, &agent_id, &audience, 1_000)
+            .await
+            .unwrap();
+        assert_eq!(messages.len(), MAX_MAIL_ITEMS);
+        assert!(
+            messages
+                .iter()
+                .all(|message| message.subject == "Synthetic message")
+        );
+
+        let events = client
+            .calendar_events(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                CalendarRange {
+                    from: starts_at - Duration::hours(1),
+                    to: starts_at + Duration::days(1),
+                    limit: 1_000,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(events.len(), MAX_EVENT_ITEMS);
+        assert!(events.iter().all(|event| {
+            event.title == "Synthetic event"
+                && event
+                    .starts_at
+                    .is_some_and(|start| start >= starts_at - Duration::hours(1))
+        }));
+        task.abort();
+    }
 }

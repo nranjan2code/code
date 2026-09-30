@@ -1482,9 +1482,10 @@ authorization and approval boundary on every execution path.
   control-character cleanup, and Bcc omission; Apple IMAP and Microsoft Graph
   integration fixtures verify the adapter paths. Live provider conformance and
   the broader source-to-Review browser acceptance remain open.
-- 2026-10-01: Added large synthetic provider-data cases: a Gmail inbox with
-  5,000 listed messages and oversized bodies, and a Google Calendar response
-  with 1,000 events. They verify the 20-message and 100-event caps, Gmail's
-  16 KiB text projection limit, and that the bounded requested page is used
-  even when a simulated provider returns more. These fixtures use no real
-  account or credential.
+- 2026-10-01: Added large synthetic provider-data cases: Gmail returns 5,000
+  listed messages with oversized selected bodies; Google Calendar returns
+  1,000 events; Microsoft Graph returns 1,000 messages and 1,000 events. They
+  verify the 20-message and 100-event caps, Gmail's 16 KiB text projection
+  limit, and that the bounded requested page is used even when a simulated
+  provider returns more. These fixtures use no real account or credential;
+  Apple IMAP and CalDAV retain separate protocol/parser budget fixtures.
