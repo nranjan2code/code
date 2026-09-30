@@ -1253,6 +1253,39 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     assert_eq!(event_attempt.status(), reqwest::StatusCode::FORBIDDEN);
     assert!(vault.list_action_receipts().unwrap().is_empty());
 
+    let update_candidate_response = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": account_id,
+            "source_refs": [{ "item_id": "abcde", "version": "\"v1\"", "label": "Review meeting" }],
+            "action": {
+                "kind": "update_event", "event_id": "abcde", "source_version": "\"v1\"",
+                "draft": {
+                    "title": "Updated meeting", "description": "", "location": null,
+                    "starts_at": "2026-10-01T09:00:00Z", "ends_at": "2026-10-01T10:00:00Z",
+                    "time_zone": "Asia/Kolkata", "all_day": false, "attendee_addresses": [],
+                    "recurrence": null, "occurrence_id": null
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(update_candidate_response.status(), reqwest::StatusCode::OK);
+    let update_candidate: serde_json::Value = update_candidate_response.json().await.unwrap();
+    let update_id = update_candidate["candidate"]["id"].as_str().unwrap();
+    let update_digest = update_candidate["candidate"]["candidate_digest"]
+        .as_str()
+        .unwrap();
+    let update_attempt = client
+        .post(format!("{candidates_url}/{update_id}/update-event"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "expected_revision": 1, "candidate_digest": update_digest, "confirm": true }))
+        .send().await.unwrap();
+    assert_eq!(update_attempt.status(), reqwest::StatusCode::FORBIDDEN);
+    assert!(vault.list_action_receipts().unwrap().is_empty());
+
     let send_url = format!("{candidates_url}/{candidate_id}/send");
     let unconfirmed = client
         .post(&send_url)
@@ -1318,7 +1351,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         .await
         .unwrap();
     assert_eq!(second.status(), reqwest::StatusCode::OK);
-    assert_eq!(vault.list_candidates().unwrap().len(), 3);
+    assert_eq!(vault.list_candidates().unwrap().len(), 4);
 
     let disconnected = client
         .post(format!(

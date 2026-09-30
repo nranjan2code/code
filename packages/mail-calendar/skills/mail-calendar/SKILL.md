@@ -31,9 +31,11 @@ and the Agent Core permission decision. Agents cannot dispatch that effect
 through this package. Provider acceptance does not prove delivery, and an
 ambiguous attempt must not be retried. A limited timed event create is also
 available for Google/Microsoft through the owner Settings Review flow. It has
-no attendees, recurrence, or reminders; updates, cancellations, and RSVP are
-unavailable. Calendar-write provider consent is broader than that create-only
-operation. Attachments, Apple content, and reliable continuous service are
+no attendees, recurrence, or reminders. Google also allows exact-reviewed
+updates to public standalone timed events without attendees; it rechecks and
+conditionally matches the source ETag. Microsoft event updates, cancellations,
+and RSVP are unavailable. Calendar-write provider consent is broader than the
+supported operations. Attachments, Apple content, and reliable continuous service are
 not available.
 
 If asked to send, direct the owner to review and confirm the exact saved draft
@@ -44,4 +46,4 @@ account or provider grant is not itself permission for an Agent action.
 
 Follow per-call account, audience, capability, permission, and Review
 requirements. An email send or event create requires approval of the exact
-provider effect. Never add attendees to an event create.
+provider effect. Never add attendees to an event create or update.

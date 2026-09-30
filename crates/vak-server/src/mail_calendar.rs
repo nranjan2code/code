@@ -510,12 +510,16 @@ pub(super) async fn send_mail_candidate(
             .into_response();
     }
     let required_capability = candidate.required_capability();
-    let event_route = uri.path().ends_with("/create-event");
+    let send_route = uri.path().ends_with("/send");
+    let create_route = uri.path().ends_with("/create-event");
+    let update_route = uri.path().ends_with("/update-event");
     match &candidate.action {
-        ProposedAction::SendMail { draft } if !event_route && vak_mail_calendar::effect::validate_mail_draft(draft).is_ok() => {},
-        ProposedAction::CreateEvent { draft } if event_route && vak_mail_calendar::effect::validate_event_create(draft).is_ok() => {},
+        ProposedAction::SendMail { draft } if send_route && vak_mail_calendar::effect::validate_mail_draft(draft).is_ok() => {},
+        ProposedAction::CreateEvent { draft } if create_route && vak_mail_calendar::effect::validate_event_create(draft).is_ok() => {},
+        ProposedAction::UpdateEvent { event_id, source_version, draft } if update_route && vak_mail_calendar::effect::validate_event_update(event_id, source_version, draft).is_ok() => {},
         ProposedAction::SendMail { .. } => return (StatusCode::BAD_REQUEST, "This send profile supports plain text without attachments, aliases, or reply semantics.").into_response(),
         ProposedAction::CreateEvent { .. } => return (StatusCode::BAD_REQUEST, "This event profile supports one timed event without attendees, recurrence, or reminders.").into_response(),
+        ProposedAction::UpdateEvent { .. } => return (StatusCode::BAD_REQUEST, "This update profile supports one standalone timed Google event without attendees, recurrence, or reminders.").into_response(),
         _ => return (StatusCode::BAD_REQUEST, "This action is not yet supported for provider changes.").into_response(),
     }
     if !candidate.source_refs.iter().all(|source| {
@@ -589,10 +593,11 @@ pub(super) async fn send_mail_candidate(
     });
     if matches!(
         engine.evaluate(
-            if required_capability == Capability::MailSend {
-                "mail_calendar_send"
-            } else {
-                "mail_calendar_event_create"
+            match &candidate.action {
+                ProposedAction::SendMail { .. } => "mail_calendar_send",
+                ProposedAction::CreateEvent { .. } => "mail_calendar_event_create",
+                ProposedAction::UpdateEvent { .. } => "mail_calendar_event_update",
+                _ => "mail_calendar_event_create",
             },
             &permission_args,
             mode,
@@ -659,6 +664,23 @@ pub(super) async fn send_mail_candidate(
                 .create_event(&account, &vault, &agent_id, &candidate.audience_id, draft)
                 .await
         }
+        ProposedAction::UpdateEvent {
+            event_id,
+            source_version,
+            draft,
+        } => {
+            client
+                .update_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &candidate.audience_id,
+                    event_id,
+                    source_version,
+                    draft,
+                )
+                .await
+        }
         _ => Err(ProviderEffectError::Unsupported),
     };
     match result {
@@ -679,6 +701,7 @@ pub(super) async fn send_mail_candidate(
                     ProviderEffectError::NotAdmitted => "account_not_admitted",
                     ProviderEffectError::Unsupported => "operation_unsupported",
                     ProviderEffectError::Rejected => "provider_rejected",
+                    ProviderEffectError::Conflict => "source_version_conflict",
                 }
                 .into(),
             );
@@ -695,6 +718,8 @@ pub(super) async fn send_mail_candidate(
         &state,
         if required_capability == Capability::MailSend {
             "mail_send_effect"
+        } else if matches!(candidate.action, ProposedAction::UpdateEvent { .. }) {
+            "calendar_event_update_effect"
         } else {
             "calendar_event_create_effect"
         },
@@ -719,6 +744,8 @@ pub(super) async fn send_mail_candidate(
     }
     let status = if accepted {
         StatusCode::ACCEPTED
+    } else if receipt.detail_code.as_deref() == Some("source_version_conflict") {
+        StatusCode::CONFLICT
     } else {
         StatusCode::BAD_GATEWAY
     };

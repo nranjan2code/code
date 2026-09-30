@@ -52,6 +52,8 @@ pub struct MailItem {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarItem {
     pub provider_id: String,
+    /// Opaque provider version token; never display it in the everyday UI.
+    pub version: Option<String>,
     pub title: String,
     pub starts_at: Option<DateTime<Utc>>,
     pub ends_at: Option<DateTime<Utc>>,
@@ -61,6 +63,7 @@ pub struct CalendarItem {
     pub location: Option<String>,
     pub description: Option<String>,
     pub attendee_count: usize,
+    pub recurring: bool,
     pub private: bool,
 }
 
@@ -687,6 +690,7 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
         .and_then(parse_datetime);
     Some(CalendarItem {
         provider_id: bounded_text(value.get("id")?.as_str()?),
+        version: value.get("etag").and_then(Value::as_str).map(bounded_text),
         title: if private {
             "Private event".into()
         } else {
@@ -725,6 +729,11 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len)
         },
+        recurring: value.get("recurringEventId").is_some()
+            || value
+                .get("recurrence")
+                .and_then(Value::as_array)
+                .is_some_and(|rules| !rules.is_empty()),
         private,
     })
 }
@@ -739,6 +748,11 @@ fn parse_graph_event(value: &Value) -> Option<CalendarItem> {
         .unwrap_or(false);
     Some(CalendarItem {
         provider_id: bounded_text(value.get("id")?.as_str()?),
+        version: value
+            .get("@odata.etag")
+            .or_else(|| value.get("changeKey"))
+            .and_then(Value::as_str)
+            .map(bounded_text),
         title: if private {
             "Private event".into()
         } else {
@@ -779,6 +793,10 @@ fn parse_graph_event(value: &Value) -> Option<CalendarItem> {
             .get("attendees")
             .and_then(Value::as_array)
             .map_or(0, Vec::len),
+        recurring: value
+            .get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind != "singleInstance"),
         private,
     })
 }
@@ -840,13 +858,15 @@ mod tests {
     #[test]
     fn private_google_event_suppresses_details_but_keeps_busy_time() {
         let value = json!({
-            "id": "e1", "summary": "Private title", "visibility": "private",
+            "id": "e1", "etag": "\"version-1\"", "summary": "Private title", "visibility": "private",
             "start": {"dateTime": "2026-09-30T10:00:00Z"},
             "end": {"dateTime": "2026-09-30T11:00:00Z"},
             "attendees": [{"email": "secret@example.test"}]
         });
         let parsed = parse_google_event(&value).unwrap();
         assert!(parsed.private);
+        assert_eq!(parsed.version.as_deref(), Some("\"version-1\""));
+        assert!(!parsed.recurring);
         assert_eq!(parsed.title, "Private event");
         assert_eq!(parsed.location, None);
         assert_eq!(parsed.description, None);

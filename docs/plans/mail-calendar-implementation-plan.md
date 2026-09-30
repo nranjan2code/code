@@ -45,7 +45,7 @@ provider hosts and delegated scopes. Current API contracts:
 [Graph calendarView](https://learn.microsoft.com/graph/api/user-list-calendarview?view=graph-rest-1.0), and
 [Graph getSchedule](https://learn.microsoft.com/graph/api/calendar-getschedule?view=graph-rest-1.0).
 The limited create adapters follow [Google events.insert](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert)
-and [Microsoft Graph create event](https://learn.microsoft.com/graph/api/user-post-events?view=graph-rest-1.0).
+and [Microsoft Graph create event](https://learn.microsoft.com/graph/api/user-post-events?view=graph-rest-1.0). Google standalone event updates use [ETags and conditional requests](https://developers.google.com/calendar/api/guides/version-resources); Microsoft updates remain disabled until a conditional update contract is verified.
 
 The third adapter is not a generic arbitrary-host IMAP/CalDAV feature. Custom
 servers, Yahoo, Fastmail, Exchange EWS, and generic SMTP are out of scope for
@@ -264,8 +264,19 @@ include no invitees; event times are submitted as UTC instants. A distinct
 `mail_calendar_event_create` Core permission decision and durable claim protect
 the effect. CalendarWrite provider scopes can authorize broader operations
 than this package currently exposes, so credentials remain private and the
-broker enforces the narrower action. Event updates, cancellations, RSVP, and
-provider reconciliation remain disabled.
+broker enforces the narrower action.
+
+**Implemented increment (2026-09-30):** Google calendar preview now retains
+the provider ETag and recurrence marker. The owner can stage an update only for
+a public, standalone, timed event with no attendees. Review binds the event ID,
+source ETag, candidate revision, and digest. Immediately before the update the
+broker re-reads the event, verifies it is still the same eligible event, then
+sends a partial PATCH with `If-Match`; reminders and attendees are not replaced
+or notified. A changed/deleted event is a conflict and consumes the single-use
+attempt, requiring fresh preview and review. Redirects and ambiguous provider
+failures are never retried. Microsoft Graph update remains unavailable because
+the current verified contract does not establish an equivalent conditional
+write precondition; Apple remains unavailable.
 
 **Security correction (2026-09-30):** Google Calendar previews now redact the
 title, location, description, and attendee count of private events, matching

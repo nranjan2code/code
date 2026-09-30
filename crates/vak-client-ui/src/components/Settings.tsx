@@ -163,7 +163,7 @@ const MAIL_CALENDAR_CAPABILITY_LABELS: Record<api.MailCalendarCapability, string
   mail_read: "Read email",
   mail_prepare: "Prepare email drafts",
   mail_send: "Send email",
-  calendar_write: "Create calendar events after review",
+  calendar_write: "Create or update calendar events after review",
   calendar_free_busy: "Check availability",
   calendar_read: "Read calendar events",
 };
@@ -174,6 +174,14 @@ function describeMailCalendarCapabilities(capabilities: api.MailCalendarCapabili
 
 function supportsCalendarCreate(candidate: api.MailCalendarCandidate | null | undefined): boolean {
   return !!candidate && candidate.action.kind === "create_event"
+    && !candidate.action.draft.all_day
+    && candidate.action.draft.attendee_addresses.length === 0
+    && !candidate.action.draft.recurrence
+    && !candidate.action.draft.occurrence_id;
+}
+
+function supportsCalendarUpdate(candidate: api.MailCalendarCandidate | null | undefined): boolean {
+  return !!candidate && candidate.action.kind === "update_event"
     && !candidate.action.draft.all_day
     && candidate.action.draft.attendee_addresses.length === 0
     && !candidate.action.draft.recurrence
@@ -1136,6 +1144,7 @@ export default function Settings() {
   const [mailCalendarEditorAccount, setMailCalendarEditorAccount] = createSignal("");
   const [mailCalendarEditingCandidate, setMailCalendarEditingCandidate] = createSignal<api.MailCalendarCandidate | null>(null);
   const [mailCalendarSourceRefs, setMailCalendarSourceRefs] = createSignal<api.MailCalendarCandidate["source_refs"]>([]);
+  const [mailCalendarUpdateSource, setMailCalendarUpdateSource] = createSignal<{ event_id: string; source_version: string } | null>(null);
   const [mailCalendarDirty, setMailCalendarDirty] = createSignal(false);
   const [mailCalendarDraftTo, setMailCalendarDraftTo] = createSignal("");
   const [mailCalendarDraftCc, setMailCalendarDraftCc] = createSignal("");
@@ -1338,20 +1347,23 @@ export default function Settings() {
       const starts = new Date(mailCalendarDraftStarts());
       const ends = new Date(mailCalendarDraftEnds());
       if (!mailCalendarDraftTitle().trim() || !Number.isFinite(starts.getTime()) || !Number.isFinite(ends.getTime())) return null;
+      const draft = {
+        title: mailCalendarDraftTitle(),
+        description: mailCalendarDraftDescription(),
+        location: mailCalendarDraftLocation().trim() || null,
+        starts_at: starts.toISOString(),
+        ends_at: ends.toISOString(),
+        time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
+        all_day: false,
+        attendee_addresses: [],
+        recurrence: null,
+        occurrence_id: null,
+      };
+      const updateSource = mailCalendarUpdateSource();
+      if (updateSource) return { kind: "update_event", ...updateSource, draft };
       return {
         kind: "create_event",
-        draft: {
-          title: mailCalendarDraftTitle(),
-          description: mailCalendarDraftDescription(),
-          location: mailCalendarDraftLocation().trim() || null,
-          starts_at: starts.toISOString(),
-          ends_at: ends.toISOString(),
-          time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
-          all_day: false,
-          attendee_addresses: [],
-          recurrence: null,
-          occurrence_id: null,
-        },
+        draft,
       };
     }
     return null;
@@ -1399,6 +1411,7 @@ export default function Settings() {
     setMailCalendarDraftPreviewOpen(false);
     setMailCalendarEditingCandidate(null);
     setMailCalendarSourceRefs(sourceRefs);
+    setMailCalendarUpdateSource(null);
     setMailCalendarDraftTo("");
     setMailCalendarDraftCc("");
     setMailCalendarDraftBcc("");
@@ -1432,11 +1445,13 @@ export default function Settings() {
         const date = new Date(value);
         return Number.isFinite(date.getTime()) ? new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16) : "";
       };
-      setMailCalendarDraftTitle(candidate.action.draft.title);
-      setMailCalendarDraftDescription(candidate.action.draft.description);
-      setMailCalendarDraftLocation(candidate.action.draft.location ?? "");
-      setMailCalendarDraftStarts(asLocalInput(candidate.action.draft.starts_at));
-      setMailCalendarDraftEnds(asLocalInput(candidate.action.draft.ends_at));
+      const draft = candidate.action.draft;
+      setMailCalendarDraftTitle(draft.title);
+      setMailCalendarDraftDescription(draft.description);
+      setMailCalendarDraftLocation(draft.location ?? "");
+      setMailCalendarDraftStarts(asLocalInput(draft.starts_at));
+      setMailCalendarDraftEnds(asLocalInput(draft.ends_at));
+      setMailCalendarUpdateSource(candidate.action.kind === "update_event" ? { event_id: candidate.action.event_id, source_version: candidate.action.source_version } : null);
     }
     setMailCalendarDirty(false);
   };
@@ -1531,6 +1546,52 @@ export default function Settings() {
           await refreshMailCalendarCandidates();
         } catch (error) {
           setNotice({ kind: "error", text: `Could not create this event: ${error instanceof Error ? error.message : String(error)}. If an attempt already exists, do not retry it.` });
+        } finally {
+          setMailCalendarSendingDraft(false);
+        }
+      },
+    });
+  };
+  const reviewAndUpdateCalendarEvent = (candidate: api.MailCalendarCandidate) => {
+    if (!supportsCalendarUpdate(candidate) || !candidate.candidate_digest || candidate.action.kind !== "update_event") {
+      setNotice({ kind: "error", text: "Reload this event draft before reviewing it." });
+      return;
+    }
+    const draft = candidate.action.draft;
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === candidate.account_id);
+    setConfirmConfig({
+      title: "Review this exact calendar update",
+      description: "This updates one standalone Google event. It has no attendees, so no invitations or notifications are sent.",
+      detail: `Event: ${draft.title}\nStarts: ${new Date(draft.starts_at).toLocaleString()}\nEnds: ${new Date(draft.ends_at).toLocaleString()}\nLocation: ${draft.location || "None"}\n\nThe provider event will be re-read and updated only if its version still matches the one used for this draft. If it changed, review a fresh preview and save a new draft.`,
+      confirmLabel: "Update this event",
+      isDanger: true,
+      onConfirm: async () => {
+        if (account?.provider !== "google" || !account.capabilities.includes("calendar_write")) {
+          setNotice({ kind: "error", text: "This Google account no longer has permission to update calendar events." });
+          return;
+        }
+        setMailCalendarSendingDraft(true);
+        try {
+          const result = await api.updateMailCalendarEventCandidate(activeAgentId(), candidate.id, candidate.revision, candidate.candidate_digest!);
+          const state = result.receipt?.state ?? result.state ?? "unknown";
+          const detail = result.receipt?.detail_code;
+          setMailCalendarEditingCandidate({ ...candidate, action_state: state });
+          setNotice({
+            kind: state === "provider_accepted" ? "info" : "error",
+            text: state === "provider_accepted"
+              ? "The provider accepted this calendar update."
+              : detail === "source_version_conflict"
+                ? "This event changed since the preview. Refresh the calendar, create a new update draft, and review it again."
+                : state === "unknown" || state === "dispatching"
+                  ? "The update outcome is unknown. Do not retry this draft; check the provider calendar first."
+                  : "The provider did not accept this update. Review the account and create a new draft before another attempt.",
+          });
+          await refreshMailCalendarCandidates();
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          setNotice({ kind: "error", text: message.includes("409") || message.toLowerCase().includes("changed")
+            ? "This event changed since the preview. Refresh the calendar, create a new update draft, and review it again."
+            : `Could not update this saved event: ${message}. If an attempt already exists, do not retry it.` });
         } finally {
           setMailCalendarSendingDraft(false);
         }
@@ -2421,7 +2482,7 @@ export default function Settings() {
                   </Show>
                   <Show when={preview.kind === "calendar"}>
                     <Show when={(preview.events?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading calendar…" : "No events in this time range."}</p>}>
-                      <For each={preview.events ?? []}>{(event) => <article class="mail-calendar-preview-item"><strong>{event.title}</strong><span>{event.all_day ? `All day · ${event.starts_on ? new Date(`${event.starts_on}T12:00:00`).toLocaleDateString() : "Date unavailable"}` : event.starts_at ? new Date(event.starts_at).toLocaleString() : "Time unavailable"}{!event.all_day && event.ends_at ? ` – ${new Date(event.ends_at).toLocaleTimeString()}` : ""} · {event.attendee_count} attendees</span><Show when={event.location}><p>{event.location}</p></Show><Show when={event.description}><p>{event.description}</p></Show></article>}</For>
+                      <For each={preview.events ?? []}>{(event) => <article class="mail-calendar-preview-item"><strong>{event.title}</strong><span>{event.all_day ? `All day · ${event.starts_on ? new Date(`${event.starts_on}T12:00:00`).toLocaleDateString() : "Date unavailable"}` : event.starts_at ? new Date(event.starts_at).toLocaleString() : "Time unavailable"}{!event.all_day && event.ends_at ? ` – ${new Date(event.ends_at).toLocaleTimeString()}` : ""} · {event.attendee_count} attendees</span><Show when={event.location}><p>{event.location}</p></Show><Show when={event.description}><p>{event.description}</p></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "google" && event.version && !event.private && !event.all_day && !event.recurring && event.attendee_count === 0 && event.starts_at && event.ends_at}><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "calendar", [{ item_id: event.provider_id, version: event.version, label: event.title }]); setMailCalendarUpdateSource({ event_id: event.provider_id, source_version: event.version! }); setMailCalendarDraftTitle(event.title); setMailCalendarDraftDescription(event.description ?? ""); setMailCalendarDraftLocation(event.location ?? ""); const local = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }; setMailCalendarDraftStarts(local(event.starts_at!)); setMailCalendarDraftEnds(local(event.ends_at!)); }}>Draft update</button></Show></article>}</For>
                     </Show>
                   </Show>
                   <Show when={preview.kind === "freebusy"}>
@@ -2432,7 +2493,7 @@ export default function Settings() {
                 </div>}</Show>
               </Group>
               <Group title="Working area">
-                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. An email is sent only from an unchanged saved draft, when the account has the optional send grant, after you review the full preview and confirm. Event drafts stay local.</p>
+                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Email sends and Google updates are external effects: each requires an unchanged saved draft, the matching account grant, full preview, and your confirmation. Google updates are limited to standalone events with no attendees. Event creation does not invite attendees.</p>
                 <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud").length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified Google or Microsoft account to start a local draft.</p>}>
                   <div class="mail-calendar-work-actions">
                     <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud") ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
@@ -2483,6 +2544,9 @@ export default function Settings() {
                         </Show>
                         <Show when={mailCalendarEditorKind() === "calendar" && supportsCalendarCreate(mailCalendarEditingCandidate()) && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("calendar_write")}>
                           <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndCreateCalendarEvent(candidate); }}>{mailCalendarSendingDraft() ? "Creating…" : "Review and create this exact event"}</button>
+                        </Show>
+                        <Show when={mailCalendarEditorKind() === "calendar" && supportsCalendarUpdate(mailCalendarEditingCandidate()) && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("calendar_write")}>
+                          <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndUpdateCalendarEvent(candidate); }}>{mailCalendarSendingDraft() ? "Updating…" : "Review and update this exact event"}</button>
                         </Show>
                       </section>
                     </Show>

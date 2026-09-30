@@ -29,6 +29,8 @@ pub enum ProviderEffectError {
     ReauthorizationRequired,
     #[error("the provider rejected the effect")]
     Rejected,
+    #[error("the provider event changed since it was reviewed")]
+    Conflict,
     #[error("the provider outcome is unknown; this action must not be retried")]
     Unknown,
 }
@@ -170,6 +172,73 @@ impl ProviderEffectClient {
         };
         classify_created_event_response(response).await
     }
+
+    /// Update one unchanged, standalone Google event with no attendees.
+    /// The reviewed ETag is rechecked before dispatch and sent as If-Match to
+    /// close the race between the source check and the mutation.
+    pub async fn update_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        event_id: &str,
+        source_version: &str,
+        draft: &CalendarDraft,
+    ) -> Result<ProviderAcceptance, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider != Provider::Google {
+            // Graph's event update contract does not document a conditional
+            // If-Match for events, so never offer a racy overwrite there.
+            return Err(ProviderEffectError::Unsupported);
+        }
+        validate_event_update(event_id, source_version, draft)?;
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let url = format!(
+            "{}/calendars/primary/events/{event_id}",
+            self.google_calendar_base
+        );
+        let source_response = self
+            .http
+            .get(&url)
+            .bearer_auth(token.as_str())
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        match source_response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            StatusCode::NOT_FOUND | StatusCode::PRECONDITION_FAILED => {
+                return Err(ProviderEffectError::Conflict);
+            }
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let source = response_json(source_response).await?;
+        validate_google_update_source(&source, event_id, source_version)?;
+        let if_match = reqwest::header::HeaderValue::from_str(source_version)
+            .map_err(|_| ProviderEffectError::Rejected)?;
+        let response = self
+            .http
+            .patch(format!("{url}?sendUpdates=none"))
+            .bearer_auth(token.as_str())
+            .header(reqwest::header::IF_MATCH, if_match)
+            .json(&google_update_event_payload(draft))
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        classify_updated_event_response(response).await
+    }
 }
 
 /// Only create the semantics shown by the current event Review: one timed
@@ -188,6 +257,69 @@ pub fn validate_event_create(draft: &CalendarDraft) -> Result<(), ProviderEffect
     Ok(())
 }
 
+pub fn validate_event_update(
+    event_id: &str,
+    source_version: &str,
+    draft: &CalendarDraft,
+) -> Result<(), ProviderEffectError> {
+    validate_event_create(draft)?;
+    if event_id.len() < 5
+        || event_id.len() > 1024
+        || !event_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'v').contains(&byte))
+        || source_version.trim().is_empty()
+        || source_version.len() > 512
+        || source_version.chars().any(char::is_control)
+        || reqwest::header::HeaderValue::from_str(source_version).is_err()
+    {
+        return Err(ProviderEffectError::Rejected);
+    }
+    Ok(())
+}
+
+fn validate_google_update_source(
+    source: &Value,
+    event_id: &str,
+    source_version: &str,
+) -> Result<(), ProviderEffectError> {
+    let id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or(ProviderEffectError::Conflict)?;
+    let version = source
+        .get("etag")
+        .and_then(Value::as_str)
+        .ok_or(ProviderEffectError::Conflict)?;
+    let default_event = source
+        .get("eventType")
+        .and_then(Value::as_str)
+        .unwrap_or("default")
+        == "default";
+    let has_attendees = source
+        .get("attendees")
+        .and_then(Value::as_array)
+        .is_some_and(|attendees| !attendees.is_empty());
+    let recurring = source.get("recurringEventId").is_some()
+        || source
+            .get("recurrence")
+            .and_then(Value::as_array)
+            .is_some_and(|rules| !rules.is_empty());
+    let all_day = source.pointer("/start/date").is_some() || source.pointer("/end/date").is_some();
+    if id != event_id || version != source_version {
+        return Err(ProviderEffectError::Conflict);
+    }
+    if source.get("visibility").and_then(Value::as_str) == Some("private")
+        || has_attendees
+        || recurring
+        || all_day
+        || !default_event
+    {
+        return Err(ProviderEffectError::Unsupported);
+    }
+    Ok(())
+}
+
 fn google_create_event_payload(draft: &CalendarDraft) -> Value {
     json!({
         "summary": draft.title,
@@ -197,6 +329,16 @@ fn google_create_event_payload(draft: &CalendarDraft) -> Value {
         "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"},
         "attendees": [],
         "reminders": {"useDefault": false, "overrides": []}
+    })
+}
+
+fn google_update_event_payload(draft: &CalendarDraft) -> Value {
+    json!({
+        "summary": draft.title,
+        "description": draft.description,
+        "location": draft.location,
+        "start": {"dateTime": draft.starts_at.to_rfc3339(), "timeZone": "UTC"},
+        "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"}
     })
 }
 
@@ -371,6 +513,33 @@ async fn classify_created_event_response(
     })
 }
 
+async fn classify_updated_event_response(
+    response: Response,
+) -> Result<ProviderAcceptance, ProviderEffectError> {
+    match response.status() {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            return Err(ProviderEffectError::ReauthorizationRequired);
+        }
+        StatusCode::PRECONDITION_FAILED | StatusCode::NOT_FOUND => {
+            return Err(ProviderEffectError::Conflict);
+        }
+        StatusCode::OK => {}
+        status if status.is_redirection() || status.is_server_error() => {
+            return Err(ProviderEffectError::Unknown);
+        }
+        _ => return Err(ProviderEffectError::Rejected),
+    }
+    let value = response_json(response).await?;
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+        .ok_or(ProviderEffectError::Unknown)?;
+    Ok(ProviderAcceptance {
+        provider_item_id: Some(id.to_owned()),
+    })
+}
+
 async fn response_json(response: Response) -> Result<Value, ProviderEffectError> {
     if response
         .content_length()
@@ -457,6 +626,41 @@ mod tests {
             validate_event_create(&draft),
             Err(ProviderEffectError::Unsupported)
         );
+    }
+
+    #[test]
+    fn google_update_requires_the_same_public_standalone_event_version() {
+        let source = json!({
+            "id":"abcde", "etag":"\"v1\"", "eventType":"default",
+            "visibility":"default", "attendees":[],
+            "start":{"dateTime":"2026-10-01T09:00:00Z"},
+            "end":{"dateTime":"2026-10-01T10:00:00Z"}
+        });
+        validate_event_update("abcde", "\"v1\"", &timed_event()).unwrap();
+        validate_google_update_source(&source, "abcde", "\"v1\"").unwrap();
+        assert_eq!(
+            validate_google_update_source(&source, "abcde", "\"v2\""),
+            Err(ProviderEffectError::Conflict)
+        );
+        let mut private = source.clone();
+        private["visibility"] = json!("private");
+        assert_eq!(
+            validate_google_update_source(&private, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+        let mut invited = source.clone();
+        invited["attendees"] = json!([{ "email": "guest@example.com" }]);
+        assert_eq!(
+            validate_google_update_source(&invited, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn google_update_payload_does_not_replace_attendees_or_reminders() {
+        let payload = google_update_event_payload(&timed_event());
+        assert!(payload.get("attendees").is_none());
+        assert!(payload.get("reminders").is_none());
     }
 
     #[tokio::test]

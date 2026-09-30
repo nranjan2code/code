@@ -97,7 +97,9 @@ Read before changing behaviour in these areas:
   implemented. Owner-reviewed plain-text send and a constrained timed event
   create are available for Google and Microsoft through separate opt-in grants,
   Core permission checks, and durable single-use claims. Event create has no
-  attendees, recurrence, or reminders; update/cancel/RSVP and reconciliation,
+  attendees, recurrence, or reminders. Google also has an exact-reviewed,
+  conditional ETag update for standalone timed events with no attendees;
+  Microsoft update, cancel/RSVP and reconciliation,
   standing grants, and reliable
   continuous routines remain in progress. Scheduled read-only routines now
   support an explicitly best-effort email watch with bounded encrypted

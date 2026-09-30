@@ -39,8 +39,11 @@ and Microsoft from an unchanged saved candidate. It has no attendees,
 recurrence, or reminders and requires its own selected calendar-write grant,
 Core permission approval, and exact review. The provider scope can authorize
 more than this create-only operation; the credential remains private and the
-broker enforces the narrower contract. Agent/model initiated effects, event
-updates/cancel/RSVP, attachments, the third provider, multi-instance routine leases, and reliable continuous
+broker enforces the narrower contract. Google also supports an exact-reviewed
+update for public standalone timed events without attendees. It rechecks the
+source ETag and conditionally patches only event fields; stale versions require
+a fresh draft. Microsoft updates, cancel/RSVP, Agent/model initiated effects,
+attachments, the third provider, multi-instance routine leases, and reliable continuous
 service recovery remain unimplemented. This uses current 4.x storage. Before a
 read, the product explains that disconnect removes the
 saved credential and blocks future reads, while content recorded in append-only

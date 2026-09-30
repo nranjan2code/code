@@ -619,7 +619,21 @@ fn validate_source_refs(source_refs: &[SourceRef]) -> Result<(), ContractError> 
 fn validate_action(action: &ProposedAction) -> Result<(), ContractError> {
     match action {
         ProposedAction::SendMail { draft } => draft.validate(),
-        ProposedAction::CreateEvent { draft } | ProposedAction::UpdateEvent { draft, .. } => {
+        ProposedAction::CreateEvent { draft } => draft.validate(),
+        ProposedAction::UpdateEvent {
+            event_id,
+            source_version,
+            draft,
+        } => {
+            if event_id.trim().is_empty()
+                || event_id.len() > 512
+                || event_id.chars().any(char::is_control)
+                || source_version.trim().is_empty()
+                || source_version.len() > 512
+                || source_version.chars().any(char::is_control)
+            {
+                return Err(ContractError::InvalidEvent);
+            }
             draft.validate()
         }
         ProposedAction::CancelEvent { event_id, .. }
