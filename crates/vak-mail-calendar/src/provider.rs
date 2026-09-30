@@ -5444,4 +5444,75 @@ mod tests {
         }));
         task.abort();
     }
+
+    #[tokio::test]
+    async fn large_simulated_google_calendar_stays_within_event_budget() {
+        let (vault, mut account, agent_id, audience) = linked_test_account(Provider::Google);
+        account.capabilities.insert(Capability::CalendarRead);
+        let from = Utc::now();
+        let to = from + Duration::days(7);
+        let starts_at = from.to_rfc3339();
+        let ends_at = (from + Duration::minutes(30)).to_rfc3339();
+        let app = axum::Router::new().route(
+            "/calendar/v3/calendars/primary/events",
+            axum::routing::get(
+                move |axum::extract::Query(query): axum::extract::Query<
+                    std::collections::HashMap<String, String>,
+                >| {
+                    let starts_at = starts_at.clone();
+                    let ends_at = ends_at.clone();
+                    async move {
+                        assert_eq!(query.get("maxResults").map(String::as_str), Some("100"));
+                        axum::Json(json!({
+                            "items": (0..1_000).map(|i| json!({
+                                "id": format!("synthetic-event-{i:04}"),
+                                "summary": "Synthetic event",
+                                "start": {"dateTime": starts_at},
+                                "end": {"dateTime": ends_at}
+                            })).collect::<Vec<_>>()
+                        }))
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+
+        let events = client
+            .calendar_events(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                CalendarRange {
+                    from,
+                    to,
+                    limit: 1_000,
+                },
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(events.len(), MAX_EVENT_ITEMS);
+        assert!(events.iter().all(|event| {
+            event.title == "Synthetic event"
+                && event
+                    .starts_at
+                    .is_some_and(|start| start >= from && start < to)
+        }));
+        task.abort();
+    }
 }
