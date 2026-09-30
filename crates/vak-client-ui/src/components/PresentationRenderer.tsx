@@ -15,7 +15,7 @@ import {
   openWorkbenchArtifact,
   uiPreferences,
   isPreviewableArtifact,
-  openArtifactPathInCanvas,
+  openArtifactFile,
   openArtifactCanvas,
   openCandidateReview,
   openOfficeCitation,
@@ -29,6 +29,7 @@ import MessageActions from "./MessageActions";
 import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
+import { fileSubject, runOrigin } from "../canvasSubject";
 import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPreview";
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
@@ -244,13 +245,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
 
   const openPreview = () => {
     const title = props.filename || (props.language ? `${props.language.toUpperCase()} Preview` : "Artifact Preview");
-    openArtifactCanvas({
-      id: `code-${Date.now()}`,
-      title,
-      artifactPath: props.filename || "",
-      html: props.content,
-      timestamp: Date.now(),
-    });
+    openArtifactCanvas({ kind: "inline", title, html: props.content });
   };
 
   return (
@@ -674,9 +669,9 @@ function openFile(item: OutputItem, sessionId?: string) {
     executionId: item.provenance?.tool_call_id ?? undefined,
   };
   if (saved && context.sessionId) {
-    openArtifactCanvas({ id: `${saved.version_id}:${saved.path}`, title: artifact.name, artifactPath: saved.path, ...context, candidateId: saved.version_id });
+    openArtifactCanvas(fileSubject(saved.path, { ...runOrigin(context), sessionId: context.sessionId, candidateId: saved.version_id }, artifact.name));
   } else if (artifact.path && isPreviewableArtifact(artifact.path)) {
-    openArtifactPathInCanvas(artifact.path, undefined, context);
+    openArtifactFile(artifact.path, runOrigin(context));
   } else if (artifact.path) {
     openWorkbenchArtifact(artifact.path);
   }

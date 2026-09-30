@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
+import { fileSubject, isDocumentSubject, matchExecutionArtifact, subjectSessionId, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
 import { displayFileName } from "./attachFiles";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import * as api from "./api";
@@ -302,6 +303,7 @@ export function resetWorkbenchExecutions(sessionId: string) {
   if (canvasConversation !== sessionId) closeArtifactCanvas();
 }
 
+/** A component preview shown in the dock (`PreviewPane`); the Canvas shows a `CanvasSubject`. */
 export interface ActiveComponentPreview {
   id: string;
   title: string;
@@ -309,16 +311,6 @@ export interface ActiveComponentPreview {
   html?: string;
   previewId?: string;
   timestamp?: number;
-  serverName?: string;
-  serverUrl?: string;
-  /** Durable conversation/result identity that produced this artifact. */
-  sessionId?: string;
-  /** A cited place in an Office file or PDF to open the view at (`path#anchor`). */
-  anchor?: string;
-  resultId?: string;
-  executionId?: string;
-  /** Saved draft version; Canvas reads this candidate instead of mutable scratch. */
-  candidateId?: string;
 }
 export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
 
@@ -335,54 +327,36 @@ export function openComponentPreview(preview: ActiveComponentPreview) {
 export type CanvasMode = "split" | "focused";
 export type CanvasDevice = "desktop" | "tablet" | "mobile";
 
-export interface ArtifactCanvasState {
-  /** The artifact being previewed; null when canvas is closed. */
-  artifact: ActiveComponentPreview | null;
-  /** Layout mode: split (chat + canvas) or focused (full-width canvas). */
-  mode: CanvasMode;
-  /** Viewport device simulation mode. */
-  device: CanvasDevice;
-}
-
-const [canvasArtifact, setCanvasArtifact] = createSignal<ActiveComponentPreview | null>(null);
+const [canvasSubject, setCanvasSubject] = createSignal<CanvasSubject | null>(null);
 const [canvasMode, setCanvasMode] = createSignal<CanvasMode>("split");
 const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
 /** The conversation the open Canvas belongs to. */
 let canvasConversation: string | null = null;
 
-export { canvasArtifact, canvasMode, canvasDevice, setCanvasDevice };
-
-/** Backward-compatible compound state getter. */
-export const canvasState = (): ArtifactCanvasState => ({
-  artifact: canvasArtifact(),
-  mode: canvasMode(),
-  device: canvasDevice(),
-});
+export { canvasSubject, canvasMode, canvasDevice, setCanvasDevice };
 
 /** Whether the artifact canvas overlay is currently open. */
-export const canvasOpen = () => canvasArtifact() !== null;
+export const canvasOpen = () => canvasSubject() !== null;
 
 /** Open the artifact canvas with a smooth slide-in. User-initiated only. */
-export function openArtifactCanvas(preview: ActiveComponentPreview) {
+export function openArtifactCanvas(subject: CanvasSubject) {
   if (sidebarOpen()) {
     setSidebarOpen(false);
   }
   if (dockTab()) {
     setDockTab(null);
   }
-  canvasConversation = preview.sessionId ?? activeId();
+  canvasConversation = subjectSessionId(subject) ?? activeId();
   // Documents need the whole application viewport for reading and review.
   // Interactive previews can still open beside the conversation on wide screens.
-  const path = preview.artifactPath?.toLowerCase() ?? "";
-  const document = /\.(docx|xlsx|pptx|pdf)(?:$|[?#])/.test(path);
-  setCanvasMode(document || window.matchMedia("(max-width: 1100px)").matches ? "focused" : "split");
-  setCanvasArtifact(preview);
+  setCanvasMode(isDocumentSubject(subject) || window.matchMedia("(max-width: 1100px)").matches ? "focused" : "split");
+  setCanvasSubject(subject);
 }
 
 /** Close the artifact canvas. */
 export function closeArtifactCanvas() {
   canvasConversation = null;
-  setCanvasArtifact(null);
+  setCanvasSubject(null);
 }
 
 /** Toggle between split and focused canvas modes. */
@@ -452,115 +426,37 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
 }
 
 /**
- * Locate in-turn code block content matching a path (e.g. HTML/SVG or named block)
- * so that referenced deliverables can be previewed even before or if they are on disk.
+ * Open a file in the Canvas. A file named by its origin (a result, a run, a
+ * saved version) is read from exactly that origin. A bare reference, such as
+ * a path in the assistant's text, is matched to a run only when exactly one
+ * run in this conversation left that exact path; if several did, there is no
+ * telling which the reader means, so it says so instead of choosing.
  */
-export function extractCodeBlockForPath(text: string, path: string): string | undefined {
-  if (!text || !path) return undefined;
-  const filename = path.split("/").pop() || path;
-  const ext = filename.split(".").pop()?.toLowerCase() || "";
-
-  // 1. Look for a fenced code block with an explicit filename matching this path
-  const escapedName = filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedRegex = new RegExp("```(?:\\w+[:\\s]+)?" + escapedName + "[ \\t]*\\n([\\s\\S]*?)```", "i");
-  const namedMatch = text.match(namedRegex);
-  if (namedMatch && namedMatch[1]?.trim()) {
-    return namedMatch[1].trim();
+export function openArtifactFile(path: string, origin?: ArtifactOrigin) {
+  const clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
+  const title = displayFileName(clean) || "Artifact Preview";
+  if (origin) {
+    openArtifactCanvas(fileSubject(clean, origin, title));
+    return;
   }
-
-  // 2. Look for code blocks matching the file extension (e.g. html, svg, csv, tsv)
-  if (ext === "html" || ext === "htm") {
-    const htmlBlock = text.match(/```(?:html?|xml|xhtml)[ \t]*\n([\s\S]*?)```/i);
-    if (htmlBlock && htmlBlock[1]?.trim()) {
-      return htmlBlock[1].trim();
-    }
-    const anyBlock = text.match(/```\w*[ \t]*\n([\s\S]*?)```/g);
-    if (anyBlock) {
-      for (const b of anyBlock) {
-        const inner = b.replace(/^```\w*[ \t]*\n/, "").replace(/```$/, "").trim();
-        if (/<!doctype\s+html/i.test(inner) || /<html[\s>]/i.test(inner)) {
-          return inner;
-        }
-      }
-    }
-  } else if (ext === "svg") {
-    const svgBlock = text.match(/```(?:svg|xml)[ \t]*\n([\s\S]*?)```/i);
-    if (svgBlock && svgBlock[1]?.trim()) {
-      return svgBlock[1].trim();
-    }
-    const anyBlock = text.match(/```\w*[ \t]*\n([\s\S]*?)```/g);
-    if (anyBlock) {
-      for (const b of anyBlock) {
-        const inner = b.replace(/^```\w*[ \t]*\n/, "").replace(/```$/, "").trim();
-        if (/<svg[\s>]/i.test(inner)) {
-          return inner;
-        }
-      }
-    }
-  } else if (ext === "csv" || ext === "tsv") {
-    const dataBlock = text.match(new RegExp("```(?:" + ext + "|text)[ \\t]*\\n([\\s\\S]*?)```", "i"));
-    if (dataBlock && dataBlock[1]?.trim()) {
-      return dataBlock[1].trim();
-    }
+  const sessionId = activeId() ?? undefined;
+  const runs = workbenchExecutions();
+  const match = matchExecutionArtifact(clean, runs);
+  if (match.kind === "many") {
+    setNotice({ kind: "info", text: `${title} was made by more than one run. Open it from the run you mean.` });
+    openWorkbenchFolder(clean);
+    return;
   }
-  return undefined;
-}
-
-/** Open any artifact path directly in the Artifact Canvas. */
-export function openArtifactPathInCanvas(
-  path: string,
-  html?: string,
-  context?: Pick<ActiveComponentPreview, "sessionId" | "resultId" | "executionId" | "anchor">,
-) {
-  let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
-  // A result-bound artifact already carries its exact path and execution.
-  // Fuzzy filename matching can silently open a different turn's file.
-  const executions = context ? [] : workbenchExecutions();
-  // Check if there is an execution artifact matching this filename or ending with this path
-  for (const exec of executions) {
-    const match = exec.artifacts.find(
-      (a) =>
-        a.path === clean ||
-        a.path.endsWith("/" + clean) ||
-        clean.endsWith("/" + a.path) ||
-        a.path.split("/").pop() === clean.split("/").pop()
-    );
-    if (match) {
-      clean = match.path;
-      break;
-    }
-  }
-
-  let resolvedHtml = html;
-  if (!resolvedHtml && !context) {
-    const sid = activeId();
-    const items = itemsOf(sid);
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (item.kind === "assistant" && item.text) {
-        const found = extractCodeBlockForPath(item.text, clean);
-        if (found) {
-          resolvedHtml = found;
-          break;
-        }
-      }
-    }
-  }
-
-  const filename = displayFileName(clean) || "Artifact Preview";
-  openArtifactCanvas({
-    id: clean,
-    title: filename,
-    artifactPath: clean,
-    html: resolvedHtml,
-    timestamp: Date.now(),
-    ...context,
-  });
+  const run = match.kind === "one" ? runs.find((candidate) => candidate.id === match.executionId) : undefined;
+  const owner = run?.ownerSessionId ?? sessionId;
+  openArtifactCanvas(
+    fileSubject(clean, run && owner ? { sessionId: owner, executionId: run.id } : { sessionId }, title),
+  );
 }
 
 /** Opens the view of a cited Office file or PDF at the place it names. */
 export function openOfficeCitation(citation: { path: string; anchor: string }) {
-  openArtifactPathInCanvas(citation.path, undefined, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
+  openArtifactFile(citation.path, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
 }
 
 /**

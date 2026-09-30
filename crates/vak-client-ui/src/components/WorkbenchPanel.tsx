@@ -10,7 +10,7 @@ import {
   requestedArtifact,
   setRequestedArtifact,
   openArtifactCanvas,
-  openArtifactPathInCanvas,
+  openArtifactFile,
   workbenchTab,
   setWorkbenchTab,
   candidateReviewRequest,
@@ -28,6 +28,7 @@ import { acceptanceSummary, pendingVersions, undoablePromotion } from "../candid
 import { keep as keepChoice, kept as keptChoices, leaveOut } from "../officeChoices";
 import { artifactPreviewHtml } from "../artifactPreview";
 import { sandboxedSrcdoc } from "../safeUrl";
+import { fileSubject, runOrigin } from "../canvasSubject";
 import { activate } from "../App";
 import Skeleton from "./Skeleton";
 
@@ -792,15 +793,12 @@ export default function WorkbenchPanel() {
                     <Show when={prepared().candidate.files.find((file) => file.path === path())?.operation !== "Delete"}><button type="button" class="btn" disabled={!!reviewFileError()} onClick={() => {
                       const version = prepared();
                       setReviewOpen(false);
-                      openArtifactCanvas({
-                        id: `${version.candidate.candidate_id}:${path()}`,
-                        title: path().split("/").pop() || path(),
-                        artifactPath: path(),
+                      openArtifactCanvas(fileSubject(path(), {
                         sessionId: version.session_id,
                         resultId: version.result_id,
                         executionId: version.execution_id,
                         candidateId: version.candidate.candidate_id,
-                      });
+                      }, path().split("/").pop() || path()));
                     }}>Open saved version in Canvas</button></Show>
                   }</Show>
                 </div>
@@ -1276,7 +1274,7 @@ export default function WorkbenchPanel() {
                                   class="artifact-card-popout-btn"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    openArtifactPathInCanvas(art.path);
+                                    openArtifactFile(art.path, runOrigin({ sessionId: exec().ownerSessionId ?? activeId() ?? undefined, executionId: exec().id }));
                                   }}
                                   title="Open in Artifact Canvas"
                                 >
@@ -1330,7 +1328,7 @@ export default function WorkbenchPanel() {
                           class="artifact-popout-btn"
                           onClick={(e) => {
                             e.stopPropagation();
-                            openArtifactPathInCanvas(art.path, undefined, { sessionId: art.sessionId, executionId: art.executionId });
+                            openArtifactFile(art.path, runOrigin({ sessionId: art.sessionId, executionId: art.executionId }));
                           }}
                           title="Open in Artifact Canvas"
                           aria-label={`Open ${art.path} in Artifact Canvas`}
@@ -1366,15 +1364,8 @@ export default function WorkbenchPanel() {
                     onClick={() => {
                       const p = selectedArtifact();
                       if (p) {
-                        openArtifactCanvas({
-                          id: p,
-                          title: p.split("/").pop() || "Artifact Preview",
-                          artifactPath: p,
-                          html: artifactContent() || undefined,
-                          timestamp: Date.now(),
-                          sessionId: allArtifacts().find((artifact) => artifact.path === p)?.sessionId,
-                          executionId: allArtifacts().find((artifact) => artifact.path === p)?.executionId,
-                        });
+                        const source = artifactSource(p);
+                        openArtifactFile(p, runOrigin({ sessionId: source?.sessionId, executionId: source?.executionId }));
                       }
                     }}
                     title="Open in the full viewer"

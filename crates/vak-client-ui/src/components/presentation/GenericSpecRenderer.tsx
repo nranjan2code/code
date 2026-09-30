@@ -2,7 +2,7 @@ import { For, Show, createContext, createEffect, createMemo, createSignal, onCle
 import type { AdaptiveRenderNode } from "../../types";
 import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
 import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
-import { openInEditor, openComponentPreview, openArtifactCanvas, technicalDetails, uiPreferences } from "../../store";
+import { openInEditor, openComponentPreview, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
@@ -1309,7 +1309,11 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     timestamp: Date.now(),
   });
 
-  const openInCanvas = () => openArtifactCanvas(previewPayload());
+  const openInCanvas = () => {
+    const html = inlineHtml();
+    if (html) openArtifactCanvas({ kind: "inline", title: previewPayload().title, html, basePath: path() || undefined });
+    else if (path()) openArtifactFile(path());
+  };
   const openInDock = () => openComponentPreview(previewPayload());
 
   const handleCopySource = async () => {

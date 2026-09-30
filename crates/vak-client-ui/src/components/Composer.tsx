@@ -19,7 +19,7 @@ import {
   agentForSession,
   agentOpening,
   technicalDetails,
-  openArtifactCanvas,
+  openArtifactFile,
   setPendingSettingsPage,
   setSettingsOpen,
 } from "../store";
@@ -601,7 +601,7 @@ export default function Composer(props: { cwd: string }) {
                   <span class="attachment-name">{chip.name}</span>
                   <small class="attachment-state">{chip.error ? "Not saved" : chip.saved ? formatBytes(chip.bytes) : "Saving…"}</small>
                   <Show when={chip.saved && /\.(docx|xlsx|pptx|pdf)$/i.test(chip.name)}>
-                    <button type="button" class="attachment-preview" onClick={() => openArtifactCanvas({ id: `attached:${chip.saved!.path}`, title: chip.name, artifactPath: chip.saved!.path })}>Open</button>
+                    <button type="button" class="attachment-preview" onClick={() => openArtifactFile(chip.saved!.path, { sessionId: activeId() ?? undefined })}>Open</button>
                   </Show>
                   <button
                     class="attachment-remove"

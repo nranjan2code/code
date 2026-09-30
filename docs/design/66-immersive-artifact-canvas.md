@@ -20,16 +20,20 @@ When agents generate deliverables — web applications, prototypes, diagrams, re
 
 ## 2. Architecture & Reactive Decoupling
 
+### 0. What the Canvas shows: a subject
+
+The Canvas opens a `CanvasSubject` (`src/canvasSubject.ts`), which names what is shown by identity, not by path: a workspace `file`, an `execution_artifact` (a run's scratch file), a `draft_file` (one saved version, read through hash-checked candidate routes), `inline` markup from the conversation, or a `live_server`. Each kind is read through the one route its identity names, and there is no fallback between them: an unreadable file is an error, never replaced by text found elsewhere. `openArtifactFile(path, origin?)` is the entry point for files. A bare reference (a path in the Agent's text) is matched to a run only by an identical path made by exactly one run; if several runs made it, the reader is asked instead of a file being chosen.
+
 ### A. SolidJS State Atoms (`store.ts`)
 Earlier iterations coupled layout modes and active artifact payloads inside a single compound signal. Toggling view modes caused the compound object to change identity, triggering unwanted iframe reloads and resetting runtime application state.
 
 The state is cleanly decoupled into discrete atoms:
-- `canvasArtifact`: The active `ActiveComponentPreview` payload (or `null` when closed).
+- `canvasSubject`: The active `CanvasSubject` (or `null` when closed).
 - `canvasMode`: `"split" | "focused"` layout signal.
 - `canvasDevice`: `"desktop" | "tablet" | "mobile"` responsive viewport simulation.
-- `canvasOpen`: Derived memo checking `canvasArtifact() !== null`.
+- `canvasOpen`: Derived memo checking `canvasSubject() !== null`.
 
-`createEffect` in `ArtifactCanvas` tracks `canvasArtifact()` strictly, ensuring that toggling between split/focused modes or switching between 100%/768px/375px viewports never reloads the underlying iframe.
+`createEffect` in `ArtifactCanvas` tracks `canvasSubject()` strictly, ensuring that toggling between split/focused modes or switching between 100%/768px/375px viewports never reloads the underlying iframe.
 
 ### B. Asynchronous Generation Guarding
 Rapid navigation between artifacts or dev-server startup introduces potential race conditions. Every asynchronous loading pipeline increments a local `request` counter (`const generation = ++request`). State assignments (`setActiveServerPort`, `startedServerName`, `setHtml`, `setRawText`) and DOM mutations are guarded by `if (generation !== request) return;`.

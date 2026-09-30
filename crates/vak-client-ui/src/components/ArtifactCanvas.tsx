@@ -1,6 +1,6 @@
 import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
 import {
-  canvasArtifact,
+  canvasSubject,
   canvasMode,
   canvasDevice,
   setCanvasDevice,
@@ -9,7 +9,6 @@ import {
   toggleCanvasMode,
   activeId,
   openCandidateReview,
-  type ActiveComponentPreview,
   technicalDetails,
   coworkingPresence,
 } from "../store";
@@ -17,13 +16,20 @@ import * as api from "../api";
 import { watchCoworking } from "../streamHub";
 import Icon from "./Icon";
 import { previewSandbox, sandboxedSrcdoc } from "../safeUrl";
-import { artifactPreviewHtml } from "../artifactPreview";
+import { artifactPreviewHtml, subjectReader } from "../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../delimitedPreview";
 import { activate, sendPrompt } from "../App";
 import OfficeWorkspacePane from "./OfficeWorkspacePane";
-import { isOfficePath, pdfAnchorPage } from "../officeFiles";
-
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office";
+import { pdfAnchorPage } from "../officeFiles";
+import {
+  displayType as subjectDisplayType,
+  subjectCandidateId,
+  subjectExecutionId,
+  subjectPath,
+  subjectSessionId,
+  type ArtifactDisplayType,
+  type CanvasSubject,
+} from "../canvasSubject";
 
 /**
  * ArtifactCanvas — immersive overlay preview for showcaseable artifacts.
@@ -31,6 +37,11 @@ export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | 
  * Replaces the dock-panel preview with a full-height canvas that slides in
  * from the right. In "split" mode the chat stays visible and interactive
  * side-by-side; in "focused" mode the canvas takes the full viewport width.
+ *
+ * It shows a `CanvasSubject` (../canvasSubject.ts): what is open is named by
+ * identity, and each kind is read through the one route its identity names —
+ * a workspace file, a run's scratch file, a saved version of a draft, markup
+ * from the conversation, or a dev server. There is no fallback between them.
  *
  * Supports polyglot artifacts:
  * - HTML: sandboxed iframe with CSP
@@ -74,33 +85,47 @@ export default function ArtifactCanvas() {
     return commentLineEnd() !== "" && (!Number.isFinite(start) || !Number.isFinite(end) || start < 1 || end < start);
   };
 
+  /** The saved version being viewed, when the subject is one. */
+  const draft = () => {
+    const subject = canvasSubject();
+    return subject?.kind === "draft_file" ? subject : undefined;
+  };
+  const candidateId = () => { const subject = canvasSubject(); return subject ? subjectCandidateId(subject) : undefined; };
+  const executionId = () => { const subject = canvasSubject(); return subject ? subjectExecutionId(subject) : undefined; };
+  const ownerSessionId = () => { const subject = canvasSubject(); return subject ? subjectSessionId(subject) : undefined; };
+  const title = () => canvasSubject()?.title || "Artifact Preview";
+  const path = () => { const subject = canvasSubject(); return subject ? subjectPath(subject) : ""; };
+
   let request = 0;
-  let startedServerName: string | null = null;
+  /** The dev server this Canvas started, with the identity it was started under. */
+  let startedServer: { sessionId: string; name: string; candidateId?: string } | null = null;
   let allocatedMediaUrl: string | null = null;
   let closeTimeout: ReturnType<typeof setTimeout> | undefined;
 
   createEffect(() => {
-    const artifact = canvasArtifact();
-    setPdfText(/\.pdf$/i.test(artifact?.artifactPath ?? "") && window.matchMedia("(max-width: 1100px)").matches);
+    const subject = canvasSubject();
+    const file = subject ? subjectPath(subject) : "";
+    setPdfText(/\.pdf$/i.test(file) && window.matchMedia("(max-width: 1100px)").matches);
     setFeedback("");
-    setShowFeedback(!/\.(docx|xlsx|pptx|pdf)$/i.test(artifact?.artifactPath ?? ""));
+    setShowFeedback(!/\.(docx|xlsx|pptx|pdf)$/i.test(file));
     setFeedbackState("idle");
     setCommentLineStart("");
     setCommentLineEnd("");
     setCandidateComments([]);
     setCandidateVersion(null);
     setPreparationRequired(false);
-    if (artifact?.candidateId && artifact.sessionId) {
+    const version = subject?.kind === "draft_file" ? subject : undefined;
+    if (version) {
       let disposed = false;
       void Promise.allSettled([
-        api.listSandboxCandidateComments(artifact.sessionId, artifact.candidateId),
-        api.listSessionSandboxRecords(artifact.sessionId),
+        api.listSandboxCandidateComments(version.sessionId, version.candidateId),
+        api.listSessionSandboxRecords(version.sessionId),
       ]).then(([commentsResult, recordsResult]) => {
         if (disposed) return;
         if (commentsResult.status === "fulfilled") setCandidateComments(commentsResult.value.comments);
         if (recordsResult.status === "fulfilled") {
-          const versions = recordsResult.value.records.filter((record) => record.kind === "Candidate" && (!artifact.executionId || record.record.execution_id === artifact.executionId));
-          const index = versions.findIndex((record) => record.kind === "Candidate" && record.record.candidate.candidate_id === artifact.candidateId);
+          const versions = recordsResult.value.records.filter((record) => record.kind === "Candidate" && (!version.executionId || record.record.execution_id === version.executionId));
+          const index = versions.findIndex((record) => record.kind === "Candidate" && record.record.candidate.candidate_id === version.candidateId);
           if (index >= 0) setCandidateVersion(index + 1);
         }
       });
@@ -109,15 +134,14 @@ export default function ArtifactCanvas() {
   });
 
   createEffect(() => {
-    const artifact = canvasArtifact();
-    if (!canvasOpen() || !artifact?.candidateId || !artifact.sessionId) return;
-    const sessionId = artifact.sessionId;
-    const candidateId = artifact.candidateId;
+    const version = draft();
+    if (!canvasOpen() || !version) return;
+    const { sessionId, candidateId } = version;
     let disposed = false;
     const stop = watchCoworking(sessionId, () => {
       void api.listSandboxCandidateComments(sessionId, candidateId)
         .then(({ comments }) => {
-          if (!disposed && canvasArtifact()?.candidateId === candidateId) setCandidateComments(comments);
+          if (!disposed && draft()?.candidateId === candidateId) setCandidateComments(comments);
         })
         .catch(() => { /* Preserve the visible comment history while offline. */ });
     });
@@ -125,36 +149,36 @@ export default function ArtifactCanvas() {
   });
 
   const sendRevision = async () => {
-    const artifact = canvasArtifact();
-    const sessionId = artifact?.sessionId ?? activeId();
+    const subject = canvasSubject();
+    const sessionId = (subject && subjectSessionId(subject)) ?? activeId();
     const note = feedback().trim();
-    if (!sessionId || !artifact || !note || feedbackState() === "sending") return;
+    if (!sessionId || !subject || !note || feedbackState() === "sending") return;
     setFeedbackState("sending");
     let commentSaved = false;
-    const subject = artifact.artifactPath || artifact.title;
+    const subjectLabel = path() || subject.title;
     try {
-      if (artifact.candidateId) {
+      if (subject.kind === "draft_file") {
         const lineStart = Number.parseInt(commentLineStart(), 10);
         const lineEnd = Number.parseInt(commentLineEnd(), 10);
-        const saved = await api.commentOnSandboxCandidate(sessionId, artifact.candidateId, note, {
-          path: artifact.artifactPath || undefined,
+        const saved = await api.commentOnSandboxCandidate(sessionId, subject.candidateId, note, {
+          path: subject.path || undefined,
           lineStart: Number.isFinite(lineStart) && lineStart > 0 ? lineStart : undefined,
           lineEnd: Number.isFinite(lineEnd) && lineEnd > 0 ? lineEnd : undefined,
         });
         commentSaved = true;
         setFeedback("");
-        void api.listSandboxCandidateComments(sessionId, artifact.candidateId)
+        void api.listSandboxCandidateComments(sessionId, subject.candidateId)
           .then(({ comments }) => setCandidateComments(comments))
           .catch(() => { /* The accepted comment remains durable. */ });
-        await api.requestRevisionFromCandidateComment(sessionId, artifact.candidateId, saved.comment_id);
+        await api.requestRevisionFromCandidateComment(sessionId, subject.candidateId, saved.comment_id);
       } else {
-        const result = artifact.resultId ? ` from result ${artifact.resultId}` : "";
+        const result = subject.resultId ? ` from result ${subject.resultId}` : "";
         await sendPrompt(
-          `Please revise the draft ${JSON.stringify(subject)}${result}. Feedback: ${note}\nInspect the saved result and answer when the change is done; do not repeat a write when the file already contains the requested change.`,
+          `Please revise the draft ${JSON.stringify(subjectLabel)}${result}. Feedback: ${note}\nInspect the saved result and answer when the change is done; do not repeat a write when the file already contains the requested change.`,
           undefined,
           undefined,
           sessionId,
-          { sessionId, resultId: artifact.resultId, label: subject },
+          { sessionId, resultId: subject.resultId, label: subjectLabel },
           "correction",
           true,
         );
@@ -169,12 +193,13 @@ export default function ArtifactCanvas() {
     }
   };
 
-  // Cleanup helper for dev servers started specifically by the canvas
+  // Stops the dev server this Canvas started, under the identity it was
+  // started with: by the time this runs the subject may already be another.
   const cleanupServer = () => {
-    if (startedServerName) {
-      const sid = canvasArtifact()?.sessionId ?? activeId();
-      if (sid) void api.stopLaunch(sid, startedServerName, canvasArtifact()?.candidateId);
-      startedServerName = null;
+    if (startedServer) {
+      const { sessionId, name, candidateId } = startedServer;
+      void api.stopLaunch(sessionId, name, candidateId);
+      startedServer = null;
     }
   };
 
@@ -194,39 +219,7 @@ export default function ArtifactCanvas() {
     cleanupMedia();
   });
 
-  const detectType = (artifact: ActiveComponentPreview): ArtifactDisplayType => {
-    if (artifact.serverName || artifact.serverUrl) return "server";
-    const p = (artifact.artifactPath || "").toLowerCase();
-    if (p.endsWith(".pdf")) return "pdf";
-    if (p.endsWith(".csv") || p.endsWith(".tsv")) return "table";
-    if (isOfficePath(p)) return "office";
-    if (
-      p.endsWith(".png") ||
-      p.endsWith(".jpg") ||
-      p.endsWith(".jpeg") ||
-      p.endsWith(".gif") ||
-      p.endsWith(".webp") ||
-      p.endsWith(".svg") ||
-      p.endsWith(".ico") ||
-      p.endsWith(".bmp")
-    ) {
-      return "image";
-    }
-    if (p.endsWith(".html") || p.endsWith(".htm") || p.endsWith(".xhtml")) {
-      return "html";
-    }
-    // If inline html is provided without a conflicting non-html file path, treat as html
-    if (artifact.html && !p) {
-      return "html";
-    }
-    // Any file with a path (source code, config, logs, etc.) is rendered in the code viewer
-    if (p) {
-      return "code";
-    }
-    return "html";
-  };
-
-  const loadContent = async (artifact: ActiveComponentPreview) => {
+  const loadContent = async (subject: CanvasSubject) => {
     const generation = ++request;
     setLoading(true);
     setError(null);
@@ -234,69 +227,41 @@ export default function ArtifactCanvas() {
     setTablePreview(null);
     cleanupMedia();
 
-    const kind = detectType(artifact);
+    const kind = subjectDisplayType(subject);
     setDisplayType(kind);
-    // Automatically configure default viewMode: code artifacts default to source; web/media default to preview
-    if (kind === "code") {
-      setViewMode("source");
-    } else {
-      setViewMode("preview");
-    }
+    // Code opens on its source; web pages and media open on the preview.
+    setViewMode(kind === "code" ? "source" : "preview");
 
     try {
-      if (artifact.candidateId && !artifact.sessionId) throw new Error("Saved draft has no owning conversation.");
-      const readText = () => artifact.candidateId && artifact.sessionId
-        ? api.readSandboxCandidateFile(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
-        : artifact.executionId && artifact.sessionId
-          ? api.readExecutionArtifact(artifact.sessionId, artifact.executionId, artifact.artifactPath)
-        : api.readFile(artifact.artifactPath);
-      const readRaw = () => artifact.candidateId && artifact.sessionId
-        ? api.readSandboxCandidateFileRaw(artifact.sessionId, artifact.candidateId, artifact.artifactPath)
-        : artifact.executionId && artifact.sessionId
-          ? api.readExecutionArtifactRaw(artifact.sessionId, artifact.executionId, artifact.artifactPath)
-        : api.readFileRaw(artifact.artifactPath);
-      // 1. Dev-server handling: if serverName is provided, ensure it is running
-      if (artifact.serverName) {
-        const sid = artifact.sessionId ?? activeId();
-        if (sid) {
-          if (startedServerName && startedServerName !== artifact.serverName) {
-            cleanupServer();
-          }
-          const readiness = await api.getLaunch(sid, artifact.candidateId);
-          const configured = readiness.servers.find((server) => server.name === artifact.serverName);
-          if (!configured) throw new Error(`Dev server "${artifact.serverName}" is unavailable for this saved version.`);
-          if (!configured.available && !configured.running) {
-            setPreparationRequired(configured.availability === "needs_preparation");
-            throw new Error(configured.unavailable_reason ?? "Preview environment is not ready.");
-          }
-          const res = await api.startLaunch(sid, artifact.serverName, artifact.candidateId);
-          if (res.error && !res.error.toLowerCase().includes("already running")) {
-            throw new Error(res.error);
-          }
-          if (generation !== request) return;
-          startedServerName = artifact.serverName;
-          const launchState = await api.getLaunch(sid, artifact.candidateId);
-          if (generation !== request) return;
-          const srv = launchState.servers.find((s) => s.name === artifact.serverName);
-          if (srv?.port) {
-            setActiveServerPort(srv.port);
-            setRawText(`<!-- Running dev server: ${artifact.serverName} at http://127.0.0.1:${srv.port} -->`);
-            setHtml("");
-            return;
-          }
-          throw new Error(`Dev server "${artifact.serverName}" started, but did not report a listening port.`);
+      // 1. Dev server: make sure the configured server is running, under this subject's identity.
+      if (subject.kind === "live_server") {
+        const { sessionId, serverName, candidateId } = subject;
+        if (startedServer && startedServer.name !== serverName) cleanupServer();
+        const readiness = await api.getLaunch(sessionId, candidateId);
+        const configured = readiness.servers.find((server) => server.name === serverName);
+        if (!configured) throw new Error(`Dev server "${serverName}" is unavailable for this saved version.`);
+        if (!configured.available && !configured.running) {
+          setPreparationRequired(configured.availability === "needs_preparation");
+          throw new Error(configured.unavailable_reason ?? "Preview environment is not ready.");
         }
-      } else if (artifact.serverUrl) {
-        if (startedServerName) cleanupServer();
-        setActiveServerPort(null);
+        const res = await api.startLaunch(sessionId, serverName, candidateId);
+        if (res.error && !res.error.toLowerCase().includes("already running")) {
+          throw new Error(res.error);
+        }
         if (generation !== request) return;
-        setRawText(`<!-- External server: ${artifact.serverUrl} -->`);
+        startedServer = { sessionId, name: serverName, candidateId };
+        const launchState = await api.getLaunch(sessionId, candidateId);
+        if (generation !== request) return;
+        const running = launchState.servers.find((server) => server.name === serverName);
+        if (!running?.port) throw new Error(`Dev server "${serverName}" started, but did not report a listening port.`);
+        setActiveServerPort(running.port);
+        setRawText(`<!-- Running dev server: ${serverName} at http://127.0.0.1:${running.port} -->`);
         setHtml("");
         return;
       }
 
-      // If switching away from dev server, shut down previously started server
-      if (startedServerName) cleanupServer();
+      // Switching away from a dev server shuts down the one this Canvas started.
+      cleanupServer();
       setActiveServerPort(null);
 
       // Office files: OfficeView reads its own pages from the projection.
@@ -305,112 +270,62 @@ export default function ArtifactCanvas() {
         return;
       }
 
-      // 2. PDF Document handling: load raw bytes into a blob URL
-      if (kind === "pdf") {
-        if (!artifact.artifactPath) throw new Error("PDF artifact path is missing.");
-        const url = await readRaw();
+      const reader = subjectReader(subject);
+      const file = subjectPath(subject);
+      const readText = async () => {
+        if (!reader || !file) throw new Error("This preview has no file to read.");
+        const response = await reader.readFile(file);
+        if (response.content === undefined) throw new Error(`"${file}" has no readable text.`);
+        return response.content;
+      };
+
+      // 2. PDF and images: load raw bytes into a blob URL.
+      if (kind === "pdf" || kind === "image") {
+        if (!reader || !file) throw new Error(kind === "pdf" ? "PDF artifact path is missing." : "Image artifact path is missing.");
+        const url = await reader.readFileRaw(file);
         allocatedMediaUrl = url;
         if (generation !== request) {
           URL.revokeObjectURL(url);
           return;
         }
         setMediaUrl(url);
-        setRawText(`[PDF Document: ${artifact.artifactPath}]`);
+        setRawText(kind === "pdf" ? `[PDF Document: ${file}]` : `[Image: ${file}]`);
         return;
       }
 
-      // 3. Image handling: load raw bytes into an image blob URL
-      if (kind === "image") {
-        if (!artifact.artifactPath) throw new Error("Image artifact path is missing.");
-        const url = await readRaw();
-        allocatedMediaUrl = url;
-        if (generation !== request) {
-          URL.revokeObjectURL(url);
-          return;
-        }
-        setMediaUrl(url);
-        setRawText(`[Image: ${artifact.artifactPath}]`);
-        return;
-      }
-
-      // 4. Source / Text-only document handling
+      // 3. Delimited data.
       if (kind === "table") {
-        if (!artifact.artifactPath) throw new Error("Data artifact path is missing.");
-        const file = await readText();
-        if (file.content === undefined) throw new Error("Data file content is unavailable.");
+        const content = await readText();
         if (generation !== request) return;
-        setRawText(file.content);
+        setRawText(content);
         try {
-          setTablePreview(parseDelimitedPreview(file.content, artifact.artifactPath.toLowerCase().endsWith(".tsv") ? "\t" : ","));
+          setTablePreview(parseDelimitedPreview(content, file.toLowerCase().endsWith(".tsv") ? "\t" : ","));
         } catch (cause) {
           setPreviewWarning(cause instanceof Error ? cause.message : String(cause));
         }
         return;
       }
 
-      // 5. Source / Text-only document handling
+      // 4. Source text.
       if (kind === "code") {
-        let text = !artifact.candidateId && artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
-        if (artifact.artifactPath) {
-          try {
-            const fileRes = await readText();
-            if (fileRes.content !== undefined) text = fileRes.content;
-          } catch (error) {
-            if (artifact.candidateId) throw error;
-            // Keep inline content if disk file was not found
-          }
-        }
-        if (text === undefined) {
-          throw new Error(
-            artifact.artifactPath
-              ? `Document "${artifact.artifactPath}" has not been created on disk yet.`
-              : "Document content is unavailable."
-          );
-        }
+        const text = await readText();
         if (generation !== request) return;
         setRawText(text);
         setViewMode("source");
         return;
       }
 
-      // 6. Static / HTML preview handling
-      let content = !artifact.candidateId && artifact.html && artifact.html.trim().length > 0 ? artifact.html : undefined;
-      if (artifact.artifactPath) {
-        try {
-          const fileRes = await readText();
-          if (fileRes.content !== undefined) {
-            content = fileRes.content;
-          }
-        } catch (error) {
-          if (artifact.candidateId) throw error;
-          // Keep inline content if disk read fails (e.g. file referenced before save)
-        }
-      }
-
-      if (content === undefined) {
-        throw new Error(
-          artifact.artifactPath
-            ? `File "${artifact.artifactPath}" has not been created on disk yet.`
-            : "Preview content is unavailable."
-        );
-      }
-
+      // 5. HTML: the conversation's own markup, or a file read through its route.
+      const content = subject.kind === "inline" ? subject.html : await readText();
       let prepared: string;
-      try {
-        prepared = artifact.artifactPath
-          ? await artifactPreviewHtml(
-              artifact.artifactPath,
-              content,
-              artifact.candidateId && artifact.sessionId
-                ? {
-                    readFile: (path) => api.readSandboxCandidateFile(artifact.sessionId!, artifact.candidateId!, path),
-                    readFileRaw: (path) => api.readSandboxCandidateFileRaw(artifact.sessionId!, artifact.candidateId!, path),
-                  }
-                : api,
-            )
-          : sandboxedSrcdoc(content);
-      } catch {
-        // If relative asset resolution fails, fall back to pure sandboxed srcdoc
+      if (file && reader) {
+        try {
+          prepared = await artifactPreviewHtml(file, content, reader);
+        } catch {
+          prepared = sandboxedSrcdoc(content);
+          if (generation === request) setPreviewWarning("Some files this page uses could not be loaded, so it may look incomplete.");
+        }
+      } else {
         prepared = sandboxedSrcdoc(content);
       }
 
@@ -429,10 +344,10 @@ export default function ArtifactCanvas() {
     }
   };
 
-  // Load content ONLY when the canvas artifact changes (decoupled from layout/mode changes)
+  // Load content ONLY when the canvas subject changes (decoupled from layout/mode changes)
   createEffect(() => {
-    const artifact = canvasArtifact();
-    if (!artifact) {
+    const subject = canvasSubject();
+    if (!subject) {
       setHtml("");
       setRawText("");
       setTablePreview(null);
@@ -449,25 +364,24 @@ export default function ArtifactCanvas() {
       closeTimeout = undefined;
     }
     setIsClosing(false);
-    void loadContent(artifact);
+    void loadContent(subject);
   });
 
   const reload = () => {
     setReloadKey((k) => k + 1);
-    const artifact = canvasArtifact();
-    if (artifact) void loadContent(artifact);
+    const subject = canvasSubject();
+    if (subject) void loadContent(subject);
   };
 
   const preparePreview = async () => {
-    const artifact = canvasArtifact();
-    const sessionId = artifact?.sessionId ?? activeId();
-    if (!artifact?.candidateId || !artifact.serverName || !sessionId) return;
+    const subject = canvasSubject();
+    if (subject?.kind !== "live_server" || !subject.candidateId) return;
     setLoading(true);
     setError(null);
     try {
-      await api.prepareLaunch(sessionId, artifact.serverName, artifact.candidateId);
+      await api.prepareLaunch(subject.sessionId, subject.serverName, subject.candidateId);
       setPreparationRequired(false);
-      await loadContent(artifact);
+      await loadContent(subject);
     } catch (error) {
       setError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -488,11 +402,6 @@ export default function ArtifactCanvas() {
   const popout = () => {
     if (activeServerPort()) {
       window.open(`http://127.0.0.1:${activeServerPort()}`, "_blank", "noopener,noreferrer");
-      return;
-    }
-    const currentArtifact = canvasArtifact();
-    if (currentArtifact?.serverUrl) {
-      window.open(currentArtifact.serverUrl, "_blank", "noopener,noreferrer");
       return;
     }
     if (mediaUrl()) {
@@ -540,23 +449,17 @@ export default function ArtifactCanvas() {
     onCleanup(() => document.removeEventListener("keydown", onKeyDown));
   });
 
-  const title = () =>
-    canvasArtifact()?.title || "Artifact Preview";
-  const path = () =>
-    canvasArtifact()?.artifactPath || "";
   const mode = () => canvasMode();
   const device = () => canvasDevice();
 
   const serverSrc = () => {
     const port = activeServerPort();
-    const base = port ? `http://127.0.0.1:${port}` : (canvasArtifact()?.serverUrl ?? "");
-    if (!base) return undefined;
-    const separator = base.includes("?") ? "&" : "?";
-    const artifact = canvasArtifact();
-    const candidatePath = artifact?.candidateId && artifact.artifactPath
-      ? `/${artifact.artifactPath.split("/").map(encodeURIComponent).join("/")}`
+    if (!port) return undefined;
+    const subject = canvasSubject();
+    const candidatePath = subject?.kind === "live_server" && subject.candidateId && subject.path
+      ? `/${subject.path.split("/").map(encodeURIComponent).join("/")}`
       : "";
-    return `${base}${candidatePath}${separator}_k=${reloadKey()}`;
+    return `http://127.0.0.1:${port}${candidatePath}?_k=${reloadKey()}`;
   };
   const sourceLines = () => rawText().split("\n");
   const selectedLine = (line: number) => {
@@ -576,15 +479,16 @@ export default function ArtifactCanvas() {
     }
   };
   const commentsForArtifact = () => candidateComments().filter((comment) => !comment.path || comment.path === path());
-  const returnToReview = (candidateId?: string) => {
-    const artifact = canvasArtifact();
-    const executionId = artifact?.executionId;
-    if (!executionId) return;
+  const returnToReview = (candidate?: string) => {
+    const run = executionId();
+    if (!run) return;
+    const session = ownerSessionId();
+    const version = candidate ?? candidateId();
     closeArtifactCanvas();
-    openCandidateReview(executionId, artifact?.sessionId, candidateId ?? artifact?.candidateId);
+    openCandidateReview(run, session, version);
   };
   const returnToConversation = () => {
-    const sessionId = canvasArtifact()?.sessionId;
+    const sessionId = ownerSessionId();
     closeArtifactCanvas();
     if (sessionId && sessionId !== activeId()) void activate(sessionId);
   };
@@ -620,19 +524,19 @@ export default function ArtifactCanvas() {
         <header class="artifact-canvas-header" data-titlebar>
           <div class="artifact-canvas-title-group">
             <span class="artifact-canvas-badge">
-              {canvasArtifact()?.candidateId ? `Draft preview${candidateVersion() ? ` · Version ${candidateVersion()}` : ""}` : displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Live preview" : displayType() === "office" ? "Document" : "Preview"}
+              {draft() ? `Draft preview${candidateVersion() ? ` · Version ${candidateVersion()}` : ""}` : displayType() === "pdf" ? "PDF" : displayType() === "image" ? "Image" : displayType() === "table" ? "Data" : displayType() === "server" ? "Live preview" : displayType() === "office" ? "Document" : "Preview"}
             </span>
             <strong class="artifact-canvas-title">{title()}</strong>
             <Show when={path() && technicalDetails()}>
               <span class="artifact-canvas-path">{path()}</span>
             </Show>
-            <Show when={canvasArtifact()?.resultId}>{(resultId) =>
+            <Show when={canvasSubject()?.resultId}>{(resultId) =>
               <button type="button" class="artifact-canvas-result" title={resultId()} onClick={returnToConversation}>Back to the answer</button>
             }</Show>
           </div>
 
           <div class="artifact-canvas-controls">
-            <Show when={displayType() === "pdf" && canvasArtifact()?.artifactPath}>
+            <Show when={displayType() === "pdf" && path()}>
               <div class="artifact-canvas-segmented">
                 <button type="button" class="artifact-canvas-seg-btn" classList={{ active: !pdfText() }} onClick={() => setPdfText(false)} title="View the pages">Pages</button>
                 <button type="button" class="artifact-canvas-seg-btn" classList={{ active: pdfText() }} onClick={() => setPdfText(true)} title="Read, comment on and edit the text">Text</button>
@@ -712,7 +616,7 @@ export default function ArtifactCanvas() {
             <Show when={displayType() === "html" || displayType() === "server"}>
               <button type="button" class="artifact-canvas-btn" onClick={popout} title="Open in new window" aria-label="Open in new window"><Icon name="preview" size={14} /></button>
             </Show>
-            <Show when={canvasArtifact()?.candidateId && canvasArtifact()?.executionId}>
+            <Show when={candidateId() && executionId()}>
               <button type="button" class="artifact-canvas-btn" onClick={() => returnToReview()} title="Back to review">
                 <Icon name="diff" size={14} /> Review changes
               </button>
@@ -777,16 +681,16 @@ export default function ArtifactCanvas() {
                   </div>
                 </div>
               }</Show>
-              <Show when={(displayType() === "office" || (displayType() === "pdf" && pdfText())) && canvasArtifact()}>{(artifact) =>
+              <Show when={(displayType() === "office" || (displayType() === "pdf" && pdfText())) && canvasSubject()}>{(subject) =>
                 <OfficeWorkspacePane
                   hideHeader
-                  source={{ path: artifact().artifactPath, sessionId: artifact().sessionId, candidateId: artifact().candidateId, executionId: artifact().executionId }}
+                  source={{ path: path(), sessionId: ownerSessionId(), candidateId: candidateId(), executionId: executionId() }}
                   fileName={title()}
-                  focus={artifact().anchor}
+                  focus={subject().anchor}
                   canEdit={true}
-                  canStart={!!artifact().sessionId && !!artifact().candidateId}
-                  collaborators={coworkingPresence(artifact().sessionId ?? activeId())}
-                  onReview={artifact().executionId ? returnToReview : undefined}
+                  canStart={!!ownerSessionId() && !!candidateId()}
+                  collaborators={coworkingPresence(ownerSessionId() ?? activeId())}
+                  onReview={executionId() ? returnToReview : undefined}
                 />
               }</Show>
               {/* Image Preview */}
@@ -804,7 +708,7 @@ export default function ArtifactCanvas() {
               <Show when={displayType() === "pdf" && mediaUrl() && !pdfText()}>
                 <iframe
                   class="artifact-canvas-pdf-frame"
-                  src={pdfAnchorPage(canvasArtifact()?.anchor) ? `${mediaUrl()}#page=${pdfAnchorPage(canvasArtifact()?.anchor)}` : mediaUrl()!}
+                  src={pdfAnchorPage(canvasSubject()?.anchor) ? `${mediaUrl()}#page=${pdfAnchorPage(canvasSubject()?.anchor)}` : mediaUrl()!}
                   title={title()}
                 />
               </Show>
@@ -825,7 +729,7 @@ export default function ArtifactCanvas() {
                       src={serverSrc()}
                       srcdoc={serverSrc() ? undefined : html()}
                       title={title()}
-                      sandbox={previewSandbox(activeServerPort() || canvasArtifact()?.serverUrl ? "live_server" : "static")}
+                      sandbox={previewSandbox(activeServerPort() ? "live_server" : "static")}
                     />
                   </div>
                 </div>
@@ -868,7 +772,7 @@ export default function ArtifactCanvas() {
             <span>Tell the Agent what to change in this draft.</span>
           </div>
           <div class="artifact-canvas-feedback-compose">
-            <Show when={canvasArtifact()?.candidateId && viewMode() === "source"}>
+            <Show when={draft() && viewMode() === "source"}>
               <div class="artifact-canvas-line-anchor" aria-label="Comment location">
                 <label for="canvas-comment-line-start">Line</label>
                 <input id="canvas-comment-line-start" type="number" min="1" inputmode="numeric" value={commentLineStart()} onInput={(event) => setCommentLineStart(event.currentTarget.value)} placeholder="Start" />
@@ -915,14 +819,14 @@ export default function ArtifactCanvas() {
           <span class="artifact-canvas-security">
             <Icon name="shield" size={12} />
             <Show
-              when={activeServerPort() || canvasArtifact()?.serverUrl}
+              when={activeServerPort()}
               fallback={
                 <>
                   Safe preview, offline
                 </>
               }
             >
-              Live preview: {activeServerPort() ? `http://127.0.0.1:${activeServerPort()}` : canvasArtifact()?.serverUrl}
+              Live preview: {`http://127.0.0.1:${activeServerPort()}`}
             </Show>
           </span>
         </footer></Show>

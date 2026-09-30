@@ -21,6 +21,17 @@ live model created a valid deliverable, that every renderer schema was exercised
 or that Tauri's installed binary has been updated. Production builds do not
 include this test entry point.
 
+# Canvas
+
+`canvas.html` mounts the real `ArtifactCanvas` over a stub server whose file
+routes (workspace, run, saved version) each answer with their own marker and
+log every request. Run `window.runChecks()` as above. It shows that each kind of
+subject is read through exactly its own route, an unreadable file is an error
+and never a stand-in page, a bare path opens a run's file only on an identical
+path from exactly one run, and a preview frame has the client-owned sandbox
+and no-network policy. The pure rules are in `canvas-subject.mjs` and
+`preview-isolation.mjs` (`node tests/<file>`).
+
 # Result card
 
 `result-card.html` renders the real timeline over file results shaped like
