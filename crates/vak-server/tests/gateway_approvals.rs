@@ -464,6 +464,8 @@ async fn default_policy_denies_without_forwarding() {
                 ),
                 text("skipping that step"),
                 text("skipping that step"),
+                text("skipping that step"),
+                text("There is no pending action."),
             ])),
         }),
         &config_with_modes("", "read-only", "ask"), // approvals unset => deny
@@ -471,17 +473,17 @@ async fn default_policy_denies_without_forwarding() {
     .await;
     let client = client_with(&gw.token);
 
-    // No approver configured: forward_mode() must be false even if someone
-    // sends verdict-shaped text to any chat.
-    let res = inbound(&client, &gw.base, "log", "ops", "yes", false).await;
-    let body: serde_json::Value = res.json().await.unwrap();
-    assert_ne!(body["state"], "approval_resolved");
-
     // The unattended turn completes via auto-deny; nothing was forwarded.
     let res = inbound(&client, &gw.base, "webhook", "ci", "go", true).await;
     assert_eq!(res.status(), 200);
     let body: serde_json::Value = res.json().await.unwrap();
     assert_eq!(body["text"], "skipping that step");
+
+    // No approver configured: a verdict-shaped message to another chat must
+    // remain ordinary conversation after the denial turn has settled.
+    let res = inbound(&client, &gw.base, "log", "ops", "yes", true).await;
+    let body: serde_json::Value = res.json().await.unwrap();
+    assert_ne!(body["state"], "approval_resolved");
     assert!(
         !deliveries(&gw.home).exists(),
         "deny mode must not announce anything"
