@@ -10,6 +10,9 @@ or Microsoft conversations. Brokered Agent reads cover selected Google and
 Microsoft folders and threads with per-message citations; channel access fails
 closed without an explicit share grant.
 
+Opening an Agent citation loads further pages of that same conversation, up to
+420 messages, to locate the cited item. Remaining pages can be loaded manually.
+
 The Agent-vault work area stores revisioned local drafts and shows exact-payload
 previews. Google and Microsoft support reviewed plain-text email sends and a
 limited timed-event create profile; Google also supports conditional update and

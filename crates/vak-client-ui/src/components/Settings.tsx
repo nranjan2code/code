@@ -36,6 +36,7 @@ import type { ConfigSnapshot, SessionSummary, TaskDef } from "../types";
 import * as api from "../api";
 import { overlappingMailCalendarEventIds } from "../mailCalendarConflicts.mjs";
 import { mailCalendarWatchFreshness } from "../mailCalendarRoutineStatus.mjs";
+import { loadConversationCitation } from "../mailCalendarThreadNavigation.mjs";
 import { MailCalendarAgenda } from "./MailCalendarAgenda";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
 import { watchConfig } from "../streamHub";
@@ -1565,18 +1566,30 @@ export default function Settings() {
       setMailCalendarBusy(false);
     }
   };
-  const openMailThread = async (accountId: string, threadId: string) => {
-    if (mailCalendarBusy()) return;
+  const openMailThread = async (accountId: string, threadId: string, targetMessageId?: string): Promise<boolean> => {
+    if (mailCalendarBusy()) return false;
     const requestedAgentId = activeAgentId();
     setMailCalendarBusy(true);
     setMailThreadPreview({ accountId, threadId, loading: true });
     try {
       const result = await api.previewMailCalendarThread(requestedAgentId, accountId, threadId);
-      if (requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
-      setMailThreadPreview({ accountId, threadId, loading: false, messages: result.messages, nextCursor: result.next_cursor });
+      if (requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return false;
+      const located = targetMessageId
+        ? await loadConversationCitation({ messages: result.messages, next_cursor: result.next_cursor }, targetMessageId, (cursor) =>
+          api.previewMailCalendarThread(requestedAgentId, accountId, threadId, cursor))
+        : { messages: result.messages, nextCursor: result.next_cursor, found: true };
+      if (requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return false;
+      setMailThreadPreview({ accountId, threadId, loading: false, messages: located.messages, nextCursor: located.nextCursor });
+      if (!located.found) {
+        setNotice({ kind: "info", text: located.nextCursor
+          ? "The cited message is beyond the first 420 messages. Use Load more messages to continue through this conversation."
+          : "The cited message was not found in the available pages of this conversation." });
+      }
+      return located.found;
     } catch (error) {
       setMailThreadPreview(null);
       setNotice({ kind: "error", text: `Could not open this conversation: ${error instanceof Error ? error.message : String(error)}` });
+      return false;
     } finally {
       setMailCalendarBusy(false);
     }
@@ -1602,7 +1615,8 @@ export default function Settings() {
       kind: "mail",
       messages: [{ provider_id: citation.messageId, thread_id: citation.threadId, from: null, to: null, cc: null, subject: "Cited message", received_at: null, preview: "The conversation is loaded from the connected provider for source verification.", body_text: null, body_status: "unavailable", has_attachments: false }],
     });
-    void openMailThread(citation.accountId, citation.threadId).then(() => {
+    void openMailThread(citation.accountId, citation.threadId, citation.messageId).then((found) => {
+      if (!found) return;
       queueMicrotask(() => {
         const message = document.querySelector<HTMLElement>(`[data-mail-message-id="${CSS.escape(citation.messageId)}"]`);
         message?.scrollIntoView({ behavior: "smooth", block: "center" });

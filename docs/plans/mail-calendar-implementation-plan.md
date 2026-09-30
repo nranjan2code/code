@@ -289,9 +289,10 @@ and settled presentation rendering recognize only that token form. Selecting
 it opens the mail/calendar Settings page, verifies the cited account belongs
 to the currently selected Agent, re-fetches the thread through the owner-only
 provider preview API, and scrolls to the cited message when it is in the
-loaded page. IDs stay opaque; the UI never constructs provider URLs. Apple
-thread citations remain unavailable. Full thread workspace and pagination to
-a cited message beyond the first page remain open.
+loaded page. IDs stay opaque; the UI never constructs provider URLs. Citation
+navigation now follows up to 20 more pages within that conversation; beyond
+that cap, the person can continue with the manual Load more control. Apple
+thread citations and the full thread workspace remain open.
 
 ## Stage 2 — working area and local candidates (in progress)
 
@@ -620,7 +621,23 @@ restart persistence, settlement, interruption, and deletion. This metadata
 cleanup does not erase content already copied into append-only sessions; M7
 remains the deletion gate.
 
+**Implemented increment (2026-10-01):** opening a cited message now follows
+the provider's continuation cursor within the same selected account and
+conversation until the target is loaded, the provider is exhausted, or 20
+additional pages have been fetched. Repeated cursors are rejected, duplicate
+message IDs are collapsed, and any remaining cursor stays available through
+the manual Load more action. The page cap bounds automatic reads at 420
+messages. Unit tests cover first-page targets, later-page targets, exhausted
+conversations, repeated cursors, and the ceiling; signed-in browser acceptance
+remains open.
+
 ## Progress log
+
+- 2026-10-01: Conversation citations now follow at most 20 additional
+  same-thread pages (420 messages total) to locate a cited message. Provider
+  cursors are tracked to stop cycles, duplicate message IDs are collapsed, and
+  further pages remain manually loadable. Five focused client tests pass;
+  browser verification requires an unlocked local session.
 
 - 2026-10-01: Added owner-visible routine run history backed by bounded,
   content-free records in the encrypted Agent vault. The server verifies Agent
