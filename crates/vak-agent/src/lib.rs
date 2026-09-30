@@ -4265,8 +4265,11 @@ impl Agent {
         if matches!(reason, BlockReason::UserCompletionRequired) {
             return Some((reason.message(), false));
         }
+        // The cap limits recovery nudges, not the user's turn. Once the
+        // bounded recovery budget is spent, let the model's next response
+        // stand rather than failing the whole run on the same unmet check.
         if *blocks_left == 0 {
-            return Some((reason.message(), true));
+            return None;
         }
         *blocks_left -= 1;
         Some((reason.message(), false))

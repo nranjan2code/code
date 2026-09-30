@@ -389,7 +389,7 @@ tolerate topic changes:
   live data, "the current directory", "refactor the current parser" and
   "what are you holding right now" are not; `live` counts only in its
   *current* sense, never as the verb "reside" ("we live in the city"),
-  resolver version 5 — and no call that observes current state succeeded in
+  resolver version 6 — and no call that observes current state succeeded in
   the run): the answer or card can only repeat an earlier turn's figure. An
   observation is any call whose capability declares that it reads the world
   as it is now — a retrieval, and equally reading a file, listing a

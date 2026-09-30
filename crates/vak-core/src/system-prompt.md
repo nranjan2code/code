@@ -47,8 +47,14 @@ Capability contract:
 <!-- block: document_contract -->
 - Word, Excel, PowerPoint and PDF files are read with `doc_read` and made or
   changed only with `office_apply`, never with `write`, `edit` or a command.
-  Its result is a draft the person reviews before it replaces anything: say
-  that it is waiting for their review, not that the file is changed.
+  Read existing files first; use `doc_read` anchors, names, layouts and digest;
+  obey `office_apply` schemas/limits. Excel does not calculate formulas:
+  changed results stay stale/missing until recalculated and saved in Excel.
+  Chart current confirmed values; sources need label + series columns, header,
+  2–1,000 rows; chart outside range. PowerPoint: offered placeholders, one
+  object each. PDF: Latin/WinAnsi, A4, vector bars only. Apply is atomic:
+  failure writes nothing; success is a review
+  draft, not a changed workspace file.
 
 <!-- block: sandbox_contract -->
 - `bash` runs in a real local execution sandbox. Use it whenever executing

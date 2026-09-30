@@ -67,6 +67,7 @@ mod heartbeat;
 mod inbox;
 mod office_workspace;
 mod operations;
+mod preview;
 mod projection;
 mod rate_limit;
 mod service_control;
@@ -252,6 +253,8 @@ pub struct AppState {
     pub(crate) voice_active: Arc<std::sync::atomic::AtomicUsize>,
     /// Per-minute budget shared by every paid voice request.
     pub(crate) voice_requests: Arc<voice::RequestWindow>,
+    /// Open preview origins (docs/design/66, §3.2).
+    pub(crate) previews: preview::PreviewHub,
 }
 
 #[derive(Clone)]
@@ -309,6 +312,7 @@ impl AppState {
             active_core: Arc::new(Mutex::new(None)),
             voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             voice_requests: Arc::new(voice::RequestWindow::new()),
+            previews: preview::PreviewHub::default(),
         }
     }
 
@@ -966,7 +970,6 @@ fn router_with_state(state: AppState) -> Router {
                 inbox::UPLOAD_MAX_BYTES,
             )),
         )
-        .route("/fs/preview/{*path}", get(preview_file))
         .route("/sandbox/records", get(list_sandbox_records))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
@@ -1094,7 +1097,8 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
-        .route("/canvas/preview", post(canvas_preview))
+        .route("/previews", post(create_preview))
+        .route("/previews/{id}", delete(close_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
         .route("/commitments", get(list_commitments))
@@ -10976,35 +10980,6 @@ async fn read_file_raw(
     (headers, Body::from(bytes)).into_response()
 }
 
-/// Serve a workspace-confined artifact through a stable path so compound HTML
-/// previews can resolve relative stylesheets, scripts, images, and imports.
-/// The response is still sandboxed by CSP; it is never a general static-file
-/// server.
-async fn preview_file(
-    State(state): State<AppState>,
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> axum::response::Response {
-    use axum::body::Body;
-    use axum::response::IntoResponse;
-    let Some(path) = resolve_confined_file(&state, &path) else {
-        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
-    };
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(_) => return (StatusCode::NOT_FOUND, "file not found").into_response(),
-    };
-    let headers = [
-        (axum::http::header::CONTENT_TYPE, raw_mime_for(&path)),
-        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        (axum::http::header::CACHE_CONTROL, "no-store"),
-        (
-            axum::http::header::CONTENT_SECURITY_POLICY,
-            "sandbox allow-scripts; default-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'self'",
-        ),
-    ];
-    (headers, Body::from(bytes)).into_response()
-}
-
 fn raw_mime_for(path: &std::path::Path) -> &'static str {
     match path
         .extension()
@@ -11024,6 +10999,17 @@ fn raw_mime_for(path: &std::path::Path) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "pdf" => "application/pdf",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "txt" => "text/plain; charset=utf-8",
+        "csv" => "text/csv; charset=utf-8",
+        "xml" => "application/xml",
+        "map" => "application/json",
+        "wasm" => "application/wasm",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "ogg" => "audio/ogg",
@@ -16048,17 +16034,128 @@ async fn instantiate_agent_template(
     }
 }
 
+/// What a preview is opened on. The scope decides which route reads its
+/// files; nothing here names a path on disk.
 #[derive(serde::Deserialize)]
-struct CanvasPreviewRequest {
-    #[serde(default)]
-    title: Option<String>,
-    content: String,
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PreviewRequest {
+    Candidate {
+        session_id: String,
+        candidate_id: String,
+        path: String,
+    },
+    Execution {
+        session_id: String,
+        execution_id: String,
+        path: String,
+    },
+    Workspace {
+        path: String,
+    },
 }
 
-async fn canvas_preview(Json(body): Json<CanvasPreviewRequest>) -> axum::response::Response {
-    let title = body.title.as_deref().unwrap_or("Outcome Canvas");
-    let html = vak_presentation::transcode_to_html(title, &body.content);
-    html_response(html)
+/// Opens a preview origin for a file and everything it loads (docs/design/66,
+/// §3.2). The reply carries the URL to frame; the preview lives until it is
+/// closed. Only a loopback request can be answered: the preview listens on a
+/// loopback port, which a browser on another machine cannot reach.
+async fn create_preview(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PreviewRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !host_is_loopback(host) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "Previews of several files need Vakyartha running on this computer.",
+                "reason": "not_local",
+            })),
+        )
+            .into_response();
+    }
+    let (scope, path) = match body {
+        PreviewRequest::Candidate {
+            session_id,
+            candidate_id,
+            path,
+        } => (
+            preview::Scope::Candidate {
+                session_id,
+                candidate_id,
+            },
+            path,
+        ),
+        PreviewRequest::Execution {
+            session_id,
+            execution_id,
+            path,
+        } => (
+            preview::Scope::Execution {
+                session_id,
+                execution_id,
+            },
+            path,
+        ),
+        PreviewRequest::Workspace { path } => {
+            let clean = path.trim().trim_start_matches("./").to_string();
+            let directory = clean
+                .rsplit_once('/')
+                .map(|(directory, _)| directory.to_string())
+                .unwrap_or_default();
+            (preview::Scope::Workspace { directory }, clean)
+        }
+    };
+    let opened = match state.previews.open(state.clone(), scope, &path).await {
+        Ok(opened) => opened,
+        Err(preview::OpenError::NotFound) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "That file is not available to preview." })),
+            )
+                .into_response();
+        }
+        Err(preview::OpenError::Unavailable(error)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    // The page is framed from a different loopback name than the app's, so it
+    // shares no cookies or storage with it.
+    let name = if strip_port(host.unwrap_or("")) == "localhost" {
+        "127.0.0.1"
+    } else {
+        "localhost"
+    };
+    let origin = format!("http://{name}:{}", opened.port);
+    let encoded: Vec<String> = path
+        .trim_start_matches("./")
+        .split('/')
+        .map(|part| percent_encoding::utf8_percent_encode(part, PREVIEW_PATH_SEGMENT).to_string())
+        .collect();
+    Json(serde_json::json!({
+        "id": opened.id,
+        "origin": origin,
+        "url": format!("{origin}/{}/{}", opened.token, encoded.join("/")),
+    }))
+    .into_response()
+}
+
+const PREVIEW_PATH_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+async fn close_preview(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    state.previews.close(&id);
+    StatusCode::NO_CONTENT
 }
 
 async fn put_agents(

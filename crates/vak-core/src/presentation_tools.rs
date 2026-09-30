@@ -270,7 +270,8 @@ fn ui_preview_payload_schema() -> Value {
             "title": {"type": "string"},
             "artifact_path": {"type": "string"},
             "html": {"type": "string"}
-        }
+        },
+        "additionalProperties": false
     })
 }
 
@@ -558,6 +559,15 @@ fn normalize_payload(semantic_type: &str, mut payload: Value) -> Value {
                 payload["passed"] = Value::from(count_where("passed"));
                 payload["failed"] = Value::from(count_where("failed"));
                 payload["skipped"] = Value::from(count_where("skipped"));
+            }
+        }
+        // A preview's isolation is the client's decision, never the card's:
+        // a model-supplied `sandbox` or `connect_src` would widen the frame
+        // that runs its own markup.
+        "ui.preview" => {
+            if let Some(map) = payload.as_object_mut() {
+                map.remove("sandbox");
+                map.remove("connect_src");
             }
         }
         _ => {}
@@ -1465,6 +1475,26 @@ mod tests {
                 "{semantic_type}: {digest}"
             );
         }
+    }
+
+    #[test]
+    fn ui_preview_never_carries_isolation_settings_from_the_model() {
+        let payload = normalize_payload(
+            "ui.preview",
+            serde_json::json!({
+                "title": "T",
+                "html": "<p>x</p>",
+                "sandbox": "allow-scripts allow-same-origin",
+                "connect_src": "https://*"
+            }),
+        );
+        assert_eq!(
+            payload,
+            serde_json::json!({"title": "T", "html": "<p>x</p>"})
+        );
+        let schema = ui_preview_payload_schema();
+        assert_eq!(schema["additionalProperties"], serde_json::json!(false));
+        assert!(schema["properties"].get("sandbox").is_none());
     }
 
     #[test]

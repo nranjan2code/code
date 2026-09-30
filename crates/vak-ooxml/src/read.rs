@@ -608,6 +608,7 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
     let mut current: Option<ChartSeries> = None;
     let mut field: Option<&'static str> = None;
     let mut in_value = false;
+    let mut value_text = String::new();
     let mut point_index: Option<usize> = None;
     let mut title_depth = None;
     let mut title = String::new();
@@ -654,34 +655,14 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                     point_index = element.attr("idx").and_then(|value| value.parse().ok());
                 } else if name == "v" {
                     in_value = true;
+                    value_text.clear();
                 }
                 stack.push(name);
             }
             XmlEvent::Text(text) if in_value => {
-                if let Some(series) = current.as_mut() {
-                    match field {
-                        Some("name") if series.name.is_empty() => series.name.push_str(&text),
-                        Some("category") => {
-                            let index = point_index.unwrap_or(series.next_category);
-                            if index < MAX_CHART_POINTS {
-                                series.categories.insert(index, text);
-                                series.next_category = index.saturating_add(1);
-                            } else {
-                                series.cache_truncated = true;
-                            }
-                        }
-                        Some("value") => {
-                            let index = point_index.unwrap_or(series.next_value);
-                            if index < MAX_CHART_POINTS {
-                                series.values.insert(index, text);
-                                series.next_value = index.saturating_add(1);
-                            } else {
-                                series.cache_truncated = true;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
+                // Entity references and CDATA split one <v> into multiple
+                // text events. Commit the whole value at its closing tag.
+                value_text.push_str(&text);
             }
             XmlEvent::Text(text)
                 if stack.last().is_some_and(|name| name == "t") && title_depth.is_some() =>
@@ -692,6 +673,34 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                 let local = xml::local_name(&name);
                 if local == "v" {
                     in_value = false;
+                    if let Some(series) = current.as_mut() {
+                        match field {
+                            Some("name") if series.name.is_empty() => {
+                                series.name = std::mem::take(&mut value_text);
+                            }
+                            Some("category") => {
+                                let index = point_index.unwrap_or(series.next_category);
+                                if index < MAX_CHART_POINTS {
+                                    series
+                                        .categories
+                                        .insert(index, std::mem::take(&mut value_text));
+                                    series.next_category = index.saturating_add(1);
+                                } else {
+                                    series.cache_truncated = true;
+                                }
+                            }
+                            Some("value") => {
+                                let index = point_index.unwrap_or(series.next_value);
+                                if index < MAX_CHART_POINTS {
+                                    series.values.insert(index, std::mem::take(&mut value_text));
+                                    series.next_value = index.saturating_add(1);
+                                } else {
+                                    series.cache_truncated = true;
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
                 }
                 if local == "pt" {
                     point_index = None;

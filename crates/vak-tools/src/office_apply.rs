@@ -32,12 +32,11 @@ use crate::{ResourceClaims, Tool, ToolContext, ToolOutput};
 /// repeating per-format detail here made this one tool about four times the
 /// size of the whole system prompt.
 static DESCRIPTION: LazyLock<String> = LazyLock::new(|| {
-    "Create, or propose edits to, a Word, Excel, PowerPoint or PDF file with typed ops. The result is a draft the person reviews and accepts; the workspace does not change until then. \
-     New file: give path (a new .docx, .xlsx, .pptx or .pdf name) and ops, and leave out source and base_digest. \
-     From a template in the workspace: source is the template, base_digest its sha256, path the new file. \
-     To edit: read the file with doc_read first, pass the sha256 it printed as base_digest, and name anchors from that read (p@12, Budget!B4, slide:256/shape:3, page:3/line:12). To keep editing a draft, pass the draft as source with its sha256. \
-     Word edits to an existing file become tracked changes; a new file is written clean. Text is plain: Markdown is not interpreted, so headings and lists come from styles. Excel calculates formulas when the file is opened. Images need descriptive alt_text and at most 1 MiB. Macros are never added or run. \
-     A Visio drawing cannot be created or edited: say so, and never build one with a command or script. Only Latin text can be written into a PDF: when the text is in another script (Devanagari, Arabic, CJK, …), say so before starting and offer a Word document instead."
+    "Create or edit Word, Excel, PowerPoint and PDF files with typed ops; the result is a draft for human Review, not a changed workspace file. Read each op's schema for its format, required fields, examples and limits. \
+     New file: give a new .docx, .xlsx, .pptx or .pdf name and ops; omit source and base_digest. A workspace template: source is the template, base_digest its sha256, path the new file. Existing file: read with doc_read first; use its exact anchors/names and sha256 (the printed 16-character prefix is enough). To continue a successful draft, use its returned draft path as source and its digest. \
+     Ops run in order and the call is atomic: any op or read-back failure means nothing was written. Retry from the same source or blank with corrected ops; never invent a source/digest for a failed draft. Use source-read anchors for existing paragraphs, shapes and PDF lines/pages; do not guess anchors minted by earlier ops. Create/rename sheets before referencing their final names. Claim a draft only after a successful result returns its path. \
+     Word text is plain; use styles for headings/lists. Vak does not calculate Excel formulas; use numeric values for chart sources in new workbooks, not newly written formulas. PDF writing uses Helvetica and Latin/WinAnsi text: offer Word before starting if the text needs Devanagari, Arabic, CJK or other unsupported characters. Images require base64 PNG/JPEG bytes, descriptive alt_text and at most 1 MiB. Macros are never added or run. \
+     Visio is read-only. Legacy binary Office/Visio, .xlsb, OpenDocument and encrypted files are unsupported. Do not substitute a command/script or another file format without explaining the limitation to the person."
         .to_string()
 });
 
@@ -67,11 +66,11 @@ impl Tool for OfficeApplyTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "The workspace file the draft is for (relative to the workspace): an existing file to edit, or a new name to create. May equal source."
+                    "description": "The workspace file the draft is for (relative to the workspace): an existing file to edit, or a new name to create. May equal source; path cannot be inside .vak (an earlier draft belongs in source)."
                 },
                 "source": {
                     "type": "string",
-                    "description": "File to start from: the file being edited, a template, or an earlier draft. Defaults to path. Leave out, with base_digest, to create path from scratch."
+                    "description": "File to start from, with the same document format as path: the file being edited, a template, or an earlier draft. Defaults to path. Leave out, with base_digest, to create path from scratch."
                 },
                 "base_digest": {
                     "type": "string",
@@ -80,11 +79,30 @@ impl Tool for OfficeApplyTool {
                 "ops": {
                     "type": "array",
                     "minItems": 1,
-                    "description": "Ops applied in order. Each names its `op` and only that op's fields. Anchors come from doc_read of the source: paragraphs p:1A2B3C4D or p@12, cells Budget!B4, slides slide:256, shapes slide:256/shape:3, placeholders slide:256/placeholder:title.",
+                    "description": "Ops applied in order; any failure writes nothing. Open XML Review offers individual choices for up to 100 ops per draft; PDF allows at most 200 ops per call. Each names its `op` and only that op's fields. Anchors come from doc_read of the source: paragraphs p:1A2B3C4D or p@12, cells Budget!B4, slides slide:256, shapes slide:256/shape:3, placeholders slide:256/placeholder:title.",
                     "items": { "oneOf": op_schemas() }
                 }
             },
-            "required": ["path", "ops"]
+            "required": ["path", "ops"],
+            "examples": [
+                {"path":"report.docx","ops":[
+                    {"op":"add_paragraph","text":"Demonstration report","style":"Title"},
+                    {"op":"add_table","rows":[["Region","Value"],["North",120],["South",95.5]]}
+                ]},
+                {"path":"dashboard.xlsx","ops":[
+                    {"op":"rename_sheet","sheet":"Sheet1","name":"Market Data"},
+                    {"op":"append_rows","sheet":"Market Data","rows":[["Index","Change"],["Demo A",1.25],["Demo B",-0.42]]},
+                    {"op":"add_excel_table","sheet":"Market Data","range":"A1:B3"},
+                    {"op":"add_chart","sheet":"Market Data","range":"A1:B3","chart_type":"bar","title":"Demonstration change","cell":"D2"}
+                ]},
+                {"path":"slides.pptx","ops":[
+                    {"op":"add_slide_from_layout","layout":"Title and Content","placeholders":{"title":"Demonstration chart"},"charts":{"body":{"title":"Value","chart_type":"bar","categories":["North","South"],"values":[120,95.5]}}}
+                ]},
+                {"path":"report.pdf","ops":[
+                    {"op":"add_paragraph","text":"Demonstration report","style":"Title"},
+                    {"op":"add_chart","title":"Value","categories":["North","South"],"values":[120,95.5]}
+                ]}
+            ]
         })
     }
 
@@ -394,13 +412,35 @@ fn op_schemas() -> Value {
         }
         let mut all_required = vec!["op"];
         all_required.extend_from_slice(required);
-        serde_json::json!({
+        let mut schema = serde_json::json!({
             "type": "object",
             "description": description,
             "properties": properties,
             "required": all_required,
             "additionalProperties": false
-        })
+        });
+        if name == "add_chart" {
+            // The chart variants have different required fields. Keep them
+            // explicit so incomplete or mixed PDF/Excel calls fail at admission.
+            let variants = [
+                (
+                    vec!["op", "title", "sheet", "range", "chart_type", "cell"],
+                    vec!["op", "title", "sheet", "range", "chart_type"],
+                ),
+                (
+                    vec!["op", "title", "categories", "values", "after"],
+                    vec!["op", "title", "categories", "values"],
+                ),
+            ];
+            schema["oneOf"] = Value::Array(variants.into_iter().map(|(allowed, required)| {
+                let properties = allowed.into_iter().map(|key| {
+                    let field = if key == "op" { serde_json::json!({"type":"string"}) } else { schema["properties"][key].clone() };
+                    (key.to_string(), field)
+                }).collect::<serde_json::Map<String, Value>>();
+                serde_json::json!({"type":"object","properties":properties,"required":required,"additionalProperties":false})
+            }).collect());
+        }
+        schema
     }
     let anchor = |what: &str| serde_json::json!({ "type": "string", "description": what });
     let text = serde_json::json!({ "type": "string" });
@@ -414,31 +454,31 @@ fn op_schemas() -> Value {
             "replace_paragraph_text",
             serde_json::json!({ "anchor": anchor("paragraph anchor, e.g. p@12; in a PDF, a line, e.g. page:3/line:12"), "text": text }),
             &["anchor", "text"],
-            "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are. PDF: the line's whole new text, drawn in Helvetica where the old text was"
+            "Word: give the paragraph's whole new text, as it should read. Only the words that differ become tracked changes; its formatting, links, footnote marks and fields stay as they are. PDF: replace one visible page line using Helvetica at the old position/size; it may not match the source font, and lines inside form XObjects cannot be replaced. Only WinAnsi/Latin text can be written."
         ),
         op(
             "add_paragraph",
             serde_json::json!({ "text": text, "style": { "type": "string", "description": format!("style id or name; a new document offers {}", vak_ooxml::blank::DOCUMENT_STYLES.join(", ")) }, "after": anchor("paragraph anchor to add after (in a PDF, a page, e.g. page:3); omit to add at the end of the document") }),
             &["text"],
-            "Word: add a paragraph, at the end or after one. A List Number paragraph continues the list just above it, else starts at 1. PDF: set on new pages, after a page or at the end"
+            "Word: add plain text using a source style; Markdown is not interpreted. A List Number paragraph continues the list just above it, else starts at 1. PDF: add Latin/WinAnsi text in Helvetica on new A4 pages after a source page or at the end; it does not reflow existing page content."
         ),
         op(
             "add_table",
             serde_json::json!({ "rows": { "type": "array", "items": { "type": "array" }, "description": "rows of cell text, the first row being the header, e.g. [[\"Region\", \"Sales\"], [\"North\", \"120\"]]" }, "after": anchor("paragraph anchor to add after; omit to add at the end"), "header": { "type": "boolean", "description": "false when the first row is not a header row; default true" } }),
             &["rows"],
-            "Word: add a table spanning the page width"
+            "Word: add a rectangular table spanning the page width (up to 1,000 rows by 63 columns). Cell values are text, numbers or booleans, never null or objects. PDF: add a searchable table on new A4 page content; it may flow across pages. The first row is a header unless header is false."
         ),
         op(
             "add_image",
-            serde_json::json!({ "image": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false }, "after": anchor("paragraph anchor to add the inline image after; omit to add at the end") }),
+            serde_json::json!({ "image": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string", "description": "base64-encoded PNG/JPEG file bytes (no URL, path or data-URL prefix); decoded image at most 1 MiB, 10,000 pixels per side and 40 megapixels total" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048, "description": "required meaningful alternative text, at most 2,048 UTF-8 bytes" } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false }, "after": anchor("paragraph anchor to add the inline image after; omit to add at the end") }),
             &["image"],
-            "Word: add an inline PNG/JPEG with required alternative text. PDF: add a PNG/JPEG to a new page with a searchable alternative-text caption. Image pixels are not OCR-read by doc_read."
+            "Word: add an inline PNG/JPEG with required alternative text. PDF: add a PNG/JPEG to new page content with a searchable alternative-text caption. Only PNG/JPEG images up to 1 MiB are accepted. Image pixels are not OCR-read by doc_read."
         ),
         op(
             "add_chart",
-            serde_json::json!({ "title": text, "categories": { "type": "array", "items": { "type": "string" }, "description": "PDF only: 1–20 short labels" }, "values": { "type": "array", "items": { "type": "number" }, "description": "PDF only: one number per category" }, "sheet": { "type": "string", "description": "Excel only: sheet containing the source data" }, "range": { "type": "string", "description": "Excel only: two columns, a header row and 2–1,000 data rows" }, "chart_type": { "type": "string", "enum": ["bar", "line", "pie"], "description": "Excel only: native chart type" }, "cell": { "type": "string", "description": "Excel only: exact top-left anchor cell, e.g. D2, outside the source range and clear of images and other charts. Omit to place it below its data." }, "after": anchor("PDF only: page anchor, e.g. page:3; omit to add at the end") }),
+            serde_json::json!({ "title": text, "categories": { "type": "array", "items": { "type": "string" }, "description": "PDF only: required with values; 1–20 non-empty short labels" }, "values": { "type": "array", "items": { "type": "number" }, "description": "PDF only: same number of values as categories; finite numbers from -1e12 to 1e12" }, "sheet": { "type": "string", "description": "Excel only: required with range and chart_type; exact existing worksheet name containing the source data, not a table name" }, "range": { "type": "string", "description": "Excel only: an A1 range without the sheet name, e.g. A1:B4; exactly two columns (category labels, then one numeric series), a header row and 2–1,000 data rows. Values must read as numbers; formulas added or changed in this draft have stale/missing results and cannot be charted until recalculated and saved in Excel." }, "chart_type": { "type": "string", "enum": ["bar", "line", "pie"], "description": "Excel only: bar, line or pie; one numeric series per chart" }, "cell": { "type": "string", "description": "Excel only: exact top-left anchor cell, e.g. D2, outside the entire source range and clear of other drawings. Omit to place below the range." }, "after": anchor("PDF only: page anchor, e.g. page:3; omit to add at the end") }),
             &["title"],
-            "PDF: categories and values make a vector bar chart with a searchable table. Excel: sheet, range and chart_type make a native chart"
+            "PDF: categories and values make a vector bar chart plus searchable data table (1–20 categories). Excel: sheet, range and chart_type make a native chart with one numeric series. Title must be non-empty (Excel: at most 200 characters). Excel chart creation on Strict workbooks is unsupported. PowerPoint charts use the charts map in add_slide_from_layout."
         ),
         op(
             "delete_paragraph",
@@ -448,21 +488,21 @@ fn op_schemas() -> Value {
         ),
         op(
             "set_cells",
-            serde_json::json!({ "sheet": { "type": "string" }, "cells": { "type": "object", "description": "address to value, e.g. {\"B4\": 120, \"C4\": \"=SUM(B1:B3)\"}" } }),
+            serde_json::json!({ "sheet": { "type": "string", "description": "exact existing worksheet name" }, "cells": { "type": "object", "description": "address to text, number, boolean or formula; formulas begin with =, and prefix an apostrophe to store text beginning with =. Vak does not calculate formulas. Use an empty string to clear a cell; omit untouched cells. Null, arrays and objects are invalid cell values.", "additionalProperties": { "oneOf": [{"type":"string"},{"type":"number"},{"type":"boolean"}] } } }),
             &["sheet", "cells"],
-            "Excel: set cell values or formulas"
+            "Excel: set cell values or formulas. Newly added or changed formula results remain stale or unavailable until Excel recalculates and saves the workbook; chart only formula results that doc_read confirms are current numeric cached values."
         ),
         op(
             "append_rows",
-            serde_json::json!({ "sheet": { "type": "string" }, "rows": { "type": "array", "items": { "type": "array" } } }),
+            serde_json::json!({ "sheet": { "type": "string", "description": "exact existing worksheet name" }, "rows": { "type": "array", "description": "rectangular rows of text, numbers, booleans or formulas; formulas are not calculated by Vak", "items": { "type": "array", "items": {"oneOf":[{"type":"string"},{"type":"number"},{"type":"boolean"}]} } } }),
             &["sheet", "rows"],
-            "Excel: append rows after the last used row"
+            "Excel: append rows after the last used row; keep row widths consistent with the table header and data. Formula results are not calculated by Vak."
         ),
         op(
             "add_sheet",
             serde_json::json!({ "name": { "type": "string" } }),
             &["name"],
-            "Excel: add an empty sheet"
+            "Excel: add an empty sheet with a unique name, 1–31 characters; no [ ] : * ? / or backslash, and no leading/trailing apostrophe"
         ),
         op(
             "rename_sheet",
@@ -477,43 +517,43 @@ fn op_schemas() -> Value {
             "format_cells",
             serde_json::json!({ "sheet": { "type": "string" }, "range": { "type": "string", "description": "cells, e.g. A1:D1 or B4" }, "bold": { "type": "boolean" }, "italic": { "type": "boolean" }, "number_format": { "type": "string", "description": "an Excel format code, e.g. #,##0.00 or 0% or yyyy-mm-dd" }, "fill": { "type": "string", "description": "background colour as six hex digits, e.g. D9E2F3" }, "wrap": { "type": "boolean", "description": "wrap long text" } }),
             &["sheet", "range"],
-            "Excel: format cells; every other part of each cell's format is kept"
+            "Excel: format cells using only the offered fields (bold, italic, number_format, fill, wrap); every other part of each cell's format is kept. No borders, alignment, font selection, merged cells or conditional formatting can be authored by this op"
         ),
         op(
             "set_column_widths",
-            serde_json::json!({ "sheet": { "type": "string" }, "widths": { "type": "object", "description": "column letter to width in characters, e.g. {\"A\": 30, \"B\": 12}" } }),
+            serde_json::json!({ "sheet": { "type": "string" }, "widths": { "type": "object", "description": "column letter to finite width greater than 0 and at most 255 characters, e.g. {\"A\": 30, \"B\": 12}" } }),
             &["sheet", "widths"],
             "Excel: set column widths"
         ),
         op(
             "add_excel_table",
-            serde_json::json!({ "sheet": { "type": "string" }, "range": { "type": "string", "description": "a header row and at least one data row, e.g. A1:C20" }, "name": { "type": "string", "description": "optional unique Excel table name; defaults to a generated name" } }),
+            serde_json::json!({ "sheet": { "type": "string" }, "range": { "type": "string", "description": "a populated header row and 1–10,000 data rows, 1–64 columns, e.g. A1:C20; headers must be non-empty, unique ignoring case, at most 255 characters; cannot overlap another table" }, "name": { "type": "string", "description": "optional unique table name: starts with a letter or underscore; only letters, digits, underscores or periods. Omit to generate a name; this names the table, not the sheet." } }),
             &["sheet", "range"],
-            "Excel: turn a header and data range into a native, filterable SpreadsheetML table; rows remain available to doc_read and RAG"
+            "Excel: Strict workbook table creation is unsupported. Turn a header and data range into a native, filterable table (up to 10,000 data rows and 64 columns); rows remain available to doc_read and RAG"
         ),
         op(
             "add_excel_image",
-            serde_json::json!({ "sheet": { "type": "string" }, "cell": { "type": "string", "description": "top-left cell for the image, e.g. D2" }, "image": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false } }),
+            serde_json::json!({ "sheet": { "type": "string" }, "cell": { "type": "string", "description": "top-left cell for the image, e.g. D2" }, "image": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string", "description": "base64-encoded PNG/JPEG file bytes (no URL, path or data-URL prefix); decoded image at most 1 MiB, 10,000 pixels per side and 40 megapixels total" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048, "description": "required meaningful alternative text, at most 2,048 UTF-8 bytes" } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false } }),
             &["sheet", "cell", "image"],
-            "Excel: embed a bounded PNG/JPEG picture at a cell with required searchable alternative text"
+            "Excel: embed a bounded PNG/JPEG picture at a cell with required searchable alternative text; adding drawings to Strict workbooks is unsupported"
         ),
         op(
             "add_slide_from_layout",
-            serde_json::json!({ "layout": { "type": "string", "description": format!("layout name; a new deck has {}", vak_ooxml::blank::DECK_LAYOUTS.iter().map(|(layout, placeholders)| format!("{layout} ({placeholders})")).collect::<Vec<_>>().join(", ")) }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text or lines, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}" }, "tables": { "type": "object", "description": "placeholder to native table rows, e.g. {\"body\": [[\"Region\", \"Sales\"], [\"North\", 120]]}", "additionalProperties": { "type": "array", "items": { "type": "array", "items": { "oneOf": [{"type":"string"},{"type":"number"},{"type":"boolean"}] } } } }, "charts": { "type": "object", "description": "placeholder to native chart", "additionalProperties": { "type": "object", "properties": { "title": { "type": "string" }, "chart_type": { "type": "string", "enum": ["bar", "line", "pie"] }, "categories": { "type": "array", "items": { "type": "string" } }, "values": { "type": "array", "items": { "type": "number" } } }, "required": ["title", "chart_type", "categories", "values"], "additionalProperties": false } }, "images": { "type": "object", "description": "placeholder to a PNG/JPEG image with descriptive alt_text", "additionalProperties": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048 } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false } }, "notes": { "type": "string", "description": "speaker notes for the slide" } }),
+            serde_json::json!({ "layout": { "type": "string", "description": format!("layout name; a new deck has {}", vak_ooxml::blank::DECK_LAYOUTS.iter().map(|(layout, placeholders)| format!("{layout} ({placeholders})")).collect::<Vec<_>>().join(", ")) }, "after": anchor("slide anchor to insert after, e.g. slide:256; omit to add at the end"), "placeholders": { "type": "object", "description": "placeholder to text or lines, e.g. {\"title\": \"Next steps\", \"body\": [\"First\", \"Second\"]}" }, "tables": { "type": "object", "description": "placeholder to native table rows, e.g. {\"body\": [[\"Region\", \"Sales\"], [\"North\", 120]]}", "additionalProperties": { "type": "array", "items": { "type": "array", "items": { "oneOf": [{"type":"string"},{"type":"number"},{"type":"boolean"}] } } } }, "charts": { "type": "object", "description": "placeholder to a native bar/line/pie chart with one series: 1–100 non-empty category labels (at most 512 UTF-8 bytes each), a non-empty title at most 512 UTF-8 bytes, same count of numeric values in [-1e12,1e12]; pie values cannot be negative", "additionalProperties": { "type": "object", "properties": { "title": { "type": "string" }, "chart_type": { "type": "string", "enum": ["bar", "line", "pie"] }, "categories": { "type": "array", "items": { "type": "string" } }, "values": { "type": "array", "items": { "type": "number" } } }, "required": ["title", "chart_type", "categories", "values"], "additionalProperties": false } }, "images": { "type": "object", "description": "placeholder to a PNG/JPEG image with descriptive alt_text", "additionalProperties": { "type": "object", "properties": { "mime_type": { "type": "string", "enum": ["image/png", "image/jpeg"] }, "data": { "type": "string", "description": "base64-encoded PNG/JPEG file bytes (no URL, path or data-URL prefix); decoded image at most 1 MiB, 10,000 pixels per side and 40 megapixels total" }, "alt_text": { "type": "string", "minLength": 1, "maxLength": 2048, "description": "required meaningful alternative text, at most 2,048 UTF-8 bytes" } }, "required": ["mime_type", "data", "alt_text"], "additionalProperties": false } }, "notes": { "type": "string", "description": "speaker notes for the slide" } }),
             &["layout"],
-            "PowerPoint: add a slide from one of the deck's layouts. Fill each placeholder with one of text, a table, a chart or an image, never two"
+            "PowerPoint: add a slide from one of the deck's layouts; adding slides to Strict decks is unsupported. Use only placeholders offered by that exact layout. Fill each placeholder with at most one of text, table, chart or image; do not reuse one placeholder across maps. Tables allow at most 100 rows by 32 columns, charts 1–100 categories, and chart category/value arrays must have equal lengths."
         ),
         op(
             "set_placeholder_text",
             serde_json::json!({ "anchor": anchor("placeholder or shape anchor, e.g. slide:256/placeholder:title"), "text": lines }),
             &["anchor", "text"],
-            "PowerPoint: set a placeholder's or shape's text"
+            "PowerPoint: replace a source placeholder/shape's text; arrays make one paragraph per item. Use anchors from doc_read, not guessed slide numbers."
         ),
         op(
             "set_notes",
             serde_json::json!({ "anchor": anchor("slide anchor"), "text": text }),
             &["anchor", "text"],
-            "PowerPoint: set a slide's speaker notes"
+            "PowerPoint: set a slide's speaker notes; Strict decks are unsupported"
         ),
         op(
             "delete_slide",
@@ -555,7 +595,7 @@ fn op_schemas() -> Value {
             "fill_field",
             serde_json::json!({ "field": { "type": "string", "description": "the field's name, as the read lists it" }, "value": { "type": "string", "description": "text, a choice, or on/off for a check box" } }),
             &["field", "value"],
-            "PDF: fill a form field"
+            "PDF: fill an existing text, choice, checkbox or radio form field by its exact source-read name. Follow its offered values; signatures and XFA are unsupported."
         ),
         op(
             "rotate_page",
@@ -915,6 +955,41 @@ mod tests {
             OfficeApplyTool.description().len() < 2_000,
             "the shared contract stays short; per-op detail lives in the schema"
         );
+    }
+
+    #[tokio::test]
+    async fn every_advertised_creation_example_produces_a_readable_draft() {
+        let schema = OfficeApplyTool.schema();
+        for example in schema["examples"].as_array().unwrap() {
+            crate::validate_input(&schema, example).unwrap();
+            let dir = tempfile::tempdir().unwrap();
+            let result = run(dir.path(), example.clone()).await;
+            assert!(!result.is_error, "{}: {}", example["path"], result.content);
+            let read = crate::doc_read::DocReadTool
+                .execute(
+                    &serde_json::json!({"path":draft_path(&result)}),
+                    &ToolContext::new(dir.path().to_path_buf()),
+                )
+                .await;
+            assert!(!read.is_error, "{}", read.content);
+            assert!(read.content.contains("sha256"));
+            assert!(!dir.path().join(example["path"].as_str().unwrap()).exists());
+        }
+    }
+
+    #[test]
+    fn chart_schema_requires_one_complete_format_specific_variant() {
+        let schema = OfficeApplyTool.schema();
+        for chart in [
+            serde_json::json!({"op":"add_chart","title":"Missing fields"}),
+            serde_json::json!({"op":"add_chart","title":"Incomplete","sheet":"Sheet1","range":"A1:B3"}),
+            serde_json::json!({"op":"add_chart","title":"Mixed","sheet":"Sheet1","range":"A1:B3","chart_type":"bar","categories":["A"],"values":[1]}),
+        ] {
+            assert!(
+                crate::validate_input(&schema, &serde_json::json!({"path":"a.xlsx","ops":[chart]}))
+                    .is_err()
+            );
+        }
     }
 
     #[tokio::test]

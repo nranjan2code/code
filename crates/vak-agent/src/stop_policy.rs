@@ -317,7 +317,12 @@ impl StopPolicy {
             }
             return stale_code.then_some(BlockReason::VerificationStale);
         }
-        if spec.expects_artifact() && receipts.artifact_deliveries == 0 {
+        let continued_artifact_was_inspected =
+            receipts.continued_saved_file && receipts.successful_inspections > 0;
+        if spec.expects_artifact()
+            && receipts.artifact_deliveries == 0
+            && !continued_artifact_was_inspected
+        {
             return Some(BlockReason::ExecutionReceiptMissing {
                 act: spec
                     .deliverable_act()

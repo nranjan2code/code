@@ -727,9 +727,17 @@ in progress, and the rest of V4 follows it.
     detection events, and status directly to the Workbench panel for full
     operator observability. Egress and permissions follow the broker security
     model, failing closed when unapproved; read-only mode still denies every
-    write. Frontend client preview frames must be sandboxed
-    (`sandbox="allow-scripts"`) within safe error boundaries to protect the
-    client host from untrusted script execution.
+    write. Frontend client preview frames are sandboxed and sit
+    inside error boundaries. Markup from the conversation, and a page the
+    server cannot serve from an origin of its own, runs in an opaque origin
+    (`sandbox="allow-scripts allow-forms"`, no network). A page with files
+    behind it, and a dev server, runs on an origin of its own, on a loopback
+    port and framed under the other loopback name than the app's, so it shares
+    no origin, cookie or storage with the app; the preview origin answers only
+    the files its scope names under an unguessable path prefix and refuses any
+    request that did not arrive by a loopback name
+    (`crates/vak-server/src/preview.rs`, docs/design/66 §3.2). The client, not
+    the data describing a preview, chooses the sandbox.
 36. **Context is measured, never assumed, and nothing model-visible is cut
     blind** (docs/design/68-context-engine.md). Every number that shapes a
     request — window, usable instruction horizon, tokens per char, prefill

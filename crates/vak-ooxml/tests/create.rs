@@ -1562,3 +1562,94 @@ fn a_from_scratch_draft_is_offered_change_by_change() {
         "a cell on the renamed sheet needs the rename"
     );
 }
+
+#[test]
+fn charts_accept_quoted_sheet_names_and_decimal_values() {
+    for sheet in [
+        "Market Data",
+        "Trader's Data",
+        "Profit & Loss",
+        "<Demo Data>",
+    ] {
+        for chart_type in ["bar", "line", "pie"] {
+            let applied = create(
+                "xlsx",
+                vec![
+                    OfficeOp::RenameSheet {
+                        sheet: "Sheet1".into(),
+                        name: sheet.into(),
+                    },
+                    OfficeOp::AppendRows {
+                        sheet: sheet.into(),
+                        rows: vec![
+                            vec![text("Index"), text("Profit & Loss")],
+                            vec![text("Nifty & Bank"), CellValue::Number(1.25)],
+                            vec![text("<Demo B>"), CellValue::Number(0.42)],
+                            vec![text("Demo C"), CellValue::Number(0.0)],
+                        ],
+                    },
+                    OfficeOp::AddChart {
+                        sheet: sheet.into(),
+                        range: "A1:B4".into(),
+                        chart_type: chart_type.into(),
+                        title: "Demonstration change".into(),
+                        cell: Some("D2".into()),
+                    },
+                ],
+            )
+            .unwrap();
+            let table = applied
+                .document
+                .tables
+                .iter()
+                .find(|t| t.anchor == "chart:chart1.xml")
+                .unwrap();
+            assert_eq!(
+                table.rows,
+                vec![
+                    vec!["Category", "Profit & Loss"],
+                    vec!["Nifty & Bank", "1.25"],
+                    vec!["<Demo B>", "0.42"],
+                    vec!["Demo C", "0"]
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn empty_strings_can_be_written_and_clear_existing_excel_values() {
+    let applied = create(
+        "xlsx",
+        vec![OfficeOp::SetCells {
+            sheet: "Sheet1".into(),
+            cells: BTreeMap::from([
+                ("A1".into(), text("")),
+                ("B1".into(), text("Previous value")),
+                ("C1".into(), text("'")),
+            ]),
+        }],
+    )
+    .unwrap();
+    let cleared = edit::apply(
+        &applied.bytes,
+        &[OfficeOp::SetCells {
+            sheet: "Sheet1".into(),
+            cells: BTreeMap::from([("B1".into(), text(""))]),
+        }],
+        &clean(),
+        Limits::default(),
+        Some(format("xlsx")),
+    )
+    .unwrap();
+    let sheet = part(&cleared.bytes, "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains("r=\"B1\""));
+    assert!(!sheet.contains("Previous value"));
+    assert!(
+        cleared
+            .document
+            .units
+            .iter()
+            .all(|unit| !unit.text.contains("Previous value"))
+    );
+}

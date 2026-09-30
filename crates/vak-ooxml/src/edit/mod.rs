@@ -351,6 +351,11 @@ pub(crate) enum Expect {
         prefix: String,
         needle: String,
     },
+    /// The stored cell is empty, even though the text projection omits it.
+    EmptyCell {
+        sheet: String,
+        cell: String,
+    },
     /// No unit has this anchor.
     Absent {
         anchor: String,
@@ -991,6 +996,9 @@ fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Res
             } else {
                 Err(format!("no {prefix}… unit contains {needle:?}"))
             }
+        }
+        Expect::EmptyCell { sheet, cell } => {
+            sheet::check_empty_cell(written.package()?, sheet, cell)
         }
         Expect::Absent { anchor } => match unit(anchor) {
             None => Ok(()),

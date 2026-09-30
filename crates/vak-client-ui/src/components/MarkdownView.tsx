@@ -4,7 +4,7 @@ import {
   openInEditor,
   uiPreferences,
   isPreviewableArtifact,
-  openArtifactPathInCanvas,
+  openArtifactFile,
   openArtifactCanvas,
   openWorkbenchFolder,
   isScratchDirectory,
@@ -83,13 +83,7 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
     if (target.classList.contains("cb-preview")) {
       const codeContent = target.getAttribute("data-preview") ?? "";
       const lang = target.getAttribute("data-lang") ?? "html";
-      openArtifactCanvas({
-        id: `inline-cb-${Date.now()}`,
-        title: `${lang.toUpperCase()} Preview`,
-        artifactPath: "",
-        html: codeContent,
-        timestamp: Date.now(),
-      });
+      openArtifactCanvas({ kind: "inline", title: `${lang.toUpperCase()} Preview`, html: codeContent });
       return;
     }
     if (target.classList.contains("cb-copy")) {
@@ -119,7 +113,7 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
         if (isScratch || (isDir && p.includes(".vak/scratch"))) {
           openWorkbenchFolder(p);
         } else if (!isDir && isPreviewableArtifact(p)) {
-          openArtifactPathInCanvas(p);
+          openArtifactFile(p);
         } else {
           void openFileSmart(p);
         }
@@ -135,7 +129,7 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
         if (isScratch || (isDir && p.includes(".vak/scratch"))) {
           openWorkbenchFolder(p);
         } else if (!isDir && isPreviewableArtifact(p)) {
-          openArtifactPathInCanvas(p);
+          openArtifactFile(p);
         } else {
           void openFileSmart(p);
         }

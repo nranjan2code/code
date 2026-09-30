@@ -27,7 +27,6 @@ A user may ask a question, request a complex data extraction, initiate a multi-s
    - `trend`, `timeseries`, `metric_chart`, `bar_chart`, `comparison_chart` all route to the `chart` primitive via `buildChartSpec` (`bar_chart` passing the forced `"bar"` override).
    - `decision_matrix`, `criteria_matrix`, `tradeoff_analysis` route to the `table` primitive via `buildTableSpec`, each with its own default title.
    - Aliasing is a registry entry, not a component: several semantic types deliberately share one `buildXSpec`/`renderX` pair (`docs/design/67-presentation-renderer-guide.md`).
-   - `/canvas/preview` endpoint transcodes arbitrary markdown to self-contained interactive standalone HTML.
 
 ### B. In-Memory Universal Document Ingestion (`doc_read`)
 1. **Tool Contract**:

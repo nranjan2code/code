@@ -1112,10 +1112,40 @@ impl OutcomeSpec {
         self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution())
     }
 
-    /// Whether the requested primary output is a generated artifact. This is
-    /// derived from the typed act, not file-name or domain-specific wording.
+    /// Whether the requested primary output is a file-backed Office artifact.
+    /// A bare Author act also covers prose answers such as letters and plans;
+    /// require a file receipt only when the request names a file or an Office
+    /// format. This lets "make an Excel document" require a workbook without
+    /// making every authored sentence produce a file.
     pub fn expects_artifact(&self) -> bool {
-        self.acts.contains(&Act::Author)
+        if self.expects_saved_file() {
+            return true;
+        }
+        let objective = self.objective.to_ascii_lowercase();
+        let requests_office_file = [
+            "spreadsheet",
+            "workbook",
+            "excel",
+            "xlsx",
+            "word document",
+            "word file",
+            "docx",
+            "document",
+            "powerpoint",
+            "power point",
+            "presentation",
+            "slide deck",
+            "slides",
+            "pptx",
+            "pdf",
+        ]
+        .iter()
+        .any(|term| objective.contains(term));
+        requests_office_file
+            && self
+                .acts
+                .iter()
+                .any(|act| matches!(act, Act::Author | Act::Modify | Act::Operate))
     }
 
     /// Whether this outcome requires inspection, search, or enumeration.
@@ -1217,8 +1247,22 @@ mod tests {
         assert!(file.expects_saved_file());
         let plan = OutcomeSpec::from_reading("Create a two-day lunch plan", &authoring, 1);
         assert!(!plan.expects_saved_file());
+        assert!(!plan.expects_artifact());
+        let note = OutcomeSpec::from_reading("Write a short note to my neighbour", &authoring, 1);
+        assert!(!note.expects_artifact());
+        for request in [
+            "Make an Excel document",
+            "Create a spreadsheet dashboard",
+            "Write a Word document",
+            "Build a PowerPoint presentation",
+            "Generate a PDF report",
+        ] {
+            let output = OutcomeSpec::from_reading(request, &authoring, 1);
+            assert!(output.expects_artifact(), "{request}");
+        }
         let inspection = OutcomeSpec::from_reading("Explain README.md", &Reading::general(), 1);
         assert!(!inspection.expects_saved_file());
+        assert!(!inspection.expects_artifact());
         // Naming a file inside a question is not asking for one.
         let explanation =
             OutcomeSpec::from_reading("explain how to write a README.md", &Reading::general(), 1);

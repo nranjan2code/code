@@ -1,7 +1,7 @@
 # 47 — The commitment kernel
 
 Status: **shipped**. The current deterministic reader is
-`vak_intent::RESOLVER_VERSION = 5`. The historical reviews below explain why
+`vak_intent::RESOLVER_VERSION = 6`. The historical reviews below explain why
 it changed; this document describes the current implementation. One known
 boundary remains: `full-access` bypasses the permission engine's approval
 gate, so the kernel's irreversible-work approval floor cannot force a prompt
@@ -362,7 +362,7 @@ Core can decline or fail the classifier dispatch and still use `partial`.
 `apply_classification` cannot lower caution established by deterministic
 signals; a classifier answer without confidence does not earn capability
 slicing. The lexicon digest test pins the signal tables and segmentation
-vocabulary to resolver version 5.
+vocabulary to resolver version 6.
 
 ### Authority: the autonomy spectrum
 
@@ -877,8 +877,10 @@ read its own commitments — and found five more, all fixed here:
 On the `main` line, resolver version 4 separately fixed the sense of `live`:
 the verb "reside" ("we live in the city") carries no recency or stakes,
 while "a live score" asks for a current value and "go live" describes a
-launch. The version 5 resolver combines that reading with the clause-aware
-reader described above.
+launch. Version 5 combined that reading with the clause-aware reader described
+above. Version 6 pins the current tier-1 lexicon and lets irreversible stakes
+words raise caution even when another recognized action verb is present; the
+digest regression test prevents the tables from drifting without a version bump.
 
 One finding is left as a decision rather than a fix: under `full-access`
 the permission engine allows every call without asking, so the approval

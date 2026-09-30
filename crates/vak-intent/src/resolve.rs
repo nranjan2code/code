@@ -59,7 +59,7 @@ use crate::strand::{Boundary, Lineage, LineageHint, Strand, StrandRelation, Thre
 /// sense of *current*, and "go live" is a stakes phrase. The test
 /// `lexicon_digest_matches_resolver_version` pins the tables to this number
 /// so a change to either without the other fails CI.
-pub const RESOLVER_VERSION: u32 = 5;
+pub const RESOLVER_VERSION: u32 = 6;
 
 /// Thresholds and switches for the cascade.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -729,8 +729,12 @@ fn assemble(extraction: &Extraction, declared: &Declared) -> (Reading, &'static 
     // reader does not know. Only a request recognised as asking, finding or
     // analysing may mention production without being about to change it.
     let act_unknown = declared.act.is_none() && extraction.act.winner().is_none();
+    let may_carry_action_stakes = matches!(
+        act,
+        Act::Author | Act::Modify | Act::Operate | Act::Verify | Act::Orchestrate | Act::Govern
+    );
     let mut stakes_votes: crate::signals::Votes<Stakes> = crate::signals::Votes::default();
-    if act.is_effectful() || act_unknown {
+    if may_carry_action_stakes || act_unknown {
         for (value, weight) in extraction.stakes_from_words.ranked() {
             stakes_votes.add(value, weight);
         }
@@ -1357,8 +1361,8 @@ mod tests {
     #[test]
     fn lexicon_digest_matches_resolver_version() {
         const PINNED: (u32, &str) = (
-            5,
-            "b4a8e4771afdfa16f21afc993fbfe8864723a4a5a714c8f438faa01d583748f9",
+            6,
+            "efddcec2f20c375f3c787b163ae28414b8d3aa1d47e0071dfb4b03d2e208c4c1",
         );
         let digest = crate::signals::lexicon_digest();
         assert_eq!(
