@@ -55,7 +55,6 @@ export default function AgentPresence(props: { sessionId: string | null; working
   const reveal = () => {
     if (!props.working) return;
     setHovered(true);
-    void load();
   };
   const close = (event: PointerEvent | FocusEvent) => {
     const target = event.currentTarget;
@@ -77,7 +76,7 @@ export default function AgentPresence(props: { sessionId: string | null; working
       const within = list.slice(0, index).filter((item) => item.state === "next" || item.state === "blocked").length;
       angle = ((nextCount - within) / (nextCount + 1)) * Math.PI / 2;
     }
-    return { x: 74 + 64 * Math.cos(angle), y: 8 + 64 * Math.sin(angle) };
+    return { x: 74 + 64 * Math.cos(angle), y: 74 - 64 * Math.sin(angle) };
   };
   createEffect(() => {
     if (!props.working) { setHovered(false); setSelected(null); setWorkProjection(null); }
@@ -99,8 +98,8 @@ export default function AgentPresence(props: { sessionId: string | null; working
       </button>
       <Show when={props.working && hovered() && stages().length > 0}>
         <div class="commitment-wheel-popover" role="group" aria-label="Commitment progress">
-          <svg class="commitment-wheel" viewBox="0 0 148 82" aria-label="Commitments move from upcoming on the right through active at the bottom to completed on the left">
-            <path class="commitment-wheel-track" d="M 138 8 A 64 64 0 0 1 10 8" />
+          <svg class="commitment-wheel" viewBox="0 0 148 82" aria-label="Upcoming commitments start on the right, active work is centered, and completed items move left along an upward arc">
+            <path class="commitment-wheel-track" d="M 138 74 A 64 64 0 0 0 10 74" />
             <For each={stages()}>{(stage, index) => {
               const position = () => point(index());
               return <circle class={`commitment-wheel-dot ${stage.state}`} cx={position().x} cy={position().y} r="4.5" tabIndex="0"
