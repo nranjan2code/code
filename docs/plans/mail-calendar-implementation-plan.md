@@ -587,6 +587,16 @@ authorization and approval boundary on every execution path.
 
 ## Progress log
 
+- 2026-10-01: Re-ran the provider and security-boundary test suites from the
+  feature worktree after the isolated local-draft browser fix. All 111
+  `vak-mail-calendar` unit tests and its state-registry test pass; all 11 Core
+  mail/calendar boundary tests, 13 server mail/calendar unit tests, 4 matching
+  HTTP end-to-end tests, 10 worker parser tests, and 5 isolated-worker
+  integration tests pass. `npm run build:web` passes from
+  `crates/vak-client-ui` and regenerates the committed bundle without a worktree
+  diff. These local fixtures do not establish live account/provider behavior,
+  the full connected source-to-Review flow, or 24-hour scheduled-service
+  recovery; those Stage 2, 4, and 5 acceptance checks remain open.
 - 2026-09-30: Added the isolated worker-side MIME parsing foundation needed
   for selected Apple Mail content. It extracts bounded explicit `text/plain`
   content, ignores HTML and attachment parts, and distinguishes HTML-only
