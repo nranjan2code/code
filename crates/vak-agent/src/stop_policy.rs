@@ -227,24 +227,35 @@ impl StopPolicy {
                     .collect::<String>()
             )));
         }
-        const MARKERS: [&str; 8] = [
+        // A plan marker opens the line ("Now I'll write the tests"); found
+        // anywhere, "going to" matched "They're going to the park". Closing
+        // quotes and brackets after the full stop still end the sentence.
+        const MARKERS: [&str; 10] = [
             "now i'll",
             "now let me",
             "let me ",
             "i will ",
             "i'll ",
+            "i'm going to ",
+            "i am going to ",
             "going to ",
             "next,",
             "then,",
         ];
-        let lower = last_line.to_ascii_lowercase();
+        let lower = last_line.to_lowercase();
+        let opening = lower
+            .trim_start_matches(|c: char| c == '-' || c == '*' || c == '•' || c.is_whitespace());
+        let closing = lower.trim_end_matches(|c: char| {
+            matches!(
+                c,
+                '"' | '\'' | '”' | '’' | '»' | ')' | ']' | '*' | '_' | '`'
+            ) || c.is_whitespace()
+        });
         if lower.len() < 300
-            && MARKERS
-                .iter()
-                .any(|m| lower.starts_with(m) || lower.contains(m))
-            && !lower.ends_with('.')
-            && !lower.ends_with('!')
-            && !lower.ends_with('?')
+            && MARKERS.iter().any(|m| opening.starts_with(m))
+            && !closing.ends_with('.')
+            && !closing.ends_with('!')
+            && !closing.ends_with('?')
         {
             return Some(BlockReason::TruncatedPlan("a plan marker".into()));
         }
@@ -560,6 +571,42 @@ mod tests {
             ),
             None
         );
+    }
+
+    /// Found live on 2026-09-30: a corrected sentence in quotes ("They're
+    /// going to the park ….”) was sent back as an unfinished plan.
+    #[test]
+    fn prose_that_mentions_a_plan_word_is_not_a_plan() {
+        let p = StopPolicy::default();
+        let grammar = spec(vak_intent::Act::Verify, "run a quick grammar check");
+        let verified = ReceiptSummary {
+            substantive_bash_calls: 1,
+            successful_tool_calls: 1,
+            ..ReceiptSummary::default()
+        };
+        for answer in [
+            "“They’re going to the park tomorrow, and they have brought sandwiches.”",
+            "You said you'll call her — that is fine as written.",
+            "(Then, add the eggs.)",
+        ] {
+            assert_eq!(
+                p.evaluate_receipts("check this", answer, Some(&grammar), &verified, false),
+                None,
+                "{answer}"
+            );
+        }
+        for plan in [
+            "Now I'll write the store module",
+            "- I'm going to run the tests",
+        ] {
+            assert!(
+                matches!(
+                    p.evaluate_receipts("check this", plan, Some(&grammar), &verified, false),
+                    Some(BlockReason::TruncatedPlan(_))
+                ),
+                "{plan}"
+            );
+        }
     }
 
     #[test]
