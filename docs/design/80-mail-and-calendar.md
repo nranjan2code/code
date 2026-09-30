@@ -91,13 +91,16 @@ as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
 surface grant. Local drafts, scheduled read-only routines, and an explicitly
-best-effort scheduled email watch are implemented. A per-routine OS lease
-prevents duplicate local server-process runs through child completion; it does
-not provide multi-host coordination or a provider-native cursor. Email send,
-a constrained timed event create, and Google standalone event update have
+best-effort scheduled email watch are implemented. Its content-free preflight
+does not consume IDs: the encrypted dedupe cursor advances only when the
+brokered routine read succeeds. The watch still polls only a bounded latest
+window, has no provider-native cursor, and can miss older mail after a burst.
+A per-routine OS lease prevents duplicate local server-process runs through
+child completion; it does not provide multi-host coordination. Email send, a
+constrained timed event create, and Google standalone event update have
 effect-aware owner confirmation paths; other event update/cancel/RSVP, standing
 grants, complete receipt reconciliation, durable continuous service recovery,
-and the third provider remain in progress. The
+and full provider conformance remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.
 No crypto-shred guarantee is made. Apple Mail is available only for a verified
@@ -257,8 +260,8 @@ such. Apple's support guide describes the user authorization and revocation
 experience.
 Apple's manual iCloud Mail configuration documents IMAP at
 `imap.mail.me.com:993` and an app-specific password
-([server settings](https://support.apple.com/en-us/102525)). The current
-The Mail-only connection path authenticates and runs `EXAMINE INBOX` before
+([server settings](https://support.apple.com/en-us/102525)). In Vakyartha,
+the Mail-only connection path authenticates and runs `EXAMINE INBOX` before
 storing the credential, then the preview reads at most 20 message envelopes
 and body structures with a 512 KiB protocol-session limit. It does not fetch
 message bodies during the inbox listing. A separate selected-message request
@@ -282,11 +285,12 @@ grant for unattended routines ([EventKit access](https://developer.apple.com/doc
 **Do not treat Sign in with Apple as this permission:** it authenticates a
 person to Vakyartha, rather than granting access to their iCloud Mail or
 Calendar ([Sign in with Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
-Before enabling iCloud content access, verify Apple's supported integration
-protocol, server credential handling, and revocation behavior for both local
-and always-on clients. No generic arbitrary-URL, raw-HTTP, or model-selected
-MCP call is an escape hatch to the account. Custom IMAP/CalDAV hosts are out of
-initial scope.
+The current fixed-host IMAP and CalDAV read paths are implemented, but
+credentialed live Apple Calendar conformance, provider revocation behavior,
+Apple free/busy, and all Apple write operations remain unverified or
+unsupported. No generic arbitrary-URL, raw-HTTP, or model-selected MCP call is
+an escape hatch to the account. Custom IMAP/CalDAV hosts are out of initial
+scope.
 
 The package declares capabilities such as `mail.read`, `mail.prepare`,
 `mail.send`, `calendar.freebusy`, `calendar.read`, and `calendar.write`. These
