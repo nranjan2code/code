@@ -952,3 +952,14 @@ authorization and approval boundary on every execution path.
   action occurs. `npm run build:web` and TypeScript checking pass. Browser
   inspection reached the running app's passkey sign-in gate, so the signed-in
   working-area interaction and responsive layout are not visually verified.
+- 2026-09-30: Added the first Stage 3 effect boundary increment: fixed-host
+  Gmail and Microsoft Graph plain-text send adapters with no proxy override,
+  redirects, or retries; bounded provider response parsing; exact
+  `mail_send` account admission; and conservative unknown-outcome handling.
+  The Agent credential vault now supports a bounded encrypted action journal
+  that durably claims a candidate before dispatch, rejects duplicate claims,
+  and removes receipts when the account disconnects. Unit tests cover exact
+  Google MIME fields, Graph payload acceptance, ambiguous server failures,
+  durable single-use claims, and disconnect cleanup. This is only adapter and
+  journal groundwork: no route, effect-aware Review UI, permission-engine
+  wiring, calendar writes, or provider conformance has shipped yet.

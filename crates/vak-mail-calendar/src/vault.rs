@@ -5,7 +5,7 @@
 //! encrypted-file fallback. Secret values are not `Debug` and are zeroized
 //! when dropped.
 
-use crate::ActionCandidate;
+use crate::{ActionCandidate, ActionReceipt, ActionState};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
@@ -22,6 +22,9 @@ const ROUTINE_CURSOR_KEY: &str = "vak_mail_calendar_routine_cursors";
 const MAX_ROUTINE_CURSORS: usize = 128;
 const MAX_ROUTINE_SEEN_IDS: usize = 512;
 const MAX_ROUTINE_CURSOR_BYTES: usize = 512 * 1024;
+const ACTION_RECEIPTS_KEY: &str = "vak_mail_calendar_action_receipts";
+const MAX_ACTION_RECEIPTS: usize = 128;
+const MAX_ACTION_RECEIPTS_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
@@ -283,7 +286,80 @@ impl AccountVault {
         let key = Self::credential_ref(account_id)?;
         vak_config::remove_env_file_key(&self.scope_hint, &key)?;
         self.remove_candidates_for_account(account_id)?;
-        self.remove_routine_cursors_for_account(account_id)
+        self.remove_routine_cursors_for_account(account_id)?;
+        self.remove_action_receipts_for_account(account_id)
+    }
+
+    /// Persist a dispatch claim before any external effect. A candidate can
+    /// be claimed only once, including after an ambiguous outcome; this
+    /// intentionally prevents blind retries for non-idempotent provider APIs.
+    pub fn begin_action(&self, candidate: &ActionCandidate) -> Result<ActionReceipt, VaultError> {
+        candidate
+            .validate()
+            .map_err(|_| VaultError::InvalidReference)?;
+        if candidate.agent_id != self.agent_id {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_action_receipts(|mut receipts| {
+            if receipts
+                .iter()
+                .any(|receipt| receipt.candidate_id == candidate.id)
+            {
+                return Err(VaultError::Conflict);
+            }
+            if receipts.len() >= MAX_ACTION_RECEIPTS {
+                return Err(VaultError::TooLarge);
+            }
+            let receipt = ActionReceipt::new(candidate, ActionState::Dispatching)
+                .map_err(|_| VaultError::InvalidReference)?;
+            receipts.push(receipt.clone());
+            self.write_action_receipts(&receipts)?;
+            Ok(receipt)
+        })
+    }
+
+    /// Record a provider result only against the exact durable claim and its
+    /// candidate digest. Terminal failures and unknown outcomes are retained
+    /// as non-retryable receipts.
+    pub fn settle_action(&self, receipt: ActionReceipt) -> Result<(), VaultError> {
+        let candidate_id_is_v7 =
+            Uuid::parse_str(&receipt.candidate_id).is_ok_and(|id| id.get_version_num() == 7);
+        let attempt_id_is_v7 =
+            Uuid::parse_str(&receipt.attempt_id).is_ok_and(|id| id.get_version_num() == 7);
+        if receipt.state == ActionState::Dispatching
+            || receipt.logical_action_id != receipt.candidate_id
+            || !candidate_id_is_v7
+            || !attempt_id_is_v7
+            || receipt.account_id.trim().is_empty()
+            || receipt.candidate_digest.len() != 64
+            || !receipt
+                .candidate_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_action_receipts(|mut receipts| {
+            let Some(previous) = receipts
+                .iter_mut()
+                .find(|previous| previous.candidate_id == receipt.candidate_id)
+            else {
+                return Err(VaultError::InvalidReference);
+            };
+            if previous.candidate_digest != receipt.candidate_digest
+                || previous.account_id != receipt.account_id
+                || previous.attempt_id != receipt.attempt_id
+                || !previous.state.can_transition_to(receipt.state)
+            {
+                return Err(VaultError::Conflict);
+            }
+            *previous = receipt;
+            self.write_action_receipts(&receipts)
+        })
+    }
+
+    pub fn list_action_receipts(&self) -> Result<Vec<ActionReceipt>, VaultError> {
+        self.with_action_receipts(|receipts| Ok(receipts))
     }
 
     /// Atomically remember opaque provider item ids for one routine and
@@ -463,6 +539,95 @@ impl AccountVault {
             }
             Ok(())
         })
+    }
+
+    fn remove_action_receipts_for_account(&self, account_id: &str) -> Result<(), VaultError> {
+        self.with_action_receipts(|mut receipts| {
+            let before = receipts.len();
+            receipts.retain(|receipt| receipt.account_id != account_id);
+            if receipts.len() != before {
+                self.write_action_receipts(&receipts)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn with_action_receipts<T>(
+        &self,
+        operation: impl FnOnce(Vec<ActionReceipt>) -> Result<T, VaultError>,
+    ) -> Result<T, VaultError> {
+        let agent_home = self
+            .scope_hint
+            .parent()
+            .ok_or(VaultError::InvalidReference)?;
+        let work_dir = agent_home.join("mail-calendar");
+        ensure_agent_directory(&work_dir, true)?;
+        let lock_path = work_dir.join(".action-receipts.lock");
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let lock = options.open(&lock_path).map_err(VaultError::Store)?;
+        lock.lock_exclusive().map_err(VaultError::Store)?;
+        let result = (|| {
+            let Some(encoded) =
+                vak_config::read_env_file_var(&self.scope_hint, ACTION_RECEIPTS_KEY)
+            else {
+                return operation(Vec::new());
+            };
+            let encoded = Zeroizing::new(encoded);
+            if encoded.len() > MAX_ACTION_RECEIPTS_BYTES {
+                return Err(VaultError::TooLarge);
+            }
+            let receipts: Vec<ActionReceipt> =
+                serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
+            if receipts.len() > MAX_ACTION_RECEIPTS
+                || receipts.iter().any(|receipt| {
+                    validate_account_id(&receipt.account_id).is_err()
+                        || !Uuid::parse_str(&receipt.candidate_id)
+                            .is_ok_and(|id| id.get_version_num() == 7)
+                        || !Uuid::parse_str(&receipt.attempt_id)
+                            .is_ok_and(|id| id.get_version_num() == 7)
+                        || receipt.logical_action_id != receipt.candidate_id
+                        || receipt.candidate_digest.len() != 64
+                        || !receipt
+                            .candidate_digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_hexdigit())
+                })
+                || receipts.iter().enumerate().any(|(index, receipt)| {
+                    receipts[index + 1..]
+                        .iter()
+                        .any(|next| next.candidate_id == receipt.candidate_id)
+                })
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            operation(receipts)
+        })();
+        let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
+        if let Err(error) = unlock_result {
+            return Err(error);
+        }
+        result
+    }
+
+    fn write_action_receipts(&self, receipts: &[ActionReceipt]) -> Result<(), VaultError> {
+        let encoded =
+            Zeroizing::new(serde_json::to_string(receipts).map_err(|_| VaultError::Unavailable)?);
+        if encoded.len() > MAX_ACTION_RECEIPTS_BYTES {
+            return Err(VaultError::TooLarge);
+        }
+        vak_config::upsert_env_file(&self.scope_hint, ACTION_RECEIPTS_KEY, &encoded)
+            .map_err(VaultError::Store)
     }
 
     fn with_routine_cursors<T>(
@@ -726,7 +891,7 @@ fn validate_account_id(value: &str) -> Result<(), VaultError> {
 #[cfg(test)]
 mod tests {
     use super::{AccountSecretMaterial, AccountVault, Uuid, VaultError};
-    use crate::{ActionCandidate, MailAddress, MailDraft, ProposedAction, SourceRef};
+    use crate::{ActionCandidate, ActionState, MailAddress, MailDraft, ProposedAction, SourceRef};
 
     fn candidate(agent_id: &str, account_id: &str) -> ActionCandidate {
         ActionCandidate::new(
@@ -844,6 +1009,36 @@ mod tests {
                 .unwrap(),
             ids(&["m4"])
         );
+    }
+
+    #[test]
+    fn action_claim_is_durable_single_use_and_disconnect_scoped() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-action-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let candidate = candidate(&agent_id, &account_id);
+        let mut receipt = vault.begin_action(&candidate).unwrap();
+        assert_eq!(receipt.state, ActionState::Dispatching);
+        assert!(matches!(
+            vault.begin_action(&candidate),
+            Err(VaultError::Conflict)
+        ));
+
+        receipt.state = ActionState::Unknown;
+        receipt.detail_code = Some("outcome_unknown".into());
+        vault.settle_action(receipt).unwrap();
+        assert_eq!(
+            vault.list_action_receipts().unwrap()[0].state,
+            ActionState::Unknown
+        );
+        assert!(matches!(
+            vault.begin_action(&candidate),
+            Err(VaultError::Conflict)
+        ));
+
+        vault.remove(&account_id).unwrap();
+        assert!(vault.list_action_receipts().unwrap().is_empty());
     }
 
     #[test]

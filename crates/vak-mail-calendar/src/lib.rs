@@ -12,6 +12,7 @@ use std::collections::BTreeSet;
 use uuid::Uuid;
 
 pub mod connection_ledger;
+pub mod effect;
 pub mod oauth;
 pub mod provider;
 pub mod vault;
