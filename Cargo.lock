@@ -7745,6 +7745,7 @@ dependencies = [
  "url",
  "uuid",
  "vak-config",
+ "vak-core",
  "zeroize",
 ]
 

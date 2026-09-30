@@ -719,3 +719,7 @@ authorization and approval boundary on every execution path.
   and Google loopback-IP callbacks remain supported. The server unit guard
   and native OAuth HTTP flow pass, including a forwarded-header rejection
   that verifies a supplied authorization code is not echoed.
+- 2026-09-30: Added a package integration regression that resolves the actual
+  per-Agent connection-ledger path and checks it against `vak_core::state::REGISTRY`.
+  The mail/calendar suite now passes 47 unit tests plus this registry test,
+  confirming that the ledger is covered by backup, purge, and upgrade checks.

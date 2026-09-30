@@ -25,6 +25,7 @@ vak-config = { workspace = true }
 
 [dev-dependencies]
 axum = { workspace = true }
+vak-core = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 
