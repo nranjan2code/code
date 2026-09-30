@@ -98,7 +98,14 @@ The standard failure matrix and where each case is handled.
   satisfies the empty-answer check, just as a displayed card does. When the
   model ends the next step without prose, the loop accepts that completion
   through the remaining outcome and safety gates instead of requesting more
-  work solely to repeat the delivered file in text.
+  work solely to repeat the delivered file in text. Conversely, an authoring
+  outcome cannot be marked complete by a prose claim alone: a successful
+  result from a tool that declares artifact production must be receipted in
+  the same run. Tool declarations are the extension point; the runtime does
+  not maintain a domain or file-type list. The ordinary bounded stop guard
+  asks the model to recover when that receipt is missing; if the recovery
+  budget expires, the run returns a failure instead of accepting the prose
+  claim as completion.
 
 ## Crash & recovery
 

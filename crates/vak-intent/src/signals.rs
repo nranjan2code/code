@@ -277,6 +277,9 @@ const ACT_VERBS: &[(&str, Act, f64)] = &[
     ("draft", Act::Author, 0.9),
     ("create", Act::Author, 0.7),
     ("generate", Act::Author, 0.7),
+    // General creation language, without assuming a domain or file type.
+    ("make", Act::Author, 0.7),
+    ("build", Act::Author, 0.7),
     ("design", Act::Author, 0.7),
     ("compose", Act::Author, 0.8),
     ("plan", Act::Author, 0.5),

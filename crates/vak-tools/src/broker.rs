@@ -313,6 +313,10 @@ impl Tool for BrokeredTool {
         self.inner.delivered_file(args)
     }
 
+    fn produces_artifact(&self, args: &Value) -> bool {
+        self.inner.produces_artifact(args)
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         execute(
             self.name(),
