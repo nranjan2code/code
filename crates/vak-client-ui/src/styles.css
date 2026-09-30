@@ -5395,6 +5395,19 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   flex-shrink: 0;
 }
 
+.automation-view { position: relative; height: 100%; overflow: auto; background: var(--bg); }
+.automation-body { max-width: 640px; margin: 0 auto; padding: var(--space-5) var(--space-4); }
+.automation-body header { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); }
+.automation-body h2 { margin: 0; font-size: var(--fs-title, 20px); color: var(--text); }
+.automation-state { padding: 2px var(--space-2); border: 1px solid var(--border); border-radius: 999px; color: var(--text-soft); font-size: var(--fs-meta); }
+.automation-state[data-state="running"] { border-color: var(--accent); color: var(--text); }
+.automation-state[data-state="paused"] { color: var(--muted); }
+.automation-body dl { display: grid; grid-template-columns: max-content 1fr; gap: var(--space-2) var(--space-4); margin: 0; font-size: var(--fs-control); }
+.automation-body dt { color: var(--muted); }
+.automation-body dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.automation-what, .automation-summary { white-space: pre-wrap; }
+.automation-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-4); }
+.automation-note { margin: var(--space-3) 0 0; color: var(--text-soft); font-size: var(--fs-meta); }
 .artifact-canvas-tabs {
   display: flex;
   gap: var(--space-1);

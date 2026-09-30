@@ -34,6 +34,10 @@ A viewer says what a reader can point at in each of its views (`ViewerSpec.selec
 
 A newer version of the draft being read is announced (`NewVersionNotice`) and never replaces it: reading it opens another tab, comments stay on the version they were written on, and dismissing the notice keeps it away until a still newer one arrives. Not built: a pointing mode for interactive pages, regions of an image, and handing work over to another person or Agent (collaboration stage C3).
 
+### 0c. Subjects that are not files
+
+A subject need not be a file: a scheduled routine is `{ kind: "automation", taskId }` (`AutomationViewer`). It has no path, conversation or comments, so its registry entry says `feedback: "none"` and `selects: () => null`, and the frame draws no comment area for it. The viewer reads the task list, keeps itself current every ten seconds, and offers what the task list offers for one routine (run now, pause or resume, retry a waiting delivery, see the last run); the words for cadence, status and delivery are shared with the task list (`taskWords.ts`). The task list's "open" opens one. A routine that has been deleted says so. A new non-file subject kind (a mail thread, a calendar view) is the same three steps: a `CanvasSubject` variant, an entry in `canvasViewers.ts`, and a viewer in `components/canvas/`.
+
 ### 0. What the Canvas shows: a subject
 
 The Canvas opens a `CanvasSubject` (`src/canvasSubject.ts`), which names what is shown by identity, not by path: a workspace `file`, an `execution_artifact` (a run's scratch file), a `draft_file` (one saved version, read through hash-checked candidate routes), `inline` markup from the conversation, or a `live_server`. Each kind is read through the one route its identity names, and there is no fallback between them: an unreadable file is an error, never replaced by text found elsewhere. `openArtifactFile(path, origin?)` is the entry point for files. A bare reference (a path in the Agent's text) is matched to a run only by an identical path made by exactly one run; if several runs made it, the reader is asked instead of a file being chosen.

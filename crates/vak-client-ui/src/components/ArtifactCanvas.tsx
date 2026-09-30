@@ -219,7 +219,9 @@ export default function ArtifactCanvas() {
                 <Icon name="diff" size={14} /> Review changes
               </button>
             </Show>
-            <button type="button" class="artifact-canvas-btn" aria-expanded={!!canvasEntry()?.feedbackOpen} onClick={() => updateCanvasEntry({ feedbackOpen: !canvasEntry()?.feedbackOpen })}>{canvasEntry()?.feedbackOpen ? "Hide comments" : "Comment"}</button>
+            <Show when={spec()?.feedback !== "none"}>
+              <button type="button" class="artifact-canvas-btn" aria-expanded={!!canvasEntry()?.feedbackOpen} onClick={() => updateCanvasEntry({ feedbackOpen: !canvasEntry()?.feedbackOpen })}>{canvasEntry()?.feedbackOpen ? "Hide comments" : "Comment"}</button>
+            </Show>
             <button
               type="button"
               class="artifact-canvas-close"

@@ -28,8 +28,8 @@ export interface ViewerSpec {
   devices: boolean;
   /** Can be opened in a window of its own. */
   popout: boolean;
-  /** Whether the comment area is open when the subject opens or only on request. */
-  feedback: "always" | "on_request";
+  /** Whether the comment area is open when the subject opens, only on request, or not offered. */
+  feedback: "always" | "on_request" | "none";
   /** What a reader can point at in the given view, or nothing: a preview page or an image has no place a comment could name. */
   selects: (view: string | null) => SelectionKind | null;
   /** The footer that says what the frame is allowed to do. */
@@ -61,6 +61,7 @@ const SPECS: Record<ArtifactDisplayType, ViewerSpec> = {
     selects: (view) => (view === "text" ? "anchor" : null),
     safetyFooter: false,
   },
+  automation: { type: "automation", badge: "Routine", views: [], defaultView: () => null, layout: "split", reloadable: true, devices: false, popout: false, feedback: "none", selects: () => null, safetyFooter: false },
   office: { type: "office", badge: "Document", views: [], defaultView: () => null, layout: "focused", reloadable: false, devices: false, popout: false, feedback: "on_request", selects: () => "anchor", safetyFooter: false },
 };
 

@@ -24,6 +24,7 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
     case "inline":
       return api;
     case "live_server":
+    case "automation":
       return null;
   }
 }
