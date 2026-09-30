@@ -38,6 +38,14 @@ implemented together. An unauthenticated probe of `caldav.icloud.com` received
 an Apple 401 Basic challenge; this is endpoint evidence, not proof of valid
 credentials or a supported Apple API contract.
 
+The isolated parser foundation now accepts bounded VCALENDAR data and
+CalDAV multistatus XML, projects at most 100 events, refuses ambiguous or
+unsupported local times, and redacts details for private events. It runs only
+through the versioned tool-worker broker, with an empty private scratch
+directory and the network-denied verification sandbox on supported platforms.
+This parser is not yet connected to a live provider adapter or preview route;
+Apple Calendar remains unavailable.
+
 ## Scope and provider matrix
 
 The first three provider targets are Google Workspace/Gmail, Microsoft
@@ -1079,3 +1087,16 @@ authorization and approval boundary on every execution path.
   and a redirect is rejected. `cargo test -p vak-mail-calendar` passes (75
   unit tests plus the state-registry test). No credentialed live Apple request
   was made.
+- 2026-09-30: Added the worker-only CalDAV/iCalendar parsing path. It accepts
+  bounded standalone VCALENDAR data or extracts calendar-data from a bounded
+  CalDAV multistatus response, applies a 64-level XML depth limit, caps calendar
+  and event counts, rejects unsupported time zones and malformed event bounds,
+  and suppresses private event details. The broker passes input over bounded
+  IPC to an isolated worker with a private empty scratch directory and no
+  network access on supported platforms; unsupported platforms fail closed.
+  A server integration test exercises the real worker executable and checks
+  missing-worker and oversized-input refusals. Apple Calendar is still not
+  connected to this parser and remains unavailable. Verification:
+  `cargo test -p vak-tools mail_calendar --lib` and
+  `cargo test -p vak-server --test mail_calendar_worker` pass; server check
+  passes.

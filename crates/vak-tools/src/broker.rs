@@ -69,6 +69,9 @@ enum WorkerTask {
         keep: Vec<String>,
         out: PathBuf,
     },
+    IcalendarParse {
+        data: String,
+    },
 }
 
 /// Which projection of an Office file a view asks for (docs/design/72, P4).
@@ -592,6 +595,19 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::IcalendarParse { data } => {
+            let (content, is_error) = match crate::mail_calendar::parse_calendar_data(&data) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::VerifyTargets { root, checks } => {
             let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
             let content = serde_json::to_string(&results).unwrap_or_default();
@@ -716,6 +732,30 @@ pub async fn verify_targets(
         Ok(results) if results.len() == checks.len() => results,
         Ok(_) => failed("worker answered a different number of checks".into()),
         Err(error) => failed(format!("worker returned invalid results: {error}")),
+    }
+}
+
+/// Parse untrusted iCalendar content in the isolated tool worker. The worker
+/// gets an empty private directory, no network, and the bounded input over
+/// its versioned IPC channel; unsupported platforms fail closed.
+pub async fn parse_icalendar(worker_exe: &Path, data: &str) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("calendar response exceeds the parser input limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("calendar parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-calendar-parse-")
+            .tempdir()
+            .map_err(|_| "calendar parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::IcalendarParse {
+            data: data.to_owned(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "calendar worker returned an invalid result".to_owned())
     }
 }
 

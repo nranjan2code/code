@@ -13,9 +13,10 @@ reviewed instants as UTC. Other event update/cancel/RSVP, full provider
 reconciliation and reliable continuous routines remain open, 2026-09-30.
 iCloud Mail-only links now verify fixed-host IMAP sign-in and support bounded,
 read-only inbox metadata. A fixed-host, no-redirect CalDAV authentication probe
-exists but is not wired into account admission; iCloud Calendar remains
-unverified and unavailable until discovery, bounded event reads, capability
-checks, and worker-isolated iCalendar parsing are implemented.**
+and isolated bounded iCalendar parser exist, but neither is connected to
+account admission or a preview route; iCloud Calendar remains unverified and
+unavailable until discovery, bounded event reads, and capability checks are
+implemented.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -33,9 +34,10 @@ the app-specific password against `imap.mail.me.com:993` using TLS, read-only
 for `MailRead`; inbox metadata is bounded to 20 items and message bodies are
 not fetched. A selection that includes calendar access remains
 `connected_unverified` and unavailable until a CalDAV verifier and bounded
-calendar adapter exist. The current CalDAV probe only checks the fixed
-endpoint's authenticated PROPFIND response and cannot activate a calendar
-account or provide event data. Google and Microsoft Agent reads are limited
+calendar adapter exist. The CalDAV probe only checks the fixed endpoint's
+authenticated PROPFIND response. The worker parser is not yet called by the
+provider adapter and cannot activate a calendar account or provide event data.
+Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
 share grant. Provider previews redact private-event titles, locations,
 descriptions, and attendee counts while preserving only the busy time. Reads
