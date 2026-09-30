@@ -249,6 +249,12 @@ struct RoutineCursor {
     #[serde(default)]
     delivered_ids: Vec<String>,
     #[serde(default)]
+    seen_calendar_occurrences: Vec<String>,
+    #[serde(default)]
+    pending_calendar_occurrences: Vec<String>,
+    #[serde(default)]
+    delivered_calendar_occurrences: Vec<String>,
+    #[serde(default)]
     provider_cursor: Option<String>,
 }
 
@@ -519,6 +525,9 @@ impl AccountVault {
                         seen_ids: Vec::new(),
                         pending_ids: Vec::new(),
                         delivered_ids: Vec::new(),
+                        seen_calendar_occurrences: Vec::new(),
+                        pending_calendar_occurrences: Vec::new(),
+                        delivered_calendar_occurrences: Vec::new(),
                         provider_cursor: None,
                     });
                     cursors.len() - 1
@@ -722,6 +731,194 @@ impl AccountVault {
                     return Err(VaultError::TooLarge);
                 }
                 cursor.pending_ids = pending;
+            }
+            self.write_routine_cursors(&cursors)
+        })
+    }
+
+    /// Queue opaque calendar occurrence keys in this Agent's encrypted vault.
+    /// Occurrences have their own backlog so mail IDs cannot be consumed by
+    /// calendar runs (or vice versa).
+    pub fn queue_calendar_occurrences(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        occurrence_keys: &[String],
+    ) -> Result<bool, VaultError> {
+        validate_calendar_occurrence_keys(routine_id, account_id, occurrence_keys)?;
+        self.with_routine_cursors(|mut cursors| {
+            let index = match cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            {
+                Some(index) => {
+                    if cursors[index].account_id != account_id {
+                        return Err(VaultError::InvalidReference);
+                    }
+                    index
+                }
+                None => {
+                    if cursors.len() >= MAX_ROUTINE_CURSORS {
+                        return Err(VaultError::TooLarge);
+                    }
+                    cursors.push(RoutineCursor {
+                        routine_id: routine_id.to_owned(),
+                        account_id: account_id.to_owned(),
+                        seen_ids: Vec::new(),
+                        pending_ids: Vec::new(),
+                        delivered_ids: Vec::new(),
+                        seen_calendar_occurrences: Vec::new(),
+                        pending_calendar_occurrences: Vec::new(),
+                        delivered_calendar_occurrences: Vec::new(),
+                        provider_cursor: None,
+                    });
+                    cursors.len() - 1
+                }
+            };
+            let cursor = &mut cursors[index];
+            for key in occurrence_keys {
+                if cursor.seen_calendar_occurrences.contains(key)
+                    || cursor.pending_calendar_occurrences.contains(key)
+                    || cursor.delivered_calendar_occurrences.contains(key)
+                {
+                    continue;
+                }
+                if cursor.pending_calendar_occurrences.len()
+                    + cursor.delivered_calendar_occurrences.len()
+                    >= MAX_ROUTINE_PENDING_IDS
+                {
+                    return Err(VaultError::TooLarge);
+                }
+                cursor.pending_calendar_occurrences.push(key.clone());
+            }
+            let has_pending = !cursor.pending_calendar_occurrences.is_empty();
+            self.write_routine_cursors(&cursors)?;
+            Ok(has_pending)
+        })
+    }
+
+    pub fn pending_calendar_occurrences(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, VaultError> {
+        validate_routine_mail_ids(routine_id, account_id, &[])?;
+        if !(1..=MAX_ROUTINE_PENDING_IDS).contains(&limit) {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_routine_cursors(|cursors| {
+            let Some(cursor) = cursors
+                .iter()
+                .find(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(Vec::new());
+            };
+            if cursor.account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            Ok(cursor
+                .pending_calendar_occurrences
+                .iter()
+                .take(limit)
+                .cloned()
+                .collect())
+        })
+    }
+
+    pub fn has_unresolved_calendar_occurrences(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+    ) -> Result<bool, VaultError> {
+        validate_routine_mail_ids(routine_id, account_id, &[])?;
+        self.with_routine_cursors(|cursors| {
+            let Some(cursor) = cursors
+                .iter()
+                .find(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(false);
+            };
+            if cursor.account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            Ok(!cursor.pending_calendar_occurrences.is_empty()
+                || !cursor.delivered_calendar_occurrences.is_empty())
+        })
+    }
+
+    pub fn stage_delivered_calendar_occurrences(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        occurrence_keys: &[String],
+    ) -> Result<(), VaultError> {
+        validate_calendar_occurrence_keys(routine_id, account_id, occurrence_keys)?;
+        self.with_routine_cursors(|mut cursors| {
+            let Some(index) = cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Err(VaultError::InvalidReference);
+            };
+            if cursors[index].account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            let cursor = &mut cursors[index];
+            if occurrence_keys
+                .iter()
+                .any(|key| !cursor.pending_calendar_occurrences.contains(key))
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            for key in occurrence_keys {
+                cursor
+                    .pending_calendar_occurrences
+                    .retain(|pending| pending != key);
+                if !cursor.delivered_calendar_occurrences.contains(key) {
+                    cursor.delivered_calendar_occurrences.push(key.clone());
+                }
+            }
+            self.write_routine_cursors(&cursors)
+        })
+    }
+
+    pub fn resolve_delivered_calendar_occurrences(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        run_succeeded: bool,
+    ) -> Result<(), VaultError> {
+        validate_routine_mail_ids(routine_id, account_id, &[])?;
+        self.with_routine_cursors(|mut cursors| {
+            let Some(index) = cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(());
+            };
+            if cursors[index].account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            let cursor = &mut cursors[index];
+            let delivered = std::mem::take(&mut cursor.delivered_calendar_occurrences);
+            if run_succeeded {
+                for key in delivered {
+                    if !cursor.seen_calendar_occurrences.contains(&key) {
+                        cursor.seen_calendar_occurrences.push(key);
+                    }
+                }
+                if cursor.seen_calendar_occurrences.len() > MAX_ROUTINE_SEEN_IDS {
+                    let remove = cursor.seen_calendar_occurrences.len() - MAX_ROUTINE_SEEN_IDS;
+                    cursor.seen_calendar_occurrences.drain(..remove);
+                }
+            } else {
+                let mut pending = delivered;
+                pending.append(&mut cursor.pending_calendar_occurrences);
+                if pending.len() > MAX_ROUTINE_PENDING_IDS {
+                    return Err(VaultError::TooLarge);
+                }
+                cursor.pending_calendar_occurrences = pending;
             }
             self.write_routine_cursors(&cursors)
         })
@@ -931,77 +1128,139 @@ impl AccountVault {
         }
         let lock = options.open(&lock_path).map_err(VaultError::Store)?;
         lock.lock_exclusive().map_err(VaultError::Store)?;
-        let result = (|| {
-            let Some(encoded) = vak_config::read_env_file_var(&self.scope_hint, ROUTINE_CURSOR_KEY)
-            else {
-                return operation(Vec::new());
-            };
-            let encoded = Zeroizing::new(encoded);
-            if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
-                return Err(VaultError::TooLarge);
-            }
-            let cursors: Vec<RoutineCursor> =
-                serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
-            if cursors.len() > MAX_ROUTINE_CURSORS
-                || cursors.iter().any(|cursor| {
-                    validate_account_id(&cursor.account_id).is_err()
-                        || validate_account_id(&cursor.routine_id).is_err()
-                        || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
-                        || cursor.pending_ids.len() > MAX_ROUTINE_PENDING_IDS
-                        || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
-                        || cursor.provider_cursor.as_ref().is_some_and(|value| {
-                            value.is_empty()
-                                || value.len() > MAX_PROVIDER_CURSOR_BYTES
-                                || value.chars().any(char::is_control)
-                        })
-                        || cursor.pending_ids.len() + cursor.delivered_ids.len()
-                            > MAX_ROUTINE_PENDING_IDS
-                        || cursor.seen_ids.iter().any(|id| {
-                            id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
-                        })
-                        || cursor.pending_ids.iter().any(|id| {
-                            id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
-                        })
-                        || cursor
-                            .pending_ids
-                            .iter()
-                            .any(|pending| cursor.seen_ids.iter().any(|seen| seen == pending))
-                        || cursor.delivered_ids.iter().any(|delivered| {
-                            cursor.seen_ids.iter().any(|seen| seen == delivered)
-                                || cursor
-                                    .pending_ids
-                                    .iter()
-                                    .any(|pending| pending == delivered)
-                        })
-                        || cursor
-                            .pending_ids
-                            .iter()
-                            .enumerate()
-                            .any(|(index, pending)| {
-                                cursor.pending_ids[index + 1..]
-                                    .iter()
-                                    .any(|next| next == pending)
+        let result =
+            (|| {
+                let Some(encoded) =
+                    vak_config::read_env_file_var(&self.scope_hint, ROUTINE_CURSOR_KEY)
+                else {
+                    return operation(Vec::new());
+                };
+                let encoded = Zeroizing::new(encoded);
+                if encoded.len() > MAX_ROUTINE_CURSOR_BYTES {
+                    return Err(VaultError::TooLarge);
+                }
+                let cursors: Vec<RoutineCursor> =
+                    serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
+                if cursors.len() > MAX_ROUTINE_CURSORS
+                    || cursors.iter().any(|cursor| {
+                        validate_account_id(&cursor.account_id).is_err()
+                            || validate_account_id(&cursor.routine_id).is_err()
+                            || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
+                            || cursor.pending_ids.len() > MAX_ROUTINE_PENDING_IDS
+                            || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
+                            || cursor.seen_calendar_occurrences.len() > MAX_ROUTINE_SEEN_IDS
+                            || cursor.pending_calendar_occurrences.len() > MAX_ROUTINE_PENDING_IDS
+                            || cursor.delivered_calendar_occurrences.len() > MAX_ROUTINE_PENDING_IDS
+                            || cursor.provider_cursor.as_ref().is_some_and(|value| {
+                                value.is_empty()
+                                    || value.len() > MAX_PROVIDER_CURSOR_BYTES
+                                    || value.chars().any(char::is_control)
                             })
-                        || cursor
-                            .delivered_ids
-                            .iter()
-                            .enumerate()
-                            .any(|(index, delivered)| {
-                                cursor.delivered_ids[index + 1..]
-                                    .iter()
-                                    .any(|next| next == delivered)
+                            || cursor.pending_ids.len() + cursor.delivered_ids.len()
+                                > MAX_ROUTINE_PENDING_IDS
+                            || cursor.seen_ids.iter().any(|id| {
+                                id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
                             })
-                })
-                || cursors.iter().enumerate().any(|(index, cursor)| {
-                    cursors[index + 1..]
-                        .iter()
-                        .any(|next| next.routine_id == cursor.routine_id)
-                })
-            {
-                return Err(VaultError::InvalidReference);
-            }
-            operation(cursors)
-        })();
+                            || cursor
+                                .pending_calendar_occurrences
+                                .iter()
+                                .any(|key| !valid_calendar_occurrence_key(key))
+                            || cursor
+                                .delivered_calendar_occurrences
+                                .iter()
+                                .any(|key| !valid_calendar_occurrence_key(key))
+                            || cursor
+                                .seen_calendar_occurrences
+                                .iter()
+                                .any(|key| !valid_calendar_occurrence_key(key))
+                            || cursor.pending_calendar_occurrences.len()
+                                + cursor.delivered_calendar_occurrences.len()
+                                > MAX_ROUTINE_PENDING_IDS
+                            || cursor.pending_calendar_occurrences.iter().any(|pending| {
+                                cursor
+                                    .seen_calendar_occurrences
+                                    .iter()
+                                    .any(|seen| seen == pending)
+                            })
+                            || cursor
+                                .delivered_calendar_occurrences
+                                .iter()
+                                .any(|delivered| {
+                                    cursor
+                                        .seen_calendar_occurrences
+                                        .iter()
+                                        .any(|seen| seen == delivered)
+                                        || cursor
+                                            .pending_calendar_occurrences
+                                            .iter()
+                                            .any(|pending| pending == delivered)
+                                })
+                            || cursor.pending_calendar_occurrences.iter().enumerate().any(
+                                |(i, key)| {
+                                    cursor.pending_calendar_occurrences[i + 1..]
+                                        .iter()
+                                        .any(|next| next == key)
+                                },
+                            )
+                            || cursor
+                                .delivered_calendar_occurrences
+                                .iter()
+                                .enumerate()
+                                .any(|(i, key)| {
+                                    cursor.delivered_calendar_occurrences[i + 1..]
+                                        .iter()
+                                        .any(|next| next == key)
+                                })
+                            || cursor.seen_calendar_occurrences.iter().enumerate().any(
+                                |(i, key)| {
+                                    cursor.seen_calendar_occurrences[i + 1..]
+                                        .iter()
+                                        .any(|next| next == key)
+                                },
+                            )
+                            || cursor.pending_ids.iter().any(|id| {
+                                id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
+                            })
+                            || cursor
+                                .pending_ids
+                                .iter()
+                                .any(|pending| cursor.seen_ids.iter().any(|seen| seen == pending))
+                            || cursor.delivered_ids.iter().any(|delivered| {
+                                cursor.seen_ids.iter().any(|seen| seen == delivered)
+                                    || cursor
+                                        .pending_ids
+                                        .iter()
+                                        .any(|pending| pending == delivered)
+                            })
+                            || cursor
+                                .pending_ids
+                                .iter()
+                                .enumerate()
+                                .any(|(index, pending)| {
+                                    cursor.pending_ids[index + 1..]
+                                        .iter()
+                                        .any(|next| next == pending)
+                                })
+                            || cursor
+                                .delivered_ids
+                                .iter()
+                                .enumerate()
+                                .any(|(index, delivered)| {
+                                    cursor.delivered_ids[index + 1..]
+                                        .iter()
+                                        .any(|next| next == delivered)
+                                })
+                    })
+                    || cursors.iter().enumerate().any(|(index, cursor)| {
+                        cursors[index + 1..]
+                            .iter()
+                            .any(|next| next.routine_id == cursor.routine_id)
+                    })
+                {
+                    return Err(VaultError::InvalidReference);
+                }
+                operation(cursors)
+            })();
         let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
         if let Err(error) = unlock_result {
             return Err(error);
@@ -1525,6 +1784,28 @@ fn validate_routine_mail_ids(
     Ok(())
 }
 
+fn valid_calendar_occurrence_key(value: &str) -> bool {
+    value.len() == 73
+        && value.starts_with("calendar:")
+        && value[9..].bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+fn validate_calendar_occurrence_keys(
+    routine_id: &str,
+    account_id: &str,
+    occurrence_keys: &[String],
+) -> Result<(), VaultError> {
+    validate_routine_mail_ids(routine_id, account_id, &[])?;
+    if occurrence_keys.len() > MAX_ROUTINE_PENDING_IDS
+        || occurrence_keys
+            .iter()
+            .any(|key| !valid_calendar_occurrence_key(key))
+    {
+        return Err(VaultError::InvalidReference);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1837,6 +2118,84 @@ mod tests {
                 .queue_unseen_mail_ids(&routine_id, &other_account_id, &ids(&["m4"]))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn calendar_occurrence_backlog_is_encrypted_scoped_and_restart_recoverable() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-calendar-backlog-{}", Uuid::now_v7());
+        let other_agent_id = format!("mailcal-calendar-other-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let other_account_id = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let keys = |n: u8| vec![format!("calendar:{}", format!("{n:02x}").repeat(32))];
+        let owner = AccountVault::for_agent(&agent_id).unwrap();
+        let other_agent = AccountVault::for_agent(&other_agent_id).unwrap();
+        assert!(
+            owner
+                .queue_calendar_occurrences(&routine_id, &account_id, &keys(1))
+                .unwrap()
+        );
+        assert!(matches!(
+            owner.queue_calendar_occurrences(&routine_id, &other_account_id, &keys(2)),
+            Err(VaultError::InvalidReference)
+        ));
+        assert!(
+            other_agent
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap()
+                .is_empty()
+        );
+
+        let reopened = AccountVault::for_agent(&agent_id).unwrap();
+        assert_eq!(
+            reopened
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap(),
+            keys(1)
+        );
+        reopened
+            .stage_delivered_calendar_occurrences(&routine_id, &account_id, &keys(1))
+            .unwrap();
+        assert!(
+            reopened
+                .has_unresolved_calendar_occurrences(&routine_id, &account_id)
+                .unwrap()
+        );
+        reopened
+            .resolve_delivered_calendar_occurrences(&routine_id, &account_id, false)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap(),
+            keys(1)
+        );
+        assert!(matches!(
+            reopened.stage_delivered_calendar_occurrences(&routine_id, &account_id, &keys(2)),
+            Err(VaultError::InvalidReference)
+        ));
+        reopened
+            .stage_delivered_calendar_occurrences(&routine_id, &account_id, &keys(1))
+            .unwrap();
+        reopened
+            .resolve_delivered_calendar_occurrences(&routine_id, &account_id, true)
+            .unwrap();
+        assert!(
+            reopened
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !reopened
+                .queue_calendar_occurrences(&routine_id, &account_id, &keys(1))
+                .unwrap()
+        );
+        assert!(matches!(
+            reopened.queue_calendar_occurrences(&routine_id, &account_id, &["not-a-key".into()]),
+            Err(VaultError::InvalidReference)
+        ));
     }
 
     #[test]

@@ -34,7 +34,10 @@ provider cursors in the Agent vault. Continuous watches show an overdue warning
 after three minutes without a successful provider poll. Settings separately
 reports whether the Vakyartha service API is reachable; a reachable process
 does not prove provider freshness or detect sleep between checks. The full
-conversation workspace, Apple provider effects, broader Microsoft/event update
+event-relative trigger contracts and a separate encrypted Agent-vault queue
+for occurrence keys are implemented as groundwork; event polling and TaskDef
+dispatch remain open. The full conversation workspace, Apple provider effects,
+broader Microsoft/event update
 and cancellation profiles, RSVP, event-relative routine execution, provider
 reconciliation, live-provider conformance, full connected source-to-Review
 browser acceptance, and 24-hour service-recovery acceptance remain open. Apple

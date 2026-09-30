@@ -650,8 +650,13 @@ remains open.
   to `RoutineScope`, with signed offsets, start/end boundaries, a bounded
   catch-up window, calendar-read validation, and opaque occurrence keys. Contract
   tests cover before/after timing, expiry, moves, and isolation. Provider polling,
-  durable occurrence queueing, TaskDef execution, and owner controls remain
-  unimplemented.
+  TaskDef execution, and owner controls remain unimplemented.
+- 2026-10-01: Added a separate encrypted Agent-vault queue for opaque calendar
+  occurrence keys. It persists across process restarts, deduplicates completed,
+  pending, and staged occurrences, enforces account/Agent scope and queue bounds,
+  and requeues interrupted or failed dispatches. This is queue groundwork only;
+  event polling, TaskDef dispatch, and owner controls remain open. The focused
+  recovery/isolation test passes.
 
 - 2026-10-01: Conversation citations now follow at most 20 additional
   same-thread pages (420 messages total) to locate a cited message. Provider
