@@ -1,3 +1,11 @@
+## 5.3.0 — 2026-09-30
+
+- Make the Canvas a workspace rather than a file viewer. What it shows is named by identity (a workspace file, a run's file, one saved version, markup from the conversation, a dev server or a scheduled routine), so opening something can never quietly show a different file, and an unreadable file is an error, not a stand-in page. Each conversation keeps its own Canvas with tabs that remember the reader's view, selection and unsent note.
+- Serve previews from origins of their own. A page with files behind it (a saved draft's site, a run's output, a workspace page) loads its own stylesheets, scripts, modules and links from a loopback origin that shares no origin, cookie or storage with the app; dev servers are framed under the other loopback name. A preview's sandbox is chosen by the client and never by the data describing it, its network is closed, and the dock's old preview pane, its URL bar and the unused `/fs/preview` and `/canvas/preview` endpoints are gone. The dock keeps a Live preview list. Previews need the app on this computer; a remote browser gets a single-page view.
+- Let readers point at a place in a draft (source lines or a document place), comment on it or ask the Agent about it, see what changed and what happened to a draft, and be told when a newer version arrives without it replacing the one being read. A scheduled routine opens in the Canvas from the task list, with run now, pause and resume.
+- Fix a result saved in the folder failing to open in the Canvas, and picking a line reloading the whole viewer.
+- Require an artifact receipt before an authoring outcome counts as delivered, and add deterministic generic scenario batches to the eval suite with more reliable large runs.
+
 ## 5.2.14 — 2026-09-30
 
 - Coordinate rate-limit cooldowns across OpenAI Chat Completions and Responses routes that share the same endpoint and credential. Preserve retry timing from streamed Responses failures and wait cancelably before dispatch.
