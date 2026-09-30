@@ -587,6 +587,12 @@ authorization and approval boundary on every execution path.
 
 ## Progress log
 
+- 2026-10-01: Added explicit accessible names to the Google, Microsoft, and
+  Apple app-password email and password fields after the running preview
+  exposed anonymous text fields in its accessibility tree. The UI typecheck
+  and web bundle build pass. The existing preview tab was left untouched so
+  any in-progress owner credential entry is not cleared; a separate isolated
+  profile will be used to verify the rebuilt UI.
 - 2026-10-01: Re-ran the provider and security-boundary test suites from the
   feature worktree after the isolated local-draft browser fix. All 111
   `vak-mail-calendar` unit tests and its state-registry test pass; all 11 Core
