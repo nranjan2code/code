@@ -649,6 +649,9 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert!(!serialized_accounts.contains("abcd-efgh-ijkl-mnop"));
     assert!(!serialized_accounts.contains("owner@example.com"));
     assert!(!serialized_accounts.contains("google-owner@example.com"));
+    assert!(!serialized_accounts.contains("google:subject"));
+    assert!(!serialized_accounts.contains("access-token-secret"));
+    assert!(!serialized_accounts.contains("replacement-access-secret"));
     assert!(!serialized_accounts.contains("refresh-token-secret"));
     assert!(!serialized_accounts.contains("replacement-refresh-token-secret"));
     google_vault.remove(&google_id).unwrap();
