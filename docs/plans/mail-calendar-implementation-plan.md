@@ -367,6 +367,13 @@ and restart/recovery acceptance are not implemented yet. Current-storage session
 history is append-only and cannot be selectively erased; M7 remains the
 deletion gate.
 
+**Implemented increment (2026-09-30):** mail watches can run on their selected
+five-field schedule or check continuously at a one-minute interval through the
+existing `TaskDef` scheduler. Continuous mode remains read-only, uses the
+encrypted bounded backlog above, and skips model runs while no mail is waiting.
+It depends on the service host staying awake and connected; this does not
+establish push delivery, a source-freshness target, or 24/7 availability.
+
 Missed scheduled slots now use each task's configured IANA timezone during
 startup catch-up, with instant-based comparison across daylight-saving gaps
 and folds. A server regression covers a New York fall-back slot missed while
@@ -1164,3 +1171,10 @@ authorization and approval boundary on every execution path.
   worker integration tests, 3 mail/calendar HTTP tests, 4 scheduled-run tests,
   formatting and diff checks pass. Live provider and signed-in browser checks
   remain open.
+- 2026-09-30: Added a continuous email-watch option alongside scheduled checks.
+  Continuous mode uses the existing TaskDef interval scheduler at one-minute
+  intervals, while scheduled mode retains the selected cron expression. Both
+  use the same owner/account-scoped read-only broker and bounded encrypted
+  backlog. Settings explains that a sleeping local host is offline; native
+  push, awake-host health, and 24-hour outage/restart acceptance remain open.
+  `npm run build:web` and TypeScript checking pass.
