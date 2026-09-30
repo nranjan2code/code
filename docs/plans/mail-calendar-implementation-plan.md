@@ -356,10 +356,10 @@ the routine's configured batch by explicit IDs. The content-free poll does
 not fetch message bodies. Fetched IDs remain staged until the scheduler
 observes a completed run; failed or interrupted runs requeue them, preserving
 at-least-once recovery across local restarts. Apple now advances a bounded
-UIDVALIDITY/UID cursor, and Gmail follows bounded history pages from its stored
-history ID, so arrivals beyond one page can be drained on later checks.
-Microsoft still uses the latest 100 IDs per check, so a larger arrival burst
-can push older mail outside that window; backlog overflow fails closed. An
+UIDVALIDITY/UID cursor, Gmail follows bounded history pages from its stored
+history ID, and Microsoft follows bounded Graph delta links for the inbox.
+Each page advances its encrypted cursor atomically with queued IDs, so arrivals
+beyond one page can be drained on later checks; backlog overflow fails closed. An
 Agent-vault OS
 advisory lease now prevents duplicate polls or dispatches by
 local server processes; it is held through child completion
@@ -1206,5 +1206,7 @@ authorization and approval boundary on every execution path.
   additions enter the queue. An expired Gmail history ID or an overfull history
   page fails visibly rather than advancing past unqueued mail. Test doubles
   verify inbox filtering, page continuation, cursor advancement, expired-token
-  handling, and bearer-token scope. Microsoft Graph delta pagination and live
-  Gmail verification remain open.
+  handling, and bearer-token scope. Microsoft Graph delta pagination follows
+  the bounded per-folder API continuation URLs; continuation origins are
+  validated against the configured Graph origin before any bearer-auth request.
+  Live provider verification remains open.

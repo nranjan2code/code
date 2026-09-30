@@ -94,14 +94,13 @@ surface grant. Local drafts, scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at
 most the routine's configured batch by explicit IDs. Apple carries a
-UIDVALIDITY/UID cursor through that backlog, and Gmail follows bounded history
-pages from its stored history ID. Microsoft still scans only its latest 100
-IDs on each check. IDs fetched by a tool are
-committed only after the scheduler observes a completed run; failed or
-interrupted runs requeue them. This gives at-least-once recovery across local
-restarts, but it is not yet an all-provider cursor design: more than 100
-arrivals between Microsoft checks can still push older messages
-outside the scan window, and backlog overflow fails closed. A per-routine OS lease prevents duplicate
+UIDVALIDITY/UID cursor through that backlog, Gmail follows bounded history
+pages from its stored history ID, and Microsoft follows bounded Graph delta
+links for the inbox. IDs fetched by a tool are committed only after the
+scheduler observes a completed run; failed or interrupted runs requeue them.
+This gives at-least-once recovery across local restarts. Invalid or expired
+cursors fail visibly and require the owner to recreate the routine; backlog
+overflow also fails closed. A per-routine OS lease prevents duplicate
 local server-process runs through
 child completion; it does not provide multi-host coordination. Email send, a
 constrained timed event create, and Google standalone event update have

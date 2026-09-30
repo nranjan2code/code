@@ -23,6 +23,7 @@ const MAX_MAIL_ITEMS: usize = 20;
 const MAX_WATCH_SCAN_ITEMS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
 const MAX_EVENT_ITEMS: usize = 100;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024;
+const MAX_GRAPH_WATCH_CURSOR_BYTES: usize = 8192;
 const MAX_SELECTED_MESSAGE_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
@@ -344,9 +345,7 @@ impl ProviderReadClient {
             .collect())
     }
 
-    /// Return one bounded watch page and its continuation position. Apple
-    /// advances by UIDVALIDITY/UIDNEXT; providers without a native page
-    /// adapter retain the bounded recent-window behavior for now.
+    /// Return one bounded watch page and its continuation position.
     pub async fn mail_watch_page(
         &self,
         account: &ConnectedAccount,
@@ -377,9 +376,77 @@ impl ProviderReadClient {
                 )
                 .await;
         }
+        if account.provider == Provider::Microsoft {
+            let token = vault
+                .access_token(&account.id)
+                .map_err(|_| ProviderReadError::Vault)?;
+            return self
+                .microsoft_mail_watch_page(token.as_str(), cursor, limit)
+                .await;
+        }
         self.recent_mail_ids(account, vault, agent_id, audience, limit)
             .await
             .map(|ids| (ids, None))
+    }
+
+    async fn microsoft_mail_watch_page(
+        &self,
+        token: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<String>, Option<String>), ProviderReadError> {
+        let endpoint = match cursor {
+            Some(cursor) => decode_graph_watch_cursor(cursor, &self.microsoft_graph_base)?,
+            None => format!(
+                "{}/me/mailFolders/inbox/messages/delta",
+                self.microsoft_graph_base.trim_end_matches('/')
+            ),
+        };
+        let mut request = self.http.get(endpoint).bearer_auth(token);
+        if cursor.is_none() {
+            request = request.query(&[
+                ("$select", "id"),
+                ("$top", "100"),
+                ("changeType", "created"),
+            ]);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?;
+        if matches!(response.status(), StatusCode::NOT_FOUND | StatusCode::GONE) {
+            return Err(ProviderReadError::WatchCursorReset);
+        }
+        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+        let items = value
+            .get("value")
+            .and_then(Value::as_array)
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let mut ids = Vec::with_capacity(items.len().min(limit));
+        for item in items {
+            // Delta pages can include tombstones or updates. This watch admits
+            // newly created inbox messages only and never queues removed rows.
+            if item.get("@removed").is_some() {
+                continue;
+            }
+            if let Some(id) = item.get("id").and_then(Value::as_str) {
+                if id.is_empty() || id.len() > 512 || id.chars().any(char::is_control) {
+                    return Err(ProviderReadError::InvalidResponse);
+                }
+                ids.push(id.to_owned());
+                if ids.len() > limit {
+                    // Do not move the continuation beyond IDs we cannot stage.
+                    return Err(ProviderReadError::WatchCursorReset);
+                }
+            }
+        }
+        let next = value
+            .get("@odata.nextLink")
+            .or_else(|| value.get("@odata.deltaLink"))
+            .and_then(Value::as_str)
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let next_cursor = encode_graph_watch_cursor(next, &self.microsoft_graph_base)?;
+        Ok((ids, Some(next_cursor)))
     }
 
     async fn google_mail_watch_page(
@@ -1714,6 +1781,42 @@ fn decode_google_watch_cursor(value: &str) -> Result<GoogleWatchCursor, Provider
     Ok(cursor)
 }
 
+fn encode_graph_watch_cursor(value: &str, graph_base: &str) -> Result<String, ProviderReadError> {
+    validate_graph_delta_url(value, graph_base)?;
+    let cursor = format!("microsoft-graph:{value}");
+    if cursor.len() > MAX_GRAPH_WATCH_CURSOR_BYTES {
+        return Err(ProviderReadError::WatchCursorReset);
+    }
+    Ok(cursor)
+}
+
+fn decode_graph_watch_cursor(value: &str, graph_base: &str) -> Result<String, ProviderReadError> {
+    let value = value
+        .strip_prefix("microsoft-graph:")
+        .filter(|value| !value.is_empty() && value.len() <= MAX_GRAPH_WATCH_CURSOR_BYTES)
+        .ok_or(ProviderReadError::WatchCursorReset)?;
+    validate_graph_delta_url(value, graph_base)?;
+    Ok(value.to_owned())
+}
+
+fn validate_graph_delta_url(value: &str, graph_base: &str) -> Result<(), ProviderReadError> {
+    let base = url::Url::parse(graph_base).map_err(|_| ProviderReadError::InvalidResponse)?;
+    let next = url::Url::parse(value).map_err(|_| ProviderReadError::WatchCursorReset)?;
+    let base_path = base.path().trim_end_matches('/');
+    let expected_path = format!("{base_path}/me/mailFolders/inbox/messages/delta");
+    if next.scheme() != base.scheme()
+        || next.host_str() != base.host_str()
+        || next.port_or_known_default() != base.port_or_known_default()
+        || next.path() != expected_path
+        || next.username() != ""
+        || next.password().is_some()
+        || next.fragment().is_some()
+    {
+        return Err(ProviderReadError::WatchCursorReset);
+    }
+    Ok(())
+}
+
 fn google_history_inbox_ids(value: &Value, limit: usize) -> Result<Vec<String>, ProviderReadError> {
     let mut ids = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -3035,6 +3138,119 @@ mod tests {
         assert!(matches!(
             client
                 .mail_watch_page(&account, &vault, &agent_id, &audience, Some(&expired), 100)
+                .await,
+            Err(ProviderReadError::WatchCursorReset)
+        ));
+        vault.remove(&account_id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn microsoft_watch_follows_delta_links_and_rejects_foreign_cursor_urls() {
+        use axum::http::Request;
+        use axum::response::IntoResponse;
+
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-graph-delta-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                AccountSecretMaterial::new(
+                    "microsoft:delta-subject".into(),
+                    Some("owner@example.test".into()),
+                    Some("client".into()),
+                    Some("delta-token".into()),
+                    Some("refresh-token".into()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let base = format!("http://{address}/graph/v1.0");
+        let next_link = format!("{base}/me/mailFolders/inbox/messages/delta?$skiptoken=page-2");
+        let final_link = format!("{base}/me/mailFolders/inbox/messages/delta?$deltatoken=final");
+        let expected_final_link = final_link.clone();
+        let app = axum::Router::new().route(
+            "/graph/v1.0/me/mailFolders/inbox/messages/delta",
+            axum::routing::get(move |request: Request<axum::body::Body>| {
+                let next_link = next_link.clone();
+                let final_link = final_link.clone();
+                async move {
+                    assert_eq!(request.headers().get(reqwest::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok()), Some("Bearer delta-token"));
+                    let query = request.uri().query().unwrap_or_default();
+                    if query.contains("skiptoken=page-2") {
+                        return axum::Json(json!({
+                            "value":[{"id":"created-2"},{"id":"deleted-row","@removed":{"reason":"deleted"}}],
+                            "@odata.deltaLink":final_link
+                        })).into_response();
+                    }
+                    assert!(query.contains("changeType=created"));
+                    assert!(query.contains("select=id"));
+                    axum::Json(json!({"value":[{"id":"created-1"}],"@odata.nextLink":next_link})).into_response()
+                }
+            }),
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: base.clone(),
+        };
+        let account = ConnectedAccount {
+            id: account_id.clone(),
+            provider: Provider::Microsoft,
+            status: AccountStatus::Connected,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: BTreeSet::new(),
+            credential_ref: AccountVault::credential_ref(&account_id).unwrap(),
+            principal_ref: "opaque".into(),
+            revision: 1,
+            connected_at: Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: true,
+            revoked_at: None,
+        };
+        let audience = format!("agent:{agent_id}");
+        let (first, cursor) = client
+            .mail_watch_page(&account, &vault, &agent_id, &audience, None, 100)
+            .await
+            .unwrap();
+        assert_eq!(first, ["created-1"]);
+        let (second, cursor) = client
+            .mail_watch_page(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                cursor.as_deref(),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(second, ["created-2"]);
+        assert_eq!(
+            decode_graph_watch_cursor(cursor.as_deref().unwrap(), &base).unwrap(),
+            expected_final_link
+        );
+
+        let foreign = "microsoft-graph:https://attacker.invalid/graph/v1.0/me/mailFolders/inbox/messages/delta?$skiptoken=x";
+        assert!(matches!(
+            client
+                .mail_watch_page(&account, &vault, &agent_id, &audience, Some(foreign), 100)
                 .await,
             Err(ProviderReadError::WatchCursorReset)
         ));

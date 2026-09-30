@@ -22,6 +22,7 @@ const ROUTINE_CURSOR_KEY: &str = "vak_mail_calendar_routine_cursors";
 const MAX_ROUTINE_CURSORS: usize = 128;
 const MAX_ROUTINE_SEEN_IDS: usize = 512;
 const MAX_ROUTINE_PENDING_IDS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
+const MAX_PROVIDER_CURSOR_BYTES: usize = 8192;
 const MAX_ROUTINE_CURSOR_BYTES: usize = 512 * 1024;
 const ACTION_RECEIPTS_KEY: &str = "vak_mail_calendar_action_receipts";
 const MAX_ACTION_RECEIPTS: usize = 128;
@@ -440,7 +441,9 @@ impl AccountVault {
     ) -> Result<bool, VaultError> {
         validate_routine_mail_ids(routine_id, account_id, item_ids)?;
         if provider_cursor.is_some_and(|cursor| {
-            cursor.is_empty() || cursor.len() > 2048 || cursor.chars().any(char::is_control)
+            cursor.is_empty()
+                || cursor.len() > MAX_PROVIDER_CURSOR_BYTES
+                || cursor.chars().any(char::is_control)
         }) {
             return Err(VaultError::InvalidReference);
         }
@@ -897,7 +900,7 @@ impl AccountVault {
                         || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
                         || cursor.provider_cursor.as_ref().is_some_and(|value| {
                             value.is_empty()
-                                || value.len() > 2048
+                                || value.len() > MAX_PROVIDER_CURSOR_BYTES
                                 || value.chars().any(char::is_control)
                         })
                         || cursor.pending_ids.len() + cursor.delivered_ids.len()
