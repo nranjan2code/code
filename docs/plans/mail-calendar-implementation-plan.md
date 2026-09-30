@@ -384,7 +384,11 @@ local server processes; it is held through child completion
 and released by the OS on process exit. It does not coordinate separate hosts
 or provide a freshness guarantee. The ordinary Vakyartha service must remain
 running for schedules to fire. Provider push subscriptions, awake-host health,
-and restart/recovery acceptance are not implemented yet. Current-storage session
+and the 24-hour restart/recovery acceptance are not implemented yet. A focused
+server regression now joins startup's `working` → `interrupted` recovery marker
+to a reopened Agent vault and verifies staged mail IDs are requeued while the
+provider continuation cursor is retained. This is process-restart state coverage,
+not a 24-hour service acceptance run. Current-storage session
 history is append-only and cannot be selectively erased; M7 remains the
 deletion gate.
 

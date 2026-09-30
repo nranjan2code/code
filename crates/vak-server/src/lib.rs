@@ -20232,6 +20232,8 @@ mod scheduler_pure_tests {
     use chrono::TimeZone;
     use chrono::Utc;
     use std::collections::HashMap;
+    use vak_mail_calendar::vault::AccountVault;
+    use vak_mail_calendar::{RoutineOperation, RoutineScope};
 
     fn local(y: i32, mo: u32, d: u32, h: u32, mi: u32) -> chrono::DateTime<chrono::Local> {
         chrono::Local
@@ -20281,6 +20283,87 @@ mod scheduler_pure_tests {
             Some("interrupted")
         );
         assert_eq!(tasks["done"].last_run_status.as_deref(), Some("complete"));
+    }
+
+    #[test]
+    fn restart_requeues_inflight_mail_watch_items_from_the_agent_vault() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mail-watch-restart-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let routine_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .queue_mail_ids_with_cursor(
+                &routine_id,
+                &account_id,
+                &["message-1".to_owned()],
+                Some("google-history:opaque-next-page"),
+            )
+            .unwrap();
+        vault
+            .stage_delivered_mail_ids(&routine_id, &account_id, &["message-1".to_owned()])
+            .unwrap();
+
+        let mut task = TaskDef {
+            id: routine_id.clone(),
+            name: "mail watch".into(),
+            prompt: "Summarize new mail".into(),
+            interval_secs: 60,
+            enabled: true,
+            cwd: std::path::PathBuf::from("/tmp"),
+            created_at: Utc::now(),
+            last_run_at: Some(Utc::now()),
+            last_session_id: Some("interrupted-session".into()),
+            last_summary: None,
+            last_result_id: None,
+            last_run_status: Some("working".into()),
+            last_delivery_state: Some("pending".into()),
+            last_wt: None,
+            deliver_to: None,
+            schedule: None,
+            timezone: None,
+            due_at: None,
+            script: None,
+            model_pin: None,
+            agent_id: Some(agent_id.clone()),
+            agent_revision: Some(1),
+            mail_calendar_scope: Some(RoutineScope {
+                routine_id: routine_id.clone(),
+                account_id: account_id.clone(),
+                operations: [RoutineOperation::RecentMail].into_iter().collect(),
+                max_items: 1,
+                watch_new_mail: true,
+            }),
+        };
+        let mut tasks = HashMap::from([(routine_id.clone(), task.clone())]);
+        assert!(recover_interrupted_tasks(&mut tasks));
+        task = tasks.remove(&routine_id).unwrap();
+        assert_eq!(task.last_run_status.as_deref(), Some("interrupted"));
+
+        // On its next tick the watch resolves staged IDs using the same
+        // succeeded predicate as `mail_watch_has_unseen`: only `complete`
+        // consumes them; every other terminal/recovered state requeues them.
+        let restarted_vault = AccountVault::for_agent(&agent_id).unwrap();
+        restarted_vault
+            .resolve_delivered_mail_ids(
+                &routine_id,
+                &account_id,
+                task.last_run_status.as_deref() == Some("complete"),
+            )
+            .unwrap();
+        assert_eq!(
+            restarted_vault
+                .pending_mail_ids(&routine_id, &account_id, 10)
+                .unwrap(),
+            ["message-1"]
+        );
+        assert_eq!(
+            restarted_vault
+                .routine_provider_cursor(&routine_id, &account_id)
+                .unwrap()
+                .as_deref(),
+            Some("google-history:opaque-next-page")
+        );
     }
 
     #[test]
