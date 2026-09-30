@@ -824,7 +824,12 @@ authorization and approval boundary on every execution path.
   each account credential only while rendering that account, and loads a
   replacement credential only while comparing one reauthentication-required
   row, instead of retaining every decrypted account credential together. The
-  owner/Agent account lifecycle HTTP test passes. Server Clippy still reports
-  existing warnings outside the inventory path, including the disconnect
-  block in the same module; it reported no warning in the changed inventory
-  code. Formatting and diff checks pass.
+  owner/Agent account lifecycle HTTP test passes. That Clippy run reported no
+  warning in the changed inventory code; it also found the pre-existing
+  disconnect conditional warning fixed in the next entry. Formatting and diff
+  checks pass.
+- 2026-09-30: Simplified the disconnect tombstone conditional identified by
+  that Clippy audit. The focused account lifecycle test, formatting, and diff
+  checks pass. Strict server Clippy remains blocked by four existing
+  `collapsible_if` findings in unrelated server modules; none are in the
+  mail/calendar module.

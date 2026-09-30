@@ -1400,23 +1400,22 @@ pub(super) async fn disconnect_account(
         .mail_calendar_oauth
         .cancel_provider(&agent_id, account.provider);
     let mut already_disconnected = account.revoked_at.is_some();
-    if !already_disconnected {
-        if ledger
+    if !already_disconnected
+        && ledger
             .append_disconnected(&account_id, account.provider, chrono::Utc::now())
             .is_err()
-        {
-            // A concurrent disconnect may have written the tombstone after
-            // our read. Accept that state so this request can finish cleanup.
-            let already_fenced = ledger.read_all().is_ok_and(|accounts| {
-                accounts
-                    .iter()
-                    .any(|saved| saved.id == account_id && saved.revoked_at.is_some())
-            });
-            if !already_fenced {
-                return StatusCode::SERVICE_UNAVAILABLE.into_response();
-            }
-            already_disconnected = true;
+    {
+        // A concurrent disconnect may have written the tombstone after
+        // our read. Accept that state so this request can finish cleanup.
+        let already_fenced = ledger.read_all().is_ok_and(|accounts| {
+            accounts
+                .iter()
+                .any(|saved| saved.id == account_id && saved.revoked_at.is_some())
+        });
+        if !already_fenced {
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
+        already_disconnected = true;
     }
     // The ledger tombstone fences local use before any provider request. A
     // retry of an existing tombstone finishes local cleanup without attempting
