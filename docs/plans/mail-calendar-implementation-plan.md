@@ -490,6 +490,12 @@ Build routine preview, per-source read grants, freshness, budgets, dedupe,
 pause/run-once/revoke, quiet delivery, catch-up rules, host health, and
 automation history. Multi-host watchers remain off until fencing is present.
 
+**Remaining implementation:** the typed routine contract now defines a
+calendar event start/end boundary, signed offset, bounded catch-up window, and
+opaque occurrence key. Provider polling, durable event queue/deduplication,
+TaskDef firing, and the owner setup/preview controls are still required before
+event-relative routines are available.
+
 **Implemented increment (2026-09-30):** owner Settings can create, pause,
 resume, run once, inspect, and delete a scheduled read-only routine using the
 existing `TaskDef` scheduler. Each routine pins one admissible Agent revision,
@@ -639,6 +645,13 @@ conversations, repeated cursors, and the ceiling; signed-in browser acceptance
 remains open.
 
 ## Progress log
+
+- 2026-10-01: Added the backward-compatible event-relative trigger contract
+  to `RoutineScope`, with signed offsets, start/end boundaries, a bounded
+  catch-up window, calendar-read validation, and opaque occurrence keys. Contract
+  tests cover before/after timing, expiry, moves, and isolation. Provider polling,
+  durable occurrence queueing, TaskDef execution, and owner controls remain
+  unimplemented.
 
 - 2026-10-01: Conversation citations now follow at most 20 additional
   same-thread pages (420 messages total) to locate a cited message. Provider

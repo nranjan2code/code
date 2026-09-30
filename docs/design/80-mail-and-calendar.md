@@ -33,11 +33,12 @@ paused for a one-off preview, and store a bounded encrypted mail backlog with
 provider cursors in the Agent vault. Continuous watches show an overdue warning
 after three minutes without a successful provider poll. Settings separately
 reports whether the Vakyartha service API is reachable; a reachable process
-does not prove provider freshness or detect sleep between checks. The full conversation workspace, Apple provider
-effects, broader Microsoft/event update and cancellation profiles, RSVP,
-complete provider reconciliation, live-provider conformance, full connected
-source-to-Review browser acceptance, and 24-hour service-recovery acceptance
-remain open. Apple Calendar has not been verified with a live credential.
+does not prove provider freshness or detect sleep between checks. The full
+conversation workspace, Apple provider effects, broader Microsoft/event update
+and cancellation profiles, RSVP, event-relative routine execution, provider
+reconciliation, live-provider conformance, full connected source-to-Review
+browser acceptance, and 24-hour service-recovery acceptance remain open. Apple
+Calendar has not been verified with a live credential.
 Mail previews and conversation pages also carry bounded sender, To, and Cc
 fields from Google, Microsoft Graph, and Apple IMAP. Bcc is not requested from
 Microsoft and is never projected into the owner or Agent result.

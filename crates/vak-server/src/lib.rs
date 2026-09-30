@@ -20524,6 +20524,7 @@ mod scheduler_pure_tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 1,
                 watch_new_mail,
+                calendar_event_trigger: None,
             }),
         };
         let mut tasks = HashMap::from([
@@ -20594,6 +20595,7 @@ mod scheduler_pure_tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 1,
                 watch_new_mail: true,
+                calendar_event_trigger: None,
             }),
         };
         let mut tasks = HashMap::from([(routine_id.clone(), task.clone())]);

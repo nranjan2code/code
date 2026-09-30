@@ -83,6 +83,95 @@ pub struct RoutineScope {
     pub max_items: u8,
     #[serde(default)]
     pub watch_new_mail: bool,
+    /// Optional trigger relative to one timed calendar event. Execution still
+    /// uses the owning TaskDef scheduler and its one-run-per-routine lease.
+    #[serde(default)]
+    pub calendar_event_trigger: Option<CalendarEventTrigger>,
+}
+
+/// Trigger a routine around an event's start or end. Positive offsets fire
+/// before the boundary; negative offsets fire after it. The scheduler may
+/// catch up a missed trigger only within `max_lateness_minutes`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CalendarEventTrigger {
+    pub boundary: CalendarEventBoundary,
+    pub offset_minutes: i16,
+    pub max_lateness_minutes: u16,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CalendarEventBoundary {
+    Start,
+    End,
+}
+
+impl CalendarEventTrigger {
+    pub fn validate(&self) -> Result<(), ContractError> {
+        if self.offset_minutes.unsigned_abs() > 10_080
+            || !(1..=1_440).contains(&self.max_lateness_minutes)
+        {
+            return Err(ContractError::InvalidRoutineScope);
+        }
+        Ok(())
+    }
+
+    pub fn trigger_at(
+        &self,
+        event_starts_at: DateTime<Utc>,
+        event_ends_at: DateTime<Utc>,
+    ) -> DateTime<Utc> {
+        let boundary = match self.boundary {
+            CalendarEventBoundary::Start => event_starts_at,
+            CalendarEventBoundary::End => event_ends_at,
+        };
+        boundary - chrono::Duration::minutes(i64::from(self.offset_minutes))
+    }
+
+    /// True for a newly crossed trigger that is still within its explicit
+    /// catch-up window. `checked_after` is the prior successful calendar
+    /// poll, not the previous model run.
+    pub fn is_due_between(
+        &self,
+        event_starts_at: DateTime<Utc>,
+        event_ends_at: DateTime<Utc>,
+        checked_after: DateTime<Utc>,
+        now: DateTime<Utc>,
+    ) -> bool {
+        let trigger_at = self.trigger_at(event_starts_at, event_ends_at);
+        trigger_at > checked_after
+            && trigger_at <= now
+            && now - trigger_at <= chrono::Duration::minutes(i64::from(self.max_lateness_minutes))
+    }
+
+    /// Opaque content-free key for deduplicating one timed event occurrence.
+    /// Moving the occurrence creates a fresh key; changing its title does not.
+    pub fn occurrence_key(
+        &self,
+        provider_event_id: &str,
+        event_starts_at: DateTime<Utc>,
+        event_ends_at: DateTime<Utc>,
+    ) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(b"mail-calendar-event-trigger-v1");
+        hasher.update((provider_event_id.len() as u64).to_be_bytes());
+        hasher.update(provider_event_id.as_bytes());
+        hasher.update([match self.boundary {
+            CalendarEventBoundary::Start => 0,
+            CalendarEventBoundary::End => 1,
+        }]);
+        hasher.update(self.offset_minutes.to_be_bytes());
+        hasher.update(event_starts_at.timestamp_millis().to_be_bytes());
+        hasher.update(event_ends_at.timestamp_millis().to_be_bytes());
+        let digest = hasher.finalize();
+        let mut encoded = String::with_capacity(32 * 2);
+        for byte in digest {
+            use std::fmt::Write as _;
+            let _ = write!(encoded, "{byte:02x}");
+        }
+        format!("calendar:{encoded}")
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -101,6 +190,9 @@ impl RoutineScope {
             || self.operations.is_empty()
             || !(1..=20).contains(&self.max_items)
             || (self.watch_new_mail && !self.operations.contains(&RoutineOperation::RecentMail))
+            || (self.calendar_event_trigger.is_some()
+                && (!self.operations.contains(&RoutineOperation::CalendarEvents)
+                    || self.watch_new_mail))
             || self.mail_folder_id.as_ref().is_some_and(|folder| {
                 folder.trim().is_empty()
                     || folder.len() > 512
@@ -113,6 +205,12 @@ impl RoutineScope {
                     .mail_folder_id
                     .as_deref()
                     .is_some_and(|folder| !matches!(folder, "INBOX" | "inbox")))
+        {
+            return Err(ContractError::InvalidRoutineScope);
+        }
+        if self
+            .calendar_event_trigger
+            .is_some_and(|trigger| trigger.validate().is_err())
         {
             return Err(ContractError::InvalidRoutineScope);
         }
@@ -829,6 +927,7 @@ mod contract_tests {
         }))
         .unwrap();
         assert_eq!(legacy.mail_folder_id, None);
+        assert_eq!(legacy.calendar_event_trigger, None);
         assert!(legacy.validate().is_ok());
 
         let mut invalid_watch = legacy;
@@ -842,6 +941,127 @@ mod contract_tests {
         assert_eq!(
             invalid_folder.validate(),
             Err(ContractError::InvalidRoutineScope)
+        );
+    }
+
+    #[test]
+    fn calendar_event_trigger_contract_validates_scope_and_offset_windows() {
+        let trigger = CalendarEventTrigger {
+            boundary: CalendarEventBoundary::Start,
+            offset_minutes: 15,
+            max_lateness_minutes: 10,
+        };
+        assert_eq!(serde_json::to_value(trigger).unwrap()["boundary"], "start");
+        let mut scope: RoutineScope = serde_json::from_value(serde_json::json!({
+            "routine_id": Uuid::now_v7().to_string(),
+            "account_id": Uuid::now_v7().to_string(),
+            "operations": ["calendar_events"],
+            "max_items": 5,
+            "watch_new_mail": false,
+            "calendar_event_trigger": trigger
+        }))
+        .unwrap();
+        assert!(scope.validate().is_ok());
+
+        scope.operations.clear();
+        scope.operations.insert(RoutineOperation::RecentMail);
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
+
+        scope.operations = [RoutineOperation::CalendarEvents].into_iter().collect();
+        scope.watch_new_mail = true;
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
+
+        scope.watch_new_mail = false;
+        scope.calendar_event_trigger = Some(CalendarEventTrigger {
+            offset_minutes: 10_081,
+            ..trigger
+        });
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
+        scope.calendar_event_trigger = Some(CalendarEventTrigger {
+            max_lateness_minutes: 0,
+            ..trigger
+        });
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
+    }
+
+    #[test]
+    fn calendar_event_trigger_applies_before_after_and_bounded_catch_up() {
+        let starts_at = DateTime::parse_from_rfc3339("2026-10-02T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let ends_at = DateTime::parse_from_rfc3339("2026-10-02T11:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let before = CalendarEventTrigger {
+            boundary: CalendarEventBoundary::Start,
+            offset_minutes: 15,
+            max_lateness_minutes: 10,
+        };
+        let due_at = DateTime::parse_from_rfc3339("2026-10-02T09:45:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        assert_eq!(before.trigger_at(starts_at, ends_at), due_at);
+        assert!(before.is_due_between(
+            starts_at,
+            ends_at,
+            due_at - chrono::Duration::seconds(1),
+            due_at + chrono::Duration::minutes(3),
+        ));
+        assert!(!before.is_due_between(
+            starts_at,
+            ends_at,
+            due_at,
+            due_at + chrono::Duration::minutes(3),
+        ));
+        assert!(!before.is_due_between(
+            starts_at,
+            ends_at,
+            due_at - chrono::Duration::minutes(30),
+            due_at + chrono::Duration::minutes(11),
+        ));
+
+        let after = CalendarEventTrigger {
+            boundary: CalendarEventBoundary::End,
+            offset_minutes: -5,
+            max_lateness_minutes: 10,
+        };
+        assert_eq!(
+            after.trigger_at(starts_at, ends_at),
+            ends_at + chrono::Duration::minutes(5)
+        );
+    }
+
+    #[test]
+    fn calendar_event_occurrence_key_is_opaque_stable_and_move_sensitive() {
+        let starts_at = Utc::now();
+        let ends_at = starts_at + chrono::Duration::hours(1);
+        let trigger = CalendarEventTrigger {
+            boundary: CalendarEventBoundary::Start,
+            offset_minutes: 15,
+            max_lateness_minutes: 10,
+        };
+        let first = trigger.occurrence_key("opaque-provider-id", starts_at, ends_at);
+        assert_eq!(
+            first,
+            trigger.occurrence_key("opaque-provider-id", starts_at, ends_at)
+        );
+        assert!(first.starts_with("calendar:"));
+        assert!(!first.contains("opaque-provider-id"));
+        assert_ne!(
+            first,
+            trigger.occurrence_key(
+                "opaque-provider-id",
+                starts_at + chrono::Duration::minutes(1),
+                ends_at + chrono::Duration::minutes(1),
+            )
+        );
+        assert_ne!(
+            first,
+            CalendarEventTrigger {
+                boundary: CalendarEventBoundary::End,
+                ..trigger
+            }
+            .occurrence_key("opaque-provider-id", starts_at, ends_at)
         );
     }
 

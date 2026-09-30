@@ -890,6 +890,7 @@ mod tests {
             operations: [RoutineOperation::RecentMail].into_iter().collect(),
             max_items: 5,
             watch_new_mail: false,
+            calendar_event_trigger: None,
         };
         assert_eq!(
             resolve_mail_folder_id(Some(&scope), None),
@@ -1060,6 +1061,7 @@ mod tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
+                calendar_event_trigger: None,
             }),
             worker_exe: std::path::PathBuf::new(),
             routine_items_used: Arc::new(AtomicUsize::new(0)),
@@ -1086,6 +1088,7 @@ mod tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 10,
                 watch_new_mail: false,
+                calendar_event_trigger: None,
             }),
             worker_exe: std::path::PathBuf::new(),
             routine_items_used: Arc::new(AtomicUsize::new(0)),
@@ -1189,6 +1192,7 @@ mod tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
+                calendar_event_trigger: None,
             }),
             worker_exe: std::path::PathBuf::new(),
             routine_items_used: Arc::new(AtomicUsize::new(0)),
