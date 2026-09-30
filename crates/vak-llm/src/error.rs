@@ -102,6 +102,7 @@ impl LlmError {
             "spend limit",
             "credit limit",
             "insufficient credits",
+            "insufficient_quota",
             "billing limit",
         ]
         .iter()

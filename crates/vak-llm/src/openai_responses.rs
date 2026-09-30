@@ -241,6 +241,7 @@ struct Accumulator {
     /// call_id → position of the ToolUse block in `message.content`.
     tool_pos: std::collections::HashMap<String, usize>,
     raw_json: std::collections::HashMap<String, String>,
+    last_event: Option<String>,
 }
 
 impl Accumulator {
@@ -250,6 +251,7 @@ impl Accumulator {
             saw_completed: false,
             tool_pos: std::collections::HashMap::new(),
             raw_json: std::collections::HashMap::new(),
+            last_event: None,
         }
     }
 
@@ -261,8 +263,36 @@ impl Accumulator {
             .and_then(|t| t.as_str())
             .ok_or_else(|| LlmError::Parse("responses event missing type".into()))?
             .to_string();
+        self.last_event = Some(kind.clone());
 
         match kind.as_str() {
+            "response.failed" | "error" => {
+                let error = v
+                    .pointer("/response/error")
+                    .or_else(|| v.get("error"))
+                    .unwrap_or(&v);
+                let message = error
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .unwrap_or("provider returned a streamed failure");
+                let code = error.get("code").and_then(Value::as_str).unwrap_or("");
+                let message = format!("{code}: {message}");
+                Err(match code {
+                    "rate_limit_exceeded" | "insufficient_quota" => LlmError::RateLimit {
+                        message,
+                        retry_after_secs: None,
+                    },
+                    "server_error" => LlmError::Overloaded(message),
+                    "invalid_api_key" | "authentication_error" => LlmError::Auth(message),
+                    "context_length_exceeded" | "invalid_request_error" => {
+                        LlmError::classify_400(message)
+                    }
+                    _ => LlmError::Api {
+                        status: 500,
+                        message,
+                    },
+                })
+            }
             "response.output_text.delta" => {
                 let Some(text) = v.get("delta").and_then(|d| d.as_str()) else {
                     return Ok(None);
@@ -462,7 +492,16 @@ impl Provider for OpenAiResponsesProvider {
                                 decoder.push(&bytes);
                                 while let Some(frame) = decoder.next_frame() {
                                     match acc.convert(&frame.data) {
-                                        Ok(Some(event)) => sink.push(event),
+                                        Ok(Some(event)) => {
+                                            sink.push(event);
+                                            // The terminal response is authoritative. Waiting
+                                            // for the HTTP body to close can hang a finished
+                                            // step or replace it with a transport failure.
+                                            if acc.saw_completed {
+                                                sink.close_message(acc.message.clone()).await;
+                                                return;
+                                            }
+                                        }
                                         Ok(None) => {}
                                         Err(e) => {
                                             sink.close_error(e).await;
@@ -480,7 +519,8 @@ impl Provider for OpenAiResponsesProvider {
                                     sink.close_message(acc.message.clone()).await;
                                 } else {
                                     sink.close_error(LlmError::Parse(
-                                        "stream closed before response.completed".into(),
+                                        format!("stream closed before response.completed (last event: {})",
+                                            acc.last_event.as_deref().unwrap_or("none")),
                                     )).await;
                                 }
                                 return;

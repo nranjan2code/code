@@ -360,7 +360,7 @@ impl vak_tools::Tool for PreviewCard {
 
 /// How many model requests one turn takes when the presentation check
 /// always wants a card.
-async fn requests_after_a_draft(delivers: bool) -> usize {
+async fn requests_after_a_draft(delivers: bool, final_text: &str) -> usize {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
@@ -416,9 +416,7 @@ async fn requests_after_a_draft(delivers: bool) -> usize {
     )]);
     for _ in 0..3 {
         script.push_back(msg(
-            vec![ContentBlock::text(
-                "Added the slide; the draft is ready for review.",
-            )],
+            vec![ContentBlock::text(final_text)],
             StopReason::EndTurn,
         ));
     }
@@ -448,15 +446,20 @@ async fn requests_after_a_draft(delivers: bool) -> usize {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_answer_after_a_delivered_draft_is_not_sent_back_to_become_a_card() {
     assert_eq!(
-        requests_after_a_draft(true).await,
+        requests_after_a_draft(true, "Added the slide; the draft is ready for review.").await,
         2,
         "the tool call, then the answer, which ends the turn"
     );
     assert_eq!(
-        requests_after_a_draft(false).await,
+        requests_after_a_draft(false, "Added the slide; the draft is ready for review.").await,
         3,
         "without a delivered file, the check still asks once for a card"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_delivered_file_can_finish_without_repeating_it_in_text() {
+    assert_eq!(requests_after_a_draft(true, "").await, 2);
 }
 
 fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {

@@ -2195,8 +2195,12 @@ impl Agent {
                 // tavily_search…" followed by end of turn, four runs out of
                 // six). That is not an answer; one bounded redo asks it to
                 // act on the plan it already made. A card emitted earlier in
-                // the run IS the answer, so a card-only turn is left alone.
-                if response.text_content().trim().is_empty() && !cards_emitted_this_run {
+                // the run IS the answer. A delivered reviewable file also
+                // carries its own result, so neither needs repeated prose.
+                if response.text_content().trim().is_empty()
+                    && !cards_emitted_this_run
+                    && !file_delivered_this_run
+                {
                     if empty_step_repair_attempted {
                         return TurnOutcome::Failed {
                             error: LlmError::Parse(
