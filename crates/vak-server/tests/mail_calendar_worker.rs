@@ -60,3 +60,31 @@ async fn email_mime_is_parsed_in_the_isolated_worker() {
         vak_tools::broker::parse_mail_mime(Path::new("/nonexistent/vak-tool-worker"), raw).await;
     assert!(missing.is_err());
 }
+
+#[tokio::test]
+async fn selected_attachment_is_read_only_in_the_network_denied_document_worker() {
+    let preview = vak_tools::broker::preview_mail_attachment(
+        worker(),
+        "invoice.txt",
+        b"Invoice total: $24.00\n",
+    )
+    .await
+    .unwrap();
+    assert!(preview.contains("Invoice total: $24.00"));
+    assert!(!preview.contains("/tmp/"));
+
+    assert!(
+        vak_tools::broker::preview_mail_attachment(worker(), "active.html", b"<script>x</script>")
+            .await
+            .is_err()
+    );
+    assert!(
+        vak_tools::broker::preview_mail_attachment(
+            worker(),
+            "oversized.txt",
+            &vec![b'x'; vak_tools::broker::MAX_MAIL_ATTACHMENT_PREVIEW_BYTES + 1],
+        )
+        .await
+        .is_err()
+    );
+}

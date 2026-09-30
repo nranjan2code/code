@@ -291,6 +291,16 @@ timed or all-day entries in the selected account preview. It does not yet
 provide agenda/day/week grid views, cross-calendar conflict detection,
 calendar-source selection, or browser acceptance with connected test accounts.
 
+**Implemented increment (2026-09-30):** Google and Microsoft owner inbox
+previews now return bounded attachment cards. A person can select one supported
+PDF, Open XML, or plain-text attachment up to 1 MiB; the server rechecks its
+parent message and provider metadata, then passes bounded bytes only to the
+network-denied document worker. The owner UI receives capped extracted text,
+not attachment bytes. Inline content, Apple attachments, images, HTML, archives,
+and unsupported or oversized files are unavailable. Local staging, source
+version citations, attachment selection during compose, and send-with-attachment
+remain open.
+
 ## Stage 3 — reviewed provider effects
 
 Add typed send, event create/update/cancel, and RSVP operations through the
@@ -1262,3 +1272,12 @@ authorization and approval boundary on every execution path.
   conflicts. Node regression tests cover timed overlaps, adjacent intervals,
   exclusive all-day ends, and malformed bounds. Agenda/day/week workspace and
   cross-source conflict detection remain open.
+- 2026-09-30: Added selected attachment previews for Google and Microsoft. The
+  inbox shows provider metadata, but the user explicitly selects each file;
+  server rechecks membership under the message, bounds it to 1 MiB, and invokes
+  the document reader only in the network-denied worker. The response contains
+  at most 32 KiB of extracted text, never file bytes. Provider URL-segment and
+  message-membership logic is covered by tests; worker extraction/refusal tests
+  pass. UI TypeScript and production web build pass. Apple attachments, image
+  rendering, attachment composition, and source-to-Review browser acceptance
+  remain open.

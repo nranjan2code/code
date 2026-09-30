@@ -20,6 +20,8 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
+pub const MAX_MAIL_ATTACHMENTS: usize = 20;
+pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
 const MAX_WATCH_SCAN_ITEMS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
 const MAX_EVENT_ITEMS: usize = 100;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024;
@@ -154,6 +156,18 @@ pub struct MailItem {
     pub preview: String,
     pub body_text: Option<String>,
     pub has_attachments: bool,
+    #[serde(default)]
+    pub attachments: Vec<MailAttachmentRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailAttachmentRef {
+    /// Opaque provider attachment ID. Never use as a path or URL host.
+    pub provider_id: String,
+    pub filename: String,
+    pub mime_type: Option<String>,
+    pub size_bytes: usize,
+    pub previewable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -651,6 +665,166 @@ impl ProviderReadClient {
         Ok(output)
     }
 
+    /// Fetch one owner-selected, previewable file attachment from the
+    /// authorized message. The caller must pass its containing message ID;
+    /// metadata is rechecked against that message before content is fetched.
+    pub async fn mail_attachment(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<(MailAttachmentRef, Vec<u8>), ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if account.provider == Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        if message_id.is_empty()
+            || message_id.len() > 512
+            || message_id.chars().any(char::is_control)
+            || attachment_id.is_empty()
+            || attachment_id.len() > 2048
+            || attachment_id.chars().any(char::is_control)
+        {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        match account.provider {
+            Provider::Google => {
+                self.google_attachment(&token, message_id, attachment_id)
+                    .await
+            }
+            Provider::Microsoft => {
+                self.microsoft_attachment(&token, message_id, attachment_id)
+                    .await
+            }
+            Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
+        }
+    }
+
+    async fn google_attachment(
+        &self,
+        token: &str,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<(MailAttachmentRef, Vec<u8>), ProviderReadError> {
+        if !message_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+            || !valid_google_attachment_id(attachment_id)
+        {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let response = self
+            .http
+            .get(format!(
+                "{}/users/me/messages/{message_id}",
+                self.google_gmail_base
+            ))
+            .bearer_auth(token)
+            .query(&[("format", "full")])
+            .send()
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?;
+        let message = parse_response(response, MAX_MAIL_ATTACHMENT_BYTES * 2).await?;
+        let payload = message.get("payload").unwrap_or(&Value::Null);
+        let part = google_find_attachment_part(payload, attachment_id)
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let filename = part
+            .get("filename")
+            .and_then(Value::as_str)
+            .map(bounded_text)
+            .filter(|name| attachment_name_previewable(name))
+            .ok_or(ProviderReadError::Unsupported)?;
+        let size_bytes = part
+            .pointer("/body/size")
+            .and_then(Value::as_u64)
+            .and_then(|size| usize::try_from(size).ok())
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        if !(1..=MAX_MAIL_ATTACHMENT_BYTES).contains(&size_bytes) {
+            return Err(ProviderReadError::Unsupported);
+        }
+        let metadata = MailAttachmentRef {
+            provider_id: attachment_id.to_owned(),
+            mime_type: part
+                .get("mimeType")
+                .and_then(Value::as_str)
+                .map(bounded_text),
+            previewable: true,
+            filename,
+            size_bytes,
+        };
+        let encoded = if let Some(data) = part.pointer("/body/data").and_then(Value::as_str) {
+            data.to_owned()
+        } else {
+            let response = self
+                .http
+                .get(format!(
+                    "{}/users/me/messages/{message_id}/attachments/{attachment_id}",
+                    self.google_gmail_base
+                ))
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?;
+            parse_response(response, MAX_MAIL_ATTACHMENT_BYTES * 2)
+                .await?
+                .get("data")
+                .and_then(Value::as_str)
+                .ok_or(ProviderReadError::InvalidResponse)?
+                .to_owned()
+        };
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&encoded)
+            .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(&encoded))
+            .map_err(|_| ProviderReadError::InvalidResponse)?;
+        validate_attachment_bytes(&metadata, bytes)
+    }
+
+    async fn microsoft_attachment(
+        &self,
+        token: &str,
+        message_id: &str,
+        attachment_id: &str,
+    ) -> Result<(MailAttachmentRef, Vec<u8>), ProviderReadError> {
+        let metadata_list = self.microsoft_attachment_refs(token, message_id).await?;
+        let metadata = metadata_list
+            .into_iter()
+            .find(|attachment| attachment.provider_id == attachment_id)
+            .filter(|attachment| attachment.previewable)
+            .ok_or(ProviderReadError::Unsupported)?;
+        let url = graph_url_segments(
+            &self.microsoft_graph_base,
+            &["me", "messages", message_id, "attachments", attachment_id],
+        )?;
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?;
+        let value = parse_response(response, MAX_MAIL_ATTACHMENT_BYTES * 2).await?;
+        if value.get("@odata.type").and_then(Value::as_str)
+            != Some("#microsoft.graph.fileAttachment")
+            || value.get("id").and_then(Value::as_str) != Some(attachment_id)
+        {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let encoded = value
+            .get("contentBytes")
+            .and_then(Value::as_str)
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|_| ProviderReadError::InvalidResponse)?;
+        validate_attachment_bytes(&metadata, bytes)
+    }
+
     /// Fetch one selected Apple inbox message without setting `Seen`. Raw MIME
     /// is returned only to the Core layer for worker-isolated parsing.
     pub async fn icloud_message_mime(
@@ -975,10 +1149,48 @@ impl ProviderReadClient {
             .get("value")
             .and_then(Value::as_array)
             .ok_or(ProviderReadError::InvalidResponse)?;
+        let mut output = Vec::with_capacity(items.len().min(MAX_MAIL_ITEMS));
+        for value in items.iter().take(limit.parse().unwrap_or(1)) {
+            let Some(mut message) = parse_graph_message(value) else {
+                continue;
+            };
+            if message.has_attachments {
+                message.attachments = self
+                    .microsoft_attachment_refs(token, &message.provider_id)
+                    .await?;
+            }
+            output.push(message);
+        }
+        Ok(output)
+    }
+
+    async fn microsoft_attachment_refs(
+        &self,
+        token: &str,
+        message_id: &str,
+    ) -> Result<Vec<MailAttachmentRef>, ProviderReadError> {
+        let url = graph_url_segments(
+            &self.microsoft_graph_base,
+            &["me", "messages", message_id, "attachments"],
+        )?;
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(token)
+            .query(&[("$select", "id,name,contentType,size,isInline")])
+            .send()
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?;
+        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+        let items = value
+            .get("value")
+            .and_then(Value::as_array)
+            .ok_or(ProviderReadError::InvalidResponse)?;
         Ok(items
             .iter()
-            .take(limit.parse().unwrap_or(1))
-            .filter_map(parse_graph_message)
+            .filter(|item| item.get("isInline").and_then(Value::as_bool) != Some(true))
+            .take(MAX_MAIL_ATTACHMENTS)
+            .filter_map(parse_graph_attachment_ref)
             .collect())
     }
 
@@ -1373,6 +1585,7 @@ where
             received_at,
             body_text: None,
             has_attachments,
+            attachments: Vec::new(),
         });
     }
     output.sort_by(|left, right| right.received_at.cmp(&left.received_at));
@@ -1633,6 +1846,7 @@ where
             preview: subject,
             body_text: None,
             has_attachments: imap_body_has_attachments(body_structure),
+            attachments: Vec::new(),
         });
     }
     if output.len() != item_ids.len() {
@@ -2035,6 +2249,7 @@ fn parse_google_message(value: &Value) -> MailItem {
             .unwrap_or_default(),
         body_text: body,
         has_attachments: has_gmail_attachment(value.get("payload").unwrap_or(&Value::Null)),
+        attachments: google_attachment_refs(value.get("payload").unwrap_or(&Value::Null)),
     }
 }
 
@@ -2065,6 +2280,99 @@ fn has_gmail_attachment(payload: &Value) -> bool {
             .get("parts")
             .and_then(Value::as_array)
             .is_some_and(|parts| parts.iter().any(has_gmail_attachment))
+}
+
+fn google_attachment_refs(payload: &Value) -> Vec<MailAttachmentRef> {
+    fn collect(payload: &Value, output: &mut Vec<MailAttachmentRef>) {
+        if output.len() >= MAX_MAIL_ATTACHMENTS {
+            return;
+        }
+        let filename = payload
+            .get("filename")
+            .and_then(Value::as_str)
+            .map(bounded_text)
+            .filter(|filename| !filename.trim().is_empty());
+        let attachment_id = payload
+            .pointer("/body/attachmentId")
+            .and_then(Value::as_str)
+            .filter(|id| valid_google_attachment_id(id));
+        if let (Some(filename), Some(attachment_id)) = (filename, attachment_id) {
+            let size_bytes = payload
+                .pointer("/body/size")
+                .and_then(Value::as_u64)
+                .and_then(|size| usize::try_from(size).ok())
+                .unwrap_or(0);
+            output.push(MailAttachmentRef {
+                provider_id: bounded_text(attachment_id),
+                previewable: attachment_name_previewable(&filename)
+                    && (1..=MAX_MAIL_ATTACHMENT_BYTES).contains(&size_bytes),
+                filename,
+                mime_type: payload
+                    .get("mimeType")
+                    .and_then(Value::as_str)
+                    .map(bounded_text),
+                size_bytes,
+            });
+        }
+        if let Some(parts) = payload.get("parts").and_then(Value::as_array) {
+            for part in parts.iter().take(MAX_MAIL_ATTACHMENTS) {
+                collect(part, output);
+                if output.len() >= MAX_MAIL_ATTACHMENTS {
+                    break;
+                }
+            }
+        }
+    }
+    let mut output = Vec::new();
+    collect(payload, &mut output);
+    output
+}
+
+fn valid_google_attachment_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 1024
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'='))
+}
+
+fn google_find_attachment_part<'a>(payload: &'a Value, attachment_id: &str) -> Option<&'a Value> {
+    if payload
+        .pointer("/body/attachmentId")
+        .and_then(Value::as_str)
+        == Some(attachment_id)
+    {
+        return Some(payload);
+    }
+    payload
+        .get("parts")
+        .and_then(Value::as_array)?
+        .iter()
+        .take(MAX_MAIL_ATTACHMENTS * 4)
+        .find_map(|part| google_find_attachment_part(part, attachment_id))
+}
+
+fn validate_attachment_bytes(
+    metadata: &MailAttachmentRef,
+    bytes: Vec<u8>,
+) -> Result<(MailAttachmentRef, Vec<u8>), ProviderReadError> {
+    if bytes.is_empty()
+        || bytes.len() > MAX_MAIL_ATTACHMENT_BYTES
+        || bytes.len() != metadata.size_bytes
+    {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    Ok((metadata.clone(), bytes))
+}
+
+fn attachment_name_previewable(filename: &str) -> bool {
+    matches!(
+        filename
+            .rsplit_once('.')
+            .map(|(_, ext)| ext.to_ascii_lowercase())
+            .as_deref(),
+        Some("pdf" | "docx" | "xlsx" | "pptx" | "vsdx" | "txt" | "csv" | "md")
+    )
 }
 
 fn parse_graph_message(value: &Value) -> Option<MailItem> {
@@ -2101,7 +2409,59 @@ fn parse_graph_message(value: &Value) -> Option<MailItem> {
             .get("hasAttachments")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        attachments: Vec::new(),
     })
+}
+
+fn parse_graph_attachment_ref(value: &Value) -> Option<MailAttachmentRef> {
+    let provider_id = value.get("id")?.as_str()?;
+    let filename = value.get("name")?.as_str()?;
+    if provider_id.is_empty()
+        || provider_id.len() > 2048
+        || provider_id.chars().any(char::is_control)
+        || filename.is_empty()
+        || filename.len() > 512
+        || filename.chars().any(char::is_control)
+    {
+        return None;
+    }
+    let size_bytes = value
+        .get("size")
+        .and_then(Value::as_u64)
+        .and_then(|size| usize::try_from(size).ok())
+        .unwrap_or(0);
+    Some(MailAttachmentRef {
+        provider_id: provider_id.to_owned(),
+        filename: filename.to_owned(),
+        mime_type: value
+            .get("contentType")
+            .and_then(Value::as_str)
+            .filter(|content_type| {
+                content_type.len() <= 256 && !content_type.chars().any(char::is_control)
+            })
+            .map(str::to_owned),
+        previewable: attachment_name_previewable(filename)
+            && (1..=MAX_MAIL_ATTACHMENT_BYTES).contains(&size_bytes),
+        size_bytes,
+    })
+}
+
+fn graph_url_segments(base: &str, segments: &[&str]) -> Result<url::Url, ProviderReadError> {
+    let mut url = url::Url::parse(&format!("{}/", base.trim_end_matches('/')))
+        .map_err(|_| ProviderReadError::InvalidResponse)?;
+    {
+        let mut path = url
+            .path_segments_mut()
+            .map_err(|_| ProviderReadError::InvalidResponse)?;
+        path.pop_if_empty();
+        for segment in segments {
+            if segment.is_empty() || segment.len() > 2048 || segment.chars().any(char::is_control) {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+            path.push(segment);
+        }
+    }
+    Ok(url)
 }
 
 fn parse_google_event(value: &Value) -> Option<CalendarItem> {
@@ -2282,6 +2642,226 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use uuid::Uuid;
+
+    fn linked_test_account(provider: Provider) -> (AccountVault, ConnectedAccount, String, String) {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-attachment-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                AccountSecretMaterial::new(
+                    format!(
+                        "{}:subject",
+                        match provider {
+                            Provider::Google => "google",
+                            Provider::Microsoft => "microsoft",
+                            Provider::AppleIcloud => "apple",
+                        }
+                    ),
+                    Some("owner@example.test".into()),
+                    Some("client".into()),
+                    Some("access-token".into()),
+                    Some("refresh-token".into()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let account = ConnectedAccount {
+            id: account_id.clone(),
+            provider,
+            status: AccountStatus::Connected,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")]
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: BTreeSet::new(),
+            credential_ref: AccountVault::credential_ref(&account_id).unwrap(),
+            principal_ref: "opaque".into(),
+            revision: 1,
+            connected_at: Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: true,
+            revoked_at: None,
+        };
+        let audience = format!("agent:{agent_id}");
+        (vault, account, agent_id, audience)
+    }
+
+    #[tokio::test]
+    async fn google_attachment_is_fetched_only_after_message_metadata_match() {
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
+        let bytes = b"Invoice total: $24.00";
+        let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+        let attachment = json!({"id":"attachment_1","size":bytes.len(),"data":encoded});
+        let message = json!({"id":"message_1","payload":{"mimeType":"multipart/mixed","parts":[{"filename":"invoice.txt","mimeType":"text/plain","body":{"attachmentId":"attachment_1","size":bytes.len()}}]}});
+        let saw_bearer = Arc::new(AtomicBool::new(false));
+        let saw_bearer_handler = Arc::clone(&saw_bearer);
+        let app = axum::Router::new()
+            .route(
+                "/gmail/v1/users/me/messages/message_1",
+                axum::routing::get(move |headers: axum::http::HeaderMap| {
+                    let body = message.clone();
+                    let saw = Arc::clone(&saw_bearer_handler);
+                    async move {
+                        saw.store(
+                            headers
+                                .get(axum::http::header::AUTHORIZATION)
+                                .and_then(|value| value.to_str().ok())
+                                == Some("Bearer access-token"),
+                            Ordering::SeqCst,
+                        );
+                        axum::Json(body)
+                    }
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/messages/message_1/attachments/attachment_1",
+                axum::routing::get(move || {
+                    let body = attachment.clone();
+                    async move { axum::Json(body) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let (metadata, fetched) = client
+            .mail_attachment(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                "message_1",
+                "attachment_1",
+            )
+            .await
+            .unwrap();
+        assert!(saw_bearer.load(Ordering::SeqCst));
+        assert_eq!(metadata.filename, "invoice.txt");
+        assert_eq!(fetched, bytes);
+        assert!(
+            client
+                .mail_attachment(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    "message_1",
+                    "unlisted"
+                )
+                .await
+                .is_err()
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn graph_attachment_fetch_is_bound_to_the_parent_message_and_file_type() {
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Microsoft);
+        let message_id = "AAMk+safe==";
+        let attachment_id = "attachment+1==";
+        let bytes = b"Quarterly report";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        let listed = json!({"value":[{
+            "@odata.type":"#microsoft.graph.fileAttachment", "id":attachment_id,
+            "name":"report.txt", "contentType":"text/plain", "size":bytes.len(), "isInline":false
+        }]});
+        let fetched = json!({
+            "@odata.type":"#microsoft.graph.fileAttachment", "id":attachment_id,
+            "name":"report.txt", "contentType":"text/plain", "size":bytes.len(), "isInline":false,
+            "contentBytes":encoded
+        });
+        let app = axum::Router::new()
+            .route(
+                "/graph/v1.0/me/messages/AAMk+safe==/attachments",
+                axum::routing::get(move || {
+                    let body = listed.clone();
+                    async move { axum::Json(body) }
+                }),
+            )
+            .route(
+                "/graph/v1.0/me/messages/AAMk+safe==/attachments/attachment+1==",
+                axum::routing::get(move || {
+                    let body = fetched.clone();
+                    async move { axum::Json(body) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let (metadata, actual) = client
+            .mail_attachment(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                message_id,
+                attachment_id,
+            )
+            .await
+            .unwrap();
+        assert_eq!(metadata.filename, "report.txt");
+        assert_eq!(actual, bytes);
+        task.abort();
+    }
+
+    #[test]
+    fn graph_attachment_ids_are_encoded_as_single_fixed_host_path_segments() {
+        let url = graph_url_segments(
+            "https://graph.microsoft.com/v1.0",
+            &[
+                "me",
+                "messages",
+                "message+id==",
+                "attachments",
+                "part/with/slashes",
+            ],
+        )
+        .unwrap();
+        assert_eq!(url.host_str(), Some("graph.microsoft.com"));
+        assert!(url.path().contains("message+id=="));
+        assert!(url.path().contains("part%2Fwith%2Fslashes"));
+        let metadata = parse_graph_attachment_ref(&json!({
+            "id":"attach+1==", "name":"report.pdf", "contentType":"application/pdf", "size":512
+        }))
+        .unwrap();
+        assert!(metadata.previewable);
+        assert!(
+            !parse_graph_attachment_ref(&json!({
+                "id":"inline", "name":"image.png", "size":512, "isInline":true
+            }))
+            .unwrap()
+            .previewable
+        );
+    }
 
     #[tokio::test]
     async fn icloud_recent_mail_reads_bounded_metadata_from_a_read_only_mailbox() {

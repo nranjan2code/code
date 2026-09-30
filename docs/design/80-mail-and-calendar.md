@@ -116,6 +116,14 @@ grants, complete receipt reconciliation, durable continuous service recovery,
 and full provider conformance remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.
+Google and Microsoft inbox previews now show bounded attachment metadata and
+allow a person to preview one selected PDF, Open XML document, or plain-text
+file up to 1 MiB. The provider response is revalidated against the parent
+message; bytes are read only by the existing network-denied document worker and
+only capped extracted text returns to the owner UI. HTML, archives, inline
+attachments, unsupported formats, oversized files, and Apple iCloud attachments
+remain unavailable. Attachments are not copied into Agent history unless a
+person separately asks the Agent to read or use that content.
 No crypto-shred guarantee is made. Apple Mail is available only for a verified
 Mail-only account; inbox listing returns bounded metadata and a separately
 selected message can return bounded plain text. Apple Calendar is available for a separately verified CalendarRead-only

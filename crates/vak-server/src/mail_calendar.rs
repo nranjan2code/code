@@ -839,6 +839,13 @@ pub(super) struct MessagePreviewRequest {
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AttachmentPreviewRequest {
+    message_id: String,
+    attachment_id: String,
+}
+
+#[derive(Deserialize)]
 pub(super) struct CalendarPreviewRequest {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
@@ -932,6 +939,113 @@ pub(super) async fn mail_preview(
                 "failed",
             );
             provider_preview_error(error)
+        }
+    }
+}
+
+/// Preview one selected Google or Microsoft document attachment. Provider
+/// bytes are bounded and sent only to the network-denied document worker; the
+/// response contains extracted text, never the original attachment bytes.
+pub(super) async fn attachment_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+    Json(request): Json<AttachmentPreviewRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if request.message_id.is_empty()
+        || request.message_id.len() > 512
+        || request.attachment_id.is_empty()
+        || request.attachment_id.len() > 2048
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    record_account_event(
+        &state,
+        "mail_attachment_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    let client = ProviderReadClient::default();
+    let attachment = client
+        .mail_attachment(
+            &account,
+            &vault,
+            &agent_id,
+            &format!("agent:{agent_id}"),
+            &request.message_id,
+            &request.attachment_id,
+        )
+        .await;
+    let (metadata, bytes) = match attachment {
+        Ok(attachment) => attachment,
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "mail_attachment_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            return provider_preview_error(error);
+        }
+    };
+    match vak_tools::broker::preview_mail_attachment(
+        &state.core.tool_worker_exe(),
+        &metadata.filename,
+        &bytes,
+    )
+    .await
+    {
+        Ok(text) => {
+            record_account_event(
+                &state,
+                "mail_attachment_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(serde_json::json!({
+                "filename": metadata.filename,
+                "mime_type": metadata.mime_type,
+                "size_bytes": metadata.size_bytes,
+                "text": text,
+            }))
+            .into_response()
+        }
+        Err(_) => {
+            record_account_event(
+                &state,
+                "mail_attachment_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "kind": "attachment_unpreviewable",
+                    "error": "This attachment could not be previewed by the supported document reader.",
+                })),
+            )
+                .into_response()
         }
     }
 }

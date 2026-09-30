@@ -180,6 +180,14 @@ export interface MailCalendarMailPreview {
   body_text: string | null;
   body_status?: "available" | "no_plain_text" | "unavailable";
   has_attachments: boolean;
+  attachments?: MailCalendarAttachmentPreview[];
+}
+export interface MailCalendarAttachmentPreview {
+  provider_id: string;
+  filename: string;
+  mime_type: string | null;
+  size_bytes: number;
+  previewable: boolean;
 }
 export interface MailCalendarEventPreview {
   provider_id: string;
@@ -206,6 +214,11 @@ export function previewMailCalendarMail(agentId: string, accountId: string, limi
 export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "no_plain_text" }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/message-preview`, {
     method: "POST", body: JSON.stringify({ provider_id: providerId }),
+  });
+}
+export function previewMailCalendarAttachment(agentId: string, accountId: string, messageId: string, attachmentId: string): Promise<{ filename: string; mime_type: string | null; size_bytes: number; text: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/attachment-preview`, {
+    method: "POST", body: JSON.stringify({ message_id: messageId, attachment_id: attachmentId }),
   });
 }
 export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50): Promise<{ events: MailCalendarEventPreview[] }> {

@@ -1149,6 +1149,15 @@ export default function Settings() {
     refreshedAt?: string;
     query?: string;
   } | null>(null);
+  const [mailAttachmentPreview, setMailAttachmentPreview] = createSignal<{
+    accountId: string;
+    messageId: string;
+    attachmentId: string;
+    filename: string;
+    mime_type: string | null;
+    size_bytes: number;
+    text: string;
+  } | null>(null);
   const mailCalendarConflictIds = createMemo(() => {
     const preview = mailCalendarPreview();
     return preview?.kind === "calendar" ? overlappingMailCalendarEventIds(preview.events ?? []) : new Set<string>();
@@ -1394,6 +1403,21 @@ export default function Settings() {
         : current);
     } catch (error) {
       setNotice({ kind: "error", text: `Could not open this message: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
+  const readMailAttachment = async (accountId: string, messageId: string, attachment: api.MailCalendarAttachmentPreview) => {
+    if (mailCalendarBusy() || !attachment.previewable) return;
+    const requestedAgentId = activeAgentId();
+    setMailCalendarBusy(true);
+    setMailAttachmentPreview(null);
+    try {
+      const result = await api.previewMailCalendarAttachment(requestedAgentId, accountId, messageId, attachment.provider_id);
+      if (requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+      setMailAttachmentPreview({ accountId, messageId, attachmentId: attachment.provider_id, ...result });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not preview this attachment: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       setMailCalendarBusy(false);
     }
@@ -2578,7 +2602,7 @@ export default function Settings() {
                   <Show when={preview.refreshedAt}><p class="settings-hint">Updated {relTime(preview.refreshedAt!)}{preview.kind !== "mail" && preview.from && preview.to ? ` · ${new Date(preview.from).toLocaleDateString()} through ${new Date(new Date(preview.to).getTime() - 1).toLocaleDateString()}` : ""}</p></Show>
                   <Show when={preview.kind === "mail"}>
                     <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : preview.query ? "No inbox messages matched that phrase." : "No recent inbox messages were returned."}</p>}>
-                      <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.has_attachments}><small>Has attachments · attachment preview is not available yet</small></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
+                      <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.has_attachments}><section aria-label="Message attachments"><strong>Attachments</strong><Show when={(message.attachments?.length ?? 0) > 0} fallback={<small>Attachment listing is unavailable for this provider.</small>}><For each={message.attachments ?? []}>{(attachment) => <div class="mail-calendar-attachment"><span>{attachment.filename} · {attachment.size_bytes < 1024 ? `${attachment.size_bytes} B` : `${Math.ceil(attachment.size_bytes / 1024)} KB`}</span><Show when={attachment.previewable} fallback={<small>Preview unavailable for this file type or size.</small>}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readMailAttachment(preview.accountId, message.provider_id, attachment)}>{mailCalendarBusy() ? "Opening…" : "Preview attachment"}</button></Show><Show when={mailAttachmentPreview()?.accountId === preview.accountId && mailAttachmentPreview()?.messageId === message.provider_id && mailAttachmentPreview()?.attachmentId === attachment.provider_id}><div class="mail-calendar-attachment-preview"><small>Attachment contents are untrusted. Review before using them.</small><pre>{mailAttachmentPreview()?.text}</pre></div></Show></div>}</For></Show></section></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected email" }]); setMailCalendarDraftSubject(`Re: ${message.subject}`); }}>Draft a reply</button></article>}</For>
                     </Show>
                   </Show>
                   <Show when={preview.kind === "calendar"}>

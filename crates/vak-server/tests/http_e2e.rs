@@ -394,6 +394,34 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .unwrap();
     assert_eq!(unauthorized_scope.status(), reqwest::StatusCode::NOT_FOUND);
 
+    let attachment_preview_url =
+        format!("http://{addr}/mail-calendar/accounts/vak/account-a/attachment-preview");
+    let attachment_request = serde_json::json!({
+        "message_id": "message-1",
+        "attachment_id": "attachment-1",
+    });
+    let unauthenticated_attachment_preview = reqwest::Client::new()
+        .post(&attachment_preview_url)
+        .json(&attachment_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated_attachment_preview.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let non_owner_attachment_preview = reqwest::Client::new()
+        .post(attachment_preview_url)
+        .bearer_auth(&token)
+        .json(&attachment_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        non_owner_attachment_preview.status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+
     let icloud_url = format!("http://{addr}/mail-calendar/accounts/vak/icloud");
     let body = serde_json::json!({
         "email": "owner@example.com",
