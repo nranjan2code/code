@@ -32,7 +32,7 @@ implementation.
 |---|---|---|
 | Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
 | Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so content access and effects stay disabled until a separately reviewed adapter and credential verification contract exist. Apple documents Account & Organizational Data Sharing OAuth for Apple School Manager Roster API scopes, not iCloud Mail/Calendar; EventKit is a native on-device calendar permission, not an unattended server grant. |
+| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so content access and effects stay disabled until a separately reviewed adapter and credential verification contract exist. Apple documents Account & Organizational Data Sharing OAuth for Apple School Manager Roster API scopes, not iCloud Mail/Calendar; EventKit is a native on-device calendar permission, not an unattended server grant. Apple documents IMAP for Mail, but not a complete server-side Mail and Calendar API contract. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -61,6 +61,17 @@ Manager Roster API, not iCloud Mail/Calendar
 requires a native app's on-device calendar permission and does not define a
 server-side grant for unattended routines
 ([EventKit access](https://developer.apple.com/documentation/eventkit/accessing-the-event-store)).
+Apple's published iCloud Mail configuration documents IMAP on
+`imap.mail.me.com:993` with TLS and an app-specific password, and SMTP on
+`smtp.mail.me.com:587`; SMTP remains outside the read-only profile
+([Mail settings](https://support.apple.com/en-us/102525)). Apple does not
+publish a corresponding iCloud Calendar server API contract on that page.
+Before enabling Apple previews, implement and verify both fixed-host protocol
+adapters, credential checks for the requested mail and calendar capabilities,
+and worker-isolated parsing of untrusted IMAP MIME and CalDAV/iCalendar
+responses. Do not treat saving an app-specific password as verification or
+provider support. The app-specific password has broader authority than Vak's
+per-operation grants and must never be injected into Agent tools.
 Do not substitute Sign in with Apple: it authenticates the person to
 Vakyartha but does not grant iCloud Mail/Calendar access ([Apple's Sign in with
 Apple overview](https://developer.apple.com/documentation/signinwithapple/authenticating-users-with-sign-in-with-apple)).
@@ -425,6 +436,12 @@ authorization and approval boundary on every execution path.
 - 2026-09-29: provider feasibility checked against current Google, Microsoft,
   and Apple documentation. The Apple adapter needs separate treatment because
   iCloud's user-supported client path relies on an app-specific password.
+- 2026-09-30: Rechecked Apple's published third-party and iCloud Mail setup
+  guidance. IMAP read is documented, while a complete unattended Mail and
+  Calendar contract is not. Apple enrollment remains explicitly unverified;
+  previews require fixed-host adapter verification and worker-isolated parsing
+  of untrusted MIME and calendar payloads. Do not promote enrollment to
+  provider support based on a credential save alone.
 - 2026-09-29: Stage 0 recorded the current-storage constraint without starting
   data-architecture M1. Added the first provider-neutral typed contract in
   `crates/vak-mail-calendar`; no provider requests or credentials are exposed
