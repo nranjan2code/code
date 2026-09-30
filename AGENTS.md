@@ -90,11 +90,13 @@ Read before changing behaviour in these areas:
   `office_apply`, Review with choices and shared drafts; its deferred list
   says what is not built and why).
 - **Mail and calendar** — `80-mail-and-calendar.md` (Stage 1A account linking
-  is implemented on `codex/mail-calendar`; Stage 1B provider content reads
-  wait for data-architecture M7 erasure support. Continuous and scheduled routines, the shared preview
-  and working area, local drafts, Review, and provider effects remain gated
-  by the design and data-lifecycle milestones); implementation stages and
-  provider support matrix are in
+  and owner-only bounded Google/Microsoft previews are implemented on
+  `codex/mail-calendar` against current 4.x storage. Agent/model tools, the
+  shared working area, local drafts, Review, provider effects, and scheduled
+  or continuous routines remain in progress. Disconnect removes credentials
+  and fences future reads but cannot erase content already recorded in
+  append-only Agent sessions; disclose this until lifecycle erasure ships);
+  implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,
   `73-data-architecture-and-lifecycle.md` and

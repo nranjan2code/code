@@ -2366,6 +2366,14 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .settings-callout strong { color: var(--text-soft); font-size: var(--fs-meta); }
 .settings-callout span { color: var(--muted); font-size: var(--fs-caption); }
 .settings-actions { display: flex; align-items: center; gap: var(--space-2); margin-top: -10px; }
+.settings-preview { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 17px 18px; }
+.settings-preview-heading { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 10px 0; border-bottom: 1px solid var(--border); color: var(--text-primary); font-size: var(--fs-control); }
+.mail-calendar-preview-item { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 12px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--surface-raised); }
+.mail-calendar-preview-item strong { color: var(--text-primary); font-size: var(--fs-control); overflow-wrap: anywhere; }
+.mail-calendar-preview-item span,
+.mail-calendar-preview-item small { color: var(--muted); font-size: var(--fs-meta); overflow-wrap: anywhere; }
+.mail-calendar-preview-item p { margin: 3px 0 0; color: var(--text-secondary); font-size: var(--fs-control); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.settings-preview .settings-hint { padding: 10px 0; }
 .settings-status { padding: 3px 7px; border-radius: 99px; color: var(--muted); background: var(--surface); font-size: var(--fs-caption); }
 .settings-status.good { color: var(--green); background: color-mix(in srgb, var(--green) 13%, transparent); }
 .settings-status.warn { color: var(--yellow); background: color-mix(in srgb, var(--yellow) 15%, transparent); }

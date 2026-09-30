@@ -1105,10 +1105,29 @@ export default function Settings() {
     onCleanup(() => window.removeEventListener("focus", refreshMailCalendarOnFocus));
   });
   const [mailCalendarBusy, setMailCalendarBusy] = createSignal(false);
+  const [mailCalendarPreview, setMailCalendarPreview] = createSignal<{
+    accountId: string;
+    kind: "mail" | "calendar" | "freebusy";
+    loading?: boolean;
+    messages?: api.MailCalendarMailPreview[];
+    events?: api.MailCalendarEventPreview[];
+    busy?: api.MailCalendarBusySlot[];
+  } | null>(null);
+  let mailCalendarPreviewGeneration = 0;
   const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
   createEffect(() => {
     activeAgentId();
+    mailCalendarPreviewGeneration += 1;
+    setMailCalendarBusy(false);
     setMailCalendarCapabilities([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
+    setMailCalendarPreview(null);
+  });
+  createEffect(() => {
+    if (page() !== "mail-calendar") {
+      mailCalendarPreviewGeneration += 1;
+      setMailCalendarBusy(false);
+      setMailCalendarPreview(null);
+    }
   });
   const [icloudEmail, setIcloudEmail] = createSignal("");
   const [icloudAppPassword, setIcloudAppPassword] = createSignal("");
@@ -1174,6 +1193,9 @@ export default function Settings() {
     confirmLabel: account.revoked_at ? "Finish cleanup" : "Disconnect account",
     isDanger: true,
     onConfirm: async () => {
+      mailCalendarPreviewGeneration += 1;
+      setMailCalendarPreview(null);
+      setMailCalendarBusy(false);
       const result = await api.disconnectMailCalendarAccount(activeAgentId(), account.id);
       await refreshMailCalendarAccounts();
       setNotice({ kind: "info", text: result.already_disconnected
@@ -1196,6 +1218,38 @@ export default function Settings() {
       setNotice({ kind: "error", text: `Could not refresh the provider sign-in: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
       setMailCalendarBusy(false);
+    }
+  };
+  const loadMailCalendarPreview = async (account: api.MailCalendarAccount, kind: "mail" | "calendar" | "freebusy") => {
+    const requestedAgentId = activeAgentId();
+    const requestGeneration = ++mailCalendarPreviewGeneration;
+    setMailCalendarBusy(true);
+    setMailCalendarPreview({ accountId: account.id, kind, loading: true });
+    try {
+      if (kind === "mail") {
+        const result = await api.previewMailCalendarMail(requestedAgentId, account.id);
+        if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+        setMailCalendarPreview({ accountId: account.id, kind, loading: false, messages: result.messages });
+      } else {
+        const from = new Date();
+        const to = new Date(from.getTime() + (kind === "freebusy" ? 7 : 14) * 24 * 60 * 60 * 1000);
+        if (kind === "calendar") {
+          const result = await api.previewMailCalendarEvents(requestedAgentId, account.id, from.toISOString(), to.toISOString());
+          if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events });
+        } else {
+          const result = await api.previewMailCalendarFreeBusy(requestedAgentId, account.id, from.toISOString(), to.toISOString());
+          if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+          setMailCalendarPreview({ accountId: account.id, kind, loading: false, busy: result.busy });
+        }
+      }
+    } catch (error) {
+      if (requestGeneration === mailCalendarPreviewGeneration && requestedAgentId === activeAgentId() && page() === "mail-calendar") {
+        setMailCalendarPreview(null);
+        setNotice({ kind: "error", text: `Could not load this preview: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    } finally {
+      if (requestGeneration === mailCalendarPreviewGeneration) setMailCalendarBusy(false);
     }
   };
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
@@ -1963,6 +2017,7 @@ export default function Settings() {
 
             <Show when={page() === "mail-calendar"}>
               <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p></header>
+              <div class="settings-callout"><Icon name="shield" /><div><strong>Preview is owner-only. Agent access and automations are still being built.</strong><span>Previews load bounded content directly from Google or Microsoft and do not save a second content copy. If you later use content with an Agent, its append-only conversation history may retain it. Disconnecting removes saved sign-in details and blocks future reads, but current storage cannot erase content already recorded in Agent history. It does not delete messages or events from your provider.</span></div></div>
               <Group title="Choose access">
                 <p class="settings-hint">Start with read access. Sending email and changing calendar events will require a separate permission and a review of the exact change.</p>
                 <div class="capability-list">
@@ -1976,7 +2031,7 @@ export default function Settings() {
                   <Row title="Apple iCloud email" description="Enter your iCloud email and an app-specific password generated at account.apple.com. Your Apple Account password is never requested.">
                     <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
                   </Row>
-                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. It is stored for owner-managed cleanup, but it is not verified or available to Agents. Provider content stays disabled until a supported access path and deletion tracking are ready. Remove the password at Apple to revoke it.</p>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. It is stored for owner-managed cleanup, but it is not verified or available to Agents. Owner preview remains unavailable until Apple credentials can be verified with a reviewed access boundary. Remove the password at Apple to revoke it.</p>
                 </Show>
                 <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
               </Group>
@@ -2003,13 +2058,31 @@ export default function Settings() {
                               : account.status === "connected" && !account.refresh_token_available
                                 ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
                               : "Connected";
-                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.provider === "apple_icloud" ? "App-specific password" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><span class="settings-actions"><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span></Row>;
+                      const canPreview = account.status === "connected" && account.credential_available && account.provider !== "apple_icloud" && !account.revoked_at;
+                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.provider === "apple_icloud" ? "App-specific password" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><span class="settings-actions"><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span></Row>;
                     }}</For>
                   </Show>
                 </Show>
               </Group>
               <Group title="Preview, routines and deletion">
-                <div class="settings-callout"><Icon name="shield" /><div><strong>Provider content is not available to Agents yet.</strong><span>Continuous and scheduled routines, a shared preview and working area, and deletion of Vakyartha's saved copies will be enabled after the data lifecycle can track and erase every derived copy. Disconnecting removes saved sign-in details and attempts provider revocation where supported. It does not delete messages or events from your provider.</span></div></div>
+                <Show when={mailCalendarPreview()} keyed>{(preview) => <div class="settings-preview" aria-live="polite">
+                  <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? "Recent inbox" : preview.kind === "calendar" ? "Next two weeks" : "Availability for the next week"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
+                  <Show when={preview.kind === "mail"}>
+                    <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading inbox…" : "No recent inbox messages were returned."}</p>}>
+                      <For each={preview.messages ?? []}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><p>{message.body_text || message.preview || "No plain-text preview was returned."}</p><Show when={message.has_attachments}><small>Has attachments · attachment preview is not available yet</small></Show></article>}</For>
+                    </Show>
+                  </Show>
+                  <Show when={preview.kind === "calendar"}>
+                    <Show when={(preview.events?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading calendar…" : "No events in this time range."}</p>}>
+                      <For each={preview.events ?? []}>{(event) => <article class="mail-calendar-preview-item"><strong>{event.title}</strong><span>{event.all_day ? `All day · ${event.starts_on ? new Date(`${event.starts_on}T12:00:00`).toLocaleDateString() : "Date unavailable"}` : event.starts_at ? new Date(event.starts_at).toLocaleString() : "Time unavailable"}{!event.all_day && event.ends_at ? ` – ${new Date(event.ends_at).toLocaleTimeString()}` : ""} · {event.attendee_count} attendees</span><Show when={event.location}><p>{event.location}</p></Show><Show when={event.description}><p>{event.description}</p></Show></article>}</For>
+                    </Show>
+                  </Show>
+                  <Show when={preview.kind === "freebusy"}>
+                    <Show when={(preview.busy?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Checking availability…" : "No busy periods were returned."}</p>}>
+                      <For each={preview.busy ?? []}>{(slot) => <article class="mail-calendar-preview-item"><strong>Busy</strong><span>{new Date(slot.starts_at).toLocaleString()} – {new Date(slot.ends_at).toLocaleTimeString()}</span></article>}</For>
+                    </Show>
+                  </Show>
+                </div>}</Show>
               </Group>
             </Show>
 

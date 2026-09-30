@@ -1,14 +1,18 @@
 # Plan — secure mail and calendar package
 
-Status: **Stage 0 and Stage 1A Agent/account linking complete, with a
-skills-only installable package added on `codex/mail-calendar`; Stage 1B awaits
-the data-architecture M7 gate.** The
+Status: **Stage 0 and Stage 1A Agent/account linking complete; the first
+Stage 1B owner-only Google/Microsoft preview slice and the skills-only package
+are implemented on `codex/mail-calendar`. The maintainer authorized continuing
+against the current 4.x storage model on 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
 `docs/design/80-mail-and-calendar.md`. This plan stages the work so a secure
 read path, exact preview, and provider actions can be reviewed as concrete
 increments. No milestone claims 24/7 operation until the durable service and
-recovery acceptance checks pass. Stage 1B content reads wait for data
-architecture M7.
+recovery acceptance checks pass. Current storage does not provide crypto-shred
+or complete account-deletion erasure: provider content copied into append-only
+Agent session history may remain until future lifecycle work provides lineage
+and erasure. This limitation must be visible before a content feature is
+enabled.
 
 ## Scope and provider matrix
 
@@ -21,7 +25,18 @@ implementation.
 |---|---|---|
 | Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
 | Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so effects remain disabled and reads stay behind M7. Apple documents Account & Organizational Data Sharing OAuth for Apple School Manager Roster API scopes, not iCloud Mail/Calendar; EventKit is a native on-device calendar permission, not an unattended server grant. Resolve a supported account flow and its revocation lifecycle before provider access ships. |
+| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so content access and effects stay disabled until a separately reviewed adapter and credential verification contract exist. Apple documents Account & Organizational Data Sharing OAuth for Apple School Manager Roster API scopes, not iCloud Mail/Calendar; EventKit is a native on-device calendar permission, not an unattended server grant. |
+
+The implemented read adapters use Gmail's bounded message list/get methods and
+Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
+list, bounded `calendarView`, and `getSchedule` endpoints. They use fixed
+provider hosts and delegated scopes. Current API contracts:
+[Gmail messages.list](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list),
+[Google Calendar events.list](https://developers.google.com/calendar/api/v3/reference/events/list),
+[Google Calendar freebusy.query](https://developers.google.com/calendar/api/v3/reference/freebusy/query),
+[Graph messages.list](https://learn.microsoft.com/graph/api/user-list-messages?view=graph-rest-1.0),
+[Graph calendarView](https://learn.microsoft.com/graph/api/user-list-calendarview?view=graph-rest-1.0), and
+[Graph getSchedule](https://learn.microsoft.com/graph/api/calendar-getschedule?view=graph-rest-1.0).
 
 The third adapter is not a generic arbitrary-host IMAP/CalDAV feature. Custom
 servers, Yahoo, Fastmail, Exchange EWS, and generic SMTP are out of scope for
@@ -73,9 +88,10 @@ operator, not by an end user pasting OAuth credentials into the UI:
   account link. See Google's [native-app scope verification guidance](https://developers.google.com/identity/protocols/oauth2/native-app)
   and [incremental authorization behavior](https://developers.google.com/identity/protocols/oauth2/web-server#incrementalAuth).
 
-These instructions configure OAuth account linking only. They do not enable
-mail or calendar content reads, which remain gated on the data-architecture
-M7 erasure implementation. Apple iCloud currently uses its separate local
+These instructions configure OAuth account linking. Bounded Google and
+Microsoft content reads are enabled for owner-only previews on the feature
+branch using the current storage model. Agent/model reads are a separate
+in-progress gate. Apple iCloud currently uses its separate local
 app-specific-password enrollment path and has no OAuth client setup.
 The redirect behavior follows Microsoft's [localhost port matching rules](https://learn.microsoft.com/entra/identity-platform/reply-url)
 and Google's [desktop installed-app loopback flow](https://developers.google.com/identity/protocols/oauth2/native-app).
@@ -111,16 +127,15 @@ process environment access.
 
 ## Stage 1 — owner-linked providers
 
-Stage 1 has two explicit gates so account linking can ship without implying
-that content reads are safe before M7.
+Stage 1 separates account linking from content reads. The original M7 gate
+was explicitly waived by the owner on 2026-09-30 to continue against current
+storage; the append-only history limitation is disclosed at every content
+entry point, and no claim of complete account-deletion erasure is made.
 
-### Stage 1A — account linking, before M7
+### Stage 1A — account linking
 
 Build Agent-owned account records, OAuth callback/state handling for Google
-and Microsoft, and the iCloud app-specific credential form. Account metadata
-and credentials may be implemented before erasure support, but provider
-message/event content reads, citations, content previews, and content retention
-stay disabled until the data architecture reaches M7. Provider clients use
+and Microsoft, and the iCloud app-specific credential form. Provider clients use
 fixed hosts; OAuth tokens and the iCloud credential remain in the credential
 service. OAuth refresh preserves the existing grant ceiling and rotates
 refresh tokens inside the Agent vault. Google supports the provider's per-token
@@ -160,11 +175,17 @@ principal cannot accumulate a second capability grant. A second attempt made
 while a provider link is pending receives a conflict and can be retried after
 the first link finishes or is cleaned up.
 
-### Stage 1B — bounded content reads, after M7
+### Stage 1B — bounded content reads, current storage
 
-Only after the data architecture reaches M7, implement bounded mailbox,
-calendar, and free/busy reads, citations, secure previews, provider health and
-freshness, and worker-contained parsing. The provider exit requirements for
+The first slice implements owner-only bounded inbox, event, and free/busy
+previews for Google and Microsoft through fixed-host, read-only adapters. It
+does not persist a second mailbox/event cache, and the preview stays outside
+Agent model context. Next, add broker-owned Agent/model reads and citations,
+provider health/freshness, and worker-contained parsing using the current
+Agent vault and session storage. Before enabling Agent content access, the UI
+must explain that disconnect removes the account credential and fences future
+reads, but current storage cannot erase content already recorded in append-only
+Agent session history. Do not claim complete account deletion. The provider exit requirements for
 bounded responses, no remote HTML loads, prompt-injection containment,
 revocation during a read, and no message-read mutation apply here. Each
 provider must return useful structured views or an explicit unsupported or
@@ -229,11 +250,14 @@ remains read-only until an acceptable credential model exists.
 
 ## Build order and repository constraints
 
-Provider content reads and retention are explicitly gated until the approved
-data-architecture sequence reaches M7 after M6; account deletion cannot be
-honestly guaranteed on the current 4.x substrate. No provider content may be
-fetched into local durable storage or model context before that gate. Starting
-M1 or a later data milestone needs a separate explicit milestone instruction.
+Provider content reads may use the current 4.x substrate under the maintainer's
+2026-09-30 direction. Do not add a second durable content cache. Keep the
+current direct preview owner-only until the broker-owned Agent tool path is
+implemented. Account
+disconnect removes credentials and revokes access where supported, but does
+not erase copied content from append-only session history; account/Agent
+deletion must present this limitation until the lifecycle architecture ships.
+This feature work does not start a data-architecture milestone.
 
 The user's build is running in the primary checkout. All feature edits are in
 the managed worktree for `codex/mail-calendar`; do not change primary checkout
@@ -839,4 +863,21 @@ authorization and approval boundary on every execution path.
   the manifest declares no tools, MCP servers, hooks, commands, scripts, or
   executable files. The package lifecycle regression inspects and installs it,
   proves the only component is its skill, and confirms install leaves it
-  disabled. Content operations remain unavailable behind M7.
+  disabled. At that point, content operations were still held behind the then-
+  active M7 gate.
+- 2026-09-30: The maintainer authorized feature implementation against the
+  current 4.x storage model and deferred the data-architecture refactor. The
+  plan and doc 80 now state that disconnect removes credentials and fences
+  future reads but cannot erase content already written to append-only Agent
+  sessions; the UI must disclose this before Agent content access is enabled.
+  Added bounded, fixed-host, read-only Gmail and Microsoft adapters and
+  owner-only Settings previews for inbox, event-range, and free/busy data.
+  Provider reads are serialized with account disconnect, require the selected
+  account capability/audience, cap time ranges and payload sizes, and write
+  content-free audit outcomes. Apple remains unavailable pending credential
+  verification. The preview clears when switching Agents/pages and is not
+  persisted into a separate cache. Verification: 56 mail/calendar tests
+  (including the local Gmail HTTP double) and 16 server HTTP tests pass;
+  web build/typecheck passes. Agent/model tools, drafts, Review, and routines
+  remain unimplemented. Provider contracts were checked against the Google
+  and Microsoft API references linked above.

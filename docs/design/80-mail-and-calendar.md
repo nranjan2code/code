@@ -1,8 +1,10 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **proposal with Stage 1A account linking and a skills-only installable
-package implemented, 2026-09-30.**
-Stage 1B provider-content reads await data-architecture M7. The owner
+Status: **proposal with Stage 1A account linking, an owner-only bounded
+Google/Microsoft preview, and a skills-only installable package implemented,
+2026-09-30.**
+On 2026-09-30 the owner authorized mail/calendar implementation against the
+current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
 Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
 owner-only connection Settings panel with masked display identities, and
@@ -14,8 +16,8 @@ activation and removes it. Apple enrollment records only read capabilities,
 stores the password in the Agent vault, reports `connected_unverified`, and
 reports no token expiry; it does not verify the credential with Apple or
 enable provider content access. Provider-content
-reads, routines, local content drafts, previews, and provider effects remain
-unimplemented. OAuth authorization attempts are bounded and single-use;
+Agent/model content tools, routines, local content drafts, Review, and provider
+effects remain unimplemented. OAuth authorization attempts are bounded and single-use;
 disconnect serializes with new links and atomically advances a durable,
 Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
 attempt captures that fence at initiation; callback credential persistence
@@ -36,8 +38,11 @@ other local packages; installation leaves it disabled until a separate review
 and enable action. Provider operations remain unavailable to Agents.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
-as proof that saved sign-in material can be loaded. Account erasure remains
-gated on the data architecture reaching M7.
+as proof that saved sign-in material can be loaded. Owner-only bounded
+previews for Gmail and Microsoft are implemented. Agent/model reads, local
+drafts, Review, and routines may proceed against current storage, with the
+account-deletion limitation below disclosed before those features are enabled.
+No crypto-shred guarantee is made. Apple remains unverified and unavailable.
 Provider-specific API details and consent requirements must be rechecked
 against current provider documentation before each implementation milestone.
 
@@ -349,7 +354,8 @@ domain-wide delegation are excluded from the first release. Revocation and
 expiry fail closed and produce an actionable reconnect state.
 
 Fetched content is not copied into memory, search, RAG, or a feed by default.
-All excerpts supplied to the model, whether subsequently cited or not, and
+The current owner-only preview returns bounded content directly to the UI and
+does not store a second content copy. All excerpts supplied to the model, whether subsequently cited or not, and
 local candidates needed for Review are
 retained under the owning Agent/conversation and audience, with explicit
 retention. Any future background mailbox source must use the single intake
@@ -360,7 +366,7 @@ later data milestone. Delete, export, legal hold, and erasure must follow
 `74-lifecycle-and-data-administration.md` when implemented. Provider deletion
 or revocation cannot promise deletion of copies held by external recipients.
 
-### D12 — Agent boundary, account deletion, and erasure gate
+### D12 — Agent boundary, account deletion, and current-storage limit
 
 Every connection belongs to exactly one Agent. Its account identifier,
 principal/display data, refresh token or app-specific password, and any
@@ -376,20 +382,18 @@ read rechecks them at the broker boundary.
 Disconnect revokes provider authorization where supported, deletes the vault
 secrets, stops and fences schedules/watchers, cancels undispatched work, and
 leaves only a content-free revocation tombstone needed to reject stale work.
-Account deletion additionally removes all local message/event copies,
-attachments, candidates, previews, citations, cursors, indexes, caches,
-backups, and derived records through the lifecycle catalog. It must be
-idempotent and report any external copy it cannot remove. An append-only
-connection ledger must never retain the principal or body content, so its
-tombstone does not prevent erasure.
+No second durable mailbox/event cache is added. Content that reaches a model is
+recorded in the owning Agent's append-only session history to preserve model
+reconstruction. Under current 4.x storage, disconnect does not remove that
+history, and deleting an account does not erase copies already in sessions.
 
-This deletion guarantee is a release gate, not a best-effort promise. The
-current 4.x substrate does not provide catalog lineage or cryptographic
-erasure. Until the approved data-architecture sequence has landed through
-M7 (M7 follows M6), this package must not fetch provider message/event bodies
-into local durable storage or model context. Metadata-only design and UI
-scaffolding may proceed, but connected content reads and retention are
-disabled. This package does not start M1 or any later data milestone.
+The UI must state this before enabling connected-content features and must
+distinguish account disconnection (credential removal and future-read fencing)
+from deletion of previously recorded content. Do not describe account or
+Agent deletion as complete erasure of mail/calendar content. The future data
+architecture M6/M7 work remains required for catalog-based lineage and
+crypto-shred, but this feature branch does not start those milestones. External
+recipient copies remain outside Vak's deletion control in every storage model.
 
 Audit records contain IDs, scope, policy generation, decisions, payload
 digest, provider outcome, and trace key, but no message body, subject,

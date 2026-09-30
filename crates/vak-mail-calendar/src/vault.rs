@@ -313,6 +313,29 @@ impl AccountVault {
             .map(Zeroizing::new)
             .ok_or(VaultError::Unavailable)
     }
+
+    /// Load only the short-lived OAuth access token for a connected provider
+    /// request. The caller must first admit the account and capability; the
+    /// returned value is zeroized when dropped and is never serialized.
+    pub fn access_token(&self, account_id: &str) -> Result<Zeroizing<String>, VaultError> {
+        let material = self.load(account_id)?;
+        material
+            .access_token
+            .clone()
+            .map(Zeroizing::new)
+            .ok_or(VaultError::Unavailable)
+    }
+
+    /// Return the identity hint needed by Graph's delegated getSchedule API.
+    /// The value remains vault-owned and callers should drop it immediately
+    /// after the request completes.
+    pub fn display_identity(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<Zeroizing<String>>, VaultError> {
+        let material = self.load(account_id)?;
+        Ok(material.display_identity.clone().map(Zeroizing::new))
+    }
 }
 
 fn ensure_agent_directory(path: &std::path::Path, private: bool) -> Result<(), VaultError> {

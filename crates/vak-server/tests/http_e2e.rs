@@ -484,6 +484,27 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert!(!response_body.contains("abcd-efgh-ijkl-mnop"));
     assert!(!response_body.contains("owner@example.com"));
 
+    let apple_accounts: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let apple_account_id = apple_accounts["accounts"][0]["id"].as_str().unwrap();
+    let unverified_preview = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/vak/{apple_account_id}/mail-preview"
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"limit": 1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unverified_preview.status(), reqwest::StatusCode::NOT_FOUND);
+
     let duplicate_icloud = reqwest::Client::new()
         .post(&icloud_url)
         .bearer_auth(&token)

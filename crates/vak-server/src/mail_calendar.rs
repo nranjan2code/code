@@ -11,7 +11,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
@@ -130,6 +130,320 @@ pub(super) async fn list_accounts(
         }
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+
+#[derive(Deserialize)]
+pub(super) struct MailPreviewRequest {
+    limit: Option<usize>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct CalendarPreviewRequest {
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    limit: Option<usize>,
+}
+
+/// Owner-only interactive preview. The response is transient and is not
+/// persisted; Agent/model access will use a separate broker-owned path.
+pub(super) async fn mail_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+    Json(request): Json<MailPreviewRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if account
+        .access_token_expires_at
+        .is_some_and(|expires| expires <= Utc::now())
+    {
+        return (
+            StatusCode::PRECONDITION_REQUIRED,
+            "Refresh this account's sign-in before previewing content.",
+        )
+            .into_response();
+    }
+    record_account_event(
+        &state,
+        "mail_content_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    match vak_mail_calendar::provider::ProviderReadClient::default()
+        .recent_mail(
+            &account,
+            &vault,
+            &agent_id,
+            &format!("agent:{agent_id}"),
+            request.limit.unwrap_or(10),
+        )
+        .await
+    {
+        Ok(messages) => {
+            record_account_event(
+                &state,
+                "mail_content_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(serde_json::json!({"messages": messages})).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "mail_content_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
+}
+
+pub(super) async fn calendar_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+    Json(request): Json<CalendarPreviewRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if account
+        .access_token_expires_at
+        .is_some_and(|expires| expires <= Utc::now())
+    {
+        return (
+            StatusCode::PRECONDITION_REQUIRED,
+            "Refresh this account's sign-in before previewing content.",
+        )
+            .into_response();
+    }
+    record_account_event(
+        &state,
+        "calendar_content_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    match vak_mail_calendar::provider::ProviderReadClient::default()
+        .calendar_events(
+            &account,
+            &vault,
+            &agent_id,
+            &format!("agent:{agent_id}"),
+            vak_mail_calendar::provider::CalendarRange {
+                from: request.from,
+                to: request.to,
+                limit: request.limit.unwrap_or(50),
+            },
+        )
+        .await
+    {
+        Ok(events) => {
+            record_account_event(
+                &state,
+                "calendar_content_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(serde_json::json!({"events": events})).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "calendar_content_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
+}
+
+pub(super) async fn free_busy_preview(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+    Json(request): Json<CalendarPreviewRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if account
+        .access_token_expires_at
+        .is_some_and(|expires| expires <= Utc::now())
+    {
+        return (
+            StatusCode::PRECONDITION_REQUIRED,
+            "Refresh this account's sign-in before previewing content.",
+        )
+            .into_response();
+    }
+    record_account_event(
+        &state,
+        "calendar_freebusy_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    match vak_mail_calendar::provider::ProviderReadClient::default()
+        .free_busy(
+            &account,
+            &vault,
+            &agent_id,
+            &format!("agent:{agent_id}"),
+            request.from,
+            request.to,
+        )
+        .await
+    {
+        Ok(busy) => {
+            record_account_event(
+                &state,
+                "calendar_freebusy_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(serde_json::json!({"busy": busy})).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "calendar_freebusy_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
+}
+
+fn mark_preview_reauthentication(
+    state: &AppState,
+    account: &ConnectedAccount,
+    error: &vak_mail_calendar::provider::ProviderReadError,
+) {
+    if !matches!(
+        error,
+        vak_mail_calendar::provider::ProviderReadError::ReauthenticationRequired
+    ) {
+        return;
+    }
+    if let Ok(ledger) = ConnectionLedger::for_agent(&account.owner_agent_id) {
+        if ledger
+            .append_reauthentication_required(&account.id, Utc::now())
+            .is_ok()
+        {
+            record_account_event(
+                state,
+                "account_reauthentication_required",
+                &account.owner_agent_id,
+                &account.id,
+                account.provider,
+                &account.capabilities,
+                "provider_read_rejected",
+            );
+        }
+    }
+}
+
+fn preview_account(
+    state: &AppState,
+    agent_id: &str,
+    account_id: &str,
+) -> Option<(ConnectedAccount, AccountVault)> {
+    if !registered_agent(state, agent_id)
+        || !valid_agent(state, agent_id)
+        || Uuid::parse_str(account_id).is_err()
+    {
+        return None;
+    }
+    let ledger = ConnectionLedger::for_agent(agent_id).ok()?;
+    let account = ledger
+        .read_all()
+        .ok()?
+        .into_iter()
+        .find(|account| account.id == account_id)?;
+    if account.owner_agent_id != agent_id
+        || account.status != AccountStatus::Connected
+        || account.revoked_at.is_some()
+        || !account.capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                Capability::MailRead | Capability::CalendarRead | Capability::CalendarFreeBusy
+            )
+        })
+    {
+        return None;
+    }
+    let vault = AccountVault::for_agent(agent_id).ok()?;
+    Some((account, vault))
+}
+
+fn provider_preview_error(error: vak_mail_calendar::provider::ProviderReadError) -> Response {
+    use vak_mail_calendar::provider::ProviderReadError as E;
+    let (status, kind) = match error {
+        E::NotAdmitted => (StatusCode::FORBIDDEN, "not_admitted"),
+        E::Unsupported => (StatusCode::NOT_IMPLEMENTED, "unsupported"),
+        E::ReauthenticationRequired => (
+            StatusCode::PRECONDITION_REQUIRED,
+            "reauthentication_required",
+        ),
+        E::InvalidRange | E::InvalidResponse => (StatusCode::BAD_REQUEST, "invalid_request"),
+        E::Vault => (StatusCode::SERVICE_UNAVAILABLE, "credential_unavailable"),
+        E::Unavailable => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
+    };
+    (
+        status,
+        Json(serde_json::json!({"kind": kind, "error": error.to_string()})),
+    )
+        .into_response()
 }
 
 fn same_provider_principal(

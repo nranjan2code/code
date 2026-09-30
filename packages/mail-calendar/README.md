@@ -17,7 +17,13 @@ enable it through Settings → Capabilities if the person wants the account
 setup guidance in their Agent. Account linking and cleanup remain in Settings
 → Email and calendar.
 
-Mail/calendar content reads, citations, drafts, previews, provider effects,
-scheduled work, and continuous routines are not available yet. These remain
-behind the data-architecture M7 gate; the package skill must not imply that a
-connected account is usable by an Agent.
+The owner can preview bounded Gmail and Microsoft inbox, event, and free/busy
+results in Settings. Apple remains unverified and unavailable. Agents cannot
+read provider content yet; the brokered Agent tools, working area, local
+drafts, Review, provider effects, scheduled work, and continuous routines are
+still being built against current 4.x storage. Before Agent content access is
+enabled, the product must explain that disconnect removes the saved credential
+and blocks future reads, while content recorded in append-only Agent session
+history cannot currently be erased. This package does not claim
+account-content crypto-shredding; that requires future data-architecture
+lifecycle work.

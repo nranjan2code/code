@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 pub mod connection_ledger;
 pub mod oauth;
+pub mod provider;
 pub mod vault;
 
 pub const MAX_ADDRESSES: usize = 100;

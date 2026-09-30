@@ -170,6 +170,47 @@ export async function refreshMailCalendarAccount(agentId: string, accountId: str
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/refresh`, { method: "POST", body: "{}" });
 }
 
+export interface MailCalendarMailPreview {
+  provider_id: string;
+  thread_id: string | null;
+  from: string | null;
+  subject: string;
+  received_at: string | null;
+  preview: string;
+  body_text: string | null;
+  has_attachments: boolean;
+}
+export interface MailCalendarEventPreview {
+  provider_id: string;
+  title: string;
+  starts_at: string | null;
+  ends_at: string | null;
+  starts_on: string | null;
+  ends_on: string | null;
+  all_day: boolean;
+  location: string | null;
+  description: string | null;
+  attendee_count: number;
+  private: boolean;
+}
+export interface MailCalendarBusySlot { starts_at: string; ends_at: string }
+
+export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10): Promise<{ messages: MailCalendarMailPreview[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-preview`, {
+    method: "POST", body: JSON.stringify({ limit }),
+  });
+}
+export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50): Promise<{ events: MailCalendarEventPreview[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-preview`, {
+    method: "POST", body: JSON.stringify({ from, to, limit }),
+  });
+}
+export function previewMailCalendarFreeBusy(agentId: string, accountId: string, from: string, to: string): Promise<{ busy: MailCalendarBusySlot[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/free-busy-preview`, {
+    method: "POST", body: JSON.stringify({ from, to }),
+  });
+}
+
 export async function disconnectMailCalendarAccount(agentId: string, accountId: string): Promise<{ disconnected: boolean; already_disconnected: boolean; provider_grant_revoked: boolean; provider_revocation: "confirmed" | "unsupported" | "unconfirmed" | "not_retried"; content_erased: boolean }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/disconnect`, { method: "POST", body: "{}" });
 }
