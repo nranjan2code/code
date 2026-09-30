@@ -1002,6 +1002,15 @@ details[open] > summary:after {
 .capability-pdf .chapter-art { width: 53%; margin-left: 0; }
 .capability-review .chapter-art { width: 56%; margin-left: -4%; }
 .calendar-story .chapter-composition { flex-direction: row-reverse; }
+.cloud-story .chapter-art { width: 48%; margin: 0; }
+.cloud-story .chapter-copy > .button { margin-top: 20px; }
+.cloud-story .capability-list li { grid-template-columns: 1fr; gap: 8px; }
+@media (max-width: 1000px) {
+  .cloud-story .chapter-composition { flex-direction: column; align-items: stretch; gap: 28px; }
+  .cloud-story .chapter-art { width: 100%; margin: 0; }
+  .cloud-story .chapter-copy { width: 100%; }
+}
+
 .capability-limits { margin-top: 18px; border-top: 1px solid var(--line); }
 .capability-limits summary { font-size: 14px; }
 .capability-limits p { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
@@ -2064,6 +2073,7 @@ details[open] > summary:after {
           <a href="/surfaces">Ways to use it</a>
           <a href="/capabilities">Documents</a>
           <a href="/email-calendar">Email &amp; Calendar</a>
+          <a href="/headless-cloud">Headless &amp; Cloud</a>
           <a href="/security">Your control</a>
         </nav>
         <nav class="footer-group" aria-label="Vakyartha resources">

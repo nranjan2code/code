@@ -1002,6 +1002,15 @@ details[open] > summary:after {
 .capability-pdf .chapter-art { width: 53%; margin-left: 0; }
 .capability-review .chapter-art { width: 56%; margin-left: -4%; }
 .calendar-story .chapter-composition { flex-direction: row-reverse; }
+.cloud-story .chapter-art { width: 48%; margin: 0; }
+.cloud-story .chapter-copy > .button { margin-top: 20px; }
+.cloud-story .capability-list li { grid-template-columns: 1fr; gap: 8px; }
+@media (max-width: 1000px) {
+  .cloud-story .chapter-composition { flex-direction: column; align-items: stretch; gap: 28px; }
+  .cloud-story .chapter-art { width: 100%; margin: 0; }
+  .cloud-story .chapter-copy { width: 100%; }
+}
+
 .capability-limits { margin-top: 18px; border-top: 1px solid var(--line); }
 .capability-limits summary { font-size: 14px; }
 .capability-limits p { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
@@ -2037,6 +2046,12 @@ details[open] > summary:after {
     </div>
   </div>
 </section>
+<section class="day-chapter calendar-story cloud-story" id="cloud-home" aria-labelledby="cloud-home-title">
+  <div class="wrap chapter-composition">
+    <figure class="chapter-art"><img src="/site/cloud/server.png" width="1200" height="800" loading="lazy" alt="Vakyartha’s blue Songbird with its own server, connected to a laptop and phone" /><figcaption class="cast">Your server. Your agent. Ready when you return.</figcaption></figure>
+    <div class="chapter-copy"><p class="eyebrow">Headless &amp; Cloud</p><h2 id="cloud-home-title">Close your laptop.<br />Keep the work going.</h2><p class="chapter-lead">Give Vakyartha a home on your own cloud server. Scheduled routines can keep running while your computer is away, and you can return to your agent from a browser or connected chat.</p><p class="cast">Choose your host, model providers, and access. Your server stays on; your agent stays within the permissions you set.</p><a class="button primary" href="/headless-cloud">Explore Headless &amp; Cloud <span aria-hidden="true">↗</span></a></div>
+  </div>
+</section>
 <div class="story-intro wrap" id="your-day">
   <p>Pick a place to start.</p>
   <span>Tap a request. See an example. ↓</span>
@@ -2243,6 +2258,7 @@ details[open] > summary:after {
           <a href="/surfaces">Ways to use it</a>
           <a href="/capabilities">Documents</a>
           <a href="/email-calendar">Email &amp; Calendar</a>
+          <a href="/headless-cloud">Headless &amp; Cloud</a>
           <a href="/security">Your control</a>
         </nav>
         <nav class="footer-group" aria-label="Vakyartha resources">

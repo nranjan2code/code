@@ -1,6 +1,6 @@
 # Vakyartha public site
 
-Fourteen static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+Fifteen static pages, built here and embedded by `crates/vak-server/src/site.rs`.
 The navigation uses plain labels. `/doctor` is reserved for the authenticated
 runtime API; the public introduction lives at `/meet-doctor`. Only the standalone
 Vercel export redirects the old website URL to that introduction.
@@ -10,6 +10,7 @@ Vercel export redirects the old website URL to that introduction.
 | `/` | Character scenes and expandable everyday, work and learning examples |
 | `/outcomes` | All eight companions with example requests and possible results |
 | `/email-calendar` | Selected mail, calendar planning, reviewed actions and useful routines |
+| `/headless-cloud` | Own-server hosting, cloud deployment, and remote access |
 | `/tour` | Interactive request/result illustrations and a short walkthrough |
 | `/security` | Illustrated guide to access, approvals, data, connected chats, interruption and evidence |
 | `/install` | Public source build instructions and access to an existing installation |

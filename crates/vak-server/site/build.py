@@ -39,6 +39,8 @@ PAGES = [
      "Ask Vakyartha to read, cite, create and edit Office documents and PDFs. Review every proposed change before it reaches your files."),
     ("email-calendar.html", "/email-calendar", "Email & Calendar", "Email & Calendar | Vakyartha",
      "Understand the messages that matter, plan with the time you have, and review every proposed email or calendar change."),
+    ("headless-cloud.html", "/headless-cloud", "Headless & Cloud", "Headless & Cloud | Vakyartha",
+     "Run Vakyartha on your own server or cloud host, keep scheduled work available, and connect from your browser or chosen chat channels."),
     ("tour.html", "/tour", "How it works", "How it works | Vakyartha",
      "Start in your own words, return to ongoing work, and see what is ready or waiting for you."),
     ("security.html", "/security", "Your control", "Your control | Vakyartha",
