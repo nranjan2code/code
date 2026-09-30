@@ -565,6 +565,13 @@ export function openOfficeCitation(citation: { path: string; anchor: string }) {
   openArtifactPathInCanvas(citation.path, undefined, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
 }
 
+/** Opens an owner-only mail citation in the account conversation preview. */
+export function openMailCalendarCitation(citation: MailCalendarCitationTarget) {
+  setPendingMailCalendarCitation(citation);
+  setPendingSettingsPage("mail-calendar");
+  setSettingsOpen(true);
+}
+
 /**
  * Goal mode (docs/design/27 Phase H): an objective + criteria armed for the
  * *next* prompt, consumed once and cleared. `sessionId: null` means armed
@@ -797,6 +804,8 @@ export type SettingsPageId =
   | "storage"
   | "archived";
 export const [pendingSettingsPage, setPendingSettingsPage] = createSignal<SettingsPageId | null>(null);
+export type MailCalendarCitationTarget = { accountId: string; threadId: string; messageId: string };
+export const [pendingMailCalendarCitation, setPendingMailCalendarCitation] = createSignal<MailCalendarCitationTarget | null>(null);
 // Read-only historical transcript viewer (docs/design/29): any session by id,
 // served from disk — no attach, no stream, never touches live view state.
 export const [transcriptViewId, setTranscriptViewId] = createSignal<string | null>(null);

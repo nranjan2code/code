@@ -9,10 +9,12 @@ import {
   openWorkbenchFolder,
   isScratchDirectory,
   openOfficeCitation,
+  openMailCalendarCitation,
 } from "../store";
 import { openFileSmart } from "../App";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
+import { parseMailCalendarCitation } from "../mailCalendarCitation";
 
 function closeUnclosedFences(src: string): string {
   const lines = src.split("\n");
@@ -109,6 +111,12 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
       openOfficeCitation({ path: cite.getAttribute("data-office-path") ?? "", anchor: cite.getAttribute("data-anchor") ?? "" });
       return;
     }
+    const mailCite = target.closest("code.mail-calendar-cite[data-mail-account]");
+    if (mailCite) {
+      const citation = parseMailCalendarCitation(`mailcite:${encodeURIComponent(mailCite.getAttribute("data-mail-account") ?? "")}/${encodeURIComponent(mailCite.getAttribute("data-mail-thread") ?? "")}/${encodeURIComponent(mailCite.getAttribute("data-mail-message") ?? "")}`);
+      if (citation) openMailCalendarCitation(citation);
+      return;
+    }
     const link = target.closest("a.artifact-lnk[data-path]");
     if (link) {
       event.preventDefault();
@@ -143,5 +151,15 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
     }
   };
 
-  return <div class="md" classList={{ streaming: !!props.streaming }} ref={el} onClick={onClick} />;
+  const onKeyDown = (event: KeyboardEvent) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const target = event.target as HTMLElement;
+    const mailCite = target.closest("code.mail-calendar-cite[data-mail-account]");
+    if (!mailCite) return;
+    event.preventDefault();
+    const citation = parseMailCalendarCitation(`mailcite:${encodeURIComponent(mailCite.getAttribute("data-mail-account") ?? "")}/${encodeURIComponent(mailCite.getAttribute("data-mail-thread") ?? "")}/${encodeURIComponent(mailCite.getAttribute("data-mail-message") ?? "")}`);
+    if (citation) openMailCalendarCitation(citation);
+  };
+
+  return <div class="md" classList={{ streaming: !!props.streaming }} ref={el} onClick={onClick} onKeyDown={onKeyDown} />;
 }

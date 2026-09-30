@@ -6250,3 +6250,5 @@ code.ic[data-previewable="true"]:hover {
 .chat-shell.file-drop::after { content: "Drop to attach"; position: absolute; inset: 8px; z-index: 5; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: var(--radius); color: var(--accent-bright); font-size: var(--fs-ui); background: var(--accent-wash); pointer-events: none; }
 .office-cite { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 0.9em; text-decoration: underline dotted; text-underline-offset: 2px; color: var(--accent-bright); }
 .office-cite:hover, .office-cite:focus-visible { text-decoration-style: solid; }
+.mail-calendar-cite { cursor: pointer; font: inherit; font-family: var(--mono); font-size: 0.9em; text-decoration: underline dotted; text-underline-offset: 2px; color: var(--accent-bright); }
+.mail-calendar-cite:hover, .mail-calendar-cite:focus-visible { text-decoration-style: solid; }

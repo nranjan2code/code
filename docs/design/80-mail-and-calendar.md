@@ -121,8 +121,11 @@ establishes thread membership. The Agent tool can now read a bounded selected
 Google/Microsoft thread page with a routine-scoped `mail_thread` permission.
 Each message is separately labelled as untrusted and carries a citation bound
 to provider, account, audience, thread, and message IDs. Click-through citation
-navigation, the full thread workspace, and cross-folder Agent access remain
-open. Local drafts,
+navigation now accepts the exact inline `mailcite:` token from that citation
+and opens the connected account's owner-only conversation preview; the server
+re-fetches the thread from the provider, and the UI scrolls to the cited
+message when it is in the loaded page. Full thread workspace and cross-folder
+Agent access remain open. Local drafts,
 scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at

@@ -19,6 +19,7 @@ import {
   openArtifactCanvas,
   openCandidateReview,
   openOfficeCitation,
+  openMailCalendarCitation,
   setReplyTarget,
   isRunning,
   presentationOf,
@@ -29,6 +30,7 @@ import MessageActions from "./MessageActions";
 import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
+import { parseMailCalendarCitation } from "../mailCalendarCitation";
 import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPreview";
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
@@ -144,6 +146,8 @@ function InlineSequence(props: { nodes: InlineNode[] }): JSX.Element {
           case "strikethrough":
             return <s><InlineSequence nodes={node.content} /></s>;
           case "code": {
+            const mailCitation = parseMailCalendarCitation(node.code);
+            if (mailCitation) return <button type="button" class="ic mail-calendar-cite" title="Open cited conversation" onClick={() => openMailCalendarCitation(mailCitation)}>{node.code}</button>;
             const citation = parseOfficeCitation(node.code);
             if (!citation) return <code class="ic">{node.code}</code>;
             return <button type="button" class="ic office-cite" title={`Open ${citation.path} at ${citation.anchor}`} onClick={() => openOfficeCitation(citation)}>{node.code}</button>;

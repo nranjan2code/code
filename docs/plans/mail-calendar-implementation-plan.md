@@ -2,7 +2,8 @@
 
 Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
 Google/Microsoft owner previews, owner-submitted bounded inbox search for all
-three providers, the broker-owned local Agent read tool, and
+three providers, the broker-owned local Agent read tool with clickable
+provider-reverified message citations, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
 the owner calendar preview now has grouped agenda, day, and week layouts;
@@ -256,14 +257,25 @@ The tool never exposes vault handles to workers. Returned provider content is
 model-visible and enters append-only session history, which current storage
 cannot selectively erase. The UI and tool description disclose this before
 reads. Do not claim complete account deletion. Per-message citation metadata
-is present for selected Google/Microsoft threads, but click-through citation
-navigation is open. Provider health/freshness and further prompt-injection
+is present for selected Google/Microsoft threads. Exact inline citation tokens
+open the owner-only conversation preview and focus the cited message when it
+is on the loaded page. Provider health/freshness and further prompt-injection
 handling remain to be completed. The
 provider exit requirements for
 bounded responses, no remote HTML loads, prompt-injection containment,
 revocation during a read, and no message-read mutation apply here. Each
 provider must return useful structured views or an explicit unsupported or
 reauthentication state.
+
+**Implemented increment (2026-09-30):** each Agent-read thread message now
+includes a bounded, percent-encoded `mailcite:` token. Both streaming Markdown
+and settled presentation rendering recognize only that token form. Selecting
+it opens the mail/calendar Settings page, verifies the cited account belongs
+to the currently selected Agent, re-fetches the thread through the owner-only
+provider preview API, and scrolls to the cited message when it is in the
+loaded page. IDs stay opaque; the UI never constructs provider URLs. Apple
+thread citations remain unavailable. Full thread workspace and pagination to
+a cited message beyond the first page remain open.
 
 ## Stage 2 — working area and local candidates (in progress)
 
