@@ -79,7 +79,7 @@ async fn spawn_secured(
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        vak_server::serve_router(listener, app).await.unwrap();
     });
     (format!("http://{addr}"), token, cwd, handle)
 }

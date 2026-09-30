@@ -109,11 +109,11 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
         .unwrap();
     assert_eq!(approve_res.status(), 200, "approve must succeed");
 
-    // Second message: now allowed. Provider auth still fails (no credential
-    // configured / injected for the pooled Core), so the turn itself can't
-    // finish — but session creation happens *before* that check, so the
-    // pooled Core for `other_dir` must already have started and minted a
-    // session there by the time we inspect it.
+    // Second message: now allowed. Since this is `wait: false`, the gateway
+    // acknowledges admission before the asynchronous turn reaches the
+    // provider-credential check. Session creation happens before that check,
+    // so the pooled Core for `other_dir` must already have minted a session
+    // there by the time we inspect it.
     let res = client
         .post(format!("{base}/gateway/inbound"))
         .json(&msg)
@@ -122,9 +122,8 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
         .unwrap();
     assert_eq!(
         res.status(),
-        503,
-        "session should have been created against the other workspace's pooled Core \
-         before the provider-credential check fails"
+        202,
+        "a wait=false inbound request should be acknowledged after admission"
     );
 
     // Confirm: the pool now reports the other workspace as warm.
