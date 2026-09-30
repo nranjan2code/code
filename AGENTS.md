@@ -329,13 +329,11 @@ in progress, and the rest of V4 follows it.
    `Core::discover_models` memoises it for 5 minutes. When discovery fails,
    surface the reason; never substitute a static list. Endpoint *hosts* are
    configuration and may have defaults; model *ids* may not.
-   AWS Bedrock additionally reports native control-plane status for each
-   discovered model: agreement, authorization, entitlement, and regional
-   availability. Only a fully available model is invokable in the admin
-   selector. Mantle inference uses the scoped `AWS_BEARER_TOKEN_BEDROCK`,
-   while native checks use the standard AWS SDK credential chain so headless
-   AWS deployments can use IAM roles, SSO, web identity, or environment
-   credentials. Failed checks remain explicitly unknown/unavailable.
+   All provider catalogues use the provider's published HTTP API through
+   VAK-owned adapters. No provider SDK or provider-specific control-plane
+   client is part of the runtime. A discovered model is a selectable route;
+   invocation errors are reported by that provider through the shared error
+   contract. Never add a vendor-only preflight gate or SDK credential chain.
 10. **Restricted filesystem access is workspace-rooted.** In read-only and
     workspace-write modes, automatic read/glob/grep access must resolve inside
     the canonical session workspace; traversal and symlink escapes fail

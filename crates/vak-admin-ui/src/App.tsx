@@ -6193,7 +6193,6 @@ export function Settings() {
   const [bedrockRegionInput, setBedrockRegionInput] = createSignal("us-east-1");
   const [savingBedrockRegion, setSavingBedrockRegion] = createSignal(false);
   const [discoveredModels, setDiscoveredModels] = createSignal<string[]>([]);
-  const [bedrockAvailability, setBedrockAvailability] = createSignal<import("./types").BedrockModelAvailability[]>([]);
   const [loadingModels, setLoadingModels] = createSignal(false);
   const [modelError, setModelError] = createSignal("");
   const [modelSearch, setModelSearch] = createSignal("");
@@ -6221,8 +6220,7 @@ export function Settings() {
       if (prov !== selectedProvider() || mod !== selectedModel()) return;
       const latency = Math.round(performance.now() - start);
       const models = res.models ?? [];
-      const hasActive = models.includes(mod) && (prov !== "bedrock" ||
-        (!res.availability_error && res.availability?.some((item) => item.model_id === mod && item.invokable) === true));
+      const hasActive = models.includes(mod);
       setProbeResult({
         ok: true,
         latency_ms: latency,
@@ -6299,7 +6297,6 @@ export function Settings() {
     setSelectedProvider("");
     setSelectedModel("");
     setDiscoveredModels([]);
-    setBedrockAvailability([]);
     setLoadingModels(false);
     setModelError("");
     setProviderKeyInput("");
@@ -6310,15 +6307,12 @@ export function Settings() {
     setLoadingModels(true);
     setModelError("");
     setDiscoveredModels([]);
-    setBedrockAvailability([]);
     const current = () => revision === discoveryRevision && provider === selectedProvider();
     try {
       const res = await api.models(provider, selectedAgentIdOrUndefined());
       if (!current()) return;
       const models = res.models ?? [];
       setDiscoveredModels(models);
-      setBedrockAvailability(res.availability ?? []);
-      setModelError(res.availability_error ?? "");
       // Refreshing a catalogue must not replace an operator's saved/custom choice.
     } catch (err) {
       if (current()) setModelError(`${err}`);
@@ -6326,8 +6320,6 @@ export function Settings() {
       if (current()) setLoadingModels(false);
     }
   };
-  const modelAllowed = () => selectedProvider() !== "bedrock" ||
-    (!modelError() && bedrockAvailability().some((item) => item.model_id === selectedModel() && item.invokable));
 
   createEffect(() => {
     const provider = selectedProvider();
@@ -6592,7 +6584,7 @@ export function Settings() {
                         onInput={(e) => setBedrockRegionInput(e.currentTarget.value)}
                       />
                       <p class="dim" style="margin:0">
-                        Used for model discovery, access checks and requests. Mumbai is <code>ap-south-1</code>; N. Virginia is <code>us-east-1</code>.
+                        Used to select the service endpoint for model discovery and requests. Mumbai is <code>ap-south-1</code>; N. Virginia is <code>us-east-1</code>.
                       </p>
                       <Show when={config()?.bedrock_region_source === "server environment"}>
                         <p class="dim" role="status" style="margin:0">
@@ -6650,12 +6642,7 @@ export function Settings() {
                       >
                         <option value="">Choose a model…</option>
                         <Show when={selectedModel() && !filteredDiscoveredModels().includes(selectedModel())}><option value={selectedModel()}>{selectedModel()} (current choice)</option></Show>
-                        <For each={filteredDiscoveredModels()}>{(m) => {
-                          const status = () => bedrockAvailability().find((item) => item.model_id === m);
-                          return <option value={m} disabled={selectedProvider() === "bedrock" && (Boolean(modelError()) || !status()?.invokable)}>
-                            {selectedProvider() === "bedrock" && !status()?.invokable ? `${m} (access not confirmed)` : m}
-                          </option>;
-                        }}</For>
+                        <For each={filteredDiscoveredModels()}>{(m) => <option value={m}>{m}</option>}</For>
                       </select>
 
                       <Show when={modelSearch().trim() && !discoveredModels().includes(modelSearch().trim())}>
@@ -6684,21 +6671,10 @@ export function Settings() {
                     ({modelError()})
                   </p>
                 </Show>
-                <Show when={selectedProvider() === "bedrock" && bedrockAvailability().length > 0}>
-                  <div class="dim" style={{ "margin-top": "8px" }}>
-                    <p>
-                      <span class="chip chip-tone-success">{bedrockAvailability().filter((item) => item.invokable).length} invokable</span>{" "}
-                      <span class="chip chip-tone-warning">{bedrockAvailability().filter((item) => !item.invokable).length} require entitlement/agreement</span>
-                    </p>
-                  </div>
-                </Show>
-                <Show when={selectedProvider() === "bedrock" && modelError()}>
-                  <p class="dim">Bedrock authorization status could not be checked: {modelError()}</p>
-                </Show>
 
                 <div class="row-gap" style="margin-top:10px">
                   <button
-                    disabled={loadingModels() || savingKey() || probing() || !selectedModel().trim() || !modelAllowed()}
+                    disabled={loadingModels() || savingKey() || probing() || !selectedModel().trim()}
                     onClick={() =>
                       void guard(
                         () => api.patchConfigScope(configScope(), { provider: selectedProvider(), model: selectedModel() }, selectedAgentIdOrUndefined()),
@@ -6780,7 +6756,7 @@ export function Settings() {
                       {selectedProvider() === "ollama"
                         ? "Ollama does not require an API key. Set its endpoint in workspace settings if it is not running locally."
                         : selectedProvider() === "bedrock"
-                        ? <>Enter an Amazon Bedrock API key. Vak stores it in the host’s secure credential store; the server’s AWS credentials are used separately to check model permissions.</>
+                        ? <>Enter an Amazon Bedrock API key. Vak stores it in the host’s secure credential store. The service reports model access errors when a request is made.</>
                         : <>Authentication credential for {providerLabel(selectedProvider())}. {configScope() === "user" ? "Saved for every agent" : `Saved for ${adminAgents().find((a) => a.id === selectedAgentId())?.name || selectedAgentId()}`} in the host’s secure credential store and never shown again.</>}
                     </p>
                   </div>

@@ -4,7 +4,8 @@
 //!
 //! Three response shapes cover every provider we speak to:
 //!   - OpenAI-compatible (`openai`, `openai-responses`, `openrouter`,
-//!     `openrouter-responses`, `opencode-zen`, `ollama`): `GET {base}/models`
+//!     `openrouter-responses`, `opencode-zen`, `ollama`, Bedrock Mantle):
+//!     `GET {base}/models`
 //!     → `{ "data": [{ "id" }] }`
 //!   - Anthropic: same path but `x-api-key` + `anthropic-version` headers.
 //!   - Google: `GET {base}/models?key=…` → `{ "models": [{ "name": "models/x" }] }`
@@ -24,160 +25,6 @@ pub struct ModelContext {
     /// requantised model is measured fresh rather than inheriting a stale
     /// profile (docs/design/68-context-engine.md §1).
     pub quantisation: Option<String>,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
-pub struct BedrockModelAvailability {
-    pub model_id: String,
-    pub agreement_status: Option<String>,
-    pub agreement_error: Option<String>,
-    pub authorization_status: Option<String>,
-    pub entitlement_status: Option<String>,
-    pub region_status: Option<String>,
-    pub invokable: bool,
-}
-
-type BedrockAvailabilityCache =
-    std::collections::HashMap<String, (std::time::Instant, Vec<BedrockModelAvailability>)>;
-
-/// Read Bedrock's native control-plane availability projection. This
-/// intentionally remains separate from Mantle `/models`:
-/// catalogue membership is not proof that a model can be invoked.
-pub async fn bedrock_model_availability(
-    auth: &ProviderAuth,
-    model_ids: &[String],
-) -> Result<Vec<BedrockModelAvailability>, LlmError> {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<BedrockAvailabilityCache>> = OnceLock::new();
-    let cache_key = format!(
-        "{}:{:?}",
-        auth.credential_id.as_deref().unwrap_or_default(),
-        model_ids
-    );
-    if let Ok(cache) = CACHE
-        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-        .lock()
-        && let Some((at, value)) = cache.get(&cache_key)
-        && at.elapsed() < Duration::from_secs(300)
-    {
-        return Ok(value.clone());
-    }
-    let region = auth
-        .base_url
-        .as_deref()
-        .and_then(|url| url.split('.').nth(1))
-        .unwrap_or("us-east-1");
-    let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-        .region(aws_sdk_bedrock::config::Region::new(region.to_owned()))
-        .load()
-        .await;
-    let client = aws_sdk_bedrock::Client::new(&config);
-    // Mantle's `/models` IDs are not always the same as the control-plane
-    // foundation model IDs (for example, Qwen's Mantle ID omits `-v1:0`).
-    // Resolve aliases against AWS's live catalogue instead of baking model
-    // identifiers into Vak.
-    let foundation_models =
-        client
-            .list_foundation_models()
-            .send()
-            .await
-            .map_err(|e| LlmError::Api {
-                status: 403,
-                message: e.to_string(),
-            })?;
-    let mut out = Vec::with_capacity(model_ids.len());
-    for model_id in model_ids {
-        let requested_key = bedrock_model_label_key(model_id);
-        let mut matching_ids = foundation_models
-            .model_summaries()
-            .iter()
-            .filter(|summary| {
-                summary.model_id() == model_id
-                    || summary
-                        .model_name()
-                        .is_some_and(|name| bedrock_model_label_key(name) == requested_key)
-            })
-            .map(|summary| summary.model_id().to_owned())
-            .collect::<Vec<_>>();
-        matching_ids.sort();
-        matching_ids.dedup();
-        let [availability_id] = matching_ids.as_slice() else {
-            out.push(BedrockModelAvailability {
-                model_id: model_id.clone(),
-                agreement_status: None,
-                agreement_error: Some(if matching_ids.is_empty() {
-                    "Model ID was not found in the AWS foundation model catalogue".into()
-                } else {
-                    "Model ID matches more than one AWS foundation model".into()
-                }),
-                authorization_status: None,
-                entitlement_status: None,
-                region_status: None,
-                invokable: false,
-            });
-            continue;
-        };
-        let response = client
-            .get_foundation_model_availability()
-            .model_id(availability_id.as_str())
-            .send()
-            .await
-            .map_err(|e| LlmError::Api {
-                status: 403,
-                message: e.to_string(),
-            })?;
-        let agreement_status = response
-            .agreement_availability()
-            .map(|v| v.status().as_str().to_owned());
-        let agreement_error = response
-            .agreement_availability()
-            .and_then(|v| v.error_message().map(str::to_owned));
-        let authorization_status = Some(response.authorization_status().as_str().to_owned());
-        let entitlement_status = Some(response.entitlement_availability().as_str().to_owned());
-        let region_status = Some(response.region_availability().as_str().to_owned());
-        out.push(BedrockModelAvailability {
-            // Return the ID used by Mantle and the Vak route; the AWS control
-            // plane ID is an implementation detail of the availability check.
-            model_id: model_id.clone(),
-            agreement_error,
-            invokable: agreement_status.as_deref() == Some("AVAILABLE")
-                && authorization_status.as_deref() == Some("AUTHORIZED")
-                && entitlement_status.as_deref() == Some("AVAILABLE")
-                && region_status.as_deref() == Some("AVAILABLE"),
-            agreement_status,
-            authorization_status,
-            entitlement_status,
-            region_status,
-        });
-    }
-    if let Ok(mut cache) = CACHE
-        .get_or_init(|| Mutex::new(std::collections::HashMap::new()))
-        .lock()
-    {
-        cache.insert(cache_key, (std::time::Instant::now(), out.clone()));
-    }
-    Ok(out)
-}
-
-/// Make a conservative, punctuation-insensitive key for joining a Mantle
-/// model ID to AWS's display name. Mantle IDs start with a provider prefix;
-/// AWS display names do not. We only accept a unique match.
-fn bedrock_model_label_key(value: &str) -> String {
-    let label = value
-        .split_once('.')
-        .filter(|(provider, _)| {
-            !provider.is_empty()
-                && provider == &provider.to_ascii_lowercase()
-                && provider
-                    .bytes()
-                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-        })
-        .map_or(value, |(_, model)| model);
-    label
-        .chars()
-        .filter(|ch| ch.is_ascii_alphanumeric())
-        .flat_map(char::to_lowercase)
-        .collect()
 }
 
 const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -643,18 +490,6 @@ fn collect_data_ids(json: serde_json::Value) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bedrock_mantle_ids_match_live_aws_display_names() {
-        assert_eq!(
-            bedrock_model_label_key("qwen.qwen3-235b-a22b-2507"),
-            bedrock_model_label_key("Qwen3 235B A22B 2507")
-        );
-        assert_eq!(
-            bedrock_model_label_key("zai.glm-4.7-flash"),
-            bedrock_model_label_key("GLM 4.7 Flash")
-        );
-    }
 
     #[test]
     fn openai_shape_yields_ids() {

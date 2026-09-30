@@ -4593,14 +4593,6 @@ impl Core {
         Ok(all)
     }
 
-    pub async fn bedrock_model_availability(
-        &self,
-        model_ids: &[String],
-    ) -> Result<Vec<vak_llm::models::BedrockModelAvailability>, CoreError> {
-        let auth = self.provider_auth_for("bedrock")?;
-        Ok(vak_llm::models::bedrock_model_availability(&auth, model_ids).await?)
-    }
-
     /// Read provider-published account metadata without exposing credentials.
     pub async fn provider_status(
         &self,

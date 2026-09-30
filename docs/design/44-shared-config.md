@@ -3,25 +3,16 @@ Shared / Global Configuration
 
 Status: implemented in 3.0.24
 
-## AWS Bedrock endpoint management
+## Provider-neutral model routes
 
-Bedrock is a first-class provider in the shared/project configuration layers.
-The provider/model route is persisted atomically using the same inheritance
-and provenance rules as other providers. The bearer secret is resolved from
-the canonical secret chain as `AWS_BEARER_TOKEN_BEDROCK`; it is never stored
-in the TOML route or returned by the admin API.
-
-Discovery uses the configured Bedrock Mantle endpoint. When the host has a
-standard AWS SDK credential chain, the provider response also reports native
-Bedrock availability per model: agreement, authorization, entitlement, and
-regional status, plus an `invokable` result. Status is shown in Settings and
-models not confirmed fully available are disabled. A failed control-plane
-check is surfaced as an error rather than treated as authorization.
-
-This split supports headless vak hosted in AWS: Mantle inference can use the
-scoped bearer key, while availability checks use an IAM role, SSO/web
-identity, or another standard AWS credential source. Results are cached for
-five minutes, with the credential/endpoint identity included in the cache key.
+Provider/model routes are persisted atomically using the same
+inheritance and provenance rules for every provider. Provider credentials
+are resolved from the canonical secret chain and are never stored in TOML or
+returned by the admin API. Discovery and invocation use VAK-owned HTTP
+adapters for the provider's published API. No provider SDK or native vendor
+control-plane client is required. The live model catalogue is the selector's
+source; provider invocation errors report account, entitlement, agreement,
+authorization, and region failures when they occur.
 
 ## Goal
 

@@ -3,7 +3,7 @@ Status: implemented in 2.0.0
 
 ## Decisions
 
-1. **Raw provider APIs, no meta-SDK.** Broad lowest-common-denominator
+1. **Raw provider APIs, no meta-SDK or provider SDK.** Broad lowest-common-denominator
    abstractions leak. We own request/response shape
    per provider family. Cost: ~2K LOC per family; acceptable.
 2. **Every streaming event carries delta AND accumulated snapshot**
@@ -101,6 +101,7 @@ whenever a key is stored or revoked).
 | OpenAI listing | `openai`, `openai-responses`, `openrouter`, `openrouter-responses`, compatible gateways, `ollama` | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
 | Anthropic | `anthropic` | `GET {base}/v1/models`, `x-api-key` + `anthropic-version` | `{ data: [{ id }], has_more, last_id }` |
 | Google | `google` | `GET {base}/models?key=…` | `{ models: [{ name: "models/x" }], nextPageToken }` |
+| OpenAI-compatible gateway (including Bedrock Mantle) | configured endpoint | `GET {base}/models`, bearer | `{ data: [{ id }] }` |
 
 Anthropic (default 20/page) and Google (default 50/page) **paginate** — both
 are followed to exhaustion (`after_id` / `pageToken`, capped at 20 pages) or

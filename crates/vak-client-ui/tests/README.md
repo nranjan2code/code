@@ -82,5 +82,5 @@ agent-browser --session vak-ai-service eval 'window.runChecks()'
 node tests/model-choices.mjs
 ```
 
-The admin race and Bedrock availability fixture is
+The admin race and provider-neutral model discovery fixture is
 `crates/vak-admin-ui/tests/model-settings.html`.

@@ -72,9 +72,7 @@ function ConnectForm() {
       const result = await api.discoverModels(name);
       if (!alive) return;
       const found = availableModels(result);
-      if (!found.length) throw new Error(result.availability_error || (name === "bedrock"
-        ? "No models have confirmed access. Check AWS access in the admin portal, then try again."
-        : "No models are available from this service. Check your account or model server, then try again."));
+      if (!found.length) throw new Error("No models are available from this service. Check your account or model server, then try again.");
       setModels(found);
       setModel(initialModel(found, current.provider === name ? current.model : ""));
       setChecked(true);

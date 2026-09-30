@@ -151,15 +151,14 @@ recognise. A request with no `Origin` at all is not a browser mutation
 
 ## API surface (`/admin/api/*`)
 
-### Bedrock model access status
+### Provider model discovery
 
-`GET /providers/bedrock/models` returns discovered model IDs and, when the
-native AWS check is available, a typed `availability` array. Entries include
-agreement, authorization, entitlement, and regional status, an optional
-agreement error, and `invokable`. The response may include
-`availability_error` when the control-plane check cannot run. Settings renders
-these states and disables models whose full availability is not confirmed;
-discovery alone is never treated as proof of invocation access.
+`GET /providers/:name/models` returns the model IDs and optional capabilities
+reported by that provider's published API. Settings uses the same discovery
+and selection behavior for every provider. Account- or model-specific
+invocation failures are surfaced through the normal provider error contract;
+the server does not make vendor-only control-plane calls or require vendor
+SDKs to preflight a model.
 
 | Endpoint | Verb | Purpose |
 |---|---|---|

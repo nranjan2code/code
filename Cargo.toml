@@ -84,8 +84,6 @@ bytes = "1"
 # Gemini Live API (bidi voice synthesis) speaks raw WebSocket frames.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring"] }
-aws-config = { version = "1.12.0", default-features = false, features = ["default-https-client", "rt-tokio", "credentials-process", "sso"] }
-aws-sdk-bedrock = { version = "1.155.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"

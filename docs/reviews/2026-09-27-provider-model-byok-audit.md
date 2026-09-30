@@ -73,6 +73,13 @@ lifecycle, secret store, credentials precedence, or session contract changed.
 No provider/model IDs were added to source. A catalogue remains provider
 reported; exact IDs and provider-specific selection remain an admin task.
 
+## Follow-up: provider-neutral discovery
+
+The Bedrock-only control-plane preflight described above has since been
+removed. All providers now use their published model catalogue and shared
+invocation error contract; `vak-llm` links no provider SDK. This supersedes
+the Bedrock-specific selector behavior recorded in this historical audit.
+
 ## Verification
 
 - `npm --prefix crates/vak-client-ui run typecheck` and the client web/Tauri

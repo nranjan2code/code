@@ -1058,10 +1058,6 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
-        .route(
-            "/providers/{name}/models/availability",
-            get(model_availability),
-        )
         .route("/providers/{name}/status", get(provider_status))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
@@ -13983,15 +13979,8 @@ async fn discover_models(
     };
     match core.discover_models(&name).await {
         Ok(models) => {
-            if name == "bedrock" {
-                match core.bedrock_model_availability(&models).await {
-                    Ok(availability) => Json(serde_json::json!({ "provider": name, "models": models, "availability": availability })).into_response(),
-                    Err(e) => Json(serde_json::json!({ "provider": name, "models": models, "availability_error": e.to_string() })).into_response(),
-                }
-            } else {
-                let capabilities = voice::voice_model_capabilities(&name, &models);
-                Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
-            }
+            let capabilities = voice::voice_model_capabilities(&name, &models);
+            Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
         }
         Err(e) => {
             let mut body = provider_error_body(&e);
@@ -14083,43 +14072,6 @@ async fn route_same_model_suggestions(
         only.as_ref(),
     );
     Json(serde_json::json!({ "groups": groups, "errors": errors })).into_response()
-}
-
-async fn model_availability(
-    State(state): State<AppState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-    Query(query): Query<AgentScopeQuery>,
-) -> axum::response::Response {
-    if name != "bedrock" {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error":"availability is only supported for bedrock"})),
-        )
-            .into_response();
-    }
-    let core = if query.agent.is_some() {
-        scoped_core!(&state, None, query.agent.as_deref())
-    } else {
-        state.core.clone()
-    };
-    let models = match core.discover_models("bedrock").await {
-        Ok(models) => models,
-        Err(e) => {
-            let mut body = provider_error_body(&e);
-            body["provider"] = serde_json::Value::String(name);
-            return (StatusCode::BAD_GATEWAY, Json(body)).into_response();
-        }
-    };
-    match core.bedrock_model_availability(&models).await {
-        Ok(availability) => {
-            Json(serde_json::json!({"provider":name,"models":availability})).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"provider":name,"error":e.to_string()})),
-        )
-            .into_response(),
-    }
 }
 
 /// Read provider-published account metadata without returning credentials.

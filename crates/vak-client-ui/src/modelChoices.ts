@@ -1,10 +1,8 @@
 import type { DiscoveredModels } from "./api";
 
-/** A missing Bedrock authorization check is unknown, never permission. */
+/** Keep the live provider catalogue as the source of model choices. */
 export function availableModels(result: DiscoveredModels): string[] {
-  if (result.provider !== "bedrock") return result.models;
-  if (result.availability_error) return [];
-  return result.models.filter((model) => result.availability?.some((item) => item.model_id === model && item.invokable));
+  return result.models;
 }
 
 /** Retain a deliberate choice; a catalogue's ordering is not a recommendation. */

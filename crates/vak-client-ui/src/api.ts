@@ -795,8 +795,6 @@ export interface DiscoveredModels {
   provider: string;
   models: string[];
   capabilities?: Record<string, string[]>;
-  availability?: { model_id: string; invokable: boolean }[];
-  availability_error?: string;
 }
 
 export function discoverModels(provider: string, agent?: string): Promise<DiscoveredModels> {
