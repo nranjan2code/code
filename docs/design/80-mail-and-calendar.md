@@ -1,11 +1,27 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **proposal, 2026-09-29. Nothing in this document is shipped.** This is
-the design-first response to the owner's request for an Office-like mail and
-calendar package with security as a first constraint. It authorizes no
-implementation milestone. Provider-specific API details and consent
-requirements must be rechecked against current provider documentation before
-implementation.
+Status: **proposal with Stage 1A account linking implemented, 2026-09-30.**
+Stage 1B provider-content reads await data-architecture M7. The owner
+authorized a feature branch after the design review. Typed contracts,
+Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
+owner-only connection Settings panel with masked display identities, and
+local-only Apple app-specific-password enrollment are implemented in that
+branch. OAuth and Apple activation hold the shared connection-ledger lock
+across the Agent-vault credential write and pending-to-connected event, so a
+concurrent disconnect either prevents the new credential write or runs after
+activation and removes it. Apple enrollment records only read capabilities,
+stores the password in the Agent vault, and reports no token expiry; it does not verify the
+credential with Apple or enable provider content access. Provider-content
+reads, routines, local content drafts, previews, and provider effects remain
+unimplemented. OAuth authorization attempts are bounded and single-use;
+disconnect serializes with new links, and the in-flight callback fence table
+is capped so eviction invalidates stale commits instead of authorizing them.
+The owner account inventory reports whether each credential is actually
+available in the Agent vault; a connection ledger row alone is not presented
+as proof that saved sign-in material can be loaded. Account erasure remains
+gated on the data architecture reaching M7.
+Provider-specific API details and consent requirements must be rechecked
+against current provider documentation before each implementation milestone.
 
 **Review, 2026-09-29:** expanded the initial proposal with protocol semantics,
 automation safety, connection security, delivery states, and explicit release
@@ -140,11 +156,20 @@ controls remain available from an authenticated surface.
 ### D1 — One contract, separate provider adapters
 
 The user-facing mail and calendar operations are provider-neutral typed
-operations. Each account connection names an immutable provider, external
-principal, granted scope set, credential reference, and owner/audience scope.
-Google Workspace and Microsoft Graph can have separate adapters; adding either
-must not change the policy or Review contract. No generic arbitrary-URL,
-raw-HTTP, or model-selected MCP call is an escape hatch to the account.
+operations. Each account connection names an immutable provider, a vault
+reference for its external principal, granted scope set, credential reference,
+and owner/audience scope.
+Google Workspace, Microsoft Graph, and Apple iCloud have separate adapters;
+adding one must not change the policy or Review contract. Google and Microsoft
+use delegated OAuth. Apple now documents Apple Account authorization for
+supported third-party apps, and app-specific passwords when an app does not
+support that flow. The current Vakyartha branch implements only the
+app-specific-password fallback with IMAP/SMTP and CalDAV; the credential has
+broader protocol access than Vak's selected capabilities and must be disclosed
+as such. Before enabling iCloud content access, verify an Apple-supported
+authorization flow for Vakyartha's desktop and always-on server clients. No
+generic arbitrary-URL, raw-HTTP, or model-selected MCP call is an escape hatch
+to the account. Custom IMAP/CalDAV hosts are out of initial scope.
 
 The package declares capabilities such as `mail.read`, `mail.prepare`,
 `mail.send`, `calendar.freebusy`, `calendar.read`, and `calendar.write`. These
@@ -285,6 +310,37 @@ later data milestone. Delete, export, legal hold, and erasure must follow
 `74-lifecycle-and-data-administration.md` when implemented. Provider deletion
 or revocation cannot promise deletion of copies held by external recipients.
 
+### D12 — Agent boundary, account deletion, and erasure gate
+
+Every connection belongs to exactly one Agent. Its account identifier,
+principal/display data, refresh token or app-specific password, and any
+provider-specific recovery material are stored through the vault/credential
+service; durable Agent metadata contains opaque references only. The vault
+entry is recipient-scoped to the owning Agent and connector operation. A
+different Agent, workspace, channel, or audience cannot resolve that secret
+by guessing an account id or reusing a reference. Every read, candidate,
+preview, attachment, citation, schedule, watcher cursor, and derived record
+must carry the owning Agent, account lineage, and allowed audience, and each
+read rechecks them at the broker boundary.
+
+Disconnect revokes provider authorization where supported, deletes the vault
+secrets, stops and fences schedules/watchers, cancels undispatched work, and
+leaves only a content-free revocation tombstone needed to reject stale work.
+Account deletion additionally removes all local message/event copies,
+attachments, candidates, previews, citations, cursors, indexes, caches,
+backups, and derived records through the lifecycle catalog. It must be
+idempotent and report any external copy it cannot remove. An append-only
+connection ledger must never retain the principal or body content, so its
+tombstone does not prevent erasure.
+
+This deletion guarantee is a release gate, not a best-effort promise. The
+current 4.x substrate does not provide catalog lineage or cryptographic
+erasure. Until the approved data-architecture sequence has landed through
+M7 (M7 follows M6), this package must not fetch provider message/event bodies
+into local durable storage or model context. Metadata-only design and UI
+scaffolding may proceed, but connected content reads and retention are
+disabled. This package does not start M1 or any later data milestone.
+
 Audit records contain IDs, scope, policy generation, decisions, payload
 digest, provider outcome, and trace key, but no message body, subject,
 recipient address, event title, token, or attachment bytes in telemetry.
@@ -341,8 +397,22 @@ PKCE, a single-use state bound to the initiating session, exact registered
 redirects, and issuer/account validation; no model-supplied authorization or
 token endpoints. Refresh-token rotation is serialized, secrets are never
 placed in URLs or logs, and reconnection cannot silently substitute another
-principal. Headless linking uses an authenticated owner browser ceremony or a
-provider-supported device flow with an explicit account confirmation. Apply
+principal. The web flow binds a callback to the authenticated initiating
+session and uses a loopback redirect. The desktop installed-client flow uses
+the RFC 8252 loopback redirect with PKCE and a high-entropy single-use state;
+its bearer-authenticated owner initiation is tied to the callback by that
+state because a Tauri webview cookie cannot cross into the system browser.
+The callback remains loopback-only, is consumed once, and exchanges the code
+only with the fixed provider token endpoint. Because the browser's
+`SameSite=Strict` application session cookie is withheld on the provider's
+cross-site top-level return, the callback also uses a separate random,
+short-lived, `HttpOnly`, `/mail-calendar`-scoped `SameSite=Lax` cookie bound to
+that pending state and initiating session. The package path lets multiple
+pending account-link flows share the browser binding without sending it to
+unrelated app routes. The callback also revalidates that the initiating
+session is still active before redeeming the authorization code. Never weaken
+the application session cookie to make OAuth work. A headless/web callback needs a separately
+configured confidential-client or device-flow contract. Apply
 [OAuth security BCP, RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html).
 
 Before fetching model context, enforce which inference providers may receive
@@ -362,6 +432,10 @@ quiet; meaningful changes, failures, and required action reach the configured
 audience. Configure time zone, daylight-saving schedule behavior, lateness
 limit, and missed-run policy. On restart, do not burst-replay expired reminders
 or externally effectful work.
+Unattended admission also requires a usable refresh credential and a service
+host that can renew it; if the provider did not issue a refresh token or later
+revoked it, pause the routine and request owner reconnection. A valid access
+token at setup time is not evidence of 24/7 readiness.
 
 Carry trigger causality into each action. Suppress self-generated mail and
 calendar update loops, repeated matches, bounce/auto-reply loops, and repeated
@@ -507,19 +581,34 @@ names in Vak's product contract:
   control. See [Calendar scopes](https://developers.google.com/workspace/calendar/api/auth).
 - Microsoft Graph distinguishes delegated user permissions from application
   permissions; application permissions can reach mailboxes beyond the signed-in
-  user. The first release uses delegated permissions only. See [Graph permission
+  user. The first release uses delegated permissions only. Graph's
+  [`calendar: getSchedule` API](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0)
+  names `Calendars.ReadBasic` as the least delegated permission and does not
+  support personal Microsoft accounts. Vak should request that scope for
+  free/busy and `Calendars.Read` only for event details; the later adapter must
+  report the unsupported personal-account case. See [Graph permission
   guidance](https://learn.microsoft.com/en-us/graph/best-practices-graph-permission)
   and [Exchange application RBAC](https://learn.microsoft.com/en-us/exchange/permissions-exo/application-rbac).
+- Apple documents Apple Account authorization for supported third-party apps;
+  apps that do not support that flow may use an app-specific password. The
+  current branch uses the latter with fixed-host IMAP/SMTP and CalDAV. This
+  fallback is not operation-scoped by Apple, so it must remain disclosed and
+  read-only when the broker cannot constrain an effect safely. Verify a
+  supported authorization flow across desktop and always-on server clients
+  before enabling content access. See [Apple's third-party access guidance](https://support.apple.com/en-us/121539),
+  [iCloud Mail server settings](https://support.apple.com/en-us/102525), and
+  [Apple app-specific passwords](https://support.apple.com/en-us/102654).
 
 ## Implementation order and exit tests
 
 Each stage replaces any temporary path it supersedes in the same change
 (invariant 30). No stage is marked shipped from a typecheck alone.
 
-All stages below are **not started**. Before coding, create the execution
-plan in `docs/plans/` with an owner-approved starting stage, the provider
-support matrix, and the storage dependencies from D11. The current document
-is the proposed behavior and acceptance contract.
+Implementation stages, provider matrix, and dependencies are tracked in
+`docs/plans/mail-calendar-implementation-plan.md`. That plan was opened by
+the owner's explicit request on 2026-09-29; its status governs implementation
+progress. This document remains the proposed behavior and acceptance
+contract, and its stages are not claims of shipped behavior.
 
 1. **Contract and threat review.** Fix typed operations, connection identity,
    candidate and receipt schemas, policy predicates, retention, provider
@@ -541,7 +630,7 @@ is the proposed behavior and acceptance contract.
    meeting preparation, and follow-up drafts through `TaskDef`, then narrow
    unattended grants for selected effects and continuous bounded watchers.
    Run the same acceptance scenarios
-   for both adapters and for local, web, channel, task, and CLI paths. A
+   for all three adapters and for local, web, channel, task, and CLI paths. A
    channel with no approver, a revoked grant, or a narrowed policy must fail
    closed. Exercise missed runs, duplicate triggers, quiet delivery, and
    cross-activity audience isolation. Browser checks cover desktop and phone
@@ -584,8 +673,9 @@ light and dark themes. Save screenshots and evidence with the execution plan.
   Office/PDF: bounded worker parsing, structured preview, and portable output.
   Importing an invitation never accepts it or contacts attendees. Calendar
   file actions, alarms, and remote attachments never execute automatically.
-  PST/OST/mbox archives, S/MIME/PGP decryption and signing, IMAP/SMTP, CalDAV,
-  Apple/iCloud, and other providers are not implied by the first adapters.
+  PST/OST/mbox archives, S/MIME/PGP decryption and signing, custom IMAP/SMTP,
+  custom CalDAV, and providers beyond Google, Microsoft, and Apple are not
+  implied by the first adapters.
 - Before implementation, verify each provider's current OAuth review rules,
   scope availability, conditional-write support, send reconciliation options,
   webhook authentication, and rate limits. A missing safe reconciliation path

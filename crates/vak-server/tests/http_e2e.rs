@@ -102,7 +102,12 @@ async fn spawn_server(
     let addr = listener.local_addr().unwrap();
     let app = vak_server::router(core);
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     (format!("http://{addr}"), handle)
 }
@@ -328,6 +333,621 @@ async fn secured_operations_center_uses_the_bound_port() {
         .unwrap();
     assert_eq!(replay_missing.status(), reqwest::StatusCode::CONFLICT);
 
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allows_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    let agent_workspace = core.cwd().to_path_buf();
+    let mut paused_agent = vak_server::agents::find_template("writer")
+        .unwrap()
+        .to_agent_definition("mail-paused", None);
+    vak_server::agents::save(&agent_workspace, std::slice::from_ref(&paused_agent), true).unwrap();
+    std::mem::forget(dir);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let url = format!("http://{addr}/mail-calendar/accounts?agent_id=unregistered-agent");
+
+    let unauthenticated = reqwest::get(&url).await.unwrap();
+    assert_eq!(unauthenticated.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+    let unknown_agent = reqwest::Client::new()
+        .get(url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown_agent.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let refresh_url =
+        format!("http://{addr}/mail-calendar/accounts/unregistered-agent/account-a/refresh");
+    let unauthenticated_refresh = reqwest::Client::new()
+        .post(&refresh_url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated_refresh.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let unauthorized_scope = reqwest::Client::new()
+        .post(refresh_url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unauthorized_scope.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let icloud_url = format!("http://{addr}/mail-calendar/accounts/vak/icloud");
+    let body = serde_json::json!({
+        "email": "owner@example.com",
+        "app_specific_password": "abcd-efgh-ijkl-mnop",
+        "capabilities": ["mail_read", "calendar_free_busy"]
+    });
+    let unauthenticated_icloud = reqwest::Client::new()
+        .post(&icloud_url)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated_icloud.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let remote_host_icloud = reqwest::Client::new()
+        .post(&icloud_url)
+        .bearer_auth(&token)
+        .header(reqwest::header::HOST, "mail.example.com")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        remote_host_icloud.status(),
+        reqwest::StatusCode::MISDIRECTED_REQUEST
+    );
+    let proxied_icloud = reqwest::Client::new()
+        .post(&icloud_url)
+        .bearer_auth(&token)
+        .header("x-forwarded-for", "198.51.100.7")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(proxied_icloud.status(), reqwest::StatusCode::FORBIDDEN);
+    let malformed_icloud = reqwest::Client::new()
+        .post(&icloud_url)
+        .bearer_auth(&token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(
+            r#"{"email":"owner@example.com","app_specific_password":"abcd-efgh-ijkl-mnop","capabilities":false}"#,
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(malformed_icloud.status(), reqwest::StatusCode::BAD_REQUEST);
+    let malformed_icloud_body = malformed_icloud.text().await.unwrap();
+    assert!(!malformed_icloud_body.contains("abcd-efgh-ijkl-mnop"));
+    for capability in ["mail_prepare", "mail_send", "calendar_write"] {
+        let effectful_icloud = reqwest::Client::new()
+            .post(&icloud_url)
+            .bearer_auth(&token)
+            .json(&serde_json::json!({
+                "email": "owner@example.com",
+                "app_specific_password": "abcd-efgh-ijkl-mnop",
+                "capabilities": [capability]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            effectful_icloud.status(),
+            reqwest::StatusCode::BAD_REQUEST,
+            "iCloud's broad app password must reject {capability} in Stage 1"
+        );
+    }
+    let after_rejected_icloud = reqwest::Client::new()
+        .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(after_rejected_icloud.status(), reqwest::StatusCode::OK);
+    let rejected_inventory: serde_json::Value = after_rejected_icloud.json().await.unwrap();
+    assert_eq!(rejected_inventory["accounts"], serde_json::json!([]));
+    let connected = reqwest::Client::new()
+        .post(&icloud_url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(connected.status(), reqwest::StatusCode::OK);
+    let response_body = connected.text().await.unwrap();
+    assert_eq!(response_body, r#"{"connected":true}"#);
+    assert!(!response_body.contains("abcd-efgh-ijkl-mnop"));
+    assert!(!response_body.contains("owner@example.com"));
+
+    // Refresh failures are persisted in the owner-visible inventory without
+    // exposing the provider principal or credential material.
+    let google_vault = vak_mail_calendar::vault::AccountVault::for_agent("vak").unwrap();
+    let google_ledger =
+        vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent("vak").unwrap();
+    let google_id = uuid::Uuid::now_v7().to_string();
+    let google_credential_ref =
+        vak_mail_calendar::vault::AccountVault::credential_ref(&google_id).unwrap();
+    google_vault
+        .store(
+            &google_id,
+            vak_mail_calendar::vault::AccountSecretMaterial::new(
+                "google:subject".into(),
+                Some("google-owner@example.com".into()),
+                Some("test-client".into()),
+                Some("access-token-secret".into()),
+                Some("refresh-token-secret".into()),
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut google_account = vak_mail_calendar::ConnectedAccount {
+        id: google_id.clone(),
+        provider: vak_mail_calendar::Provider::Google,
+        status: vak_mail_calendar::AccountStatus::Pending,
+        owner_agent_id: "vak".into(),
+        allowed_audiences: ["agent:vak".into()].into_iter().collect(),
+        capabilities: [vak_mail_calendar::Capability::MailRead]
+            .into_iter()
+            .collect(),
+        provider_scopes: [
+            "openid".into(),
+            "email".into(),
+            "https://www.googleapis.com/auth/gmail.readonly".into(),
+        ]
+        .into_iter()
+        .collect(),
+        credential_ref: google_credential_ref.clone(),
+        principal_ref: google_credential_ref,
+        revision: 1,
+        connected_at: chrono::Utc::now(),
+        access_token_expires_at: Some(chrono::Utc::now() + chrono::Duration::minutes(30)),
+        refresh_token_available: true,
+        revoked_at: None,
+    };
+    google_ledger
+        .append_pending(google_account.clone())
+        .unwrap();
+    google_account.status = vak_mail_calendar::AccountStatus::Connected;
+    google_account.revision = 2;
+    google_ledger.append_connected(google_account).unwrap();
+    google_ledger
+        .append_reauthentication_required(&google_id, chrono::Utc::now())
+        .unwrap();
+    let repeated_refresh = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/vak/{google_id}/refresh"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(repeated_refresh.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let accounts_response = reqwest::Client::new()
+        .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        accounts_response.headers()[reqwest::header::CACHE_CONTROL],
+        "no-store"
+    );
+    assert_eq!(
+        accounts_response.headers()[reqwest::header::PRAGMA],
+        "no-cache"
+    );
+    let accounts: serde_json::Value = accounts_response.json().await.unwrap();
+    let apple = accounts["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| {
+            account["provider"] == "apple_icloud"
+                && account["identity_masked"] == "o***@example.com"
+        })
+        .unwrap();
+    assert!(apple["access_token_expires_at"].is_null());
+    assert_eq!(apple["credential_available"], true);
+    let google = accounts["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == google_id)
+        .unwrap();
+    assert_eq!(google["status"], "reauthentication_required");
+    assert_eq!(google["identity_masked"], "g***@example.com");
+    assert_eq!(google["credential_available"], true);
+    let serialized_accounts = accounts.to_string();
+    assert!(!serialized_accounts.contains("abcd-efgh-ijkl-mnop"));
+    assert!(!serialized_accounts.contains("owner@example.com"));
+    assert!(!serialized_accounts.contains("google-owner@example.com"));
+    assert!(!serialized_accounts.contains("refresh-token-secret"));
+    google_vault.remove(&google_id).unwrap();
+    let after_credential_removal: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let google_without_credential = after_credential_removal["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == google_id)
+        .unwrap();
+    assert_eq!(google_without_credential["credential_available"], false);
+    assert!(google_without_credential["identity_masked"].is_null());
+
+    let apple_id = apple["id"].as_str().unwrap();
+    let apple_refresh = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/vak/{apple_id}/refresh"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(apple_refresh.status(), reqwest::StatusCode::CONFLICT);
+    let accounts_after_unsupported_refresh: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let apple_after_unsupported_refresh = accounts_after_unsupported_refresh["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == apple_id)
+        .unwrap();
+    assert_eq!(apple_after_unsupported_refresh["status"], "connected");
+
+    let disconnected = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/vak/{apple_id}/disconnect"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disconnected.status(), reqwest::StatusCode::OK);
+    let disconnect_result: serde_json::Value = disconnected.json().await.unwrap();
+    assert_eq!(disconnect_result["disconnected"], true);
+    assert_eq!(disconnect_result["provider_grant_revoked"], false);
+    assert_eq!(disconnect_result["content_erased"], false);
+    let vault = vak_mail_calendar::vault::AccountVault::for_agent("vak").unwrap();
+    assert!(vault.load(apple_id).is_err());
+
+    // Simulate a crash after the ledger tombstone but before secret removal.
+    // A second owner request must finish cleanup instead of rejecting the
+    // already-disconnected account.
+    let leftover = vak_mail_calendar::vault::AccountSecretMaterial::new(
+        "owner@example.com".to_owned(),
+        Some("owner@example.com".to_owned()),
+        None,
+        None,
+        None,
+        Some("owner@example.com".to_owned()),
+        Some("abcd-efgh-ijkl-mnop".to_owned()),
+    )
+    .unwrap();
+    vault.store(apple_id, leftover).unwrap();
+    let retried = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/vak/{apple_id}/disconnect"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(retried.status(), reqwest::StatusCode::OK);
+    let retry_result: serde_json::Value = retried.json().await.unwrap();
+    assert_eq!(retry_result["already_disconnected"], true);
+    assert_eq!(retry_result["content_erased"], false);
+    assert!(vault.load(apple_id).is_err());
+
+    let accounts_after_disconnect: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let revoked = accounts_after_disconnect["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == apple_id)
+        .unwrap();
+    assert!(!revoked["revoked_at"].is_null());
+
+    // Pausing an Agent stops new connections and refreshes, but owner-only
+    // inventory and disconnect remain available to clean up its credentials.
+    let paused_icloud_url = format!("http://{addr}/mail-calendar/accounts/mail-paused/icloud");
+    let paused_connection = reqwest::Client::new()
+        .post(&paused_icloud_url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(paused_connection.status(), reqwest::StatusCode::OK);
+    let paused_ledger =
+        vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent("mail-paused").unwrap();
+    let connected_record = paused_ledger.read_all().unwrap().remove(0);
+    let pending_id = uuid::Uuid::now_v7().to_string();
+    let pending_ref = vak_mail_calendar::vault::AccountVault::credential_ref(&pending_id).unwrap();
+    let mut interrupted = connected_record;
+    interrupted.id = pending_id.clone();
+    interrupted.status = vak_mail_calendar::AccountStatus::Pending;
+    interrupted.revision = 1;
+    interrupted.credential_ref = pending_ref.clone();
+    interrupted.principal_ref = pending_ref;
+    interrupted.connected_at = chrono::Utc::now();
+    interrupted.revoked_at = None;
+    paused_ledger.append_pending(interrupted).unwrap();
+    paused_agent.lifecycle = vak_server::agents::AgentLifecycle::Paused;
+    vak_server::agents::save(&agent_workspace, std::slice::from_ref(&paused_agent), true).unwrap();
+
+    let paused_accounts = reqwest::Client::new()
+        .get(format!(
+            "http://{addr}/mail-calendar/accounts?agent_id=mail-paused"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(paused_accounts.status(), reqwest::StatusCode::OK);
+    let paused_accounts: serde_json::Value = paused_accounts.json().await.unwrap();
+    let interrupted_account = paused_accounts["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["id"] == pending_id)
+        .unwrap();
+    assert_eq!(interrupted_account["status"], "pending");
+    let interrupted_cleanup = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/mail-paused/{pending_id}/disconnect"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(interrupted_cleanup.status(), reqwest::StatusCode::OK);
+    let pending_vault = vak_mail_calendar::vault::AccountVault::for_agent("mail-paused").unwrap();
+    assert!(pending_vault.load(&pending_id).is_err());
+
+    let paused_account_id = paused_accounts["accounts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|account| account["status"] == "connected")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let inactive_icloud = reqwest::Client::new()
+        .post(&paused_icloud_url)
+        .bearer_auth(&token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(inactive_icloud.status(), reqwest::StatusCode::NOT_FOUND);
+    let inactive_refresh = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/mail-paused/{paused_account_id}/refresh"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(inactive_refresh.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let cleanup = reqwest::Client::new()
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/mail-paused/{paused_account_id}/disconnect"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(cleanup.status(), reqwest::StatusCode::OK);
+    let paused_vault = vak_mail_calendar::vault::AccountVault::for_agent("mail-paused").unwrap();
+    assert!(paused_vault.load(&paused_account_id).is_err());
+
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native_redirects() {
+    let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    std::mem::forget(dir);
+
+    vak_config::set_override("VAK_GOOGLE_OAUTH_CLIENT_ID", "google-desktop-client");
+    vak_config::set_override("VAK_MICROSOFT_OAUTH_CLIENT_ID", "microsoft-native-client");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+
+    let client = reqwest::Client::new();
+    for (provider, expected_redirect) in [
+        (
+            "google",
+            format!(
+                "http://127.0.0.1:{}/mail-calendar/oauth/callback",
+                addr.port()
+            ),
+        ),
+        (
+            "microsoft",
+            format!(
+                "http://localhost:{}/mail-calendar/oauth/callback",
+                addr.port()
+            ),
+        ),
+    ] {
+        let endpoint = format!("http://{addr}/mail-calendar/accounts/vak/oauth");
+        let body = serde_json::json!({
+            "provider": provider,
+            "capabilities": ["mail_read", "calendar_free_busy"]
+        });
+        let unauthorized = client.post(&endpoint).json(&body).send().await.unwrap();
+        assert_eq!(unauthorized.status(), reqwest::StatusCode::UNAUTHORIZED);
+
+        let response = client
+            .post(endpoint)
+            .bearer_auth(&token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            response.headers()[reqwest::header::CACHE_CONTROL],
+            "no-store"
+        );
+        assert_eq!(response.headers()[reqwest::header::PRAGMA], "no-cache");
+        let result: serde_json::Value = response.json().await.unwrap();
+        let auth_url = url::Url::parse(result["authorization_url"].as_str().unwrap()).unwrap();
+        assert_eq!(auth_url.scheme(), "https");
+        let params = auth_url
+            .query_pairs()
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            params.get("redirect_uri").map(|value| value.as_ref()),
+            Some(expected_redirect.as_str())
+        );
+        assert_eq!(
+            params.get("client_id").map(|value| value.as_ref()),
+            Some(if provider == "google" {
+                "google-desktop-client"
+            } else {
+                "microsoft-native-client"
+            })
+        );
+        assert_eq!(
+            params
+                .get("code_challenge_method")
+                .map(|value| value.as_ref()),
+            Some("S256")
+        );
+        assert_eq!(
+            params.get("response_type").map(|value| value.as_ref()),
+            Some("code")
+        );
+        assert_eq!(params.get("state").map(|value| value.len()), Some(43));
+        let state = params.get("state").unwrap().to_string();
+
+        for forbidden in ["mail_prepare", "mail_send", "calendar_write"] {
+            let rejected = client
+                .post(format!("http://{addr}/mail-calendar/accounts/vak/oauth"))
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "provider": provider,
+                    "capabilities": [forbidden]
+                }))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                rejected.status(),
+                reqwest::StatusCode::BAD_REQUEST,
+                "{provider} must reject {forbidden} during read-only Stage 1"
+            );
+        }
+
+        let callback_host = if provider == "microsoft" {
+            format!("localhost:{}", addr.port())
+        } else {
+            addr.to_string()
+        };
+        let proxied_callback = client
+            .get(format!(
+                "http://{addr}/mail-calendar/oauth/callback?state={state}&code=do-not-echo-this-code"
+            ))
+            .header(reqwest::header::HOST, callback_host.clone())
+            .header("x-forwarded-for", "198.51.100.7")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(proxied_callback.status(), reqwest::StatusCode::FORBIDDEN);
+        assert!(
+            !proxied_callback
+                .text()
+                .await
+                .unwrap()
+                .contains("do-not-echo-this-code")
+        );
+
+        let callback = client
+            .get(format!(
+                "http://{addr}/mail-calendar/oauth/callback?state={state}&error=access_denied"
+            ))
+            .header(reqwest::header::HOST, callback_host)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(callback.status(), reqwest::StatusCode::BAD_REQUEST);
+        assert_eq!(
+            callback.headers()[reqwest::header::CACHE_CONTROL],
+            "no-store"
+        );
+        assert_eq!(callback.headers()[reqwest::header::PRAGMA], "no-cache");
+        assert_eq!(callback.headers()["referrer-policy"], "no-referrer");
+        let callback_page = callback.text().await.unwrap();
+        assert!(callback_page.contains("history.replaceState"));
+        assert!(!callback_page.contains(&state));
+    }
+    vak_config::clear_override("VAK_GOOGLE_OAUTH_CLIENT_ID");
+    vak_config::clear_override("VAK_MICROSOFT_OAUTH_CLIENT_ID");
     handle.abort();
 }
 

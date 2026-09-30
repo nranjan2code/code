@@ -7622,6 +7622,7 @@ dependencies = [
  "tauri-plugin-single-instance",
  "tokio",
  "tokio-util",
+ "url",
  "uuid",
  "vak-config",
  "vak-core",
@@ -7719,6 +7720,32 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.24.0",
  "tokio-util",
+]
+
+[[package]]
+name = "vak-mail-calendar"
+version = "5.2.9"
+dependencies = [
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "fs2",
+ "libc",
+ "reqwest 0.12.28",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "url",
+ "uuid",
+ "vak-config",
+ "zeroize",
 ]
 
 [[package]]
@@ -7874,6 +7901,7 @@ dependencies = [
  "vak-hooks",
  "vak-intent",
  "vak-llm",
+ "vak-mail-calendar",
  "vak-ooxml",
  "vak-ops",
  "vak-pdf",
@@ -7888,6 +7916,7 @@ dependencies = [
  "walkdir",
  "webauthn-authenticator-rs",
  "webauthn-rs",
+ "zeroize",
 ]
 
 [[package]]

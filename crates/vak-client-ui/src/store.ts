@@ -787,6 +787,7 @@ export type SettingsPageId =
   | "voice"
   | "notifications"
   | "connections"
+  | "mail-calendar"
   | "privacy"
   | "agent"
   | "models"

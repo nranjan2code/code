@@ -68,7 +68,7 @@ const pages: { id: Page; label: string; icon: IconName; hint: string; group: Nav
 
 /** Pages that read or write one agent's configuration, so the Shared
  * defaults switch applies to them. */
-const SCOPED_PAGES = new Set<Page>(["agent", "connections", "privacy", "prompts"]);
+const SCOPED_PAGES = new Set<Page>(["agent", "connections", "mail-calendar", "privacy", "prompts"]);
 
 const PROMPT_BLOCKS: { id: api.PromptBlock; label: string; help: string }[] = [
   { id: "identity", label: "Identity", help: "Who the agent is. This agent's version replaces the shared one." },
@@ -157,6 +157,21 @@ async function copySettingText(value: string, label: string): Promise<void> {
     setNotice({ kind: "error", text: `Could not copy ${label.toLowerCase()}. Clipboard access was denied.` });
   }
 }
+
+const MAIL_CALENDAR_CAPABILITY_LABELS: Record<api.MailCalendarCapability, string> = {
+  mail_read: "Read email",
+  mail_prepare: "Prepare email drafts",
+  mail_send: "Send email",
+  calendar_free_busy: "Check availability",
+  calendar_read: "Read calendar events",
+  calendar_write: "Change calendar events",
+};
+
+function describeMailCalendarCapabilities(capabilities: api.MailCalendarCapability[]): string {
+  return capabilities.map((capability) => MAIL_CALENDAR_CAPABILITY_LABELS[capability]).join(", ") || "No access";
+}
+
+const DEFAULT_MAIL_CALENDAR_CAPABILITIES: api.MailCalendarCapability[] = ["mail_read", "calendar_free_busy"];
 
 export default function Settings() {
   // Presentation memos can run during component setup and read this signal.
@@ -1078,6 +1093,109 @@ export default function Settings() {
   };
   const agentName = () => activeAgentId() === "vak" ? "Vakyartha" : activeAgent()?.name ?? "Vakyartha";
   const agentLook = () => activeAgentId() === "vak" ? { character: "vak", animation: "subtle" as const } : { character: activeAgent()?.character ?? "vak", animation: activeAgent()?.animation ?? "subtle" };
+  const [mailCalendarAccounts, { refetch: refreshMailCalendarAccounts }] = createResource(
+    () => page() === "mail-calendar" ? activeAgentId() : null,
+    (agentId) => agentId ? api.listMailCalendarAccounts(agentId) : Promise.resolve({ accounts: [] }),
+  );
+  const refreshMailCalendarOnFocus = () => {
+    if (page() === "mail-calendar") void refreshMailCalendarAccounts();
+  };
+  onMount(() => {
+    window.addEventListener("focus", refreshMailCalendarOnFocus);
+    onCleanup(() => window.removeEventListener("focus", refreshMailCalendarOnFocus));
+  });
+  const [mailCalendarBusy, setMailCalendarBusy] = createSignal(false);
+  const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
+  createEffect(() => {
+    activeAgentId();
+    setMailCalendarCapabilities([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
+  });
+  const [icloudEmail, setIcloudEmail] = createSignal("");
+  const [icloudAppPassword, setIcloudAppPassword] = createSignal("");
+  const canAddIcloudAccount = () => host.kind === "desktop"
+    || (typeof window !== "undefined" && ["localhost", "127.0.0.1", "::1", "[::1]"].includes(window.location.hostname));
+  const connectMailCalendar = async (provider: api.MailCalendarProvider) => {
+    if (host.kind === "desktop") {
+      setMailCalendarBusy(true);
+      try {
+        const result = await api.beginMailCalendarOAuth(activeAgentId(), provider, mailCalendarCapabilities());
+        if (!host.openOAuthUrl) throw new Error("System browser support is unavailable.");
+        await host.openOAuthUrl(result.authorization_url);
+        setNotice({ kind: "info", text: "Finish signing in in your system browser, then return here. The account list refreshes when this window regains focus." });
+      } catch (error) {
+        setNotice({ kind: "error", text: `Could not start account linking: ${error instanceof Error ? error.message : String(error)}` });
+      } finally {
+        setMailCalendarBusy(false);
+      }
+      return;
+    }
+    const popup = window.open("about:blank", "_blank");
+    if (!popup) {
+      setNotice({ kind: "error", text: "Allow a new window to continue to your provider." });
+      return;
+    }
+    popup.opener = null;
+    setMailCalendarBusy(true);
+    try {
+      const result = await api.beginMailCalendarOAuth(activeAgentId(), provider, mailCalendarCapabilities());
+      popup.location.replace(result.authorization_url);
+    } catch (error) {
+      popup.close();
+      setNotice({ kind: "error", text: `Could not start account linking: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
+  const connectIcloud = async () => {
+    const email = icloudEmail();
+    let appPassword = icloudAppPassword();
+    // Do not keep the secret in reactive UI state while the request is in
+    // flight; retain only the short-lived local needed for this submission.
+    setIcloudAppPassword("");
+    setIcloudEmail("");
+    setMailCalendarBusy(true);
+    try {
+      await api.connectIcloudAccount(activeAgentId(), email, appPassword, mailCalendarCapabilities());
+      appPassword = "";
+      await refreshMailCalendarAccounts();
+      setNotice({ kind: "info", text: "The iCloud credential is stored in this Agent's secure vault. Provider content is not enabled yet." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not connect the iCloud account: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      appPassword = "";
+      setMailCalendarBusy(false);
+    }
+  };
+  const disconnectMailCalendar = (account: api.MailCalendarAccount) => setConfirmConfig({
+    title: account.revoked_at ? "Finish disconnect cleanup?" : "Disconnect this account?",
+    description: account.revoked_at
+      ? "Retry removing any Vakyartha sign-in details left by an interrupted disconnect. This does not erase saved copies of messages or events in Vakyartha."
+      : "Vakyartha will remove this Agent's saved sign-in details and try to revoke provider access where supported. This does not delete messages or events from your provider or erase copies already saved in Vakyartha.",
+    confirmLabel: account.revoked_at ? "Finish cleanup" : "Disconnect account",
+    isDanger: true,
+    onConfirm: async () => {
+      const result = await api.disconnectMailCalendarAccount(activeAgentId(), account.id);
+      await refreshMailCalendarAccounts();
+      setNotice({ kind: "info", text: result.already_disconnected
+        ? "Local credential cleanup was retried. Provider grant revocation is not confirmed, and provider content was not erased."
+        : result.provider_grant_revoked
+          ? "The account was disconnected and its provider grant was revoked."
+          : "Local access was removed. Revoke this app's access with the provider to ensure its grant is removed." });
+    },
+  });
+  const refreshMailCalendarAccount = async (account: api.MailCalendarAccount) => {
+    setMailCalendarBusy(true);
+    try {
+      await api.refreshMailCalendarAccount(activeAgentId(), account.id);
+      await refreshMailCalendarAccounts();
+      setNotice({ kind: "info", text: "The provider sign-in was refreshed securely." });
+    } catch (error) {
+      await refreshMailCalendarAccounts();
+      setNotice({ kind: "error", text: `Could not refresh the provider sign-in: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
   const archivedSessions = createMemo(() => sessions().filter((session) => session.archived));
   const [trashedSessions, setTrashedSessions] = createSignal<SessionSummary[]>([]);
   const refreshTrash = async () => {
@@ -1347,7 +1465,7 @@ export default function Settings() {
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id || (item.id === "privacy" && page() === "archived") }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
           </For>
           <Show when={agentEntries().length > 0}>
-            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
+            <div class="settings-nav-group"><div class="settings-nav-label">Agents</div><nav><For each={agentEntries()}>{(agent) => <><button type="button" classList={{ active: page() === "agent" && scope() === "workspace" && activeAgentId() === agent.id }} onClick={() => void openAgentPage(agent.id)}><AgentMark character={agent.character} motion={agent.animation} size={24} /><span>{agent.name}</span></button><Show when={scope() === "workspace" && activeAgentId() === agent.id}><div class="settings-agent-subnav" aria-label={`${agent.name} settings`}><button type="button" classList={{ active: page() === "agent" }} onClick={() => selectPage("agent")}>Overview</button><button type="button" classList={{ active: page() === "connections" }} onClick={() => { setCapabilityView("mine"); selectPage("connections"); }}>Capabilities</button><button type="button" classList={{ active: page() === "mail-calendar" }} onClick={() => selectPage("mail-calendar")}>Email and calendar</button><button type="button" classList={{ active: page() === "privacy" }} onClick={() => selectPage("privacy")}>Privacy and safety</button><Show when={technicalDetails()}><button type="button" classList={{ active: page() === "prompts" }} onClick={() => selectPage("prompts")}>Prompts</button></Show></div></Show></>}</For></nav></div>
           </Show>
           <For each={pageGroups().filter(([group]) => group === "Advanced")}>
             {([group, items]) => <div class="settings-nav-group"><div class="settings-nav-label">{group}</div><nav><For each={items}>{(item) => <button type="button" classList={{ active: page() === item.id }} onClick={() => selectPage(item.id)}><Icon name={item.icon} /><span>{item.label}</span></button>}</For></nav></div>}
@@ -1839,6 +1957,53 @@ export default function Settings() {
             <Show when={page() === "services"}>
               <OperationsPanel onNotice={(text) => setNotice({ kind: "error", text })} />
               <DigestCard />
+            </Show>
+
+            <Show when={page() === "mail-calendar"}>
+              <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p></header>
+              <Group title="Choose access">
+                <p class="settings-hint">Start with read access. Sending email and changing calendar events will require a separate permission and a review of the exact change.</p>
+                <div class="capability-list">
+                  {([ ["mail_read", "Read email"], ["calendar_free_busy", "Check availability"], ["calendar_read", "Read calendar events"] ] as const).map(([capability, label]) => <label class="capability-item"><input type="checkbox" checked={mailCalendarCapabilities().includes(capability)} onChange={(event) => setMailCalendarCapabilities((current) => event.currentTarget.checked ? [...new Set([...current, capability])] : current.filter((item) => item !== capability))} /><span>{label}</span></label>)}
+                </div>
+              </Group>
+              <Group title="Connect an account">
+                <Row title="Google" description="Gmail and Google Calendar. Only the selected access is requested. If setup is missing, configure VAK_GOOGLE_OAUTH_CLIENT_ID on this host with a Desktop OAuth client."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("google")}>Connect Google</button></Row>
+                <Row title="Microsoft" description="Outlook email and calendar. Configure VAK_MICROSOFT_OAUTH_CLIENT_ID with an Entra public client for mobile and desktop apps. No client secret is used."><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar("microsoft")}>Connect Microsoft</button></Row>
+                <Show when={canAddIcloudAccount()} fallback={<p class="settings-hint">For security, add iCloud app-specific passwords only from Vakyartha running on this device. The credential form is unavailable on hosted servers.</p>}>
+                  <Row title="Apple iCloud email" description="Enter your iCloud email and an app-specific password generated at account.apple.com. Your Apple Account password is never requested.">
+                    <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
+                  </Row>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. Vakyartha restricts this connection to read-only capabilities; provider content stays disabled until deletion tracking is ready. Remove the password at Apple to revoke it.</p>
+                </Show>
+                <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
+              </Group>
+              <Group title={`Accounts for ${agentName()}`}>
+                <Show when={!mailCalendarAccounts.loading} fallback={<div class="settings-hint">Loading connected accounts…</div>}>
+                  <Show when={(mailCalendarAccounts()?.accounts.length ?? 0) > 0} fallback={<p class="settings-hint">No accounts are connected to this Agent.</p>}>
+                    <For each={mailCalendarAccounts()?.accounts ?? []}>{(account) => {
+                      const label = account.provider === "google" ? "Google account" : account.provider === "microsoft" ? "Microsoft account" : "Apple iCloud account";
+                      const needsNewOAuthLink = account.status === "reauthentication_required"
+                        || (account.status === "connected" && (!account.credential_available || !account.refresh_token_available));
+                      const connectionState = account.revoked_at
+                        ? "Disconnected"
+                        : !account.credential_available
+                          ? "Saved sign-in details are unavailable · connect again, then remove this entry"
+                          : account.status === "pending"
+                            ? "Connection incomplete · cleanup needed"
+                            : account.status === "reauthentication_required"
+                              ? "New sign-in required · connect again, then remove this entry"
+                              : account.provider === "apple_icloud"
+                                ? "Credential saved · not verified"
+                                : "Connected";
+                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.provider === "apple_icloud" ? "App-specific password" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><span class="settings-actions"><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span></Row>;
+                    }}</For>
+                  </Show>
+                </Show>
+              </Group>
+              <Group title="Preview, routines and deletion">
+                <div class="settings-callout"><Icon name="shield" /><div><strong>Provider content is not available to Agents yet.</strong><span>Continuous and scheduled routines, a shared preview and working area, and deletion of Vakyartha's saved copies will be enabled after the data lifecycle can track and erase every derived copy. Disconnecting removes saved sign-in details and attempts provider revocation where supported. It does not delete messages or events from your provider.</span></div></div>
+              </Group>
             </Show>
 
             <Show when={page() === "connections"}>

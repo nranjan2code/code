@@ -85,6 +85,9 @@ export interface Host {
   openWorkspace(cwd: string, trust?: boolean): Promise<BackendInfo>;
   /** What a folder would ask for, before anything opens it. */
   reviewWorkspace(cwd: string): Promise<WorkspaceReview>;
+  /** Open a provider authorization URL in the user's system browser. Desktop
+   * validates the provider host before handing it to the OS. */
+  openOAuthUrl?(url: string): Promise<void>;
   /** Choose a folder: a native dialog, or a server-side browser. `null`
    *  when the operator cancelled. */
   pickWorkspace(): Promise<string | null>;

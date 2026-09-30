@@ -38,6 +38,15 @@ Decided in the plan, each with a clear default:
   - Keys per **conversation**, spanning session rotation.
 - **Content is keyed to its conversation wherever it is written**, and
   every derived write records `derived_from` (review R2).
+- **Provider-account deletion is a first-class erasure scope.** Mail/calendar
+  content, attachments, candidates, previews, citations, automation cursors,
+  cached/indexed copies and model-visible excerpts must retain account
+  lineage across Agent and conversation boundaries. M1/M2/M6 must design and
+  prove selective crypto-erasure of that source data without erasing unrelated
+  conversation content; M7 must execute it and report external copies outside
+  Vak's control. An account-scoped key/grant or equivalent selective-erasure
+  mechanism is required; conversation-only keys are insufficient. See docs
+  73 §7.3, doc 74 §2.15 and M7 below.
 - **Deletion is two-step:** trash (hidden everywhere, restorable), then
   erase (crypto-shred with a receipt) (doc 74 §2.4).
 - **Encryption at rest** is a per-tenant policy, on by default.
@@ -203,6 +212,11 @@ Only fixes whose code survives into the target.
 - **Provenance:** memory, learning, reflection and entity writes record
   `derived_from` (review R2). Checkpoint labels become the turn id (review
   R31).
+- **External source provenance:** define typed, opaque provider-account source
+  ids and carry them with `derived_from` on all provider-originated content and
+  descendants, independently of conversation, Agent, and audience ownership.
+  This is required for selective account erasure without erasing unrelated
+  conversation content (docs 73 §7.3 and 74 §2.15).
 - **The 13 clock-derived or truncated ids become typed ids.**
 - **`TestScope` helper** (test feature of `vak-config`), so M3a's test
   migration is mechanical (review R30).
@@ -238,6 +252,10 @@ A library only, with no behaviour change elsewhere.
   an in-memory backend.
 - **`keys`:**
   - Tenant KEK through `vak_config::credentials`.
+  - Account-scoped key/grant composition for provider-originated content, so
+    deleting one connected account does not require deleting an entire
+    conversation; prove append-only model-visible record behavior under that
+    composition before admitting such content.
   - Conversation, space and artifact keys wrapped by the KEK.
   - `shred(scope)` and `hold(scope)` hooks.
 - **`Store` trait** with `LocalStore` and `MemoryStore`; the `Remote` trait
@@ -401,11 +419,16 @@ diff; the layout scan (blast-radius §0) finds no raw home-path use outside
   - the `archive.json`/`deleted.json` sidecars and their routes
   - `/workspaces/forget`
 - **Erasure (doc 74 §4):**
-  - Scopes: conversation, person, Agent, space, tenant.
+  - Scopes: provider account, conversation, person, Agent, space, tenant.
   - Preview digests and approvals.
   - A lineage walk, key destruction, derived plaintext removal
     (`secure_delete` plus a WAL checkpoint), and a signed receipt naming
     what it couldn't reach.
+  - Provider-account erasure follows source lineage across conversations and
+    Agents, destroys the account-scoped key/grants, removes provider-derived
+    records and indexes while preserving unrelated conversation data, and
+    reports provider dispatches, recipients, backups, and other copies outside
+    Vak's control. Disconnect/revocation alone is not erasure.
 - **Holds, labels and quotas** (doc 74 §3).
 - **Agent lifecycle:** add `Revoked`, and wire each state's data effects
   (review R26).
@@ -428,6 +451,9 @@ diff; the layout scan (blast-radius §0) finds no raw home-path use outside
   `settled_execution_leaves_nothing`, `gc_keeps_everything_reachable`.
 - `erasure_follows_lineage`, `erasure_leaves_ledger_bytes_unchanged`,
   `person_erasure_spans_agents_and_chats`,
+  `provider_account_erasure_spans_agents_and_conversations`,
+  `provider_account_erasure_preserves_unrelated_conversation_content`,
+  `provider_account_erasure_reapplies_after_restore`,
   `hold_blocks_every_destructive_transition`.
 - `stale_preview_cannot_authorise`, `quota_refuses_admission_not_records`,
   `restore_reapplies_erasures`, `revoke_cuts_endpoints_within_one_tick`.

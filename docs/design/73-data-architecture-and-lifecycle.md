@@ -350,7 +350,9 @@ Four rules follow:
   what lets an erasure reach every copy (review R2).
 - **Derived writes record `derived_from`.** Memory, entities, skill
   proposals, catalog text rows and embeddings name their source
-  conversation and turn.
+  conversation and turn. Provider-derived records and all descendants also
+  retain the connected-account source id and lineage edge; the account id is
+  an internal opaque identifier, never a provider address or principal.
 - **Ledgers never hold what an object should.** Big tool results, file
   contents and stdout go to the object store, and the ledger holds the hash.
   `EvidenceBodyRecord` already points this way. This is what keeps session
@@ -458,14 +460,26 @@ dedupe (review R1). The design is:
   - The tenant KEK lives in the credential store
     (`vak_config::credentials`: OS keychain, or the encrypted-file fallback).
   - The KEK wraps **scope keys**: one per conversation (spanning its session
-    rotations), one per space (checkpoints, promoted files), and one per
-    artifact (shared versions).
+    rotations), one per space (checkpoints, promoted files), one per artifact
+    (shared versions), and one per connected provider account for data that
+    must be selectively erased when that account is deleted/erased. Disconnect
+    revokes access and removes credentials; it does not itself erase content.
+  - Before implementation, the storage plan must define how a record or object
+    with both conversation and provider-account lineage is encrypted/granted
+    so account erasure makes only provider-derived content unreadable while
+    preserving unrelated conversation content. A conversation-only key is
+    insufficient for this deletion scope.
   - AEAD comes from `ring`, already a workspace dependency.
 - **Records are encrypted per entry** under their conversation key, so
-  appends never rewrite anything.
+  appends never rewrite anything. When an entry contains provider-derived
+  content, the key-grant design must also bind it to the provider-account
+  erasure scope; destroying that account scope must make only those fields
+  unreadable and must not rewrite the append-only ledger.
 - **Content fields in shared ledgers** (inbox body, delivery text, outbox
   payload, commitment statement) are field-encrypted under the
-  conversation key they came from (§5).
+  conversation key they came from (§5). Provider-derived fields additionally
+  require the source-account grant/key described above, so deleting the
+  provider account does not erase adjacent unrelated content.
 - **Objects have their own random key.** Each scope that references an
   object stores that key wrapped under the scope key (a *key grant*). An
   object stays readable while any grant survives, so the same file in two

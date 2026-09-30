@@ -29,6 +29,7 @@ members = [
     "crates/vak-presentation",
     "crates/vak-ooxml",
     "crates/vak-pdf",
+    "crates/vak-mail-calendar",
     "crates/vak",
 ]
 
@@ -65,6 +66,7 @@ vak-voice = { path = "crates/vak-voice" }
 vak-presentation = { path = "crates/vak-presentation" }
 vak-ooxml = { path = "crates/vak-ooxml" }
 vak-pdf = { path = "crates/vak-pdf" }
+vak-mail-calendar = { path = "crates/vak-mail-calendar" }
 
 crossterm = { version = "0.28", features = ["event-stream"] }
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
@@ -79,6 +81,7 @@ tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
 async-trait = "0.1"
+url = "2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls", "blocking", "multipart"] }
 bytes = "1"
 # Gemini Live API (bidi voice synthesis) speaks raw WebSocket frames.
@@ -92,6 +95,7 @@ toml = "0.8"
 thiserror = "2"
 clap = { version = "4", features = ["derive", "env"] }
 uuid = { version = "1", features = ["v7"] }
+zeroize = "1"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 regex = "1"

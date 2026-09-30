@@ -65,6 +65,7 @@ mod feeds;
 pub mod gateway;
 mod heartbeat;
 mod inbox;
+mod mail_calendar;
 mod office_workspace;
 mod operations;
 mod projection;
@@ -252,6 +253,12 @@ pub struct AppState {
     pub(crate) voice_active: Arc<std::sync::atomic::AtomicUsize>,
     /// Per-minute budget shared by every paid voice request.
     pub(crate) voice_requests: Arc<voice::RequestWindow>,
+    /// In-memory one-time OAuth state for mail and calendar account linking.
+    pub(crate) mail_calendar_oauth: Arc<vak_mail_calendar::oauth::AuthorizationStore>,
+    /// In-process serialization for account refresh/disconnect so a refresh
+    /// cannot persist rotated credentials after a concurrent disconnect.
+    mail_calendar_account_locks:
+        Arc<Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
 }
 
 #[derive(Clone)]
@@ -309,7 +316,39 @@ impl AppState {
             active_core: Arc::new(Mutex::new(None)),
             voice_active: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             voice_requests: Arc::new(voice::RequestWindow::new()),
+            mail_calendar_oauth: Arc::new(vak_mail_calendar::oauth::AuthorizationStore::default()),
+            mail_calendar_account_locks: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    pub(crate) fn mail_calendar_account_lock(
+        &self,
+        agent_id: &str,
+        account_id: &str,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        self.mail_calendar_lock(&format!("account:{agent_id}:{account_id}"))
+    }
+
+    pub(crate) fn mail_calendar_provider_lock(
+        &self,
+        agent_id: &str,
+        provider: vak_mail_calendar::Provider,
+    ) -> Arc<tokio::sync::Mutex<()>> {
+        self.mail_calendar_lock(&format!("provider:{agent_id}:{provider:?}"))
+    }
+
+    fn mail_calendar_lock(&self, key: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self
+            .mail_calendar_account_locks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(key).and_then(std::sync::Weak::upgrade) {
+            return lock;
+        }
+        let lock = Arc::new(tokio::sync::Mutex::new(()));
+        locks.insert(key.to_owned(), Arc::downgrade(&lock));
+        lock
     }
 
     /// The `Core` new work should run under: the browser's chosen
@@ -708,6 +747,12 @@ pub fn gateway_router(core: Core) -> Router {
 
 fn router_with_state(state: AppState) -> Router {
     Router::new()
+        .route("/mail-calendar/accounts", get(mail_calendar::list_accounts))
+        .route("/mail-calendar/accounts/{agent_id}/oauth", post(mail_calendar::begin_oauth))
+        .route("/mail-calendar/accounts/{agent_id}/icloud", post(mail_calendar::connect_icloud))
+        .route("/mail-calendar/accounts/{agent_id}/{account_id}/refresh", post(mail_calendar::refresh_account))
+        .route("/mail-calendar/oauth/callback", get(mail_calendar::oauth_callback))
+        .route("/mail-calendar/accounts/{agent_id}/{account_id}/disconnect", post(mail_calendar::disconnect_account))
         .route("/health", get(health))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{id}/attach", post(attach_session))
@@ -3342,6 +3387,11 @@ mod built_in_presentation_tests {
 /// shell (static assets carry no data), and the login endpoint itself.
 fn auth_exempt_path(path: &str) -> bool {
     path == "/health"
+        // OAuth returns here in the browser without an Authorization header.
+        // The route accepts only a live, single-use, PKCE-bound state minted
+        // by an authenticated owner initiation; browser flows also bind the
+        // callback to the initiating authenticated session.
+        || path == "/mail-calendar/oauth/callback"
         || path == "/admin"
         || path == "/admin/"
         || path == "/admin/favicon.svg"
@@ -3948,6 +3998,8 @@ async fn security_headers(
         .get("x-forwarded-proto")
         .is_some_and(|value| value == "https");
     let auth_path = req.uri().path().starts_with("/auth/");
+    let mail_calendar_callback = req.uri().path() == "/mail-calendar/oauth/callback";
+    let mail_calendar_account_path = req.uri().path().starts_with("/mail-calendar/accounts");
     let mut response = next.run(req).await;
     let headers = response.headers_mut();
     headers.insert(
@@ -3962,8 +4014,9 @@ async fn security_headers(
             HeaderValue::from_static("max-age=31536000"),
         );
     }
-    if auth_path {
+    if auth_path || mail_calendar_callback || mail_calendar_account_path {
         headers.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        headers.insert(header::PRAGMA, HeaderValue::from_static("no-cache"));
     }
     response
 }

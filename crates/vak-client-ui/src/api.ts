@@ -131,6 +131,48 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return parsed as T;
 }
 
+export type MailCalendarProvider = "google" | "microsoft" | "apple_icloud";
+export type MailCalendarAccountStatus = "pending" | "connected" | "reauthentication_required";
+export type MailCalendarCapability = "mail_read" | "mail_prepare" | "mail_send" | "calendar_free_busy" | "calendar_read" | "calendar_write";
+export interface MailCalendarAccount {
+  id: string;
+  provider: MailCalendarProvider;
+  status: MailCalendarAccountStatus;
+  identity_masked: string | null;
+  credential_available: boolean;
+  capabilities: MailCalendarCapability[];
+  connected_at: string;
+  access_token_expires_at: string | null;
+  refresh_token_available: boolean;
+  revoked_at: string | null;
+}
+
+export async function listMailCalendarAccounts(agentId: string): Promise<{ accounts: MailCalendarAccount[] }> {
+  return req(`/mail-calendar/accounts?agent_id=${encodeURIComponent(agentId)}`);
+}
+
+export async function beginMailCalendarOAuth(agentId: string, provider: MailCalendarProvider, capabilities: MailCalendarCapability[]): Promise<{ authorization_url: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/oauth`, {
+    method: "POST",
+    body: JSON.stringify({ provider, capabilities }),
+  });
+}
+
+export async function connectIcloudAccount(agentId: string, email: string, appSpecificPassword: string, capabilities: MailCalendarCapability[]): Promise<{ connected: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/icloud`, {
+    method: "POST",
+    body: JSON.stringify({ email, app_specific_password: appSpecificPassword, capabilities }),
+  });
+}
+
+export async function refreshMailCalendarAccount(agentId: string, accountId: string): Promise<{ account: MailCalendarAccount }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/refresh`, { method: "POST", body: "{}" });
+}
+
+export async function disconnectMailCalendarAccount(agentId: string, accountId: string): Promise<{ disconnected: boolean; already_disconnected: boolean; provider_grant_revoked: boolean; content_erased: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/disconnect`, { method: "POST", body: "{}" });
+}
+
 /**
  * Called when the server says this client is no longer authenticated.
  *
