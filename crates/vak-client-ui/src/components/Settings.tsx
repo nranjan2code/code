@@ -52,6 +52,7 @@ import { headlessAuth } from "../headlessAuth";
 import { setPendingRecoveryCodes } from "../ownerRecovery";
 
 type Page = SettingsPageId;
+const LOCAL_DRAFT_ACCOUNT_ID = "local-draft";
 
 // Everyday pages are what anyone changes; Agents holds one page per agent;
 // Advanced is shown only with technical details on (docs/design/75 §6.3).
@@ -1659,7 +1660,9 @@ export default function Settings() {
     if (mailCalendarEditorKind() === "calendar") {
       const starts = new Date(mailCalendarDraftStarts());
       const ends = new Date(mailCalendarDraftEnds());
-      if (!mailCalendarDraftTitle().trim() || !Number.isFinite(starts.getTime()) || !Number.isFinite(ends.getTime())) return null;
+      const localDraft = mailCalendarEditorAccount() === LOCAL_DRAFT_ACCOUNT_ID
+        || mailCalendarEditingCandidate()?.account_id === LOCAL_DRAFT_ACCOUNT_ID;
+      if ((!mailCalendarDraftTitle().trim() && !localDraft) || !Number.isFinite(starts.getTime()) || !Number.isFinite(ends.getTime())) return null;
       const draft = {
         title: mailCalendarDraftTitle(),
         description: mailCalendarDraftDescription(),
@@ -1690,10 +1693,11 @@ export default function Settings() {
     }
     const agentId = activeAgentId();
     const previous = mailCalendarEditingCandidate();
+    const accountId = previous?.account_id ?? (mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID);
     setMailCalendarSavingDraft(true);
     try {
       const result = await api.saveMailCalendarCandidate(agentId, {
-        account_id: mailCalendarEditorAccount(),
+        account_id: accountId,
         ...(previous ? { candidate_id: previous.id, expected_revision: previous.revision } : {}),
         ...(!previous ? { source_refs: mailCalendarSourceRefs() } : {}),
         action,
@@ -1748,7 +1752,9 @@ export default function Settings() {
       reviewAndCancelCalendarEvent(candidate);
       return;
     }
-    setMailCalendarEditorAccount(candidate.account_id);
+    setMailCalendarEditorAccount(candidate.account_id === LOCAL_DRAFT_ACCOUNT_ID
+      ? mailCalendarAccounts()?.accounts.find((account) => account.status === "connected" && !account.revoked_at)?.id ?? LOCAL_DRAFT_ACCOUNT_ID
+      : candidate.account_id);
     setMailCalendarEditorKind(candidate.action.kind === "send_mail" ? "mail" : "calendar");
     setMailCalendarDraftPreviewOpen(false);
     setMailCalendarEditingCandidate(candidate);
@@ -1775,6 +1781,38 @@ export default function Settings() {
       setMailCalendarUpdateSource(candidate.action.kind === "update_event" ? { event_id: candidate.action.event_id, source_version: candidate.action.source_version } : null);
     }
     setMailCalendarDirty(false);
+  };
+  const assignLocalMailCalendarDraft = async (candidate: api.MailCalendarCandidate) => {
+    const accountId = mailCalendarEditorAccount();
+    if (candidate.account_id !== LOCAL_DRAFT_ACCOUNT_ID || !accountId || accountId === LOCAL_DRAFT_ACCOUNT_ID || mailCalendarBusy() || mailCalendarDirty()) return;
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === accountId && item.status === "connected" && !item.revoked_at);
+    if (!account) return;
+    const action = buildMailCalendarDraftAction();
+    if (!action || (action.kind === "send_mail" && action.draft.reply_to_message_id) || (action.kind !== "send_mail" && action.kind !== "create_event")) return;
+    if (action.kind === "send_mail" && action.draft.to.length === 0 && action.draft.cc.length === 0 && action.draft.bcc.length === 0) {
+      setNotice({ kind: "error", text: "Add at least one recipient before assigning this draft to an account." });
+      return;
+    }
+    if (action.kind === "create_event" && !action.draft.title.trim()) {
+      setNotice({ kind: "error", text: "Add an event title before assigning this draft to an account." });
+      return;
+    }
+    const agentId = activeAgentId();
+    setMailCalendarBusy(true);
+    try {
+      const bound = await api.saveMailCalendarCandidate(agentId, { account_id: account.id, source_refs: [], action });
+      await api.deleteMailCalendarCandidate(agentId, candidate.id, candidate.revision);
+      if (agentId !== activeAgentId() || page() !== "mail-calendar") return;
+      setMailCalendarEditingCandidate(bound.candidate);
+      setMailCalendarEditorAccount(bound.candidate.account_id);
+      await refreshMailCalendarCandidates();
+      setNotice({ kind: "info", text: "Draft assigned to the selected account. It has not been sent or added to a calendar; review is still required." });
+    } catch (error) {
+      await refreshMailCalendarCandidates();
+      setNotice({ kind: "error", text: `Could not assign this local draft: ${error instanceof Error ? error.message : String(error)}. The local copy may still be available in the work area.` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
   };
   const removeMailCalendarDraft = (candidate: api.MailCalendarCandidate) => setConfirmConfig({
     title: "Delete this local draft?",
@@ -2952,19 +2990,17 @@ export default function Settings() {
                 </div>}</Show>
               </Group>
               <Group title="Working area">
-                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Sending, creating, updating, or cancelling an event changes provider data: each action requires an unchanged saved draft, the matching account grant, a full preview, and your confirmation. Google updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Event creation does not invite attendees. Apple Mail supports bounded selected-message reading and local reply drafts; provider changes are unavailable.</p>
-                <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account to start a local draft.</p>}>
-                  <div class="mail-calendar-work-actions">
-                    <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple iCloud" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
-                    <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount()} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "mail")}>New email draft</button>
-                    <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount() || mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditorAccount())?.provider === "apple_icloud"} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "calendar")}>New event draft</button>
-                  </div>
-                </Show>
+                <p class="settings-hint">Create and save drafts in this Agent's encrypted local work area, even before connecting an account. Assign a connected account before sending or creating an event; those provider changes require a fresh preview, the matching grant, Review, and your confirmation. Google updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer. Event creation does not invite attendees. Apple supports read previews and local drafts; provider changes are unavailable.</p>
+                <div class="mail-calendar-work-actions">
+                  <label>Draft account<select aria-label="Draft account" disabled={mailCalendarBusy()} value={mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><option value={LOCAL_DRAFT_ACCOUNT_ID}>Local draft · no account</option><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple iCloud" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
+                  <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID, "mail")}>New email draft</button>
+                  <button class="settings-button" disabled={mailCalendarBusy() || (mailCalendarEditorAccount() !== LOCAL_DRAFT_ACCOUNT_ID && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditorAccount())?.provider === "apple_icloud")} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID, "calendar")}>New event draft</button>
+                </div>
                 <Show when={!mailCalendarCandidates.loading} fallback={<p class="settings-hint">Loading secure drafts…</p>}>
                   <div class="mail-calendar-drafts"><Show when={(mailCalendarCandidates()?.candidates.length ?? 0) > 0} fallback={<p class="settings-hint">No saved drafts yet.</p>}>
                     <For each={mailCalendarCandidates()?.candidates ?? []}>{(candidate) => {
                       const summary = () => candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.kind === "cancel_event" ? candidate.source_refs[0]?.label || "Event cancellation" : candidate.action.draft.title || "Event draft";
-                      const kind = () => candidate.action.kind === "send_mail" ? "Email" : candidate.action.kind === "cancel_event" ? "Event cancellation" : "Calendar event";
+                      const kind = () => `${candidate.action.kind === "send_mail" ? "Email" : candidate.action.kind === "cancel_event" ? "Event cancellation" : "Calendar event"}${candidate.account_id === LOCAL_DRAFT_ACCOUNT_ID ? " · local draft" : ""}`;
                       const actionLabel = () => candidate.action.kind === "send_mail" ? "send" : candidate.action.kind === "cancel_event" ? "cancel" : candidate.action.kind === "update_event" ? "update" : "create";
                       return <article class="mail-calendar-draft-row"><div><strong>{summary()}</strong><span>{kind()} · revision {candidate.revision} · {new Date(candidate.created_at).toLocaleDateString()}{candidate.action_state ? ` · ${actionLabel()} ${candidate.action_state.replaceAll("_", " ")}` : ""}</span></div><div class="settings-actions"><button class="settings-button" disabled={mailCalendarBusy() || Boolean(candidate.action_state)} onClick={() => candidate.action.kind === "cancel_event" ? reviewAndCancelCalendarEvent(candidate) : openMailCalendarDraft(candidate)}>{candidate.action.kind === "cancel_event" ? candidate.action_state ? "Attempt recorded" : "Review cancellation" : "Open"}</button><button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate)}>Delete</button></div></article>;
                     }}</For>
@@ -2972,22 +3008,22 @@ export default function Settings() {
                 </Show>
                 <Show when={mailCalendarEditorKind()}>
                   <div class="mail-calendar-editor">
-                    <div class="settings-preview-heading"><strong>{mailCalendarEditorKind() === "mail" ? (mailCalendarReplyToMessageId() ? "Email reply draft" : "Email draft") : "Calendar event draft"}</strong><button class="settings-button" onClick={cancelMailCalendarDraftEditor}>Close</button></div>
+                    <div class="settings-preview-heading"><strong>{mailCalendarEditorKind() === "mail" ? (mailCalendarReplyToMessageId() ? "Email reply draft" : "Email draft") : "Calendar event draft"}</strong><button class="settings-button" disabled={mailCalendarBusy()} onClick={cancelMailCalendarDraftEditor}>Close</button></div>
                     <Show when={mailCalendarEditorKind() === "mail"}>
-                      <label>To<input type="text" value={mailCalendarDraftTo()} onInput={(event) => { setMailCalendarDraftTo(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="name@example.com" /></label>
-                      <label>Cc<input type="text" value={mailCalendarDraftCc()} onInput={(event) => { setMailCalendarDraftCc(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="Optional, comma separated" /></label>
-                      <label>Bcc<input type="text" value={mailCalendarDraftBcc()} onInput={(event) => { setMailCalendarDraftBcc(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="Optional, comma separated" /></label>
-                      <label>Subject<input type="text" value={mailCalendarDraftSubject()} onInput={(event) => { setMailCalendarDraftSubject(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                      <label>Message<textarea rows={8} value={mailCalendarDraftBody()} onInput={(event) => { setMailCalendarDraftBody(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
+                      <label>To<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftTo()} onInput={(event) => { setMailCalendarDraftTo(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="name@example.com" /></label>
+                      <label>Cc<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftCc()} onInput={(event) => { setMailCalendarDraftCc(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="Optional, comma separated" /></label>
+                      <label>Bcc<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftBcc()} onInput={(event) => { setMailCalendarDraftBcc(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="Optional, comma separated" /></label>
+                      <label>Subject<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftSubject()} onInput={(event) => { setMailCalendarDraftSubject(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
+                      <label>Message<textarea rows={8} disabled={mailCalendarBusy()} value={mailCalendarDraftBody()} onInput={(event) => { setMailCalendarDraftBody(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
                     </Show>
                     <Show when={mailCalendarEditorKind() === "calendar"}>
-                      <label>Title<input type="text" value={mailCalendarDraftTitle()} onInput={(event) => { setMailCalendarDraftTitle(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                      <div class="mail-calendar-work-actions"><label>Starts<input type="datetime-local" value={mailCalendarDraftStarts()} onInput={(event) => { setMailCalendarDraftStarts(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label><label>Ends<input type="datetime-local" value={mailCalendarDraftEnds()} onInput={(event) => { setMailCalendarDraftEnds(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label></div>
-                      <label>Location<input type="text" value={mailCalendarDraftLocation()} onInput={(event) => { setMailCalendarDraftLocation(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                      <label>Description<textarea rows={5} value={mailCalendarDraftDescription()} onInput={(event) => { setMailCalendarDraftDescription(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
+                      <label>Title<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftTitle()} onInput={(event) => { setMailCalendarDraftTitle(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
+                      <div class="mail-calendar-work-actions"><label>Starts<input type="datetime-local" disabled={mailCalendarBusy()} value={mailCalendarDraftStarts()} onInput={(event) => { setMailCalendarDraftStarts(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label><label>Ends<input type="datetime-local" disabled={mailCalendarBusy()} value={mailCalendarDraftEnds()} onInput={(event) => { setMailCalendarDraftEnds(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label></div>
+                      <label>Location<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftLocation()} onInput={(event) => { setMailCalendarDraftLocation(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
+                      <label>Description<textarea rows={5} disabled={mailCalendarBusy()} value={mailCalendarDraftDescription()} onInput={(event) => { setMailCalendarDraftDescription(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
                     </Show>
                     <Show when={mailCalendarSourceRefs().length > 0}><p class="settings-hint">Based on a selected item: {mailCalendarSourceRefs().map((source) => source.label?.trim() || "Selected source").join(", ")}</p></Show>
-                    <div class="settings-actions"><button class="settings-button" aria-expanded={mailCalendarDraftPreviewOpen()} onClick={() => setMailCalendarDraftPreviewOpen((open) => !open)}>{mailCalendarDraftPreviewOpen() ? "Hide preview" : "Preview draft"}</button><button class="btn primary" disabled={mailCalendarSavingDraft()} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
+                    <div class="settings-actions"><button class="settings-button" aria-expanded={mailCalendarDraftPreviewOpen()} onClick={() => setMailCalendarDraftPreviewOpen((open) => !open)}>{mailCalendarDraftPreviewOpen() ? "Hide preview" : "Preview draft"}</button><button class="btn primary" disabled={mailCalendarSavingDraft() || mailCalendarBusy()} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
                     <Show when={mailCalendarDraftPreviewOpen()}>
                       <section class="mail-calendar-draft-preview" aria-label="Exact local draft preview">
                         <p class="settings-hint"><strong>Local preview</strong> · This shows the current draft only. It does not send email, invite attendees, or change a calendar.</p>
@@ -3008,6 +3044,10 @@ export default function Settings() {
                         </Show>
                         <Show when={mailCalendarEditorKind() === "calendar" && supportsCalendarUpdate(mailCalendarEditingCandidate()) && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("calendar_write")}>
                           <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndUpdateCalendarEvent(candidate); }}>{mailCalendarSendingDraft() ? "Updating…" : "Review and update this exact event"}</button>
+                        </Show>
+                        <Show when={mailCalendarEditingCandidate()?.account_id === LOCAL_DRAFT_ACCOUNT_ID && mailCalendarEditorAccount() !== LOCAL_DRAFT_ACCOUNT_ID}>
+                          <button class="btn primary" disabled={mailCalendarBusy() || mailCalendarDirty() || !mailCalendarEditingCandidate()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) void assignLocalMailCalendarDraft(candidate); }}>Assign to selected account for Review</button>
+                          <p class="settings-hint">Assigning creates an account-bound candidate for review. It does not contact the provider or perform the action.</p>
                         </Show>
                       </section>
                     </Show>

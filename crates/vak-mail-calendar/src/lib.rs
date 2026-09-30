@@ -26,6 +26,10 @@ pub const MAX_EVENT_TITLE_BYTES: usize = 512;
 pub const MAX_ROUTINE_MAIL_BACKLOG: usize = 100;
 /// Maximum number of messages returned for one explicitly selected thread page.
 pub const MAX_MAIL_THREAD_MESSAGES: usize = 20;
+/// Reserved account key for an encrypted Agent-local draft that has not yet
+/// been assigned to a provider account. It can never authorize a provider
+/// effect.
+pub const LOCAL_DRAFT_ACCOUNT_ID: &str = "local-draft";
 
 pub type AccountId = String;
 pub type CandidateId = String;
@@ -211,6 +215,13 @@ impl MailDraft {
         if self.to.is_empty() || self.to.len() + self.cc.len() + self.bcc.len() > MAX_ADDRESSES {
             return Err(ContractError::InvalidRecipients);
         }
+        self.validate_fields()
+    }
+
+    fn validate_fields(&self) -> Result<(), ContractError> {
+        if self.to.len() + self.cc.len() + self.bcc.len() > MAX_ADDRESSES {
+            return Err(ContractError::InvalidRecipients);
+        }
         for address in self.to.iter().chain(&self.cc).chain(&self.bcc) {
             address.validate()?;
         }
@@ -344,11 +355,15 @@ impl ActionCandidate {
         source_refs: Vec<SourceRef>,
         action: ProposedAction,
     ) -> Result<Self, ContractError> {
-        validate_scope(&account_id)?;
+        validate_candidate_scope(&account_id, &source_refs, &action)?;
         validate_scope(&agent_id)?;
         validate_scope(&audience_id)?;
         validate_source_refs(&source_refs)?;
-        validate_action(&action)?;
+        if account_id == LOCAL_DRAFT_ACCOUNT_ID {
+            validate_local_draft(&source_refs, &action)?;
+        } else {
+            validate_action(&action)?;
+        }
         Ok(Self {
             id: Uuid::now_v7().to_string(),
             account_id,
@@ -375,15 +390,23 @@ impl ActionCandidate {
         if parsed.get_version_num() != 7 || self.revision == 0 {
             return Err(ContractError::InvalidScope);
         }
-        validate_scope(&self.account_id)?;
+        validate_candidate_scope(&self.account_id, &self.source_refs, &self.action)?;
         validate_scope(&self.agent_id)?;
         validate_scope(&self.audience_id)?;
         validate_source_refs(&self.source_refs)?;
-        validate_action(&self.action)
+        if self.account_id == LOCAL_DRAFT_ACCOUNT_ID {
+            validate_local_draft(&self.source_refs, &self.action)
+        } else {
+            validate_action(&self.action)
+        }
     }
 
     pub fn revise(&mut self, action: ProposedAction) -> Result<(), ContractError> {
-        validate_action(&action)?;
+        if self.account_id == LOCAL_DRAFT_ACCOUNT_ID {
+            validate_local_draft(&self.source_refs, &action)?;
+        } else {
+            validate_action(&action)?;
+        }
         let revision = self
             .revision
             .checked_add(1)
@@ -414,7 +437,8 @@ impl ActionCandidate {
         approval: &CandidateApproval,
         now: DateTime<Utc>,
     ) -> Result<(), ContractError> {
-        if self.account_id != account.id
+        if self.account_id == LOCAL_DRAFT_ACCOUNT_ID
+            || self.account_id != account.id
             || !account.admits(
                 &self.agent_id,
                 &self.audience_id,
@@ -427,6 +451,48 @@ impl ActionCandidate {
             return Err(ContractError::ApprovalRequired);
         }
         Ok(())
+    }
+}
+
+fn validate_candidate_scope(
+    account_id: &str,
+    source_refs: &[SourceRef],
+    action: &ProposedAction,
+) -> Result<(), ContractError> {
+    if account_id == LOCAL_DRAFT_ACCOUNT_ID {
+        validate_local_draft(source_refs, action)
+    } else {
+        validate_scope(account_id)
+    }
+}
+
+fn validate_local_draft(
+    source_refs: &[SourceRef],
+    action: &ProposedAction,
+) -> Result<(), ContractError> {
+    let eligible = source_refs.is_empty()
+        && match action {
+            ProposedAction::SendMail { draft } => {
+                draft.reply_to_message_id.is_none()
+                    && draft.reply_to_thread_id.is_none()
+                    && draft.validate_fields().is_ok()
+            }
+            ProposedAction::CreateEvent { draft } => {
+                let mut draft = draft.clone();
+                if draft.title.trim().is_empty() {
+                    draft.title = "Draft event".into();
+                }
+                draft.attendee_addresses.is_empty()
+                    && draft.recurrence.is_none()
+                    && draft.occurrence_id.is_none()
+                    && draft.validate().is_ok()
+            }
+            _ => false,
+        };
+    if eligible {
+        Ok(())
+    } else {
+        Err(ContractError::AccountDenied)
     }
 }
 
@@ -807,6 +873,155 @@ mod contract_tests {
             },
         )
         .unwrap()
+    }
+
+    #[test]
+    fn unassigned_local_drafts_are_revisionable_but_not_effect_candidates() {
+        let draft = ProposedAction::SendMail {
+            draft: MailDraft {
+                from_alias: None,
+                to: vec![MailAddress {
+                    address: "reader@example.com".into(),
+                    display_name: None,
+                }],
+                cc: Vec::new(),
+                bcc: Vec::new(),
+                subject: "Local draft".into(),
+                body_text: "Saved locally".into(),
+                attachment_refs: Vec::new(),
+                reply_to_message_id: None,
+                reply_to_thread_id: None,
+            },
+        };
+        let mut candidate = ActionCandidate::new(
+            LOCAL_DRAFT_ACCOUNT_ID.into(),
+            "agent-a".into(),
+            "agent:agent-a".into(),
+            Vec::new(),
+            draft.clone(),
+        )
+        .unwrap();
+        assert!(candidate.validate().is_ok());
+        assert_eq!(candidate.account_id, LOCAL_DRAFT_ACCOUNT_ID);
+        let connected_fake = ConnectedAccount {
+            id: LOCAL_DRAFT_ACCOUNT_ID.into(),
+            provider: Provider::Google,
+            status: AccountStatus::Connected,
+            owner_agent_id: "agent-a".into(),
+            allowed_audiences: ["agent:agent-a".into()].into_iter().collect(),
+            capabilities: [Capability::MailSend].into_iter().collect(),
+            provider_scopes: BTreeSet::new(),
+            credential_ref: "opaque".into(),
+            principal_ref: "opaque".into(),
+            revision: 1,
+            connected_at: Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: false,
+            revoked_at: None,
+        };
+        let now = Utc::now();
+        let approval = CandidateApproval {
+            candidate_id: candidate.id.clone(),
+            candidate_digest: candidate.digest().unwrap(),
+            account_id: LOCAL_DRAFT_ACCOUNT_ID.into(),
+            agent_id: "agent-a".into(),
+            audience_id: "agent:agent-a".into(),
+            approved_at: now,
+            expires_at: now + chrono::Duration::minutes(1),
+            single_use: true,
+        };
+        assert_eq!(
+            candidate.authorize_effect(&connected_fake, &approval, now),
+            Err(ContractError::AccountDenied)
+        );
+        assert_eq!(
+            ActionCandidate::new(
+                LOCAL_DRAFT_ACCOUNT_ID.into(),
+                "agent-a".into(),
+                "agent:agent-a".into(),
+                vec![SourceRef {
+                    item_id: "provider-message".into(),
+                    version: None,
+                    label: None,
+                }],
+                draft.clone(),
+            ),
+            Err(ContractError::AccountDenied)
+        );
+        let reply = ProposedAction::SendMail {
+            draft: MailDraft {
+                reply_to_message_id: Some("provider-message".into()),
+                reply_to_thread_id: Some("provider-thread".into()),
+                ..match draft {
+                    ProposedAction::SendMail { draft } => draft,
+                    _ => unreachable!(),
+                }
+            },
+        };
+        assert_eq!(
+            ActionCandidate::new(
+                LOCAL_DRAFT_ACCOUNT_ID.into(),
+                "agent-a".into(),
+                "agent:agent-a".into(),
+                Vec::new(),
+                reply,
+            ),
+            Err(ContractError::AccountDenied)
+        );
+        candidate
+            .revise(ProposedAction::CreateEvent {
+                draft: CalendarDraft {
+                    title: "Planning".into(),
+                    description: String::new(),
+                    location: None,
+                    starts_at: Utc::now() + chrono::Duration::hours(1),
+                    ends_at: Utc::now() + chrono::Duration::hours(2),
+                    time_zone: "UTC".into(),
+                    all_day: false,
+                    attendee_addresses: Vec::new(),
+                    recurrence: None,
+                    occurrence_id: None,
+                },
+            })
+            .unwrap();
+        assert_eq!(candidate.revision, 2);
+        assert!(candidate.validate().is_ok());
+    }
+
+    #[test]
+    fn local_mail_drafts_may_be_incomplete_but_provider_candidates_may_not() {
+        let draft = ProposedAction::SendMail {
+            draft: MailDraft {
+                from_alias: None,
+                to: Vec::new(),
+                cc: Vec::new(),
+                bcc: Vec::new(),
+                subject: String::new(),
+                body_text: String::new(),
+                attachment_refs: Vec::new(),
+                reply_to_message_id: None,
+                reply_to_thread_id: None,
+            },
+        };
+        let local = ActionCandidate::new(
+            LOCAL_DRAFT_ACCOUNT_ID.into(),
+            "agent-a".into(),
+            "agent:agent-a".into(),
+            Vec::new(),
+            draft.clone(),
+        )
+        .unwrap();
+        assert!(local.validate().is_ok());
+        assert_eq!(
+            ActionCandidate::new(
+                "provider-account".into(),
+                "agent-a".into(),
+                "agent:agent-a".into(),
+                Vec::new(),
+                draft,
+            ),
+            Err(ContractError::InvalidRecipients)
+        );
     }
 
     fn approval(candidate: &ActionCandidate) -> CandidateApproval {

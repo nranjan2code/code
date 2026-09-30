@@ -18,7 +18,7 @@ use std::net::SocketAddr;
 use uuid::Uuid;
 use vak_mail_calendar::{
     AccountStatus, ActionCandidate, ActionState, CandidateApproval, Capability, ConnectedAccount,
-    ProposedAction, Provider, RoutineOperation, RoutineScope, SourceRef,
+    LOCAL_DRAFT_ACCOUNT_ID, ProposedAction, Provider, RoutineOperation, RoutineScope, SourceRef,
     connection_ledger::ConnectionLedger,
     effect::{ProviderEffectClient, ProviderEffectError},
     provider::ProviderReadClient,
@@ -370,28 +370,35 @@ pub(super) async fn save_candidate(
         Ok(ledger) => ledger,
         Err(_) => return StatusCode::BAD_REQUEST.into_response(),
     };
-    let account = match ledger.read_all() {
-        Ok(accounts) => accounts.into_iter().find(|account| {
-            account.id == request.account_id
-                && account.status == AccountStatus::Connected
-                && account.revoked_at.is_none()
-                && account.owner_agent_id == agent_id
-                && account.provider != Provider::AppleIcloud
-                && account
-                    .allowed_audiences
-                    .contains(&format!("agent:{agent_id}"))
-        }),
-        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    let local_draft = request.account_id == LOCAL_DRAFT_ACCOUNT_ID;
+    let account = if local_draft {
+        None
+    } else {
+        match ledger.read_all() {
+            Ok(accounts) => accounts.into_iter().find(|account| {
+                account.id == request.account_id
+                    && account.status == AccountStatus::Connected
+                    && account.revoked_at.is_none()
+                    && account.owner_agent_id == agent_id
+                    && account.provider != Provider::AppleIcloud
+                    && account
+                        .allowed_audiences
+                        .contains(&format!("agent:{agent_id}"))
+            }),
+            Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+        }
     };
-    let Some(account) = account else {
+    if !local_draft && account.is_none() {
         return (
             StatusCode::FORBIDDEN,
             "The selected account is unavailable for this Agent.",
         )
             .into_response();
-    };
+    }
     if matches!(&request.action, ProposedAction::CancelEvent { .. })
-        && account.provider != Provider::Google
+        && account
+            .as_ref()
+            .is_some_and(|account| account.provider != Provider::Google)
     {
         return (
             StatusCode::BAD_REQUEST,
@@ -413,7 +420,10 @@ pub(super) async fn save_candidate(
                     .into_response();
             };
             match ActionCandidate::new(
-                account.id.clone(),
+                account
+                    .as_ref()
+                    .map(|account| account.id.clone())
+                    .unwrap_or_else(|| LOCAL_DRAFT_ACCOUNT_ID.to_owned()),
                 agent_id.clone(),
                 format!("agent:{agent_id}"),
                 source_refs,
@@ -434,7 +444,7 @@ pub(super) async fn save_candidate(
             else {
                 return StatusCode::NOT_FOUND.into_response();
             };
-            if candidate.account_id != account.id
+            if candidate.account_id != request.account_id
                 || candidate.agent_id != agent_id
                 || candidate.audience_id != format!("agent:{agent_id}")
             {
@@ -459,14 +469,18 @@ pub(super) async fn save_candidate(
             // A second server process may disconnect after the initial read.
             // Recheck after the vault write; if that raced, remove the saved
             // version before exposing it to the owner.
-            let account_still_connected = ledger.read_all().is_ok_and(|accounts| {
-                accounts.iter().any(|current| {
-                    current.id == candidate.account_id
-                        && current.revision == account.revision
-                        && current.status == AccountStatus::Connected
-                        && current.revoked_at.is_none()
+            let account_still_connected = if let Some(account) = account.as_ref() {
+                ledger.read_all().is_ok_and(|accounts| {
+                    accounts.iter().any(|current| {
+                        current.id == candidate.account_id
+                            && current.revision == account.revision
+                            && current.status == AccountStatus::Connected
+                            && current.revoked_at.is_none()
+                    })
                 })
-            });
+            } else {
+                candidate.account_id == LOCAL_DRAFT_ACCOUNT_ID
+            };
             if !account_still_connected {
                 let _ = vault.delete_candidate(&candidate.id, candidate.revision);
                 return (

@@ -1302,6 +1302,87 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         reqwest::StatusCode::UNAUTHORIZED
     );
 
+    let local_mail_response = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": vak_mail_calendar::LOCAL_DRAFT_ACCOUNT_ID,
+            "source_refs": [],
+            "action": {"kind": "send_mail", "draft": {
+                "from_alias": null, "to": [{"address": "recipient@example.com", "display_name": null}], "cc": [], "bcc": [], "subject": "Local draft",
+                "body_text": "Offline draft", "attachment_refs": [],
+                "reply_to_message_id": null, "reply_to_thread_id": null
+            }}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(local_mail_response.status(), reqwest::StatusCode::OK);
+    let local_mail: serde_json::Value = local_mail_response.json().await.unwrap();
+    assert_eq!(
+        local_mail["candidate"]["account_id"],
+        vak_mail_calendar::LOCAL_DRAFT_ACCOUNT_ID
+    );
+    let local_mail_id = local_mail["candidate"]["id"].as_str().unwrap();
+    let local_mail_send = client
+        .post(format!("{candidates_url}/{local_mail_id}/send"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": 1,
+            "candidate_digest": local_mail["candidate_digest"],
+            "confirm": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(local_mail_send.status(), reqwest::StatusCode::FORBIDDEN);
+
+    let local_event_response = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": vak_mail_calendar::LOCAL_DRAFT_ACCOUNT_ID,
+            "source_refs": [],
+            "action": {"kind": "create_event", "draft": {
+                "title": "Planning", "description": "Planning", "location": null,
+                "starts_at": "2026-10-01T09:00:00Z", "ends_at": "2026-10-01T10:00:00Z",
+                "time_zone": "UTC", "all_day": false, "attendee_addresses": [],
+                "recurrence": null, "occurrence_id": null
+            }}
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(local_event_response.status(), reqwest::StatusCode::OK);
+    let local_event: serde_json::Value = local_event_response.json().await.unwrap();
+    let local_event_id = local_event["candidate"]["id"].as_str().unwrap();
+    let local_event_create = client
+        .post(format!("{candidates_url}/{local_event_id}/create-event"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": 1,
+            "candidate_digest": local_event["candidate_digest"],
+            "confirm": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(local_event_create.status(), reqwest::StatusCode::FORBIDDEN);
+    assert!(vault.list_action_receipts().unwrap().is_empty());
+    for local in [&local_mail, &local_event] {
+        let delete = client
+            .delete(format!(
+                "{candidates_url}/{}",
+                local["candidate"]["id"].as_str().unwrap()
+            ))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "expected_revision": 1 }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(delete.status(), reqwest::StatusCode::OK);
+    }
+
     let action = |subject: &str| {
         serde_json::json!({
             "kind": "send_mail",

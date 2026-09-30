@@ -805,6 +805,18 @@ different operations. Closing a draft does not send, discard, or pause the
 routine that created it. A routine can leave a draft waiting while subsequent
 independent checks continue within its limits.
 
+An owner may also create a new email or calendar draft before linking an
+account. Such an unassigned draft is encrypted in the owning Agent's vault and
+is restricted to a new send or standalone event shape with no provider source
+references. It may be incomplete while being edited. It is inert: the reserved
+local-draft identity is not a connection, cannot pass effect authorization,
+and cannot be used for replies, updates, cancellations, invitations, or any
+provider call. To prepare a provider action, the owner assigns the draft to a
+linked account, which creates a separate account-bound candidate; that
+candidate must still pass the normal freshness checks, exact Review and
+single-use confirmation before an effect. Local draft deletion remains a
+separate action.
+
 Automation preview runs the configured selector on a bounded sample, shows
 which source items would match and what actions would be prepared, and cannot
 commit external effects. It still needs real read authorization and applies

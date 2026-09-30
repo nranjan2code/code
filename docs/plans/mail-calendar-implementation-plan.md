@@ -317,6 +317,18 @@ subject, and body or the event title, local start/end time, location, and
 description. This preview explicitly states that it does not send or alter
 provider data; it is not the later effect-aware Review step.
 
+**Implemented increment (2026-10-01):** owners can create new mail and
+standalone event drafts without a linked provider account. These incomplete
+drafts are encrypted in the owning Agent's vault, accept no provider source
+references, and use a reserved local identity that cannot authorize an effect.
+Assigning one to a linked account creates a separate account-bound candidate;
+it does not contact the provider or skip exact Review. Replies and provider
+updates/deletions remain unavailable in the unassigned path. Verification:
+111 mail-calendar unit tests, Core mail-calendar tests, server account-scoped
+candidate HTTP tests, server library check, formatting and diff checks, and
+web build pass. The isolated preview refresh and signed-in browser acceptance
+remain open.
+
 **Implemented increment (2026-09-30):** owner calendar and availability
 previews now accept a selected local date range of up to 30 days, convert the
 boundaries to instants using the device time zone, and show the result refresh
@@ -1214,6 +1226,12 @@ authorization and approval boundary on every execution path.
   provider effects, and routines are still open. Verification: 60
   mail-calendar tests, the candidate lifecycle HTTP test, `cargo fmt --check`,
   and the web build pass.
+- 2026-10-01: Added unassigned Agent-vault drafts for new email and standalone
+  calendar events. These may be incomplete, remain source-free, and are denied
+  at effect authorization. Assigning creates a separate provider-bound Review
+  candidate. The 111 mail-calendar tests, Core and server boundary tests, web
+  build, format check, and diff check pass; the isolated preview and signed-in
+  browser acceptance remain open.
 - 2026-09-30: Added a live local-field preview to the draft editor. It shows
   the current email recipients/subject/body or calendar title/local times/
   location/description and source references, and states that no provider
