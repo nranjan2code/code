@@ -1,9 +1,9 @@
 # 80 — Mail and calendar: governed account work
 
 Status: **proposal with Agent/account linking, owner-only bounded
-Google/Microsoft previews, and a broker-owned local-surface read tool
-implemented; working area, drafts, Review, effects, and routines remain in
-progress, 2026-09-30.**
+Google/Microsoft previews, a broker-owned local-surface read tool, and a
+bounded Agent-vault working area for local drafts implemented; Review,
+provider effects, and routines remain in progress, 2026-09-30.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -364,7 +364,12 @@ Owner previews return bounded content directly to the UI and do not store a
 second content copy. The broker-owned Agent read tool returns bounded content
 to the model; invariant 1 records its result in append-only session history.
 Current storage has no independent retention control or selective erasure for
-those transcript copies. Local candidates needed for Review remain unbuilt.
+those transcript copies.
+Local email and event drafts are now stored as bounded, revisioned candidate
+records in the owning Agent's encrypted credential vault, with compare-and-swap
+updates. Disconnect removes that account's unsent local candidates alongside
+its saved credentials. This cleanup does not erase prior copies in append-only
+session history, nor does it implement general-purpose retention or crypto-shred.
 Any future background mailbox source must use the single intake
 and catalog lifecycle proposed in `76-intake-and-knowledge.md`, after its
 data-architecture dependencies land; this document does not start M1 or a

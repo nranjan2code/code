@@ -1079,6 +1079,154 @@ async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_disconnect() {
+    let dir = tempfile::tempdir().unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    let core = Core::new(dir.path().to_path_buf()).unwrap();
+    core.set_sessions_home(dir.path().join("home"));
+    let agent_id = format!("mail-drafts-{}", uuid::Uuid::now_v7());
+    let agent = vak_server::agents::find_template("writer")
+        .unwrap()
+        .to_agent_definition(&agent_id, None);
+    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+    let account_id = uuid::Uuid::now_v7().to_string();
+    let vault = vak_mail_calendar::vault::AccountVault::for_agent(&agent_id).unwrap();
+    let credential_ref =
+        vak_mail_calendar::vault::AccountVault::credential_ref(&account_id).unwrap();
+    vault
+        .store(
+            &account_id,
+            vak_mail_calendar::vault::AccountSecretMaterial::new(
+                "google:opaque-subject".into(),
+                Some("drafts@example.com".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut account = vak_mail_calendar::ConnectedAccount {
+        id: account_id.clone(),
+        provider: vak_mail_calendar::Provider::Google,
+        status: vak_mail_calendar::AccountStatus::Pending,
+        owner_agent_id: agent_id.clone(),
+        allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+        capabilities: [vak_mail_calendar::Capability::MailRead]
+            .into_iter()
+            .collect(),
+        provider_scopes: [
+            "openid".into(),
+            "email".into(),
+            "https://www.googleapis.com/auth/gmail.readonly".into(),
+        ]
+        .into_iter()
+        .collect(),
+        credential_ref: credential_ref.clone(),
+        principal_ref: credential_ref,
+        revision: 1,
+        connected_at: chrono::Utc::now(),
+        access_token_expires_at: None,
+        refresh_token_available: false,
+        revoked_at: None,
+    };
+    let ledger =
+        vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent(&agent_id).unwrap();
+    ledger.append_pending(account.clone()).unwrap();
+    account.status = vak_mail_calendar::AccountStatus::Connected;
+    account.revision = 2;
+    ledger.append_connected(account).unwrap();
+    std::mem::forget(dir);
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
+    let handle = tokio::spawn(async move {
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
+    });
+    let client = reqwest::Client::new();
+    let candidates_url = format!("http://{addr}/mail-calendar/accounts/{agent_id}/candidates");
+    assert_eq!(
+        client.get(&candidates_url).send().await.unwrap().status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+
+    let action = |subject: &str| {
+        serde_json::json!({
+            "kind": "send_mail",
+            "draft": {
+                "from_alias": null,
+                "to": [{"address": "recipient@example.com", "display_name": null}],
+                "cc": [], "bcc": [], "subject": subject, "body_text": "Private local draft",
+                "attachment_refs": [], "reply_to_message_id": null
+            }
+        })
+    };
+    let create = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": account_id, "source_refs": [], "action": action("First subject")
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create.status(), reqwest::StatusCode::OK);
+    let created: serde_json::Value = create.json().await.unwrap();
+    let candidate_id = created["candidate"]["id"].as_str().unwrap().to_owned();
+    assert_eq!(created["candidate"]["revision"], 1);
+
+    let update = |revision| {
+        client.post(&candidates_url).bearer_auth(&token).json(&serde_json::json!({
+        "account_id": account_id, "candidate_id": candidate_id, "expected_revision": revision,
+        "action": action("Revised subject")
+    }))
+    };
+    assert_eq!(
+        update(1).send().await.unwrap().status(),
+        reqwest::StatusCode::OK
+    );
+    assert_eq!(
+        update(1).send().await.unwrap().status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    assert_eq!(vault.list_candidates().unwrap()[0].revision, 2);
+
+    let second = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": account_id, "source_refs": [], "action": action("Disconnect cleanup")
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), reqwest::StatusCode::OK);
+    assert_eq!(vault.list_candidates().unwrap().len(), 2);
+
+    let disconnected = client
+        .post(format!(
+            "http://{addr}/mail-calendar/accounts/{agent_id}/{account_id}/disconnect"
+        ))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(disconnected.status(), reqwest::StatusCode::OK);
+    assert!(vault.list_candidates().unwrap().is_empty());
+    assert!(vault.load(&account_id).is_err());
+
+    handle.abort();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn approval_flow_resolves_over_http() {
     // First turn requests bash (workspace-write => ask); we approve over HTTP.
     let provider = Arc::new(Scripted {

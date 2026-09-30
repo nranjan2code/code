@@ -294,6 +294,20 @@ impl ActionCandidate {
         Ok(hex_digest(&bytes))
     }
 
+    /// Revalidate persisted or externally supplied candidate data before it
+    /// enters a vault, preview, approval, or provider effect path.
+    pub fn validate(&self) -> Result<(), ContractError> {
+        let parsed = Uuid::parse_str(&self.id).map_err(|_| ContractError::InvalidScope)?;
+        if parsed.get_version_num() != 7 || self.revision == 0 {
+            return Err(ContractError::InvalidScope);
+        }
+        validate_scope(&self.account_id)?;
+        validate_scope(&self.agent_id)?;
+        validate_scope(&self.audience_id)?;
+        validate_source_refs(&self.source_refs)?;
+        validate_action(&self.action)
+    }
+
     pub fn revise(&mut self, action: ProposedAction) -> Result<(), ContractError> {
         validate_action(&action)?;
         let revision = self

@@ -1,7 +1,7 @@
 //! Owner-facing account linking for the mail and calendar package.
 //!
-//! These routes expose only connection metadata. Provider content operations
-//! remain unavailable until lifecycle erasure can account for their lineage.
+//! Owner-facing account, bounded read-preview, and local-candidate routes. All
+//! data operations remain Agent-scoped; provider writes are a separate gate.
 
 use crate::{AppState, AuthenticatedPrincipal, agents};
 use axum::{
@@ -17,7 +17,8 @@ use std::collections::BTreeSet;
 use std::net::SocketAddr;
 use uuid::Uuid;
 use vak_mail_calendar::{
-    AccountStatus, Capability, ConnectedAccount, Provider,
+    AccountStatus, ActionCandidate, Capability, ConnectedAccount, ProposedAction, Provider,
+    SourceRef,
     connection_ledger::ConnectionLedger,
     vault::{AccountSecretMaterial, AccountVault},
 };
@@ -128,6 +129,200 @@ pub(super) async fn list_accounts(
             }))
             .into_response()
         }
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CandidateWriteRequest {
+    account_id: String,
+    candidate_id: Option<String>,
+    expected_revision: Option<u64>,
+    source_refs: Option<Vec<SourceRef>>,
+    action: ProposedAction,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CandidateDeleteRequest {
+    expected_revision: u64,
+}
+
+pub(super) async fn list_candidates(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path(agent_id): Path<String>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !registered_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let vault = match AccountVault::for_agent(&agent_id) {
+        Ok(vault) => vault,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    match vault.list_candidates() {
+        Ok(candidates) => Json(serde_json::json!({"candidates": candidates})).into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+pub(super) async fn save_candidate(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path(agent_id): Path<String>,
+    Json(request): Json<CandidateWriteRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let account_lock = state.mail_calendar_account_lock(&agent_id, &request.account_id);
+    let _account_guard = account_lock.lock().await;
+    let ledger = match ConnectionLedger::for_agent(&agent_id) {
+        Ok(ledger) => ledger,
+        Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    let account = match ledger.read_all() {
+        Ok(accounts) => accounts.into_iter().find(|account| {
+            account.id == request.account_id
+                && account.status == AccountStatus::Connected
+                && account.revoked_at.is_none()
+                && account.owner_agent_id == agent_id
+                && account.provider != Provider::AppleIcloud
+                && account
+                    .allowed_audiences
+                    .contains(&format!("agent:{agent_id}"))
+        }),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(account) = account else {
+        return (
+            StatusCode::FORBIDDEN,
+            "The selected account is unavailable for this Agent.",
+        )
+            .into_response();
+    };
+    let vault = match AccountVault::for_agent(&agent_id) {
+        Ok(vault) => vault,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let candidate = match request.candidate_id {
+        None if request.expected_revision.is_none() => {
+            let Some(source_refs) = request.source_refs else {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "New candidates need source references.",
+                )
+                    .into_response();
+            };
+            match ActionCandidate::new(
+                account.id.clone(),
+                agent_id.clone(),
+                format!("agent:{agent_id}"),
+                source_refs,
+                request.action,
+            ) {
+                Ok(candidate) => candidate,
+                Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+            }
+        }
+        Some(candidate_id)
+            if request.expected_revision.is_some() && request.source_refs.is_none() =>
+        {
+            let mut candidates = match vault.list_candidates() {
+                Ok(candidates) => candidates,
+                Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            };
+            let Some(mut candidate) = candidates.drain(..).find(|item| item.id == candidate_id)
+            else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            if candidate.account_id != account.id
+                || candidate.agent_id != agent_id
+                || candidate.audience_id != format!("agent:{agent_id}")
+            {
+                return StatusCode::FORBIDDEN.into_response();
+            }
+            if let Err(error) = candidate.revise(request.action) {
+                return (StatusCode::BAD_REQUEST, error.to_string()).into_response();
+            }
+            candidate
+        }
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Candidate creation or revision fields are inconsistent.",
+            )
+                .into_response();
+        }
+    };
+    let expected_revision = request.expected_revision;
+    match vault.save_candidate(candidate.clone(), expected_revision) {
+        Ok(()) => {
+            // A second server process may disconnect after the initial read.
+            // Recheck after the vault write; if that raced, remove the saved
+            // version before exposing it to the owner.
+            let account_still_connected = ledger.read_all().is_ok_and(|accounts| {
+                accounts.iter().any(|current| {
+                    current.id == candidate.account_id
+                        && current.revision == account.revision
+                        && current.status == AccountStatus::Connected
+                        && current.revoked_at.is_none()
+                })
+            });
+            if !account_still_connected {
+                let _ = vault.delete_candidate(&candidate.id, candidate.revision);
+                return (
+                    StatusCode::CONFLICT,
+                    "The account changed while saving; reload its status and try again.",
+                )
+                    .into_response();
+            }
+            Json(serde_json::json!({"candidate": candidate})).into_response()
+        }
+        Err(vak_mail_calendar::vault::VaultError::Conflict) => (
+            StatusCode::CONFLICT,
+            "The candidate changed; reload it before saving.",
+        )
+            .into_response(),
+        Err(vak_mail_calendar::vault::VaultError::TooLarge) => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "The local work area is full.",
+        )
+            .into_response(),
+        Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
+}
+
+pub(super) async fn delete_candidate(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<CandidateDeleteRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !registered_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let vault = match AccountVault::for_agent(&agent_id) {
+        Ok(vault) => vault,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    match vault.delete_candidate(&candidate_id, request.expected_revision) {
+        Ok(()) => Json(serde_json::json!({"deleted": true})).into_response(),
+        Err(vak_mail_calendar::vault::VaultError::Conflict) => (
+            StatusCode::CONFLICT,
+            "The candidate changed; reload it before deleting.",
+        )
+            .into_response(),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }

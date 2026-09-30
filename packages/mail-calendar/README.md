@@ -21,9 +21,10 @@ The owner can preview bounded Gmail and Microsoft inbox, event, and free/busy
 results in Settings. A broker-owned Agent tool also reads these accounts on the
 local owner surface after exact Agent and capability checks; channel audiences
 are blocked until an explicit share flow exists. Apple remains unverified and
-unavailable. The working area, local drafts, Review, provider effects,
-scheduled work, and continuous routines are still being built against current
-4.x storage. Before a read, the product explains that disconnect removes the
+unavailable. A bounded Agent-vault working area now stores local email and
+event drafts with revision checks and disconnect cleanup. Full source editing,
+Review, provider effects, scheduled work, and continuous routines are still
+being built against current 4.x storage. Before a read, the product explains that disconnect removes the
 saved credential and blocks future reads, while content recorded in append-only
 Agent session history cannot currently be erased. This package does not claim
 account-content crypto-shredding; that requires future data-architecture

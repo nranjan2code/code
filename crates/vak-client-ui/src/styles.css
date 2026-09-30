@@ -2374,6 +2374,24 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-preview-item small { color: var(--muted); font-size: var(--fs-meta); overflow-wrap: anywhere; }
 .mail-calendar-preview-item p { margin: 3px 0 0; color: var(--text-secondary); font-size: var(--fs-control); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .settings-preview .settings-hint { padding: 10px 0; }
+.mail-calendar-work-actions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-2); padding: 12px 17px; }
+.mail-calendar-work-actions label,
+.mail-calendar-editor label { display: flex; flex: 1 1 220px; flex-direction: column; gap: 5px; color: var(--text-secondary); font-size: var(--fs-meta); }
+.mail-calendar-work-actions select,
+.mail-calendar-editor input,
+.mail-calendar-editor textarea { width: 100%; min-width: 0; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text-primary); font: inherit; }
+.mail-calendar-drafts { display: flex; flex-direction: column; gap: 8px; padding: 0 17px 14px; }
+.mail-calendar-draft-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 11px 12px; border: 1px solid var(--border-soft); border-radius: 9px; background: var(--surface-raised); }
+.mail-calendar-draft-row > div:first-child { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.mail-calendar-draft-row strong { overflow-wrap: anywhere; color: var(--text-primary); font-size: var(--fs-control); }
+.mail-calendar-draft-row span { color: var(--muted); font-size: var(--fs-meta); }
+.mail-calendar-editor { display: flex; flex-direction: column; gap: var(--space-2); margin: 12px 17px 18px; padding: 12px 15px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-raised); }
+.mail-calendar-editor label { flex: initial; }
+.mail-calendar-editor textarea { resize: vertical; line-height: 1.5; }
+.mail-calendar-editor .settings-actions { flex-wrap: wrap; align-items: center; }
+@media (max-width: 560px) {
+  .mail-calendar-draft-row { align-items: flex-start; flex-direction: column; }
+}
 .settings-status { padding: 3px 7px; border-radius: 99px; color: var(--muted); background: var(--surface); font-size: var(--fs-caption); }
 .settings-status.good { color: var(--green); background: color-mix(in srgb, var(--green) 13%, transparent); }
 .settings-status.warn { color: var(--yellow); background: color-mix(in srgb, var(--yellow) 15%, transparent); }

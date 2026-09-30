@@ -93,10 +93,12 @@ Read before changing behaviour in these areas:
   owner-only bounded Google/Microsoft previews, and a broker-owned read tool
   on the local owner surface are implemented on `codex/mail-calendar` against
   current 4.x storage. Channel reads fail closed. The
-  shared working area, local drafts, Review, provider effects, and scheduled
+  bounded Agent-vault working area with local email/event drafts is
+  implemented. Full source editing, Review, provider effects, and scheduled
   or continuous routines remain in progress. Disconnect removes credentials
-  and fences future reads but cannot erase content already recorded in
-  append-only Agent sessions; disclose this until lifecycle erasure ships);
+  and unsent drafts for that account and fences future reads, but cannot erase
+  content already recorded in append-only Agent sessions; disclose this until
+  lifecycle erasure ships);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,

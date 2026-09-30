@@ -754,6 +754,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/mail-preview", post(mail_calendar::mail_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview", post(mail_calendar::calendar_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview", post(mail_calendar::free_busy_preview))
+        .route("/mail-calendar/accounts/{agent_id}/candidates", get(mail_calendar::list_candidates).post(mail_calendar::save_candidate))
+        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}", axum::routing::delete(mail_calendar::delete_candidate))
         .route("/mail-calendar/oauth/callback", get(mail_calendar::oauth_callback))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/disconnect", post(mail_calendar::disconnect_account))
         .route("/health", get(health))

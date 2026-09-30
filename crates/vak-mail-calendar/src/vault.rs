@@ -5,13 +5,19 @@
 //! encrypted-file fallback. Secret values are not `Debug` and are zeroized
 //! when dropped.
 
+use crate::ActionCandidate;
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use std::fs::{self, OpenOptions};
 use std::path::PathBuf;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
 
 const MAX_SECRET_BYTES: usize = 256 * 1024;
 const MAX_PRINCIPAL_BYTES: usize = 512;
+const WORK_AREA_KEY: &str = "vak_mail_calendar_work_area";
+const MAX_WORK_AREA_BYTES: usize = 2 * 1024 * 1024;
+const MAX_WORK_AREA_CANDIDATES: usize = 32;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VaultError {
@@ -23,6 +29,8 @@ pub enum VaultError {
     Unavailable,
     #[error("mail and calendar vault data exceeded its size limit")]
     TooLarge,
+    #[error("mail and calendar candidate revision changed")]
+    Conflict,
 }
 
 /// Secret material accepted from a provider setup flow. Keep this type out of
@@ -251,11 +259,158 @@ impl AccountVault {
     }
 
     /// Removes all account credential material from the Agent's credential
-    /// scope. Safe to retry after partial disconnects.
+    /// scope and its unsent local candidates. Safe to retry after partial
+    /// disconnects. Append-only session copies cannot be removed here.
     pub fn remove(&self, account_id: &str) -> Result<(), VaultError> {
         let key = Self::credential_ref(account_id)?;
         vak_config::remove_env_file_key(&self.scope_hint, &key)?;
-        Ok(())
+        self.remove_candidates_for_account(account_id)
+    }
+
+    /// Return only this Agent's saved local candidates. Content is held as one
+    /// bounded secret-store item, never in a plaintext JSON file or browser
+    /// local storage.
+    pub fn list_candidates(&self) -> Result<Vec<ActionCandidate>, VaultError> {
+        self.with_work_area(|candidates| Ok(candidates))
+    }
+
+    /// Save a candidate revision using compare-and-swap semantics. Its Agent,
+    /// account, audience, source lineage, and creation time cannot change
+    /// across revisions. The credential store encrypts the whole work area.
+    pub fn save_candidate(
+        &self,
+        candidate: ActionCandidate,
+        expected_revision: Option<u64>,
+    ) -> Result<(), VaultError> {
+        candidate
+            .validate()
+            .map_err(|_| VaultError::InvalidReference)?;
+        if candidate.agent_id != self.agent_id {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_work_area(|mut candidates| {
+            let index = candidates.iter().position(|saved| saved.id == candidate.id);
+            match (index, expected_revision) {
+                (None, None) if candidate.revision == 1 => {}
+                (Some(index), Some(expected)) => {
+                    let previous = &candidates[index];
+                    if previous.revision != expected
+                        || candidate.revision
+                            != expected.checked_add(1).ok_or(VaultError::Conflict)?
+                        || previous.account_id != candidate.account_id
+                        || previous.agent_id != candidate.agent_id
+                        || previous.audience_id != candidate.audience_id
+                        || previous.source_refs != candidate.source_refs
+                        || previous.created_at != candidate.created_at
+                    {
+                        return Err(VaultError::Conflict);
+                    }
+                    candidates[index] = candidate;
+                    return self.write_work_area(&candidates);
+                }
+                _ => return Err(VaultError::Conflict),
+            }
+            if candidates.len() >= MAX_WORK_AREA_CANDIDATES {
+                return Err(VaultError::TooLarge);
+            }
+            candidates.push(candidate);
+            self.write_work_area(&candidates)
+        })
+    }
+
+    pub fn delete_candidate(
+        &self,
+        candidate_id: &str,
+        expected_revision: u64,
+    ) -> Result<(), VaultError> {
+        self.with_work_area(|mut candidates| {
+            let Some(index) = candidates.iter().position(|item| item.id == candidate_id) else {
+                return Ok(());
+            };
+            if candidates[index].revision != expected_revision {
+                return Err(VaultError::Conflict);
+            }
+            candidates.remove(index);
+            self.write_work_area(&candidates)
+        })
+    }
+
+    fn remove_candidates_for_account(&self, account_id: &str) -> Result<(), VaultError> {
+        self.with_work_area(|mut candidates| {
+            let before = candidates.len();
+            candidates.retain(|candidate| candidate.account_id != account_id);
+            if candidates.len() != before {
+                self.write_work_area(&candidates)?;
+            }
+            Ok(())
+        })
+    }
+
+    fn with_work_area<T>(
+        &self,
+        operation: impl FnOnce(Vec<ActionCandidate>) -> Result<T, VaultError>,
+    ) -> Result<T, VaultError> {
+        let agent_home = self
+            .scope_hint
+            .parent()
+            .ok_or(VaultError::InvalidReference)?;
+        let work_dir = agent_home.join("mail-calendar");
+        ensure_agent_directory(&work_dir, true)?;
+        let lock_path = work_dir.join(".working-area.lock");
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let lock = options.open(&lock_path).map_err(VaultError::Store)?;
+        lock.lock_exclusive().map_err(VaultError::Store)?;
+        let result = (|| {
+            let encoded = vak_config::read_env_file_var(&self.scope_hint, WORK_AREA_KEY);
+            let Some(encoded) = encoded else {
+                return operation(Vec::new());
+            };
+            let encoded = Zeroizing::new(encoded);
+            if encoded.len() > MAX_WORK_AREA_BYTES {
+                return Err(VaultError::TooLarge);
+            }
+            let candidates: Vec<ActionCandidate> =
+                serde_json::from_str(&encoded).map_err(|_| VaultError::Unavailable)?;
+            if candidates.len() > MAX_WORK_AREA_CANDIDATES
+                || candidates.iter().any(|candidate| {
+                    candidate.agent_id != self.agent_id || candidate.validate().is_err()
+                })
+                || candidates.iter().enumerate().any(|(index, candidate)| {
+                    candidates[index + 1..]
+                        .iter()
+                        .any(|next| next.id == candidate.id)
+                })
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            operation(candidates)
+        })();
+        let unlock_result = FileExt::unlock(&lock).map_err(VaultError::Store);
+        if let Err(error) = unlock_result {
+            return Err(error);
+        }
+        result
+    }
+
+    fn write_work_area(&self, candidates: &[ActionCandidate]) -> Result<(), VaultError> {
+        let encoded =
+            Zeroizing::new(serde_json::to_string(candidates).map_err(|_| VaultError::Unavailable)?);
+        if encoded.len() > MAX_WORK_AREA_BYTES {
+            return Err(VaultError::TooLarge);
+        }
+        vak_config::upsert_env_file(&self.scope_hint, WORK_AREA_KEY, &encoded)
+            .map_err(VaultError::Store)
     }
 
     pub fn agent_id(&self) -> &str {
@@ -380,6 +535,70 @@ fn validate_account_id(value: &str) -> Result<(), VaultError> {
 #[cfg(test)]
 mod tests {
     use super::{AccountSecretMaterial, AccountVault, Uuid, VaultError};
+    use crate::{ActionCandidate, MailAddress, MailDraft, ProposedAction, SourceRef};
+
+    fn candidate(agent_id: &str, account_id: &str) -> ActionCandidate {
+        ActionCandidate::new(
+            account_id.to_owned(),
+            agent_id.to_owned(),
+            format!("agent:{agent_id}"),
+            vec![SourceRef {
+                item_id: "message-1".into(),
+                version: Some("etag-1".into()),
+                label: Some("Selected email".into()),
+            }],
+            ProposedAction::SendMail {
+                draft: MailDraft {
+                    from_alias: None,
+                    to: vec![MailAddress {
+                        address: "reader@example.com".into(),
+                        display_name: None,
+                    }],
+                    cc: Vec::new(),
+                    bcc: Vec::new(),
+                    subject: "Draft reply".into(),
+                    body_text: "Not sent until reviewed".into(),
+                    attachment_refs: Vec::new(),
+                    reply_to_message_id: Some("message-1".into()),
+                },
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn local_candidates_are_agent_vaulted_revisioned_and_deleted_with_account() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-drafts-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let other_account = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let other = AccountVault::for_agent(&format!("mailcal-other-{}", Uuid::now_v7())).unwrap();
+        let first = candidate(&agent_id, &account_id);
+        let second = candidate(&agent_id, &other_account);
+        assert!(matches!(
+            other.save_candidate(first.clone(), None),
+            Err(VaultError::InvalidReference)
+        ));
+        vault.save_candidate(first.clone(), None).unwrap();
+        vault.save_candidate(second.clone(), None).unwrap();
+        assert_eq!(vault.list_candidates().unwrap().len(), 2);
+
+        let mut revision = first.clone();
+        if let ProposedAction::SendMail { draft } = &mut revision.action {
+            draft.body_text = "Revised locally".into();
+        }
+        revision.revise(revision.action.clone()).unwrap();
+        assert!(matches!(
+            vault.save_candidate(revision.clone(), Some(0)),
+            Err(VaultError::Conflict)
+        ));
+        vault.save_candidate(revision, Some(1)).unwrap();
+        vault.remove(&account_id).unwrap();
+        let remaining = vault.list_candidates().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].account_id, other_account);
+    }
 
     #[test]
     fn only_masked_display_identity_is_available_for_account_surfaces() {

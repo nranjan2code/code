@@ -1,9 +1,11 @@
 # Plan — secure mail and calendar package
 
 Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
-Google/Microsoft owner previews and the initial broker-owned local Agent read
-tool are implemented on `codex/mail-calendar`. The maintainer authorized continuing
-against the current 4.x storage model on 2026-09-30.** The
+Google/Microsoft owner previews, the broker-owned local Agent read tool, and
+the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
+save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`.
+The maintainer authorized continuing against the current 4.x storage model on
+2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
 `docs/design/80-mail-and-calendar.md`. This plan stages the work so a secure
 read path, exact preview, and provider actions can be reviewed as concrete
@@ -192,7 +194,7 @@ revocation during a read, and no message-read mutation apply here. Each
 provider must return useful structured views or an explicit unsupported or
 reauthentication state.
 
-## Stage 2 — working area and local candidates
+## Stage 2 — working area and local candidates (in progress)
 
 Build the shared account picker, mail reader/composer, calendar agenda and
 event editor, local autosave, structured payload preview, and revisioned
@@ -203,6 +205,14 @@ conflict display and accessibility. No provider writes in this stage.
 save/reopen, and resolve concurrent local edits on desktop and phone, light
 and dark. Browser screenshots meet doc 80's sizes. Preparing and editing
 candidates cannot contact provider write endpoints.
+
+**Implemented increment (2026-09-30):** the Settings surface can create,
+reopen, revise, and delete email/event draft candidates. The broker stores at
+most 32 candidates and 2 MiB per Agent in that Agent's credential vault,
+enforces revision compare-and-swap, validates Agent/account/source lineage,
+and removes candidates for an account during disconnect cleanup. Drafts are
+local only; this does not complete source-to-edit navigation, exact-effect
+preview, Review choices, mobile/accessibility screenshots, or provider writes.
 
 ## Stage 3 — reviewed provider effects
 
@@ -896,3 +906,12 @@ authorization and approval boundary on every execution path.
   build pass. Strict Core Clippy passes with the repository's pre-existing
   `collapsible_if` finding allowed; no new lint was reported. Working area,
   drafts, Review, effects, and routines remain open.
+- 2026-09-30: Added the first Stage 2 working-area increment: owner Settings
+  can create, reopen, revise, and delete email/event drafts. The broker stores
+  at most 32 candidates and 2 MiB per Agent in its encrypted credential vault,
+  validates Agent/account/source lineage, and uses revision compare-and-swap.
+  Account disconnect removes unsent candidates for that account. This remains
+  local-only: exact-effect preview, Review choices, full source editing,
+  provider effects, and routines are still open. Verification: 60
+  mail-calendar tests, the candidate lifecycle HTTP test, `cargo fmt --check`,
+  and the web build pass.
