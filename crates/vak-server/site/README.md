@@ -1,6 +1,6 @@
 # Vakyartha public site
 
-Twelve static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+Fourteen static pages, built here and embedded by `crates/vak-server/src/site.rs`.
 The navigation uses plain labels. `/doctor` is reserved for the authenticated
 runtime API; the public introduction lives at `/meet-doctor`. Only the standalone
 Vercel export redirects the old website URL to that introduction.
@@ -9,6 +9,7 @@ Vercel export redirects the old website URL to that introduction.
 | --- | --- |
 | `/` | Character scenes and expandable everyday, work and learning examples |
 | `/outcomes` | All eight companions with example requests and possible results |
+| `/email-calendar` | Selected mail, calendar planning, reviewed actions and useful routines |
 | `/tour` | Interactive request/result illustrations and a short walkthrough |
 | `/security` | Illustrated guide to access, approvals, data, connected chats, interruption and evidence |
 | `/install` | Public source build instructions and access to an existing installation |
@@ -48,7 +49,7 @@ static framework, copies the brand assets, provides `/version`, and changes
 the links that only work on a running Vak server. The embedded site is not
 changed by this export.
 
-The builder copies WebP and JPEG files recursively from `src/assets/` to `/site/`. CSS and the shared script
+The builder copies WebP, JPEG and PNG files recursively from `src/assets/` to `/site/`. CSS and the shared script
 are inlined. The optional, pinned Motion library is emitted under its content
 hash. Only the walkthrough's example transition uses Motion; content does not
 wait for it, and reduced motion disables the transition.

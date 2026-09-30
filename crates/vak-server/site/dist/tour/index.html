@@ -515,11 +515,13 @@ img {
 }
 .footer nav h2 { margin: 0 0 3px; color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.3; letter-spacing: 0; }
 .footer nav a { width: fit-content; color: var(--muted); text-underline-offset: 4px; }
-.footer .footer-project {
-  width: auto;
-  margin: 0;
-  padding: 0;
-  border: 0;
+.footer .footer-legal {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
 }
 .build-details {
   width: 100%;
@@ -999,6 +1001,7 @@ details[open] > summary:after {
 .capability-pdf { background: var(--soft); }
 .capability-pdf .chapter-art { width: 53%; margin-left: 0; }
 .capability-review .chapter-art { width: 56%; margin-left: -4%; }
+.calendar-story .chapter-composition { flex-direction: row-reverse; }
 .capability-limits { margin-top: 18px; border-top: 1px solid var(--line); }
 .capability-limits summary { font-size: 14px; }
 .capability-limits p { margin: 10px 0 0; font-size: 14px; line-height: 1.6; }
@@ -1458,7 +1461,6 @@ details[open] > summary:after {
     gap: 10px;
   }
   .footer-inner { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .footer-project { grid-column: 1 / -1; }
   .footer nav h2 { margin-bottom: 2px; }
   .footer nav a { line-height: 1.45; }
   .footer-brand { grid-column: 1 / -1; }
@@ -1707,7 +1709,7 @@ details[open] > summary:after {
 .pool-label h3 { font-size: 26px; }
 .pool-label p { font-size: 14px; }
 .pool-lanes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; border-top: 1px solid var(--line); padding-top: 28px; }
-.pool-lanes > div { border-left: 3px solid var(--primary); padding-left: 20px; }
+.pool-lanes > div { padding: 0; }
 .pool-lanes span, .pool-lanes strong, .pool-lanes small { display: block; }
 .pool-lanes span { font-size: 13px; color: var(--muted); }
 .pool-lanes strong { font-size: 19px; margin: 8px 0; }
@@ -1718,8 +1720,7 @@ details[open] > summary:after {
 .evidence-diagram strong { font-size: 19px; }
 .evidence-diagram small { font-size: 14px; }
 .spend-diagram ol { list-style: none; display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; margin: 0; padding: 26px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-.spend-diagram li { border-left: 3px solid var(--primary); padding-left: 24px; }
-.spend-diagram li:first-child { border-color: var(--live); }
+.spend-diagram li { padding: 0; }
 .spend-diagram h3 { font-size: 25px; margin: 12px 0; }
 .spend-diagram p { font-size: 16px; line-height: 1.65; }
 .admin-map { display: grid; grid-template-columns: 0.7fr 1.3fr; gap: 24px 64px; }
@@ -1828,12 +1829,12 @@ details[open] > summary:after {
 .pdf-diagram { width: min(380px, 100%); min-height: 490px; margin: 0 auto; padding: 28px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 24px 60px rgb(16 29 61 / 8%); transform: rotate(-2deg); }
 .pdf-page { min-height: 420px; padding: 18px 22px; background: var(--canvas); }
 .pdf-topline { display: flex; justify-content: space-between; color: var(--primary); font-size: 9px; letter-spacing: .08em; }
-.pdf-page h3 { margin: 36px 0 18px; font-family: Georgia, serif; font-size: 34px; line-height: 1.04; letter-spacing: -.03em; }
+.pdf-page h3 { margin: 36px 0 18px; font-family: inherit; font-size: 34px; line-height: 1.04; letter-spacing: -.03em; }
 .pdf-rule { width: 36px; height: 3px; margin-bottom: 22px; background: var(--live); }
 .pdf-line { height: 5px; margin: 10px 0; border-radius: 5px; background: var(--line); }
 .pdf-line.long { width: 100%; }
 .pdf-line.mid { width: 76%; }
-.pdf-page blockquote { margin: 24px 0; padding-left: 14px; border-left: 2px solid var(--live); color: var(--ink); font: italic 15px/1.5 Georgia, serif; }
+.pdf-page blockquote { margin: 24px 0; padding: 16px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--ink); font-size: 15px; font-style: italic; line-height: 1.5; }
 .pdf-citation { display: inline-flex; align-items: center; gap: 8px; margin-top: 20px; padding: 8px 10px; border-radius: 8px; background: var(--soft); color: var(--primary); font-size: 11px; }
 .pdf-citation span { color: var(--live-ink); }
 .capability-detail { margin-top: 28px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 18px 0; }
@@ -1916,7 +1917,7 @@ details[open] > summary:after {
 .security-review-column { padding-top: 20px; }
 .security-document { margin-top: 24px; }
 .security-document .security-technical { margin: 0 0 18px; font-size: 13px; }
-.security-callout { border-left: 3px solid var(--live); padding-left: 24px; margin-top: 32px; }
+.security-callout { border-top: 1px solid var(--line); padding-top: 24px; margin-top: 32px; }
 .security-callout h3 { font-size: 22px; margin-bottom: 10px; }
 .security-callout p { font-size: 16px; line-height: 1.7; }
 .security-facts article { padding: 24px 0; border-top: 1px solid var(--line); }
@@ -2277,28 +2278,31 @@ details[open] > summary:after {
           ></a>
           <p>Ask. Then go live your day.</p>
         </div>
-        <nav class="footer-group" aria-label="Explore Vakyartha">
-          <h2>Explore</h2>
-          <a href="/outcomes">Everyday examples</a>
-          <a href="/tour">How it works</a>
-          <a href="/surfaces">Ways to use it</a>
-          <a href="/capabilities">Documents</a>
-          <a href="/vak">Our name</a>
-        </nav>
         <nav class="footer-group" aria-label="Vakyartha product">
           <h2>Product</h2>
+          <a href="/tour">How it works</a>
+          <a href="/outcomes">Everyday examples</a>
+          <a href="/surfaces">Ways to use it</a>
+          <a href="/capabilities">Documents</a>
+          <a href="/email-calendar">Email &amp; Calendar</a>
           <a href="/security">Your control</a>
-          <a href="/architecture">Architecture</a>
-          <a href="/meet-doctor">Doctor</a>
-          <a href="/install">Get started</a>
         </nav>
-        <nav class="footer-group footer-project" aria-label="Project and resources">
-          <h2>Project</h2>
+        <nav class="footer-group" aria-label="Vakyartha resources">
+          <h2>Resources</h2>
+          <a href="/install">Get started</a>
           <a href="https://docs.vakyartha.com">Documentation</a>
-          <a href="https://github.com/nranjan2code/code" target="_blank" rel="noopener noreferrer">Source code</a>
+          <a href="/meet-doctor">Doctor</a>
           <a href="https://github.com/nranjan2code/code/issues" target="_blank" rel="noopener noreferrer">Support</a>
-          <a href="https://www.linkedin.com/in/nisheethranjan/" target="_blank" rel="noopener noreferrer" aria-label="Nisheeth Ranjan on LinkedIn (opens in a new tab)">LinkedIn · Nisheeth Ranjan ↗</a>
+          <a href="/architecture">Architecture</a>
+          <a href="https://github.com/nranjan2code/code" target="_blank" rel="noopener noreferrer">Source code</a>
+        </nav>
+        <nav class="footer-group" aria-label="About Vakyartha">
+          <h2>About</h2>
+          <a href="/vak">Our name</a>
           <a href="/wallpapers">Wallpapers</a>
+          <a href="https://www.linkedin.com/in/nisheethranjan/" target="_blank" rel="noopener noreferrer" aria-label="Nisheeth Ranjan on LinkedIn (opens in a new tab)">Nisheeth Ranjan ↗</a>
+        </nav>
+        <nav class="footer-legal" aria-label="Legal">
           <a href="/privacy">Privacy</a>
           <a href="/terms">Terms of use</a>
         </nav>

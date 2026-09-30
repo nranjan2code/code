@@ -1,0 +1,14 @@
+Use case: illustration-story
+Asset type: wide transparent website illustration for a Vakyartha Email & Calendar page
+Primary request: Show the canonical Vakyartha blue Songbird helping someone find a workable time for a meeting. The bird studies a compact open calendar with a few clear open blocks, and places one saffron pin beside a promising time; two tiny event cards sit nearby to suggest checking for conflicts.
+Input images: Image 1 is the exact Songbird identity reference; preserve its deep indigo-blue body, cream face, swept three-feather crest with saffron tips, saffron throat, wing silhouette, and warm attentive eyes. Image 2 is the public website scene style reference.
+Scene/backdrop: No room or rectangular backdrop; transparent cutout, calendar and event cards are dimensional objects, not app UI.
+Subject: Only the canonical blue Songbird and a small calendar arrangement; no other characters.
+Style/medium: Premium dimensional 3D editorial character illustration, refined feather detail, crisp material edges, gentle grounded shadows; match Vakyartha's website scenes.
+Composition/framing: Wide landscape, bird positioned toward the right, calendar toward the left; full uncropped composition and generous negative space.
+Lighting/mood: Soft studio daylight, clear, calm, optimistic.
+Color palette: White/ivory, indigo/blue, cream, restrained saffron only as a small selected-time accent.
+Materials/textures: Soft detailed feathers, matte ivory calendar leaves, subtle blue tabs.
+Text (verbatim): No text or numbers.
+Constraints: Preserve the exact bird identity from Image 1. Transparent background with clean alpha edges.
+Avoid: Logos or wordmarks, readable letters or dates, UI screenshots, generic blue bird, extra characters, extra accents, gradient backdrop, circles behind subject, watermark, cropped crest or calendar.
