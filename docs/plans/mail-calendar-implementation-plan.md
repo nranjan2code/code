@@ -286,9 +286,10 @@ provider data; it is not the later effect-aware Review step.
 previews now accept a selected local date range of up to 30 days, convert the
 boundaries to instants using the device time zone, and show the result refresh
 time and queried dates. This adds bounded date navigation without expanding
-provider scopes. It does not yet provide agenda/day/week navigation, conflict
-display, calendar-source selection, or browser acceptance with connected test
-accounts.
+provider scopes, adds previous/next seven-day navigation, and flags overlapping
+timed or all-day entries in the selected account preview. It does not yet
+provide agenda/day/week grid views, cross-calendar conflict detection,
+calendar-source selection, or browser acceptance with connected test accounts.
 
 ## Stage 3 — reviewed provider effects
 
@@ -1255,3 +1256,9 @@ authorization and approval boundary on every execution path.
   previews. Navigation preserves the selected range length, updates the date
   fields, and refreshes the same account immediately using local calendar-day
   arithmetic so daylight-saving transitions do not shift the chosen dates.
+- 2026-09-30: Calendar previews now flag overlapping timed and all-day events
+  without exposing additional private-event details. All-day bounds use an
+  exclusive end date; invalid or missing time bounds are not treated as
+  conflicts. Node regression tests cover timed overlaps, adjacent intervals,
+  exclusive all-day ends, and malformed bounds. Agenda/day/week workspace and
+  cross-source conflict detection remain open.

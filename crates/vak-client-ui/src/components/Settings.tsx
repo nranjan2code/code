@@ -32,6 +32,7 @@ import {
 import type { SettingsPageId } from "../store";
 import type { ConfigSnapshot, SessionSummary, TaskDef } from "../types";
 import * as api from "../api";
+import { overlappingMailCalendarEventIds } from "../mailCalendarConflicts.mjs";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
 import { watchConfig } from "../streamHub";
 import { relTime } from "../time";
@@ -1148,6 +1149,10 @@ export default function Settings() {
     refreshedAt?: string;
     query?: string;
   } | null>(null);
+  const mailCalendarConflictIds = createMemo(() => {
+    const preview = mailCalendarPreview();
+    return preview?.kind === "calendar" ? overlappingMailCalendarEventIds(preview.events ?? []) : new Set<string>();
+  });
   const [mailCalendarSearchQuery, setMailCalendarSearchQuery] = createSignal("");
   let mailCalendarPreviewGeneration = 0;
   const [mailCalendarCapabilities, setMailCalendarCapabilities] = createSignal<api.MailCalendarCapability[]>([...DEFAULT_MAIL_CALENDAR_CAPABILITIES]);
@@ -2577,8 +2582,9 @@ export default function Settings() {
                     </Show>
                   </Show>
                   <Show when={preview.kind === "calendar"}>
+                    <Show when={mailCalendarConflictIds().size > 0}><p class="settings-hint" role="status">{mailCalendarConflictIds().size} events overlap another event in this preview. Check these times before changing or adding an event.</p></Show>
                     <Show when={(preview.events?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading calendar…" : "No events in this time range."}</p>}>
-                      <For each={preview.events ?? []}>{(event) => <article class="mail-calendar-preview-item"><strong>{event.title}</strong><span>{event.all_day ? `All day · ${event.starts_on ? new Date(`${event.starts_on}T12:00:00`).toLocaleDateString() : "Date unavailable"}` : event.starts_at ? new Date(event.starts_at).toLocaleString() : "Time unavailable"}{!event.all_day && event.ends_at ? ` – ${new Date(event.ends_at).toLocaleTimeString()}` : ""} · {event.attendee_count} attendees</span><Show when={event.location}><p>{event.location}</p></Show><Show when={event.description}><p>{event.description}</p></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "google" && event.version && !event.private && !event.all_day && !event.recurring && event.attendee_count === 0 && event.starts_at && event.ends_at}><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "calendar", [{ item_id: event.provider_id, version: event.version, label: event.title }]); setMailCalendarUpdateSource({ event_id: event.provider_id, source_version: event.version! }); setMailCalendarDraftTitle(event.title); setMailCalendarDraftDescription(event.description ?? ""); setMailCalendarDraftLocation(event.location ?? ""); const local = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }; setMailCalendarDraftStarts(local(event.starts_at!)); setMailCalendarDraftEnds(local(event.ends_at!)); }}>Draft update</button></Show></article>}</For>
+                      <For each={preview.events ?? []}>{(event) => <article class="mail-calendar-preview-item"><strong>{event.title}</strong><span>{event.all_day ? `All day · ${event.starts_on ? new Date(`${event.starts_on}T12:00:00`).toLocaleDateString() : "Date unavailable"}` : event.starts_at ? new Date(event.starts_at).toLocaleString() : "Time unavailable"}{!event.all_day && event.ends_at ? ` – ${new Date(event.ends_at).toLocaleTimeString()}` : ""} · {event.attendee_count} attendees</span><Show when={mailCalendarConflictIds().has(event.provider_id)}><small>Overlaps another event in this preview.</small></Show><Show when={event.location}><p>{event.location}</p></Show><Show when={event.description}><p>{event.description}</p></Show><Show when={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "google" && event.version && !event.private && !event.all_day && !event.recurring && event.attendee_count === 0 && event.starts_at && event.ends_at}><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "calendar", [{ item_id: event.provider_id, version: event.version, label: event.title }]); setMailCalendarUpdateSource({ event_id: event.provider_id, source_version: event.version! }); setMailCalendarDraftTitle(event.title); setMailCalendarDraftDescription(event.description ?? ""); setMailCalendarDraftLocation(event.location ?? ""); const local = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); }; setMailCalendarDraftStarts(local(event.starts_at!)); setMailCalendarDraftEnds(local(event.ends_at!)); }}>Draft update</button></Show></article>}</For>
                     </Show>
                   </Show>
                   <Show when={preview.kind === "freebusy"}>
