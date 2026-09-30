@@ -55,6 +55,41 @@ export function fileSubject(path: string, origin: ArtifactOrigin, title: string)
   return { kind: "file", title, path, sessionId: origin.sessionId, resultId, anchor };
 }
 
+/** What the server is asked to open a preview origin on (`POST /previews`). */
+export type PreviewSource =
+  | { kind: "candidate"; session_id: string; candidate_id: string; path: string }
+  | { kind: "execution"; session_id: string; execution_id: string; path: string }
+  | { kind: "workspace"; path: string };
+
+/**
+ * The preview a page can be served from, by the identity its files are read
+ * through. Markup from the conversation and dev servers have none: the first
+ * has no files, the second is its own server.
+ */
+export function previewSource(subject: CanvasSubject): PreviewSource | null {
+  switch (subject.kind) {
+    case "file": return { kind: "workspace", path: subject.path };
+    case "execution_artifact": return { kind: "execution", session_id: subject.sessionId, execution_id: subject.executionId, path: subject.path };
+    case "draft_file": return { kind: "candidate", session_id: subject.sessionId, candidate_id: subject.candidateId, path: subject.path };
+    case "inline":
+    case "live_server": return null;
+  }
+}
+
+/**
+ * Where a dev server on this computer's port is framed from: the other
+ * loopback name than the one the app is reached by. Two names are two sites,
+ * so the page shares no cookies or storage with the app. `null` when the app
+ * is reached by another name, because a loopback port on the server's machine
+ * cannot be reached from a browser that is elsewhere.
+ */
+export function liveServerOrigin(appHostname: string, port: number): string | null {
+  const name = appHostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (name === "127.0.0.1" || name === "::1") return `http://localhost:${port}`;
+  if (name === "localhost") return `http://127.0.0.1:${port}`;
+  return null;
+}
+
 /** The saved file or the workspace path a subject reads; empty when there is none. */
 export function subjectPath(subject: CanvasSubject): string {
   switch (subject.kind) {

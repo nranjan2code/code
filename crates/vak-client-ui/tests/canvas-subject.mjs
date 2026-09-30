@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import {
   displayType,
   fileSubject,
+  liveServerOrigin,
   matchExecutionArtifact,
+  previewSource,
   runOrigin,
   subjectCandidateId,
   subjectExecutionId,
@@ -58,5 +60,20 @@ assert.deepEqual(matchExecutionArtifact("report.html", runs), { kind: "many", co
 assert.deepEqual(matchExecutionArtifact("chart.png", runs), { kind: "none" });
 assert.deepEqual(matchExecutionArtifact("a.csv", runs), { kind: "none" });
 assert.deepEqual(matchExecutionArtifact("x/data/a.csv", runs), { kind: "none" });
+
+// Which route serves a page's files follows its identity; markup and servers have no files to serve.
+assert.deepEqual(previewSource(plain), { kind: "workspace", path: "notes.md" });
+assert.deepEqual(previewSource(run), { kind: "execution", session_id: "s1", execution_id: "e2", path: "out/report.csv" });
+assert.deepEqual(previewSource(draft), { kind: "candidate", session_id: "s1", candidate_id: "c1", path: "site/index.html" });
+assert.equal(previewSource(inline), null);
+assert.equal(previewSource({ kind: "live_server", title: "app", serverName: "web", sessionId: "s" }), null);
+
+// A dev server is framed from the other loopback name than the app's, and never from anywhere else.
+assert.equal(liveServerOrigin("127.0.0.1", 5173), "http://localhost:5173");
+assert.equal(liveServerOrigin("[::1]", 5173), "http://localhost:5173");
+assert.equal(liveServerOrigin("localhost", 5173), "http://127.0.0.1:5173");
+assert.equal(liveServerOrigin("LOCALHOST", 5173), "http://127.0.0.1:5173");
+assert.equal(liveServerOrigin("vak.example.com", 5173), null);
+assert.equal(liveServerOrigin("192.168.1.20", 5173), null);
 
 console.log("canvas subject ok");

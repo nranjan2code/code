@@ -5,7 +5,7 @@ import { previewSandbox, sandboxedSrcdoc } from "../src/safeUrl.ts";
 // the opaque-origin one never carries allow-same-origin.
 assert.equal(previewSandbox("static"), "allow-scripts allow-forms");
 assert.ok(!previewSandbox("static").includes("allow-same-origin"));
-assert.ok(previewSandbox("live_server").includes("allow-same-origin"));
+assert.ok(previewSandbox("origin").includes("allow-same-origin"));
 
 const policyAt = (doc) => doc.indexOf("Content-Security-Policy");
 

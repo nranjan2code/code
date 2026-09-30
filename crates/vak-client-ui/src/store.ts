@@ -300,23 +300,6 @@ export function resetWorkbenchExecutions() {
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
   setRequestedArtifact(null);
-  setActiveComponentPreview(null);
-}
-
-/** A component preview shown in the dock (`PreviewPane`); the Canvas shows a `CanvasSubject`. */
-export interface ActiveComponentPreview {
-  id: string;
-  title: string;
-  artifactPath: string;
-  html?: string;
-  previewId?: string;
-  timestamp?: number;
-}
-export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
-
-export function openComponentPreview(preview: ActiveComponentPreview) {
-  setActiveComponentPreview(preview);
-  setDockTab("preview");
 }
 
 // ---------------------------------------------------------------------------

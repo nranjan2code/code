@@ -1,6 +1,6 @@
 # 66 — Immersive Polyglot Artifact Canvas
 
-Status: **partially implemented — the viewer, split/focused modes, device switcher and polyglot formats shipped in 3.0.85; preview isolation (§3.1) is enforced from the K0 change. The dev-server path in the Canvas has no producer yet and the dock `PreviewPane` still exists; `docs/plans/canvas-plan.md` is the remaining work.**
+Status: **implemented for a Canvas on this computer — the viewer, split/focused modes, device switcher and polyglot formats shipped in 3.0.85; preview isolation (§3.1), the frame and per-conversation Canvas (§0a), subject identity (§0) and preview origins (§3.2) landed after it. Previewing several files or a dev server from a browser on another machine is not built; `docs/plans/canvas-plan.md` has the remaining work.**
 
 ## 1. Product Decision & Thesis
 
@@ -55,8 +55,8 @@ Closing uses a 220ms CSS slide-out animation via `isClosing()`. If an operator c
 
 | Format | Detection Strategy | Presentation Implementation | Security & Sandboxing |
 |---|---|---|---|
-| **HTML Prototypes** | `.html`, `.htm`, `.xhtml`, or inline HTML snippet without conflicting file path | Sandboxed `<iframe>` with `srcdoc` | `static` sandbox and no-network CSP (§3.1) |
-| **Dev Servers** | `artifact.serverName` or `artifact.serverUrl` | Live `<iframe>` pointing to `http://127.0.0.1:{port}` with auto-lifecycle | `live_server` sandbox (§3.1) |
+| **HTML Prototypes** | `.html`, `.htm`, `.xhtml`, or inline HTML snippet without conflicting file path | A preview origin (§3.2) when files sit behind the page, otherwise a sandboxed `<iframe>` with `srcdoc` | `origin` sandbox on a preview origin; `static` sandbox and no-network CSP for `srcdoc` (§3.1) |
+| **Dev Servers** | a `live_server` subject, shown from the Live preview list in the dock | Live `<iframe>` on the server's own port, framed under the other loopback name than the app's, started and stopped by the viewer | `origin` sandbox (§3.1) |
 | **PDF Documents** | `.pdf` extension | Native browser PDF viewer in full-bleed `<iframe>` | Loaded via authenticated raw stream `api.readFileRaw()`, converted to managed blob URL, revoked on cleanup |
 | **Images** | `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`, `.svg`, `.ico`, `.bmp` | Responsive image viewport with checkerboard transparency grid | Blob URL streaming, containment sizing |
 | **Code & Config** | `.rs`, `.ts`, `.tsx`, `.py`, `.json`, `.toml`, `.yaml`, `.md`, `.sh`, etc. | Formatted `<pre><code>` block with one-click clipboard copy | Text content display, no script execution |
@@ -65,12 +65,25 @@ Closing uses a 220ms CSS slide-out animation via `isClosing()`. If an operator c
 
 A preview runs someone else's markup, so its isolation is decided by the client and never by the data that describes the preview.
 
-- **Sandbox.** `previewSandbox()` (`safeUrl.ts`) is the only source of an `iframe` `sandbox` value: `static` (`allow-scripts allow-forms`, opaque origin) for documents and saved drafts, `live_server` for a dev server that already has its own loopback origin. `allow-same-origin` on a `srcdoc` frame would give the previewed script the app's origin and its authenticated API, so it is never reachable from a card.
+- **Sandbox.** `previewSandbox()` (`safeUrl.ts`) is the only source of an `iframe` `sandbox` value: `static` (`allow-scripts allow-forms`, opaque origin) for markup from the conversation and for a page shown as one document, `origin` for a page served from an origin of its own (§3.2), which is not the app's origin and so may keep its own storage and open windows. `allow-same-origin` on a `srcdoc` frame would give the previewed script the app's origin and its authenticated API, so it is never reachable from a card.
 - **Network.** `sandboxedSrcdoc()` always writes `connect-src 'none'`. There is no card field, prop or argument that widens it, so the chrome's "Safe preview, offline" is what the frame enforces. A preview that needs network access is a separate, user-granted setting, not built.
 - **CSP placement.** The policy is the first markup after the document's doctype, so no script (before `<head>`, or in a string or comment that mentions `<head>`) runs ahead of it.
 - **Server side.** `emit_ui_preview_card` has a closed schema, and `normalize_payload` drops `sandbox` and `connect_src` if a model sends them anyway. The client ignores them regardless, because the fence path does not go through the tool.
 
 Tests: `crates/vak-client-ui/tests/preview-isolation.mjs`, and `ui_preview_never_carries_isolation_settings_from_the_model` in `vak-core`.
+
+### 3.2 Preview origins
+
+A page with files behind it (a saved draft's site, a run's output, a page in the workspace) is not poured into a `srcdoc` frame, where relative stylesheets, scripts, modules, `fetch` and links cannot work. `POST /previews` (`crates/vak-server/src/preview.rs`) opens a preview of one file under a scope (`candidate`, `execution` or `workspace`) and answers with the URL to frame.
+
+- **An origin of its own.** Each preview listens on a fresh loopback port, so it is a browser origin of its own, and it is framed under the *other* loopback name than the one the app is reached by (`127.0.0.1` and `localhost` are two sites). It shares no cookie, storage or `document.parent` access with the app, and the app's routes, credentials and cookies never reach it.
+- **Scope.** The listener reads only through the same functions that serve the file to the owner: a saved version's manifest files (hash-checked), a run's scratch directory, or the workspace below the opened page's directory with dotfiles refused. `..`, backslashes and NUL are refused before any read. The path starts with an unguessable token; a wrong or missing one is a plain 404.
+- **Policy.** The page may load its own files and run its own script and may reach no other origin (`connect-src 'self'`, no external images, fonts or frames); only the app's loopback origins and the desktop shell may embed it. `GET` and `HEAD` only, and a request whose `Host` is not a loopback name is refused (DNS rebinding).
+- **Lifetime.** The viewer closes the preview (`DELETE /previews/{id}`) when it lets go; at most 16 are open and the oldest goes first; none outlives twelve hours.
+- **Loopback only.** A loopback port cannot be reached from a browser on another machine. A request that did not arrive by a loopback name is answered `409 not_local`, and the page is shown as one document as before; a dev server reports that a live preview needs the app on this computer. Serving previews to a remote browser needs a distinct preview host name and a fixed port range; it is not built.
+- **Limits.** Links written as absolute paths (`/style.css`) resolve against the preview origin's root, not the page's directory, and are not found; relative links work. A dev server is framed directly on its own port; it is not proxied, so its hot-reload socket works as it does in a browser tab.
+
+The Live preview list in the dock (`LivePreviewPanel.tsx`) is the one place dev servers are started, stopped and read; "show" opens one in the Canvas. The dock's own preview pane, its URL bar and `/fs/preview` were removed (invariant 30).
 
 ---
 

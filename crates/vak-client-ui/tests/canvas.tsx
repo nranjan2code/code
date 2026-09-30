@@ -9,14 +9,31 @@ import "../src/styles.css";
 // and each request is logged, so a check can tell which route served a subject.
 const sid = "canvas-fixture";
 const requests: string[] = [];
+const previewCalls: string[] = [];
+/** Whether the stub server can give a page an origin of its own (`POST /previews`). */
+let previews: "origin" | "none" = "none";
 const page = (source: string) => `<!doctype html><html><head><title>${source}</title></head><body><h1>${source}</h1></body></html>`;
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
-window.fetch = async (input) => {
+window.fetch = async (input, init) => {
   const url = new URL(String(input), location.origin);
   const path = url.searchParams.get("path") ?? "";
   if (url.pathname === "/fs/file") {
     requests.push(`workspace:${path}`);
     return path === "missing.html" ? json({ error: "not found" }, 404) : json({ kind: "text", content: page("workspace") });
+  }
+  if (url.pathname === "/previews" && (input as any) !== undefined) {
+    const method = String(init?.method ?? "GET");
+    if (method === "POST") {
+      const body = JSON.parse(String(init?.body));
+      previewCalls.push(`open:${body.kind}:${body.path}`);
+      return previews === "origin"
+        ? json({ id: "p1", origin: "http://localhost:9", url: `http://localhost:9/token/${body.path}` })
+        : json({ error: "not local", reason: "not_local" }, 409);
+    }
+  }
+  if (/^\/previews\/[^/]+$/.test(url.pathname) && init?.method === "DELETE") {
+    previewCalls.push(`close:${url.pathname.split("/").pop()}`);
+    return new Response(null, { status: 204 });
   }
   const run = /\/sandbox\/executions\/([^/]+)\/artifact$/.exec(url.pathname);
   if (run) {
@@ -39,7 +56,7 @@ const frame = () => document.querySelector<HTMLIFrameElement>(".artifact-canvas 
 const shown = () => /<h1>([^<]*)<\/h1>/.exec(frame()?.srcdoc ?? "")?.[1];
 const check = (ok: unknown, message: string) => { if (!ok) throw new Error(message); return message; };
 const clear = () => { while (store.canvasOpen()) store.closeArtifactCanvas(); };
-const open = async (run: () => void) => { clear(); requests.length = 0; run(); await settle(); };
+const open = async (run: () => void) => { clear(); await settle(); requests.length = 0; previewCalls.length = 0; run(); await settle(); };
 const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bash", command: "", language: "", scratchDir: "", stdout: "", stderr: "", packages: [], artifacts: [{ path, mimeType: "text/html", sizeBytes: 1 }], status: "completed" as const, timestamp: "" });
 
 (window as any).runChecks = async () => {
@@ -73,6 +90,22 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   store.setNotice(null);
   await open(() => store.openArtifactFile("report.html"));
   passed.push(check(!store.canvasOpen() && store.notices().some((notice) => /more than one run/.test(notice.text)), "A path made by several runs asks which one instead of choosing"));
+
+  // With a preview origin, a page is framed from it and the files it loads come from there.
+  previews = "origin";
+  await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
+  passed.push(check(frame()?.getAttribute("src") === "http://localhost:9/token/site/index.html" && !frame()?.getAttribute("srcdoc") && previewCalls.join() === "open:workspace:site/index.html", "A page with files behind it is framed from a preview origin"));
+  passed.push(check(frame()?.getAttribute("sandbox") === "allow-scripts allow-same-origin allow-forms allow-popups", "A preview origin frame keeps its own storage and opens windows"));
+  await open(() => store.openArtifactCanvas(fileSubject("site/index.html", { sessionId: sid, candidateId: "c1" }, "index.html")));
+  passed.push(check(previewCalls.join() === "open:candidate:site/index.html", "A saved version opens its preview through its candidate"));
+  await open(() => store.openArtifactCanvas({ kind: "inline", title: "Probe", html: "<h1>inline</h1>" }));
+  passed.push(check(previewCalls.length === 0 && shown() === "inline", "Markup from the conversation never gets an origin"));
+  await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));
+  previewCalls.length = 0;
+  store.closeArtifactCanvas();
+  await settle();
+  passed.push(check(previewCalls.join() === "close:p1", "Closing the Canvas ends the preview origin"));
+  previews = "none";
 
   // Several subjects share one Canvas as tabs, and each keeps what was done in it.
   await open(() => store.openArtifactFile("site/index.html", { sessionId: sid }));

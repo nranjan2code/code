@@ -2,7 +2,7 @@ import { For, Show, createContext, createEffect, createMemo, createSignal, onCle
 import type { AdaptiveRenderNode } from "../../types";
 import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
 import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
-import { openInEditor, openComponentPreview, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
+import { openInEditor, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
@@ -1300,21 +1300,11 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     void loadContent();
   };
 
-  const previewPayload = () => ({
-    id: str(node.props, "preview_id") ?? path(),
-    title: str(node.props, "title") ?? "Component Preview",
-    artifactPath: path(),
-    html: inlineHtml() || (htmlContent().trim().length > 0 ? htmlContent() : undefined),
-    previewId: str(node.props, "preview_id"),
-    timestamp: Date.now(),
-  });
-
   const openInCanvas = () => {
     const html = inlineHtml();
-    if (html) openArtifactCanvas({ kind: "inline", title: previewPayload().title, html, basePath: path() || undefined });
+    if (html) openArtifactCanvas({ kind: "inline", title: str(node.props, "title") ?? "Component Preview", html, basePath: path() || undefined });
     else if (path()) openArtifactFile(path());
   };
-  const openInDock = () => openComponentPreview(previewPayload());
 
   const handleCopySource = async () => {
     setCopyFailed(false);
@@ -1349,9 +1339,6 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
           </button>
           <button class="pill-action-btn" onClick={reloadPreview} title="Reload live preview">
             Reload
-          </button>
-          <button class="pill-action-btn" onClick={openInDock} title="Open in dock panel">
-            Dock
           </button>
           <button class="open-canvas-btn" onClick={openInCanvas} title="Open immersive canvas preview">
             <Icon name="preview" size={14} /> Open Canvas

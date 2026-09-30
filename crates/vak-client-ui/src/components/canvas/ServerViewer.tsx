@@ -1,6 +1,6 @@
 import { createEffect, createSignal, onCleanup } from "solid-js";
 import * as api from "../../api";
-import { subjectPath } from "../../canvasSubject";
+import { liveServerOrigin, subjectPath } from "../../canvasSubject";
 import { previewSandbox } from "../../safeUrl";
 import { createLoader } from "./createLoader";
 import DeviceViewport from "./DeviceViewport";
@@ -20,6 +20,8 @@ export default function ServerViewer(props: ViewerProps) {
       if (subject.kind !== "live_server") throw new Error("This is not a live preview.");
       const { sessionId, serverName, candidateId } = subject;
       setNeedsPreparation(false);
+      // A loopback port on the server's machine cannot be reached from a browser that is elsewhere.
+      if (!liveServerOrigin(api.backendHostname(), 0)) throw new Error("A live preview needs Vakyartha running on this computer.");
       const readiness = await api.getLaunch(sessionId, candidateId);
       const configured = readiness.servers.find((server) => server.name === serverName);
       if (!configured) throw new Error(`Dev server "${serverName}" is unavailable for this saved version.`);
@@ -45,9 +47,10 @@ export default function ServerViewer(props: ViewerProps) {
     (server) => server.stop(),
   );
 
+  /** Where the page is framed from: the other loopback name than the app's, so they are two sites. */
   const address = () => {
     const port = loader.data()?.port;
-    return port ? `http://127.0.0.1:${port}` : undefined;
+    return port ? liveServerOrigin(api.backendHostname(), port) ?? undefined : undefined;
   };
   createEffect(() => {
     const base = address();
@@ -66,21 +69,21 @@ export default function ServerViewer(props: ViewerProps) {
     }
   };
 
-  const source = (port: number) => {
+  const source = (origin: string) => {
     const subject = props.subject;
     const draftPath = subject.kind === "live_server" && subject.candidateId && subjectPath(subject)
       ? `/${subjectPath(subject).split("/").map(encodeURIComponent).join("/")}`
       : "";
-    return `http://127.0.0.1:${port}${draftPath}?_k=${props.reloadKey}`;
+    return `${origin}${draftPath}?_k=${props.reloadKey}`;
   };
 
   return (
     <LoadState
       loader={loader}
       extra={needsPreparation() ? <button type="button" class="artifact-canvas-btn" onClick={() => void prepare()}>Prepare dependencies</button> : undefined}
-    >{(server) =>
+    >{() =>
       <DeviceViewport>
-        <iframe class="artifact-canvas-frame" src={source(server.port)} title={props.subject.title} sandbox={previewSandbox("live_server")} />
+        <iframe class="artifact-canvas-frame" src={source(address()!)} title={props.subject.title} sandbox={previewSandbox("origin")} />
       </DeviceViewport>
     }</LoadState>
   );

@@ -72,16 +72,19 @@ export function cleanArtifactPath(target: string): string {
  * `allow-same-origin` on a `srcdoc` frame hands the previewed script the app's
  * own origin and, with it, the authenticated API.
  *
- * - `static` — generated documents and saved drafts: scripts run in an opaque
- *   origin and forms can render, and nothing else.
- * - `live_server` — a dev server on its own loopback port, so a different
- *   origin from the app already; it needs its own storage and popups.
+ * - `static` — markup from the conversation, and a page shown as one
+ *   document: scripts run in an opaque origin and forms can render, and
+ *   nothing else.
+ * - `origin` — a page served from an origin of its own (a preview origin, or
+ *   a dev server on its own port), framed under a different loopback name
+ *   than the app's. It is not the app's origin, so it keeps its own storage,
+ *   loads its own files, and may open windows.
  */
-export type PreviewSandbox = "static" | "live_server";
+export type PreviewSandbox = "static" | "origin";
 
 const PREVIEW_SANDBOX: Record<PreviewSandbox, string> = {
   static: "allow-scripts allow-forms",
-  live_server: "allow-scripts allow-same-origin allow-forms allow-popups",
+  origin: "allow-scripts allow-same-origin allow-forms allow-popups",
 };
 
 export function previewSandbox(kind: PreviewSandbox): string {

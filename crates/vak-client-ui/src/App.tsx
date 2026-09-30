@@ -110,7 +110,7 @@ import TasksModal from "./components/TasksModal";
 import CheckpointsModal from "./components/CheckpointsModal";
 import ReceiptsModal from "./components/ReceiptsModal";
 import WorkModal from "./components/WorkModal";
-const PreviewPane = lazy(() => import("./components/PreviewPane"));
+const LivePreviewPanel = lazy(() => import("./components/LivePreviewPanel"));
 const ArtifactCanvas = lazy(() => import("./components/ArtifactCanvas"));
 const WorkbenchPanel = lazy(() => import("./components/WorkbenchPanel"));
 const WorkersPanel = lazy(() => import("./components/WorkersPanel"));
@@ -1437,7 +1437,7 @@ export default function App() {
                   <PrPanel sessionId={activeId()} />
                 </Show>
                   <Show when={tab() === "preview"}>
-                    <PreviewPane />
+                    <LivePreviewPanel />
                   </Show>
                   <Show when={tab() === "agents"}>
                     <WorkersPanel sessionId={activeId()} />
