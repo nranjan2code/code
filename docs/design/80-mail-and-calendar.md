@@ -91,11 +91,15 @@ as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
 surface grant. Local drafts, scheduled read-only routines, and an explicitly
-best-effort scheduled email watch are implemented. Its content-free preflight
-does not consume IDs: the encrypted dedupe cursor advances only when the
-brokered routine read succeeds. The watch still polls only a bounded latest
-window, has no provider-native cursor, and can miss older mail after a burst.
-A per-routine OS lease prevents duplicate local server-process runs through
+best-effort scheduled email watch are implemented. It scans up to 100 recent
+provider IDs into a bounded encrypted Agent-vault backlog, then fetches at
+most the routine's configured batch by explicit IDs. IDs fetched by a tool are
+committed only after the scheduler observes a completed run; failed or
+interrupted runs requeue them. This gives at-least-once recovery across local
+restarts, but it is not a provider-native cursor: more than 100 arrivals
+between checks can still push older messages outside the scan window, and
+backlog overflow fails closed. A per-routine OS lease prevents duplicate
+local server-process runs through
 child completion; it does not provide multi-host coordination. Email send, a
 constrained timed event create, and Google standalone event update have
 effect-aware owner confirmation paths; other event update/cancel/RSVP, standing

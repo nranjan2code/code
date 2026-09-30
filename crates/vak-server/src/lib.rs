@@ -18321,6 +18321,37 @@ async fn patch_task(
 }
 
 async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    let existing = state
+        .tasks
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&id)
+        .cloned();
+    let _routine_lease = if let Some(task) = existing.as_ref()
+        && let Some(scope) = task.mail_calendar_scope.as_ref()
+    {
+        let Some(agent_id) = task.agent_id.as_deref() else {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        };
+        let vault = match vak_mail_calendar::vault::AccountVault::for_agent(agent_id) {
+            Ok(vault) => vault,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        let lease = match vault.try_acquire_routine_lease(&task.id) {
+            Ok(Some(lease)) => lease,
+            Ok(None) => return StatusCode::CONFLICT,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR,
+        };
+        if vault
+            .remove_routine_cursor(&scope.routine_id, &scope.account_id)
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+        Some(lease)
+    } else {
+        None
+    };
     // Remove-and-persist under one lock hold, closing the window where a
     // concurrent scheduler `load_tasks` tick could otherwise re-read the
     // not-yet-updated disk file and resurrect the task right after this
@@ -18563,7 +18594,13 @@ async fn fire_task_with_force(
                 "The mail watch has no pinned Agent.".into(),
             )
         })?;
-        match mail_calendar::mail_watch_has_unseen(agent_id, scope).await {
+        match mail_calendar::mail_watch_has_unseen(
+            agent_id,
+            scope,
+            snapshot.last_run_status.as_deref() == Some("complete"),
+        )
+        .await
+        {
             Ok(false) => {
                 update_tasks(state, |tasks| {
                     if let Some(task) = tasks.get_mut(id) {

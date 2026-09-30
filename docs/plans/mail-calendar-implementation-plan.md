@@ -4,9 +4,10 @@ Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
 Google/Microsoft owner previews, the broker-owned local Agent read tool, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
-the first Stage 4 increment adds scheduled read-only routines and a best-effort
-scheduled mail watch on `TaskDef`; the first Stage 3 increment adds an
-owner-confirmed, permission-checked, digest-bound plain email send and a
+the first Stage 4 increment adds scheduled read-only routines and a bounded,
+encrypted scheduled mail-watch backlog on `TaskDef`; the first Stage 3
+increment adds an owner-confirmed, permission-checked, digest-bound plain
+email send and a
 limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
 The maintainer authorized continuing against the current 4.x storage model on
@@ -349,15 +350,15 @@ brokered tool exposed, no script, no delivery target, and no MCP/skills/hooks/
 plugins. It stores run content only in the Agent's append-only run session,
 not in shared task summaries or Inbox delivery. Disconnect removes the vault
 credential, local candidates, and mail-watch IDs, pauses routines for that
-account, and fences reads. An optional mail watch deduplicates a bounded
-rolling set of message IDs in the encrypted Agent vault. A content-free
-provider-ID poll skips model dispatch when the bounded latest-message window
-contains no unseen IDs; only a triggered run fetches message content through
-the brokered tool. The preflight is read-only; the encrypted dedupe set
-advances only after the brokered content read succeeds, so failed model
-admission does not consume new IDs. This is best-effort polling: it has no
-provider-native cursor and can miss messages outside the returned window. An
-Agent-vault OS advisory lease now prevents duplicate polls or dispatches by
+account, and fences reads. An optional mail watch scans up to 100 recent
+provider IDs into a bounded encrypted Agent-vault backlog and fetches at most
+the routine's configured batch by explicit IDs. The content-free poll does
+not fetch message bodies. Fetched IDs remain staged until the scheduler
+observes a completed run; failed or interrupted runs requeue them, preserving
+at-least-once recovery across local restarts. There is no provider-native
+cursor yet: more than 100 arrivals between checks can push older mail outside
+the scan window, and backlog overflow fails closed. An Agent-vault OS
+advisory lease now prevents duplicate polls or dispatches by
 local server processes; it is held through child completion
 and released by the OS on process exit. It does not coordinate separate hosts
 or provide a freshness guarantee. The ordinary Vakyartha service must remain
@@ -1147,3 +1148,19 @@ authorization and approval boundary on every execution path.
   package tests (76 plus registry), worker integration tests, the focused
   account lifecycle HTTP test, server check, and web build pass. No credentialed
   live Apple request was made.
+- 2026-09-30: Hardened scheduled mail-watch delivery for local restarts. The
+  encrypted Agent vault now queues up to 100 opaque message IDs per routine,
+  fetches explicit bounded batches without downloading content during polling,
+  stages fetched IDs until the TaskDef run settles, consumes them after a
+  completed run, and puts them back at the front after a failed or interrupted
+  run. A per-routine OS lease also serializes the watcher across local server
+  processes; deleting a routine clears its cursor while holding that lease.
+  Google, Microsoft Graph, and Apple IMAP now fetch only selected IDs, and
+  Apple uses UID FETCH metadata without setting Seen or fetching bodies.
+  Limits are explicit: polling scans only the latest 100 IDs, so a larger
+  arrival burst between checks can still hide older mail; provider-native
+  cursor reconciliation and 24-hour restart/sleep/outage acceptance remain
+  open. Verification: 81 mail-calendar tests, 5 Core mail/calendar tests, 4
+  worker integration tests, 3 mail/calendar HTTP tests, 4 scheduled-run tests,
+  formatting and diff checks pass. Live provider and signed-in browser checks
+  remain open.

@@ -20,8 +20,10 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
+const MAX_WATCH_SCAN_ITEMS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
 const MAX_EVENT_ITEMS: usize = 100;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024;
+const MAX_SELECTED_MESSAGE_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
@@ -280,12 +282,13 @@ impl ProviderReadClient {
     ) -> Result<Vec<String>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
         if account.provider == Provider::AppleIcloud {
-            return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_MAIL_ITEMS)).await;
+            return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_WATCH_SCAN_ITEMS))
+                .await;
         }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
-        let limit = limit.clamp(1, MAX_MAIL_ITEMS).to_string();
+        let limit = limit.clamp(1, MAX_WATCH_SCAN_ITEMS).to_string();
         let response = match account.provider {
             Provider::Google => {
                 self.http
@@ -315,11 +318,19 @@ impl ProviderReadClient {
         .map_err(|_| ProviderReadError::Unavailable)?;
         let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
         let items = match account.provider {
-            Provider::Google => value.get("messages").and_then(Value::as_array),
-            Provider::Microsoft => value.get("value").and_then(Value::as_array),
-            Provider::AppleIcloud => None,
-        }
-        .ok_or(ProviderReadError::InvalidResponse)?;
+            // Gmail omits `messages` when the inbox has no matching items.
+            Provider::Google => value
+                .get("messages")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default(),
+            Provider::Microsoft => value
+                .get("value")
+                .and_then(Value::as_array)
+                .cloned()
+                .ok_or(ProviderReadError::InvalidResponse)?,
+            Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+        };
         Ok(items
             .iter()
             .take(limit.parse().unwrap_or(1))
@@ -327,6 +338,84 @@ impl ProviderReadClient {
             .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
             .map(str::to_owned)
             .collect())
+    }
+
+    /// Fetch a small explicit set of message IDs. Scheduled watches use this
+    /// to drain their encrypted backlog instead of repeatedly reading only
+    /// the newest provider page.
+    pub async fn mail_by_ids(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        item_ids: &[String],
+    ) -> Result<Vec<MailItem>, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if item_ids.is_empty()
+            || item_ids.len() > MAX_MAIL_ITEMS
+            || item_ids
+                .iter()
+                .any(|id| id.is_empty() || id.len() > 512 || id.chars().any(char::is_control))
+        {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        if account.provider == Provider::AppleIcloud {
+            return icloud_mail_by_ids(account, vault, item_ids).await;
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let mut output = Vec::with_capacity(item_ids.len());
+        for id in item_ids {
+            let (base, segments) = match account.provider {
+                Provider::Google => (
+                    self.google_gmail_base.as_str(),
+                    vec!["users", "me", "messages", id.as_str()],
+                ),
+                Provider::Microsoft => (
+                    self.microsoft_graph_base.as_str(),
+                    vec!["me", "messages", id.as_str()],
+                ),
+                Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+            };
+            let mut url = url::Url::parse(base).map_err(|_| ProviderReadError::Unavailable)?;
+            url.path_segments_mut()
+                .map_err(|_| ProviderReadError::Unavailable)?
+                .extend(segments);
+            let mut request = self.http.get(url).bearer_auth(token.as_str());
+            match account.provider {
+                Provider::Google => {
+                    request = request.query(&[("format", "full")]);
+                }
+                Provider::Microsoft => {
+                    request = request
+                        .header("Prefer", "outlook.body-content-type=\"text\"")
+                        .query(&[(
+                            "$select",
+                            "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                        )]);
+                }
+                Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+            }
+            let response = request
+                .send()
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?;
+            let value = parse_response(response, MAX_SELECTED_MESSAGE_RESPONSE_BYTES).await?;
+            let item = match account.provider {
+                Provider::Google => parse_google_message(&value),
+                Provider::Microsoft => {
+                    parse_graph_message(&value).ok_or(ProviderReadError::InvalidResponse)?
+                }
+                Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+            };
+            if item.provider_id != *id {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+            output.push(item);
+        }
+        Ok(output)
     }
 
     /// Fetch one selected Apple inbox message without setting `Seen`. Raw MIME
@@ -1043,6 +1132,114 @@ async fn icloud_recent_mail_ids(
     result
 }
 
+async fn icloud_mail_by_ids(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    item_ids: &[String],
+) -> Result<Vec<MailItem>, ProviderReadError> {
+    let (login, password) = vault
+        .icloud_imap_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let result = icloud_fetch_mail_by_ids(&mut session, item_ids).await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+async fn icloud_fetch_mail_by_ids<T>(
+    session: &mut async_imap::Session<BudgetIo<T>>,
+    item_ids: &[String],
+) -> Result<Vec<MailItem>, ProviderReadError>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    if item_ids.is_empty() || item_ids.len() > MAX_MAIL_ITEMS {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let parsed = item_ids
+        .iter()
+        .map(|id| parse_icloud_provider_id(id))
+        .collect::<Result<Vec<_>, _>>()?;
+    if parsed.iter().any(|(validity, _)| *validity != parsed[0].0) {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let uid_set = parsed
+        .iter()
+        .map(|(_, uid)| uid.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?;
+    if mailbox.uid_validity != Some(parsed[0].0) {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let mut fetched = tokio::time::timeout(
+        StdDuration::from_secs(10),
+        session.uid_fetch(
+            uid_set,
+            "UID ENVELOPE INTERNALDATE RFC822.SIZE BODYSTRUCTURE",
+        ),
+    )
+    .await
+    .map_err(|_| ProviderReadError::Unavailable)?
+    .map_err(map_imap_error)?;
+    use futures::TryStreamExt;
+    let mut output = Vec::with_capacity(item_ids.len());
+    while let Some(message) = tokio::time::timeout(StdDuration::from_secs(10), fetched.try_next())
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?
+    {
+        let uid = message.uid.ok_or(ProviderReadError::InvalidResponse)?;
+        if !parsed.iter().any(|(_, selected)| *selected == uid) {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let Some(envelope) = message.envelope() else {
+            return Err(ProviderReadError::InvalidResponse);
+        };
+        let body_structure = message
+            .bodystructure()
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let subject = envelope
+            .subject
+            .as_deref()
+            .map(|value| bounded_mail_text(value, 512))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "(no subject)".into());
+        let from = envelope
+            .from
+            .as_ref()
+            .and_then(|addresses| addresses.first())
+            .and_then(|address| {
+                let mailbox = address.mailbox.as_deref()?;
+                let host = address.host.as_deref()?;
+                let address = format!(
+                    "{}@{}",
+                    bounded_mail_text(mailbox, 256),
+                    bounded_mail_text(host, 256)
+                );
+                (!address.starts_with('@') && !address.ends_with('@') && address.len() <= 512)
+                    .then_some(address)
+            });
+        output.push(MailItem {
+            provider_id: format!("{}:{uid}", parsed[0].0),
+            thread_id: None,
+            from,
+            subject: subject.clone(),
+            received_at: message.internal_date().map(|date| date.with_timezone(&Utc)),
+            preview: subject,
+            body_text: None,
+            has_attachments: imap_body_has_attachments(body_structure),
+        });
+    }
+    if output.len() != item_ids.len() {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    Ok(output)
+}
+
 async fn icloud_fetch_message_mime<T>(
     session: &mut async_imap::Session<BudgetIo<T>>,
     expected_validity: u32,
@@ -1549,7 +1746,7 @@ mod tests {
     use crate::{AccountStatus, vault::AccountSecretMaterial};
     use std::collections::BTreeSet;
     use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use uuid::Uuid;
 
     #[tokio::test]
@@ -1613,6 +1810,74 @@ mod tests {
         assert_eq!(messages[0].from.as_deref(), Some("sender@example.test"));
         assert!(!messages[0].has_attachments);
         assert!(messages[0].body_text.is_none());
+        session.logout().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn icloud_watch_fetches_only_selected_uids_without_setting_seen() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_stream, server_stream) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            let mut stream = BufReader::new(server_stream);
+            stream
+                .get_mut()
+                .write_all(b"* OK iCloud test server\r\n")
+                .await
+                .unwrap();
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split_whitespace().next().unwrap_or("A0000").to_owned();
+                let command = line.split_whitespace().nth(1).unwrap_or("");
+                let response = if line.contains(" LOGIN ") {
+                    format!("{tag} OK authenticated\r\n")
+                } else if command.eq_ignore_ascii_case("CAPABILITY") {
+                    format!("* CAPABILITY IMAP4rev1\r\n{tag} OK capabilities\r\n")
+                } else if line.contains(" EXAMINE ") {
+                    format!(
+                        "* 1 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] valid\r\n{tag} OK [READ-ONLY] selected\r\n"
+                    )
+                } else if line.contains(" UID FETCH ") {
+                    assert!(line.contains("UID FETCH 31 "), "{line}");
+                    assert!(line.contains("ENVELOPE"), "{line}");
+                    assert!(!line.contains("BODY[]"), "{line}");
+                    format!(
+                        "* 1 FETCH (UID 31 ENVELOPE (NIL \"Selected\" ((NIL NIL \"sender\" \"example.test\")) NIL NIL NIL NIL NIL NIL \"<m31>\") INTERNALDATE \"30-Sep-2026 12:00:00 +0000\" RFC822.SIZE 20 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 5 1))\r\n{tag} OK fetched\r\n"
+                    )
+                } else if command.eq_ignore_ascii_case("LOGOUT") {
+                    format!("* BYE logging out\r\n{tag} OK logout\r\n")
+                } else {
+                    format!("{tag} BAD unsupported test command {command}\r\n")
+                };
+                if stream
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if command.eq_ignore_ascii_case("LOGOUT") {
+                    break;
+                }
+            }
+        });
+        let client = async_imap::Client::new(BudgetIo::new(client_stream, 8192, 8192));
+        let mut session = client
+            .login("owner@icloud.com", "test-secret")
+            .await
+            .unwrap();
+        let items = icloud_fetch_mail_by_ids(&mut session, &["7:31".into()])
+            .await
+            .unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].provider_id, "7:31");
+        assert_eq!(items[0].subject, "Selected");
+        assert!(items[0].body_text.is_none());
         session.logout().await.unwrap();
         server.await.unwrap();
     }
@@ -2062,12 +2327,24 @@ mod tests {
             )
             .unwrap();
 
+        let empty_inbox = Arc::new(AtomicBool::new(false));
+        let empty_inbox_for_handler = Arc::clone(&empty_inbox);
         let message_reads = Arc::new(AtomicUsize::new(0));
         let message_reads_for_handler = message_reads.clone();
         let app = axum::Router::new()
-            .route("/gmail/v1/users/me/messages", axum::routing::get(|| async {
-                axum::Json(json!({"messages":[{"id":"message-1","threadId":"thread-1"}]}))
-            }))
+            .route(
+                "/gmail/v1/users/me/messages",
+                axum::routing::get(move || {
+                    let empty = Arc::clone(&empty_inbox_for_handler);
+                    async move {
+                        if empty.load(Ordering::SeqCst) {
+                            axum::Json(json!({"resultSizeEstimate":0}))
+                        } else {
+                            axum::Json(json!({"messages":[{"id":"message-1","threadId":"thread-1"}]}))
+                        }
+                    }
+                }),
+            )
             .route("/gmail/v1/users/me/messages/message-1", axum::routing::get(move || {
                 let reads = message_reads_for_handler.clone();
                 async move {
@@ -2123,6 +2400,34 @@ mod tests {
             .unwrap();
         assert_eq!(ids, ["message-1"]);
         assert_eq!(message_reads.load(Ordering::SeqCst), 1);
+        let selected = client
+            .mail_by_ids(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                &ids,
+            )
+            .await
+            .unwrap();
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].provider_id, "message-1");
+        assert_eq!(selected[0].body_text.as_deref(), Some("hello from inbox"));
+        assert_eq!(message_reads.load(Ordering::SeqCst), 2);
+        empty_inbox.store(true, Ordering::SeqCst);
+        assert!(
+            client
+                .recent_mail_ids(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    100
+                )
+                .await
+                .unwrap()
+                .is_empty()
+        );
         assert!(matches!(
             client
                 .recent_mail(&account, &vault, "another-agent", "agent:elsewhere", 1)
@@ -2146,6 +2451,110 @@ mod tests {
             Err(ProviderReadError::NotAdmitted)
         ));
         vault.remove(&account_id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn microsoft_watch_fetches_only_selected_message_ids() {
+        use axum::http::Request;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-graph-watch-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                AccountSecretMaterial::new(
+                    "microsoft:subject".into(),
+                    Some("owner@example.test".into()),
+                    Some("client".into()),
+                    Some("graph-token".into()),
+                    Some("refresh-token".into()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let admitted = Arc::new(AtomicBool::new(false));
+        let admitted_for_request = Arc::clone(&admitted);
+        let app = axum::Router::new().route(
+            "/graph/v1.0/me/messages/ms-message-1",
+            axum::routing::get(move |request: Request<axum::body::Body>| {
+                let admitted = Arc::clone(&admitted_for_request);
+                async move {
+                    admitted.store(
+                        request
+                            .headers()
+                            .get(reqwest::header::AUTHORIZATION)
+                            .and_then(|value| value.to_str().ok())
+                            == Some("Bearer graph-token")
+                            && request
+                                .headers()
+                                .get("Prefer")
+                                .and_then(|value| value.to_str().ok())
+                                == Some("outlook.body-content-type=\"text\""),
+                        Ordering::SeqCst,
+                    );
+                    axum::Json(json!({
+                        "id":"ms-message-1",
+                        "conversationId":"conversation-1",
+                        "subject":"Graph selected",
+                        "from":{"emailAddress":{"address":"sender@example.test"}},
+                        "receivedDateTime":"2026-09-30T12:00:00Z",
+                        "bodyPreview":"selected preview",
+                        "body":{"contentType":"text","content":"selected body"},
+                        "hasAttachments":false
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let account = ConnectedAccount {
+            id: account_id.clone(),
+            provider: Provider::Microsoft,
+            status: AccountStatus::Connected,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: BTreeSet::new(),
+            credential_ref: AccountVault::credential_ref(&account_id).unwrap(),
+            principal_ref: "opaque".into(),
+            revision: 1,
+            connected_at: Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: true,
+            revoked_at: None,
+        };
+        let items = client
+            .mail_by_ids(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                &["ms-message-1".into()],
+            )
+            .await
+            .unwrap();
+        assert!(admitted.load(Ordering::SeqCst));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].provider_id, "ms-message-1");
+        assert_eq!(items[0].body_text.as_deref(), Some("selected body"));
         task.abort();
     }
 }

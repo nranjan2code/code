@@ -339,11 +339,65 @@ impl vak_tools::Tool for MailCalendarTool {
                     .await
                     .map_err(|error| error.to_string())
                 } else {
-                    client
-                        .recent_mail(account, &vault, agent_id, &account_audience, limit)
+                    if let Some(scope) = self
+                        .routine_scope
+                        .as_ref()
+                        .filter(|scope| scope.watch_new_mail)
+                    {
+                        async {
+                            if !vault
+                                .has_unresolved_mail_ids(&scope.routine_id, &scope.account_id)
+                                .map_err(|error| error.to_string())?
+                            {
+                                let ids = client
+                                    .recent_mail_ids(
+                                        account,
+                                        &vault,
+                                        agent_id,
+                                        &account_audience,
+                                        vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
+                                    )
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                                vault
+                                    .queue_unseen_mail_ids(
+                                        &scope.routine_id,
+                                        &scope.account_id,
+                                        &ids,
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            let pending = vault
+                                .pending_mail_ids(
+                                    &scope.routine_id,
+                                    &scope.account_id,
+                                    limit.min(vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG),
+                                )
+                                .map_err(|error| error.to_string())?;
+                            if pending.is_empty() {
+                                Ok(json!([]))
+                            } else {
+                                client
+                                    .mail_by_ids(
+                                        account,
+                                        &vault,
+                                        agent_id,
+                                        &account_audience,
+                                        &pending,
+                                    )
+                                    .await
+                                    .map_err(|error| error.to_string())
+                                    .map(|items| json!(items))
+                            }
+                        }
                         .await
-                        .map_err(|error| error.to_string())
-                        .map(|items| json!(items))
+                    } else {
+                        client
+                            .recent_mail(account, &vault, agent_id, &account_audience, limit)
+                            .await
+                            .map_err(|error| error.to_string())
+                            .map(|items| json!(items))
+                    }
                 }
             }
             "calendar_events" | "free_busy" => {
@@ -418,7 +472,7 @@ impl vak_tools::Tool for MailCalendarTool {
                             "The scheduled mail watch scope is unavailable.",
                         );
                     };
-                    let mut items: Vec<vak_mail_calendar::provider::MailItem> =
+                    let items: Vec<vak_mail_calendar::provider::MailItem> =
                         match serde_json::from_value(value) {
                             Ok(items) => items,
                             Err(_) => {
@@ -431,19 +485,13 @@ impl vak_tools::Tool for MailCalendarTool {
                         .iter()
                         .map(|item| item.provider_id.clone())
                         .collect::<Vec<_>>();
-                    let fresh_ids = match vault.remember_new_mail_ids(
-                        &scope.routine_id,
-                        &scope.account_id,
-                        &ids,
-                    ) {
-                        Ok(ids) => ids.into_iter().collect::<std::collections::HashSet<_>>(),
-                        Err(_) => {
-                            return vak_tools::ToolOutput::error(
-                                "The private mail watch cursor is unavailable; results were discarded.",
-                            );
-                        }
-                    };
-                    items.retain(|item| fresh_ids.contains(&item.provider_id));
+                    if let Err(_) =
+                        vault.stage_delivered_mail_ids(&scope.routine_id, &scope.account_id, &ids)
+                    {
+                        return vak_tools::ToolOutput::error(
+                            "The private mail watch cursor is unavailable; results were discarded.",
+                        );
+                    }
                     let status = if items.is_empty() {
                         "no_new_items"
                     } else {

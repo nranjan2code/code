@@ -21,6 +21,9 @@ pub const MAX_ADDRESSES: usize = 100;
 pub const MAX_SUBJECT_BYTES: usize = 998;
 pub const MAX_BODY_BYTES: usize = 1_048_576;
 pub const MAX_EVENT_TITLE_BYTES: usize = 512;
+/// Maximum content-free provider-ID scan and durable backlog size for one
+/// unattended mail routine.
+pub const MAX_ROUTINE_MAIL_BACKLOG: usize = 100;
 
 pub type AccountId = String;
 pub type CandidateId = String;

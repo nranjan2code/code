@@ -68,6 +68,7 @@ pub(crate) fn validate_routine_scope(agent_id: &str, scope: &RoutineScope) -> Re
 pub(crate) async fn mail_watch_has_unseen(
     agent_id: &str,
     scope: &RoutineScope,
+    previous_run_succeeded: bool,
 ) -> Result<bool, String> {
     scope.validate().map_err(|error| error.to_string())?;
     if !scope.watch_new_mail || !scope.operations.contains(&RoutineOperation::RecentMail) {
@@ -88,13 +89,22 @@ pub(crate) async fn mail_watch_has_unseen(
         .ok_or_else(|| "the selected mail account is no longer authorized".to_string())?;
     let vault = AccountVault::for_agent(agent_id)
         .map_err(|_| "mail/calendar credentials are unavailable".to_string())?;
+    vault
+        .resolve_delivered_mail_ids(&scope.routine_id, &scope.account_id, previous_run_succeeded)
+        .map_err(|_| "the private mail watch cursor is unavailable".to_string())?;
+    if vault
+        .has_unresolved_mail_ids(&scope.routine_id, &scope.account_id)
+        .map_err(|_| "the private mail watch cursor is unavailable".to_string())?
+    {
+        return Ok(true);
+    }
     let item_ids = ProviderReadClient::new()
         .recent_mail_ids(
             &account,
             &vault,
             agent_id,
             &audience,
-            usize::from(scope.max_items),
+            vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
         )
         .await
         .map_err(|_| "the mail watch could not check its bounded provider window".to_string())?;
@@ -109,7 +119,7 @@ pub(crate) async fn mail_watch_has_unseen(
         return Err("the mail account changed during the watch check".into());
     }
     vault
-        .has_unseen_mail_ids(&scope.routine_id, &scope.account_id, &item_ids)
+        .queue_unseen_mail_ids(&scope.routine_id, &scope.account_id, &item_ids)
         .map_err(|_| "the private mail watch cursor is unavailable".to_string())
 }
 

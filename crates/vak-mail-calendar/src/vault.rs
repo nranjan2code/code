@@ -21,6 +21,7 @@ const MAX_WORK_AREA_CANDIDATES: usize = 32;
 const ROUTINE_CURSOR_KEY: &str = "vak_mail_calendar_routine_cursors";
 const MAX_ROUTINE_CURSORS: usize = 128;
 const MAX_ROUTINE_SEEN_IDS: usize = 512;
+const MAX_ROUTINE_PENDING_IDS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
 const MAX_ROUTINE_CURSOR_BYTES: usize = 512 * 1024;
 const ACTION_RECEIPTS_KEY: &str = "vak_mail_calendar_action_receipts";
 const MAX_ACTION_RECEIPTS: usize = 128;
@@ -192,6 +193,10 @@ struct RoutineCursor {
     routine_id: String,
     account_id: String,
     seen_ids: Vec<String>,
+    #[serde(default)]
+    pending_ids: Vec<String>,
+    #[serde(default)]
+    delivered_ids: Vec<String>,
 }
 
 impl Drop for VaultPayload {
@@ -411,77 +416,73 @@ impl AccountVault {
         self.with_action_receipts(|receipts| Ok(receipts))
     }
 
-    /// Atomically remember opaque provider item ids for one routine and
-    /// return only ids this routine has not seen. The encrypted credential
-    /// store holds this bounded state; mailbox content is never persisted.
-    pub fn remember_new_mail_ids(
-        &self,
-        routine_id: &str,
-        account_id: &str,
-        item_ids: &[String],
-    ) -> Result<Vec<String>, VaultError> {
-        validate_account_id(account_id)?;
-        validate_account_id(routine_id)?;
-        if item_ids.len() > 100
-            || item_ids
-                .iter()
-                .any(|id| id.is_empty() || id.len() > 512 || id.chars().any(char::is_control))
-        {
-            return Err(VaultError::InvalidReference);
-        }
-        self.with_routine_cursors(|mut cursors| {
-            let index = cursors
-                .iter()
-                .position(|cursor| cursor.routine_id == routine_id);
-            if let Some(index) = index {
-                if cursors[index].account_id != account_id {
-                    return Err(VaultError::InvalidReference);
-                }
-            } else {
-                if cursors.len() >= MAX_ROUTINE_CURSORS {
-                    return Err(VaultError::TooLarge);
-                }
-                cursors.push(RoutineCursor {
-                    routine_id: routine_id.to_owned(),
-                    account_id: account_id.to_owned(),
-                    seen_ids: Vec::new(),
-                });
-            }
-            let cursor = cursors
-                .iter_mut()
-                .find(|cursor| cursor.routine_id == routine_id)
-                .ok_or(VaultError::Unavailable)?;
-            let mut fresh = Vec::new();
-            for item_id in item_ids {
-                if !cursor.seen_ids.iter().any(|seen| seen == item_id) {
-                    fresh.push(item_id.clone());
-                    cursor.seen_ids.push(item_id.clone());
-                }
-            }
-            if cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS {
-                let remove = cursor.seen_ids.len() - MAX_ROUTINE_SEEN_IDS;
-                cursor.seen_ids.drain(..remove);
-            }
-            self.write_routine_cursors(&cursors)?;
-            Ok(fresh)
-        })
-    }
-
-    /// Read-only counterpart used by the scheduler to avoid starting a model
-    /// run when the bounded provider window contains no unseen messages.
-    pub fn has_unseen_mail_ids(
+    /// Queue observed message IDs without consuming them. The encrypted
+    /// Agent vault provides a small durable backlog for bounded routine runs.
+    pub fn queue_unseen_mail_ids(
         &self,
         routine_id: &str,
         account_id: &str,
         item_ids: &[String],
     ) -> Result<bool, VaultError> {
+        validate_routine_mail_ids(routine_id, account_id, item_ids)?;
+        self.with_routine_cursors(|mut cursors| {
+            let index = match cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            {
+                Some(index) => {
+                    if cursors[index].account_id != account_id {
+                        return Err(VaultError::InvalidReference);
+                    }
+                    index
+                }
+                None => {
+                    if cursors.len() >= MAX_ROUTINE_CURSORS {
+                        return Err(VaultError::TooLarge);
+                    }
+                    cursors.push(RoutineCursor {
+                        routine_id: routine_id.to_owned(),
+                        account_id: account_id.to_owned(),
+                        seen_ids: Vec::new(),
+                        pending_ids: Vec::new(),
+                        delivered_ids: Vec::new(),
+                    });
+                    cursors.len() - 1
+                }
+            };
+            let cursor = &mut cursors[index];
+            for item_id in item_ids {
+                if cursor.seen_ids.iter().any(|seen| seen == item_id)
+                    || cursor.pending_ids.iter().any(|pending| pending == item_id)
+                    || cursor
+                        .delivered_ids
+                        .iter()
+                        .any(|delivered| delivered == item_id)
+                {
+                    continue;
+                }
+                if cursor.pending_ids.len() + cursor.delivered_ids.len() >= MAX_ROUTINE_PENDING_IDS
+                {
+                    return Err(VaultError::TooLarge);
+                }
+                cursor.pending_ids.push(item_id.clone());
+            }
+            let has_pending = !cursor.pending_ids.is_empty();
+            self.write_routine_cursors(&cursors)?;
+            Ok(has_pending)
+        })
+    }
+
+    /// Return the next bounded batch from a routine's durable mail backlog.
+    pub fn pending_mail_ids(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, VaultError> {
         validate_account_id(account_id)?;
         validate_account_id(routine_id)?;
-        if item_ids.len() > 100
-            || item_ids
-                .iter()
-                .any(|id| id.is_empty() || id.len() > 512 || id.chars().any(char::is_control))
-        {
+        if !(1..=MAX_ROUTINE_PENDING_IDS).contains(&limit) {
             return Err(VaultError::InvalidReference);
         }
         self.with_routine_cursors(|cursors| {
@@ -489,14 +490,141 @@ impl AccountVault {
                 .iter()
                 .find(|cursor| cursor.routine_id == routine_id)
             else {
-                return Ok(!item_ids.is_empty());
+                return Ok(Vec::new());
             };
             if cursor.account_id != account_id {
                 return Err(VaultError::InvalidReference);
             }
-            Ok(item_ids
+            Ok(cursor.pending_ids.iter().take(limit).cloned().collect())
+        })
+    }
+
+    /// Report whether any pending or staged mail exists for this routine.
+    pub fn has_unresolved_mail_ids(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+    ) -> Result<bool, VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        self.with_routine_cursors(|cursors| {
+            let Some(cursor) = cursors
                 .iter()
-                .any(|id| !cursor.seen_ids.iter().any(|seen| seen == id)))
+                .find(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(false);
+            };
+            if cursor.account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            Ok(!cursor.pending_ids.is_empty() || !cursor.delivered_ids.is_empty())
+        })
+    }
+
+    /// Remove the cursor and queued provider IDs when a routine is deleted.
+    pub fn remove_routine_cursor(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+    ) -> Result<(), VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        self.with_routine_cursors(|mut cursors| {
+            if cursors
+                .iter()
+                .find(|cursor| cursor.routine_id == routine_id)
+                .is_some_and(|cursor| cursor.account_id != account_id)
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            cursors.retain(|cursor| cursor.routine_id != routine_id);
+            self.write_routine_cursors(&cursors)
+        })
+    }
+
+    /// Stage successfully fetched IDs until the corresponding run settles.
+    /// Keeping them in a separate list lets a restart retry an interrupted
+    /// run instead of losing mail between provider fetch and session logging.
+    pub fn stage_delivered_mail_ids(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        item_ids: &[String],
+    ) -> Result<(), VaultError> {
+        validate_routine_mail_ids(routine_id, account_id, item_ids)?;
+        self.with_routine_cursors(|mut cursors| {
+            let Some(index) = cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Err(VaultError::InvalidReference);
+            };
+            if cursors[index].account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            let cursor = &mut cursors[index];
+            if item_ids
+                .iter()
+                .any(|id| !cursor.pending_ids.iter().any(|pending| pending == id))
+            {
+                return Err(VaultError::InvalidReference);
+            }
+            for item_id in item_ids {
+                cursor.pending_ids.retain(|pending| pending != item_id);
+                if !cursor
+                    .delivered_ids
+                    .iter()
+                    .any(|delivered| delivered == item_id)
+                {
+                    cursor.delivered_ids.push(item_id.clone());
+                }
+            }
+            self.write_routine_cursors(&cursors)
+        })
+    }
+
+    /// Resolve staged IDs after the scheduler has observed a terminal run.
+    /// Successful runs consume them; failed, interrupted or refused runs put
+    /// them back at the front of the durable queue for at-least-once recovery.
+    pub fn resolve_delivered_mail_ids(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        run_succeeded: bool,
+    ) -> Result<(), VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        self.with_routine_cursors(|mut cursors| {
+            let Some(index) = cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(());
+            };
+            if cursors[index].account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            let cursor = &mut cursors[index];
+            let delivered = std::mem::take(&mut cursor.delivered_ids);
+            if run_succeeded {
+                for item_id in delivered {
+                    if !cursor.seen_ids.iter().any(|seen| seen == &item_id) {
+                        cursor.seen_ids.push(item_id);
+                    }
+                }
+                if cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS {
+                    let remove = cursor.seen_ids.len() - MAX_ROUTINE_SEEN_IDS;
+                    cursor.seen_ids.drain(..remove);
+                }
+            } else {
+                let mut pending = delivered;
+                pending.append(&mut cursor.pending_ids);
+                if pending.len() > MAX_ROUTINE_PENDING_IDS {
+                    return Err(VaultError::TooLarge);
+                }
+                cursor.pending_ids = pending;
+            }
+            self.write_routine_cursors(&cursors)
         })
     }
 
@@ -720,9 +848,45 @@ impl AccountVault {
                     validate_account_id(&cursor.account_id).is_err()
                         || validate_account_id(&cursor.routine_id).is_err()
                         || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
+                        || cursor.pending_ids.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.pending_ids.len() + cursor.delivered_ids.len()
+                            > MAX_ROUTINE_PENDING_IDS
                         || cursor.seen_ids.iter().any(|id| {
                             id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
                         })
+                        || cursor.pending_ids.iter().any(|id| {
+                            id.is_empty() || id.len() > 512 || id.chars().any(char::is_control)
+                        })
+                        || cursor
+                            .pending_ids
+                            .iter()
+                            .any(|pending| cursor.seen_ids.iter().any(|seen| seen == pending))
+                        || cursor.delivered_ids.iter().any(|delivered| {
+                            cursor.seen_ids.iter().any(|seen| seen == delivered)
+                                || cursor
+                                    .pending_ids
+                                    .iter()
+                                    .any(|pending| pending == delivered)
+                        })
+                        || cursor
+                            .pending_ids
+                            .iter()
+                            .enumerate()
+                            .any(|(index, pending)| {
+                                cursor.pending_ids[index + 1..]
+                                    .iter()
+                                    .any(|next| next == pending)
+                            })
+                        || cursor
+                            .delivered_ids
+                            .iter()
+                            .enumerate()
+                            .any(|(index, delivered)| {
+                                cursor.delivered_ids[index + 1..]
+                                    .iter()
+                                    .any(|next| next == delivered)
+                            })
                 })
                 || cursors.iter().enumerate().any(|(index, cursor)| {
                     cursors[index + 1..]
@@ -953,6 +1117,23 @@ fn validate_account_id(value: &str) -> Result<(), VaultError> {
     }
 }
 
+fn validate_routine_mail_ids(
+    routine_id: &str,
+    account_id: &str,
+    item_ids: &[String],
+) -> Result<(), VaultError> {
+    validate_account_id(routine_id)?;
+    validate_account_id(account_id)?;
+    if item_ids.len() > MAX_ROUTINE_PENDING_IDS
+        || item_ids
+            .iter()
+            .any(|id| id.is_empty() || id.len() > 512 || id.chars().any(char::is_control))
+    {
+        return Err(VaultError::InvalidReference);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AccountSecretMaterial, AccountVault, Uuid, VaultError};
@@ -1022,11 +1203,11 @@ mod tests {
     }
 
     #[test]
-    fn routine_mail_dedup_is_bounded_agent_account_scoped_and_removed_on_disconnect() {
+    fn routine_mail_backlog_is_bounded_scoped_and_recovers_interrupted_runs() {
         vak_config::paths::isolate_home_for_tests();
-        let vault = AccountVault::for_agent(&format!("mailcal-watch-{}", Uuid::now_v7())).unwrap();
+        let agent_id = format!("mailcal-backlog-{}", Uuid::now_v7());
         let account_id = Uuid::now_v7().to_string();
-        let other_account = Uuid::now_v7().to_string();
+        let other_account_id = Uuid::now_v7().to_string();
         let routine_id = Uuid::now_v7().to_string();
         let ids = |values: &[&str]| {
             values
@@ -1034,45 +1215,101 @@ mod tests {
                 .map(|value| (*value).to_string())
                 .collect::<Vec<_>>()
         };
+        let first = AccountVault::for_agent(&agent_id).unwrap();
+        assert!(
+            first
+                .queue_unseen_mail_ids(&routine_id, &account_id, &ids(&["m1", "m2", "m3"]))
+                .unwrap()
+        );
+        assert!(
+            first
+                .has_unresolved_mail_ids(&routine_id, &account_id)
+                .unwrap()
+        );
 
-        assert!(
-            !vault
-                .has_unseen_mail_ids(&routine_id, &account_id, &ids(&[]))
-                .unwrap()
-        );
-        assert!(
-            vault
-                .has_unseen_mail_ids(&routine_id, &account_id, &ids(&["m1"]))
-                .unwrap()
-        );
+        let reopened = AccountVault::for_agent(&agent_id).unwrap();
         assert_eq!(
-            vault
-                .remember_new_mail_ids(&routine_id, &account_id, &ids(&["m1", "m2"]))
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 2)
                 .unwrap(),
             ids(&["m1", "m2"])
         );
+        reopened
+            .stage_delivered_mail_ids(&routine_id, &account_id, &ids(&["m1"]))
+            .unwrap();
+        assert!(
+            reopened
+                .has_unresolved_mail_ids(&routine_id, &account_id)
+                .unwrap()
+        );
         assert_eq!(
-            vault
-                .remember_new_mail_ids(&routine_id, &account_id, &ids(&["m2", "m3"]))
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 10)
                 .unwrap(),
-            ids(&["m3"])
+            ids(&["m2", "m3"])
+        );
+        reopened
+            .resolve_delivered_mail_ids(&routine_id, &account_id, false)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 10)
+                .unwrap(),
+            ids(&["m1", "m2", "m3"])
+        );
+        assert!(matches!(
+            reopened.stage_delivered_mail_ids(&routine_id, &account_id, &ids(&["unfetched"])),
+            Err(VaultError::InvalidReference)
+        ));
+        reopened
+            .stage_delivered_mail_ids(&routine_id, &account_id, &ids(&["m1"]))
+            .unwrap();
+        reopened
+            .resolve_delivered_mail_ids(&routine_id, &account_id, true)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 10)
+                .unwrap(),
+            ids(&["m2", "m3"])
+        );
+        reopened
+            .stage_delivered_mail_ids(&routine_id, &account_id, &ids(&["m2", "m3"]))
+            .unwrap();
+        reopened
+            .resolve_delivered_mail_ids(&routine_id, &account_id, true)
+            .unwrap();
+        assert!(
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 10)
+                .unwrap()
+                .is_empty()
         );
         assert!(
-            !vault
-                .has_unseen_mail_ids(&routine_id, &account_id, &ids(&["m2", "m3"]))
+            !reopened
+                .has_unresolved_mail_ids(&routine_id, &account_id)
+                .unwrap()
+        );
+        assert!(
+            !reopened
+                .queue_unseen_mail_ids(&routine_id, &account_id, &ids(&["m1", "m2", "m3"]))
                 .unwrap()
         );
         assert!(matches!(
-            vault.remember_new_mail_ids(&routine_id, &other_account, &ids(&["m4"])),
+            reopened.queue_unseen_mail_ids(&routine_id, &other_account_id, &ids(&["m4"])),
             Err(VaultError::InvalidReference)
         ));
-
-        vault.remove(&account_id).unwrap();
-        assert_eq!(
-            vault
-                .remember_new_mail_ids(&routine_id, &other_account, &ids(&["m4"]))
-                .unwrap(),
-            ids(&["m4"])
+        reopened.remove(&account_id).unwrap();
+        assert!(
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 10)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            reopened
+                .queue_unseen_mail_ids(&routine_id, &other_account_id, &ids(&["m4"]))
+                .unwrap()
         );
     }
 
