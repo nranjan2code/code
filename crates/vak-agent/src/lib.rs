@@ -4585,6 +4585,7 @@ impl Agent {
         'legs: for (li, (provider_arc, model)) in legs.iter().enumerate() {
             leg_req.model = model.clone();
             let breaker_key = provider_arc.circuit_key();
+            let rate_limit_gate = vak_llm::RateLimitGate::for_key(provider_arc.rate_limit_key());
             if let Some(breaker) = &self.config.circuit_breaker
                 && let Err(open) = breaker.check_key(&breaker_key)
             {
@@ -4635,6 +4636,10 @@ impl Agent {
                 if cancel.is_cancelled() {
                     return Err(LlmError::Aborted { partial: None });
                 }
+                // Rate-limit waits are shared by adapters using the same
+                // provider account. Wait before reserving spend or consuming
+                // a dispatch, so a cooldown is not charged as model work.
+                let waited_for_rate_limit = rate_limit_gate.wait(cancel).await?;
                 // Budget admission precedes every paid dispatch (Phase D). A
                 // denial becomes one bounded budget Ask; refusal -- or no
                 // approver, which is the unattended case -- fails the step
@@ -4807,6 +4812,7 @@ impl Agent {
 
                 match outcome {
                     Ok((r, first_token_ms)) => {
+                        rate_limit_gate.record_probe_success(waited_for_rate_limit);
                         if let Some(breaker) = &self.config.circuit_breaker {
                             breaker.record_success_key(&breaker_key);
                         }
@@ -4833,6 +4839,20 @@ impl Agent {
                         return Err(e);
                     }
                     Err(e) => {
+                        if let LlmError::RateLimit {
+                            retry_after_secs, ..
+                        } = &e
+                        {
+                            let suggested = backoff_delay(
+                                attempt.saturating_add(1),
+                                *retry_after_secs,
+                                self.config.retry_base_backoff_ms,
+                            );
+                            rate_limit_gate.observe_limit(
+                                retry_after_secs.map(std::time::Duration::from_secs),
+                                suggested,
+                            );
+                        }
                         let (domain, settlement) = vak_llm::work::classify_error(&e);
                         ledger.receipt.record(
                             reason,

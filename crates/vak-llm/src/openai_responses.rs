@@ -242,6 +242,7 @@ struct Accumulator {
     tool_pos: std::collections::HashMap<String, usize>,
     raw_json: std::collections::HashMap<String, String>,
     last_event: Option<String>,
+    retry_after_secs: Option<u64>,
 }
 
 impl Accumulator {
@@ -252,6 +253,7 @@ impl Accumulator {
             tool_pos: std::collections::HashMap::new(),
             raw_json: std::collections::HashMap::new(),
             last_event: None,
+            retry_after_secs: None,
         }
     }
 
@@ -277,10 +279,15 @@ impl Accumulator {
                     .unwrap_or("provider returned a streamed failure");
                 let code = error.get("code").and_then(Value::as_str).unwrap_or("");
                 let message = format!("{code}: {message}");
+                let retry_after_secs = error
+                    .get("retry_after_secs")
+                    .or_else(|| error.get("retry_after"))
+                    .and_then(Value::as_u64)
+                    .or(self.retry_after_secs);
                 Err(match code {
                     "rate_limit_exceeded" | "insufficient_quota" => LlmError::RateLimit {
                         message,
-                        retry_after_secs: None,
+                        retry_after_secs,
                     },
                     "server_error" => LlmError::Overloaded(message),
                     "invalid_api_key" | "authentication_error" => LlmError::Auth(message),
@@ -439,6 +446,13 @@ impl Provider for OpenAiResponsesProvider {
         crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!(
+            "openai-account:{}",
+            crate::gate::credential_id(&self.config.base_url, &self.config.api_key)
+        )
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,
@@ -473,10 +487,16 @@ impl Provider for OpenAiResponsesProvider {
         }
 
         let model = request.model.clone();
+        let stream_retry_after = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok());
         let (mut sink, stream_rx) = channel(256);
         let mut byte_stream = response.bytes_stream();
         let mut decoder = SseDecoder::new();
         let mut acc = Accumulator::new(&model);
+        acc.retry_after_secs = stream_retry_after;
 
         tokio::spawn(async move {
             loop {
@@ -625,5 +645,40 @@ mod build_body_tests {
         let body = build_body(&config(), &req).unwrap();
         assert_eq!(body["input"].as_array().unwrap().len(), 2);
         assert!(body.get("previous_response_id").is_none());
+    }
+
+    #[test]
+    fn streamed_rate_limit_keeps_structured_retry_timing() {
+        let mut acc = Accumulator::new("model");
+        let error = acc
+            .convert(
+                r#"{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"limited","retry_after_secs":13}}}"#,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LlmError::RateLimit {
+                retry_after_secs: Some(13),
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn streamed_rate_limit_uses_response_retry_header_when_error_has_none() {
+        let mut acc = Accumulator::new("model");
+        acc.retry_after_secs = Some(7);
+        let error = acc
+            .convert(
+                r#"{"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"limited"}}}"#,
+            )
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            LlmError::RateLimit {
+                retry_after_secs: Some(7),
+                ..
+            }
+        ));
     }
 }
