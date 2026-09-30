@@ -29,6 +29,7 @@ pub mod presentation_tools;
 /// `(allow, ask, deny)`.
 pub type PermissionRuleLists = (Vec<String>, Vec<String>, Vec<String>);
 
+pub mod mail_calendar;
 pub mod prompts;
 pub mod reach;
 pub mod reflection;
@@ -3602,6 +3603,14 @@ impl Core {
                 audience_id: scope.audience_id.clone(),
             }));
         }
+        // Provider reads stay broker-owned: the model receives only a narrow
+        // typed read tool, never vault handles, credentials, or worker access.
+        // The tool is present in the declaration view too, where its missing
+        // Agent/audience scope makes execution fail closed.
+        tools.push(Arc::new(mail_calendar::MailCalendarTool {
+            agent_id: scope.agent_id.clone(),
+            audience_id: scope.audience_id.clone(),
+        }));
         if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {
                 sessions_home: self.sessions_home(),

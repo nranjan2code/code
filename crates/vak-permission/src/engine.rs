@@ -36,7 +36,7 @@ pub struct PermissionEngine {
 /// portfolio, like `session_search` reads its own history: a model that must
 /// ask a person before it may look at its own obligations cannot answer
 /// "what are you working on?" on an unattended surface at all.
-const READ_TOOLS: [&str; 9] = [
+const READ_TOOLS: [&str; 10] = [
     "read",
     "doc_read",
     "glob",
@@ -46,6 +46,7 @@ const READ_TOOLS: [&str; 9] = [
     "session_search",
     "skill",
     "commitments",
+    "mail_calendar",
 ];
 const PATH_SCOPED_READ_TOOLS: [&str; 5] = ["read", "doc_read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 3] = ["write", "edit", "office_apply"];
@@ -390,6 +391,31 @@ fn normalize_scope_path(path: &Path, cwd: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_calendar_is_a_read_capability_but_explicit_rules_still_win() {
+        let empty = PermissionEngine::default();
+        assert_eq!(
+            empty.evaluate(
+                "mail_calendar",
+                &serde_json::json!({}),
+                Mode::ReadOnly,
+                Path::new("/workspace")
+            ),
+            Decision::Allow
+        );
+        let denied =
+            PermissionEngine::from_rule_strings(&["-mail_calendar".into()]).expect("valid rule");
+        assert!(matches!(
+            denied.evaluate(
+                "mail_calendar",
+                &serde_json::json!({}),
+                Mode::ReadOnly,
+                Path::new("/workspace")
+            ),
+            Decision::Deny { .. }
+        ));
+    }
 
     #[test]
     fn test_describe_formats_task() {

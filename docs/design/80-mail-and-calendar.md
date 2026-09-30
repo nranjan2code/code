@@ -1,23 +1,27 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **proposal with Stage 1A account linking, an owner-only bounded
-Google/Microsoft preview, and a skills-only installable package implemented,
-2026-09-30.**
+Status: **proposal with Agent/account linking, owner-only bounded
+Google/Microsoft previews, and a broker-owned local-surface read tool
+implemented; working area, drafts, Review, effects, and routines remain in
+progress, 2026-09-30.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
 Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
-owner-only connection Settings panel with masked display identities, and
-local-only Apple app-specific-password enrollment are implemented in that
+connection Settings panel with masked display identities, local-only Apple
+app-specific-password enrollment, and a broker-owned read tool for the local
+owner surface are implemented in that
 branch. OAuth and Apple activation hold the shared connection-ledger lock
 across the Agent-vault credential write and pending-to-connected event, so a
 concurrent disconnect either prevents the new credential write or runs after
 activation and removes it. Apple enrollment records only read capabilities,
 stores the password in the Agent vault, reports `connected_unverified`, and
 reports no token expiry; it does not verify the credential with Apple or
-enable provider content access. Provider-content
-Agent/model content tools, routines, local content drafts, Review, and provider
-effects remain unimplemented. OAuth authorization attempts are bounded and single-use;
+enable provider content access. Google and Microsoft Agent reads are limited
+to the local owner surface; channel audiences fail closed without an explicit
+share grant. Reads supplied to the model are retained in current append-only
+session history. Routines, local content drafts, Review, and provider effects
+remain unimplemented. OAuth authorization attempts are bounded and single-use;
 disconnect serializes with new links and atomically advances a durable,
 Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
 attempt captures that fence at initiation; callback credential persistence
@@ -35,12 +39,14 @@ component is an inert skill that explains account setup and current limits; it
 declares no executable, MCP, command, hook, or data-access capability. The
 package registry inspects it through the same native manifest path used for
 other local packages; installation leaves it disabled until a separate review
-and enable action. Provider operations remain unavailable to Agents.
+and enable action. The package itself grants no data access; mail/calendar
+reads are available only through the Core broker tool.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Owner-only bounded
-previews for Gmail and Microsoft are implemented. Agent/model reads, local
-drafts, Review, and routines may proceed against current storage, with the
+previews for Gmail and Microsoft are implemented. The Agent read tool uses
+the connected account's declared capability and the owning Agent's local
+surface grant. Local drafts, Review, and routines remain in progress, with the
 account-deletion limitation below disclosed before those features are enabled.
 No crypto-shred guarantee is made. Apple remains unverified and unavailable.
 Provider-specific API details and consent requirements must be rechecked
@@ -354,11 +360,12 @@ domain-wide delegation are excluded from the first release. Revocation and
 expiry fail closed and produce an actionable reconnect state.
 
 Fetched content is not copied into memory, search, RAG, or a feed by default.
-The current owner-only preview returns bounded content directly to the UI and
-does not store a second content copy. All excerpts supplied to the model, whether subsequently cited or not, and
-local candidates needed for Review are
-retained under the owning Agent/conversation and audience, with explicit
-retention. Any future background mailbox source must use the single intake
+Owner previews return bounded content directly to the UI and do not store a
+second content copy. The broker-owned Agent read tool returns bounded content
+to the model; invariant 1 records its result in append-only session history.
+Current storage has no independent retention control or selective erasure for
+those transcript copies. Local candidates needed for Review remain unbuilt.
+Any future background mailbox source must use the single intake
 and catalog lifecycle proposed in `76-intake-and-knowledge.md`, after its
 data-architecture dependencies land; this document does not start M1 or a
 later data milestone. Delete, export, legal hold, and erasure must follow
@@ -387,7 +394,7 @@ recorded in the owning Agent's append-only session history to preserve model
 reconstruction. Under current 4.x storage, disconnect does not remove that
 history, and deleting an account does not erase copies already in sessions.
 
-The UI must state this before enabling connected-content features and must
+The UI and tool description state this before enabling connected-content features and must
 distinguish account disconnection (credential removal and future-read fencing)
 from deletion of previously recorded content. Do not describe account or
 Agent deletion as complete erasure of mail/calendar content. The future data

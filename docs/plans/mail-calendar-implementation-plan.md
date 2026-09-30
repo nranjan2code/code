@@ -1,8 +1,8 @@
 # Plan — secure mail and calendar package
 
-Status: **Stage 0 and Stage 1A Agent/account linking complete; the first
-Stage 1B owner-only Google/Microsoft preview slice and the skills-only package
-are implemented on `codex/mail-calendar`. The maintainer authorized continuing
+Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
+Google/Microsoft owner previews and the initial broker-owned local Agent read
+tool are implemented on `codex/mail-calendar`. The maintainer authorized continuing
 against the current 4.x storage model on 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
 `docs/design/80-mail-and-calendar.md`. This plan stages the work so a secure
@@ -178,14 +178,15 @@ the first link finishes or is cleaned up.
 ### Stage 1B — bounded content reads, current storage
 
 The first slice implements owner-only bounded inbox, event, and free/busy
-previews for Google and Microsoft through fixed-host, read-only adapters. It
-does not persist a second mailbox/event cache, and the preview stays outside
-Agent model context. Next, add broker-owned Agent/model reads and citations,
-provider health/freshness, and worker-contained parsing using the current
-Agent vault and session storage. Before enabling Agent content access, the UI
-must explain that disconnect removes the account credential and fences future
-reads, but current storage cannot erase content already recorded in append-only
-Agent session history. Do not claim complete account deletion. The provider exit requirements for
+previews for Google and Microsoft through fixed-host, read-only adapters. A
+broker-owned Agent tool now offers bounded reads on the local owner surface;
+channel audiences fail closed until explicitly shareable grants are built.
+The tool never exposes vault handles to workers. Returned provider content is
+model-visible and enters append-only session history, which current storage
+cannot selectively erase. The UI and tool description disclose this before
+reads. Do not claim complete account deletion. Provider health/freshness,
+citations and safe prompt-injection handling remain to be completed. The
+provider exit requirements for
 bounded responses, no remote HTML loads, prompt-injection containment,
 revocation during a read, and no message-read mutation apply here. Each
 provider must return useful structured views or an explicit unsupported or
@@ -251,10 +252,10 @@ remains read-only until an acceptable credential model exists.
 ## Build order and repository constraints
 
 Provider content reads may use the current 4.x substrate under the maintainer's
-2026-09-30 direction. Do not add a second durable content cache. Keep the
-current direct preview owner-only until the broker-owned Agent tool path is
-implemented. Account
-disconnect removes credentials and revokes access where supported, but does
+2026-09-30 direction. Do not add a second durable content cache. The current
+direct preview stays owner-only; Agent reads use the broker-owned Core tool
+and local surface grant. Account disconnect removes credentials and revokes
+access where supported, but does
 not erase copied content from append-only session history; account/Agent
 deletion must present this limitation until the lifecycle architecture ships.
 This feature work does not start a data-architecture milestone.
@@ -881,3 +882,17 @@ authorization and approval boundary on every execution path.
   web build/typecheck passes. Agent/model tools, drafts, Review, and routines
   remain unimplemented. Provider contracts were checked against the Google
   and Microsoft API references linked above.
+- 2026-09-30: Added `mail_calendar` as a Core-owned read tool. It binds the
+  admitted session's Agent/audience, reads only that Agent's connection ledger
+  and vault, and calls bounded Google/Microsoft adapters without exposing
+  credentials to a worker. Agent-wide grants are accepted only for `local`;
+  channel audiences fail closed until an explicit share flow exists. The tool
+  returns provider data as untrusted content, and a post-read ledger check
+  discards content if the account or grant changed during the request. The UI
+  now discloses that model-visible data enters append-only session history.
+  Permission tests prove it is a read in ReadOnly mode and explicit deny wins.
+  Verification: 2 Core boundary tests, 2 permission unit tests, 40 permission
+  integration tests, 59 mail-calendar tests, server check, and desktop/web UI
+  build pass. Strict Core Clippy passes with the repository's pre-existing
+  `collapsible_if` finding allowed; no new lint was reported. Working area,
+  drafts, Review, effects, and routines remain open.

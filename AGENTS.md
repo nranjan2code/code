@@ -89,9 +89,10 @@ Read before changing behaviour in these areas:
   `crates/vak-pdf`, carried by the Office loop's own surfaces: `doc_read`,
   `office_apply`, Review with choices and shared drafts; its deferred list
   says what is not built and why).
-- **Mail and calendar** — `80-mail-and-calendar.md` (Stage 1A account linking
-  and owner-only bounded Google/Microsoft previews are implemented on
-  `codex/mail-calendar` against current 4.x storage. Agent/model tools, the
+- **Mail and calendar** — `80-mail-and-calendar.md` (Agent account linking,
+  owner-only bounded Google/Microsoft previews, and a broker-owned read tool
+  on the local owner surface are implemented on `codex/mail-calendar` against
+  current 4.x storage. Channel reads fail closed. The
   shared working area, local drafts, Review, provider effects, and scheduled
   or continuous routines remain in progress. Disconnect removes credentials
   and fences future reads but cannot erase content already recorded in

@@ -7581,6 +7581,7 @@ dependencies = [
  "vak-hooks",
  "vak-intent",
  "vak-llm",
+ "vak-mail-calendar",
  "vak-mcp",
  "vak-permission",
  "vak-plugin",
