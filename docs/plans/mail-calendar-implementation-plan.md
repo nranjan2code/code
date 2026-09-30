@@ -688,7 +688,8 @@ remains open.
   Duplicate IDs and cursor cycles are rejected/deduplicated, and Graph links
   must stay on the configured origin and exact calendar-view path before the
   bearer token is sent. Simulated two-page provider tests cover both paths and
-  off-origin/wrong-path Graph rejection.
+  off-origin/wrong-path Graph rejection. A second fixture proves repeated
+  Google and Graph cursors fail closed after two requests.
 
 - 2026-10-01: Conversation citations now follow at most 20 additional
   same-thread pages (420 messages total) to locate a cited message. Provider

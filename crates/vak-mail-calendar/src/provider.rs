@@ -5814,6 +5814,88 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn calendar_page_cursor_cycles_fail_closed() {
+        let (vault, mut google, agent_id, audience) = linked_test_account(Provider::Google);
+        google.capabilities.insert(Capability::CalendarRead);
+        let (graph_vault, mut graph, graph_agent_id, graph_audience) =
+            linked_test_account(Provider::Microsoft);
+        graph.capabilities.insert(Capability::CalendarRead);
+        let google_requests = std::sync::Arc::new(AtomicUsize::new(0));
+        let graph_requests = std::sync::Arc::new(AtomicUsize::new(0));
+        let google_seen = google_requests.clone();
+        let graph_seen = graph_requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let graph_next = format!("http://{address}/graph/v1.0/me/calendarView?$skiptoken=repeat");
+        let app =
+            axum::Router::new()
+                .route(
+                    "/calendar/v3/calendars/primary/events",
+                    axum::routing::get(
+                        move |_query: axum::extract::Query<
+                            std::collections::HashMap<String, String>,
+                        >| {
+                            google_seen.fetch_add(1, Ordering::SeqCst);
+                            async { axum::Json(json!({"items": [], "nextPageToken": "repeat"})) }
+                        },
+                    ),
+                )
+                .route(
+                    "/graph/v1.0/me/calendarView",
+                    axum::routing::get(
+                        move |_query: axum::extract::Query<
+                            std::collections::HashMap<String, String>,
+                        >| {
+                            let graph_next = graph_next.clone();
+                            graph_seen.fetch_add(1, Ordering::SeqCst);
+                            async move {
+                                axum::Json(json!({"value": [], "@odata.nextLink": graph_next}))
+                            }
+                        },
+                    ),
+                );
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let range = CalendarRange {
+            from: Utc::now(),
+            to: Utc::now() + Duration::days(1),
+            limit: 2,
+        };
+        assert!(
+            client
+                .calendar_events(&google, &vault, &agent_id, &audience, range.clone())
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .calendar_events(
+                    &graph,
+                    &graph_vault,
+                    &graph_agent_id,
+                    &graph_audience,
+                    range
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(google_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(graph_requests.load(Ordering::SeqCst), 2);
+        task.abort();
+    }
+
+    #[tokio::test]
     async fn large_simulated_graph_mail_and_calendar_stay_within_page_budgets() {
         let (vault, mut account, agent_id, audience) = linked_test_account(Provider::Microsoft);
         account.capabilities.insert(Capability::CalendarRead);
