@@ -229,6 +229,11 @@ pub struct TaskDef {
     pub last_result_id: Option<String>,
     #[serde(default)]
     pub last_run_status: Option<String>,
+    /// Last successful provider cursor poll for a continuous mail watch.
+    /// Kept separate from `last_run_at`, which also records failed runs and
+    /// model-run starts and therefore cannot establish source freshness.
+    #[serde(default)]
+    pub mail_calendar_last_check_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub last_delivery_state: Option<String>,
     #[serde(default)]
@@ -746,6 +751,7 @@ mod tests {
             last_summary: None,
             last_result_id: None,
             last_run_status: None,
+            mail_calendar_last_check_at: None,
             last_delivery_state: None,
             last_wt: None,
             deliver_to: None,
@@ -935,6 +941,7 @@ mod tests {
         assert_eq!(t.schedule, None);
         assert_eq!(t.script, None);
         assert_eq!(t.model_pin, None);
+        assert_eq!(t.mail_calendar_last_check_at, None);
 
         store.save().unwrap();
         let reloaded = TaskStore::load(dir.path()).unwrap();
@@ -957,6 +964,7 @@ mod tests {
         t.script = Some("systemctl is-active nginx".into());
         t.schedule = Some("0 7 * * 1-5".into());
         t.model_pin = Some("haiku-fast".into());
+        t.mail_calendar_last_check_at = Some(Utc::now());
         store.put(t.clone());
         store.save().unwrap();
 
@@ -965,6 +973,10 @@ mod tests {
         assert_eq!(got.script.as_deref(), Some("systemctl is-active nginx"));
         assert_eq!(got.schedule.as_deref(), Some("0 7 * * 1-5"));
         assert_eq!(got.model_pin.as_deref(), Some("haiku-fast"));
+        assert_eq!(
+            got.mail_calendar_last_check_at,
+            t.mail_calendar_last_check_at
+        );
         assert!(got.validate().is_ok());
     }
 

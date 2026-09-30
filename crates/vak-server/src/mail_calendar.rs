@@ -114,7 +114,7 @@ pub(crate) async fn mail_watch_has_unseen(
     agent_id: &str,
     scope: &RoutineScope,
     previous_run_succeeded: bool,
-) -> Result<bool, String> {
+) -> Result<Option<bool>, String> {
     scope.validate().map_err(|error| error.to_string())?;
     if !scope.watch_new_mail || !scope.operations.contains(&RoutineOperation::RecentMail) {
         return Err("the scheduled routine is not a mail watch".into());
@@ -141,7 +141,9 @@ pub(crate) async fn mail_watch_has_unseen(
         .has_unresolved_mail_ids(&scope.routine_id, &scope.account_id)
         .map_err(|_| "the private mail watch cursor is unavailable".to_string())?
     {
-        return Ok(true);
+        // Work is already durably queued. Let the run consume it without
+        // claiming that this tick contacted or refreshed the provider.
+        return Ok(None);
     }
     let cursor = vault
         .routine_provider_cursor(&scope.routine_id, &scope.account_id)
@@ -179,6 +181,7 @@ pub(crate) async fn mail_watch_has_unseen(
             &item_ids,
             next_cursor.as_deref(),
         )
+        .map(Some)
         .map_err(|_| "the private mail watch cursor is unavailable".to_string())
 }
 

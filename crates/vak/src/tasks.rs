@@ -175,6 +175,7 @@ pub fn build_task_def(
         last_summary: None,
         last_result_id: None,
         last_run_status: None,
+        mail_calendar_last_check_at: None,
         last_delivery_state: None,
         last_wt: None,
         deliver_to: deliver

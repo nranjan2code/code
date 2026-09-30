@@ -544,6 +544,14 @@ the process was down. This corrects the shared `TaskDef` scheduler; it does
 not provide Google/Microsoft provider-native cursors or turn best-effort polling into a 24/7
 availability guarantee.
 
+**Implemented increment (2026-10-01):** continuous mail watches now persist a
+separate `mail_calendar_last_check_at` only after the provider cursor poll
+succeeds. The routine list uses this value for “last successful check” instead
+of treating a model-run start or failed attempt as source freshness. Legacy
+`tasks.json` files load with the field unset and continue to round-trip. This
+does not prove that the service process is awake or healthy between checks;
+host-health reporting and sustained recovery acceptance remain open.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -587,6 +595,14 @@ authorization and approval boundary on every execution path.
 
 ## Progress log
 
+- 2026-10-01: Added persisted, backward-compatible source-check timestamps for
+  continuous mail watches. Successful provider cursor polls update the field;
+  failures leave the previous successful-check time intact. The routine UI now
+  shows that timestamp separately from run status and explicitly labels a
+  watch with no successful poll. The focused status test, task-store
+  compatibility/round-trip suite, formatting, server library check, and web
+  build pass. Awake-host health, freshness targets, and 24-hour service
+  acceptance remain open.
 - 2026-10-01: Added explicit accessible names to the Google, Microsoft, and
   Apple app-password email and password fields after the running preview
   exposed anonymous text fields in its accessibility tree. The UI typecheck

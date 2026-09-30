@@ -492,6 +492,7 @@ export interface TaskDef {
   last_summary?: string | null;
   last_result_id?: string | null;
   last_run_status?: string | null;
+  mail_calendar_last_check_at?: string | null;
   last_delivery_state?: string | null;
   last_wt?: { path: string; branch: string } | null;
   deliver_to?: string | null;

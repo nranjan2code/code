@@ -18095,6 +18095,7 @@ async fn create_task(
         last_summary: None,
         last_result_id: None,
         last_run_status: None,
+        mail_calendar_last_check_at: None,
         last_delivery_state: None,
         last_wt: None,
         deliver_to: body.deliver_to,
@@ -18490,6 +18491,28 @@ enum NotFired {
     Refused,
 }
 
+/// Record only a successful provider cursor check. `last_run_at` has broader
+/// scheduling semantics (including model-run starts and failures), so it must
+/// not be used as evidence that continuous mail is fresh.
+fn mark_mail_calendar_check_succeeded(
+    tasks: &mut std::collections::HashMap<String, TaskDef>,
+    id: &str,
+    checked_at: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let Some(task) = tasks.get_mut(id) else {
+        return false;
+    };
+    if !task
+        .mail_calendar_scope
+        .as_ref()
+        .is_some_and(|scope| scope.watch_new_mail)
+    {
+        return false;
+    }
+    task.mail_calendar_last_check_at = Some(checked_at);
+    true
+}
+
 /// Tells the person why a due task could not start, once per missed slot:
 /// the scheduler retries the slot every tick, and the key changes only when
 /// the task has run since.
@@ -18607,8 +18630,9 @@ async fn fire_task_with_force(
         )
         .await
         {
-            Ok(false) => {
+            Ok(Some(false)) => {
                 update_tasks(state, |tasks| {
+                    mark_mail_calendar_check_succeeded(tasks, id, chrono::Utc::now());
                     if let Some(task) = tasks.get_mut(id) {
                         task.last_run_at = Some(chrono::Utc::now());
                         task.last_run_status = Some("no_changes".into());
@@ -18619,7 +18643,12 @@ async fn fire_task_with_force(
                 });
                 return Ok(id.to_owned());
             }
-            Ok(true) => {}
+            Ok(Some(true)) => {
+                update_tasks(state, |tasks| {
+                    mark_mail_calendar_check_succeeded(tasks, id, chrono::Utc::now());
+                });
+            }
+            Ok(None) => {}
             Err(error) => return Err(refuse_task(state, &snapshot, error)),
         }
     }
@@ -20267,6 +20296,7 @@ mod scheduler_pure_tests {
             last_summary: None,
             last_result_id: None,
             last_run_status: status.map(str::to_owned),
+            mail_calendar_last_check_at: None,
             last_delivery_state: Some("pending".into()),
             last_wt: None,
             deliver_to: None,
@@ -20289,6 +20319,59 @@ mod scheduler_pure_tests {
             Some("interrupted")
         );
         assert_eq!(tasks["done"].last_run_status.as_deref(), Some("complete"));
+    }
+
+    #[test]
+    fn source_check_timestamp_is_written_only_for_mail_watch_tasks() {
+        let task = |id: &str, watch_new_mail: bool| TaskDef {
+            id: id.into(),
+            name: id.into(),
+            prompt: "check mail".into(),
+            interval_secs: 60,
+            enabled: true,
+            cwd: std::path::PathBuf::from("/tmp"),
+            created_at: Utc::now(),
+            last_run_at: None,
+            last_session_id: None,
+            last_summary: None,
+            last_result_id: None,
+            last_run_status: None,
+            mail_calendar_last_check_at: None,
+            last_delivery_state: None,
+            last_wt: None,
+            deliver_to: None,
+            schedule: None,
+            timezone: None,
+            due_at: None,
+            script: None,
+            model_pin: None,
+            agent_id: Some("owner-agent".into()),
+            agent_revision: Some(1),
+            mail_calendar_scope: Some(RoutineScope {
+                routine_id: id.into(),
+                account_id: "account".into(),
+                mail_folder_id: None,
+                operations: [RoutineOperation::RecentMail].into_iter().collect(),
+                max_items: 1,
+                watch_new_mail,
+            }),
+        };
+        let mut tasks = HashMap::from([
+            ("watch".into(), task("watch", true)),
+            ("scheduled".into(), task("scheduled", false)),
+        ]);
+        let checked_at = Utc::now();
+
+        assert!(super::mark_mail_calendar_check_succeeded(
+            &mut tasks, "watch", checked_at
+        ));
+        assert_eq!(tasks["watch"].mail_calendar_last_check_at, Some(checked_at));
+        assert!(!super::mark_mail_calendar_check_succeeded(
+            &mut tasks,
+            "scheduled",
+            checked_at
+        ));
+        assert_eq!(tasks["scheduled"].mail_calendar_last_check_at, None);
     }
 
     #[test]
@@ -20323,6 +20406,7 @@ mod scheduler_pure_tests {
             last_summary: None,
             last_result_id: None,
             last_run_status: Some("working".into()),
+            mail_calendar_last_check_at: None,
             last_delivery_state: Some("pending".into()),
             last_wt: None,
             deliver_to: None,
