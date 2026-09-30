@@ -100,7 +100,11 @@ inbox. Owner mail previews can select Gmail labels and Microsoft top-level
 folders; Apple and Agent/watcher reads remain Inbox-only. Google and Microsoft
 owners can open one bounded thread preview with its separate messages; Apple
 supports a selected-message preview without conversation grouping. These
-results are transient and search phrases are not logged or retained. The
+results are transient and search phrases are not logged or retained. The owner
+can start a local email draft from any message in an opened Google or Microsoft
+conversation; the candidate retains that selected provider message as its
+source reference. It creates a new message and does not claim provider-thread
+reply semantics. The
 complete thread workspace, source citations, and cross-folder Agent access
 remain open. Local drafts,
 scheduled read-only routines, and an explicitly

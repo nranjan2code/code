@@ -1336,3 +1336,10 @@ authorization and approval boundary on every execution path.
   hidden behind it. The content is rendered as escaped text with a bounded,
   scrollable review area. UI typecheck and production build pass; visual browser
   acceptance at desktop and phone sizes remains open.
+- 2026-09-30: Each message in a Google or Microsoft conversation preview can
+  start a local draft that retains that provider message as its source
+  reference. The UI explicitly describes it as a new email, not a threaded
+  reply; recipient, reply headers, and thread-aware provider send remain
+  unsupported. Design and implementation docs record this boundary. UI
+  typecheck and production build pass; source-to-Review browser acceptance
+  remains open.
