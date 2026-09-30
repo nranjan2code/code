@@ -4110,6 +4110,90 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn large_simulated_icloud_mailbox_fetches_only_the_newest_bounded_page() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_stream, server_stream) = tokio::io::duplex(64 * 1024);
+        let server = tokio::spawn(async move {
+            let mut stream = BufReader::new(server_stream);
+            stream
+                .get_mut()
+                .write_all(b"* OK iCloud synthetic test server\r\n")
+                .await
+                .unwrap();
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split_whitespace().next().unwrap_or("A0000").to_owned();
+                let command = line.split_whitespace().nth(1).unwrap_or("");
+                let response = if line.contains(" LOGIN ") {
+                    format!("{tag} OK authenticated\r\n")
+                } else if command.eq_ignore_ascii_case("CAPABILITY") {
+                    format!("* CAPABILITY IMAP4rev1\r\n{tag} OK capabilities\r\n")
+                } else if line.contains(" EXAMINE ") {
+                    format!(
+                        "* 2000 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 17] valid\r\n{tag} OK [READ-ONLY] selected\r\n"
+                    )
+                } else if line.contains(" FETCH ") {
+                    assert!(
+                        line.contains("1981:2000"),
+                        "unexpected mailbox range: {line}"
+                    );
+                    let mut items = String::new();
+                    for index in 0..MAX_MAIL_ITEMS {
+                        let uid = 1981 + index;
+                        items.push_str(&format!(
+                            "* {} FETCH (UID {uid} ENVELOPE (NIL \"Synthetic {uid}\" ((NIL NIL \"sender\" \"example.test\")) NIL NIL NIL NIL NIL NIL \"<m{uid}>\") INTERNALDATE \"30-Sep-2026 12:00:00 +0000\" RFC822.SIZE 20 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 5 1))\r\n",
+                            index + 1
+                        ));
+                    }
+                    items.push_str(&format!("{tag} OK fetched\r\n"));
+                    items
+                } else if command.eq_ignore_ascii_case("LOGOUT") {
+                    format!("* BYE logging out\r\n{tag} OK logout\r\n")
+                } else {
+                    format!("{tag} BAD unsupported test command {command}\r\n")
+                };
+                if stream
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if command.eq_ignore_ascii_case("LOGOUT") {
+                    break;
+                }
+            }
+        });
+        let client = async_imap::Client::new(BudgetIo::new(client_stream, 64 * 1024, 8192));
+        let mut session = client
+            .login("owner@icloud.com", "synthetic-secret")
+            .await
+            .unwrap();
+
+        let messages = icloud_fetch_recent_mail(&mut session, MAX_MAIL_ITEMS)
+            .await
+            .unwrap();
+
+        assert_eq!(messages.len(), MAX_MAIL_ITEMS);
+        assert_eq!(
+            messages.first().map(|message| message.provider_id.as_str()),
+            Some("17:1981")
+        );
+        assert_eq!(
+            messages.last().map(|message| message.provider_id.as_str()),
+            Some("17:2000")
+        );
+        assert!(messages.iter().all(|message| message.body_text.is_none()));
+        session.logout().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn icloud_watch_fetches_only_selected_uids_without_setting_seen() {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 

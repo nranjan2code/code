@@ -1488,4 +1488,6 @@ authorization and approval boundary on every execution path.
   verify the 20-message and 100-event caps, Gmail's 16 KiB text projection
   limit, and that the bounded requested page is used even when a simulated
   provider returns more. These fixtures use no real account or credential;
-  Apple IMAP and CalDAV retain separate protocol/parser budget fixtures.
+  Apple IMAP now also presents a synthetic 2,000-message mailbox and verifies
+  that only the newest 20 metadata records are fetched. Apple CalDAV retains
+  separate protocol/parser budget fixtures.
