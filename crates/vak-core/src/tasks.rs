@@ -229,7 +229,7 @@ pub struct TaskDef {
     pub last_result_id: Option<String>,
     #[serde(default)]
     pub last_run_status: Option<String>,
-    /// Last successful provider cursor poll for a continuous mail watch.
+    /// Last successful source poll for a continuous mail/calendar routine.
     /// Kept separate from `last_run_at`, which also records failed runs and
     /// model-run starts and therefore cannot establish source freshness.
     #[serde(default)]

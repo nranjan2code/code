@@ -29,3 +29,18 @@ test("scheduled watches are not judged by the continuous polling threshold", () 
   );
   assert.equal(mailCalendarWatchFreshness({ interval_secs: 60 }, now), "not_watching");
 });
+
+test("calendar event triggers use the same provider-check freshness indicator", () => {
+  const eventRoutine = (overrides = {}) => ({
+    interval_secs: 60,
+    mail_calendar_last_check_at: "2026-10-01T11:59:00Z",
+    mail_calendar_scope: { calendar_event_trigger: { boundary: "start" } },
+    ...overrides,
+  });
+  assert.equal(mailCalendarWatchFreshness(eventRoutine(), now), "current");
+  assert.equal(mailCalendarWatchFreshness(eventRoutine({ mail_calendar_last_check_at: null }), now), "unknown");
+  assert.equal(mailCalendarWatchFreshness(eventRoutine({
+    mail_calendar_last_check_at: "2026-10-01T11:56:59.999Z",
+  }), now), "overdue");
+  assert.equal(mailCalendarWatchFreshness(eventRoutine({ interval_secs: 3600 }), now), "scheduled");
+});

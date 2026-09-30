@@ -662,8 +662,26 @@ impl vak_tools::Tool for MailCalendarTool {
                 }
             }
             "calendar_events" | "free_busy" => {
-                let (Some(from), Some(to)) = (parse_time(args, "from"), parse_time(args, "to"))
-                else {
+                let event_trigger = self
+                    .routine_scope
+                    .as_ref()
+                    .and_then(|scope| scope.calendar_event_trigger);
+                let range_times = if operation == "calendar_events" && event_trigger.is_some() {
+                    event_trigger.map(|trigger| {
+                        let now = Utc::now();
+                        let offset = chrono::Duration::minutes(i64::from(trigger.offset_minutes));
+                        (
+                            now - chrono::Duration::minutes(i64::from(
+                                trigger.max_lateness_minutes,
+                            )) - offset
+                                - chrono::Duration::minutes(1),
+                            now - offset + chrono::Duration::minutes(1),
+                        )
+                    })
+                } else {
+                    parse_time(args, "from").zip(parse_time(args, "to"))
+                };
+                let Some((from, to)) = range_times else {
                     return vak_tools::ToolOutput::error(
                         "Calendar reads need RFC 3339 'from' and 'to' times.",
                     );
@@ -679,18 +697,58 @@ impl vak_tools::Tool for MailCalendarTool {
                                 .as_ref()
                                 .map_or(100, |scope| u64::from(scope.max_items)),
                         ) as usize;
-                    calendar_events_with_worker(
-                        &client,
-                        account,
-                        &vault,
-                        agent_id,
-                        &account_audience,
-                        CalendarRange { from, to, limit },
-                        &self.worker_exe,
-                    )
+                    async {
+                        let events = calendar_events_with_worker(
+                            &client,
+                            account,
+                            &vault,
+                            agent_id,
+                            &account_audience,
+                            CalendarRange { from, to, limit },
+                            &self.worker_exe,
+                        )
+                        .await
+                        .map_err(|error| error.to_string())?;
+                        let provider_page_full = events.len() >= limit;
+                        if let (Some(scope), Some(trigger)) =
+                            (self.routine_scope.as_ref(), event_trigger)
+                        {
+                            let pending = vault
+                                .pending_calendar_occurrences(
+                                    &scope.routine_id,
+                                    &scope.account_id,
+                                    vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
+                                )
+                                .map_err(|error| error.to_string())?;
+                            let (selected, staged) =
+                                select_pending_calendar_occurrences(events, trigger, &pending);
+                            // If the provider returned fewer than the full
+                            // requested page, it confirms these are the
+                            // current candidates and stale moved/cancelled
+                            // occurrences can be dropped. A full page may
+                            // be truncated, so retain unmatched keys.
+                            if !provider_page_full {
+                                vault
+                                    .reconcile_calendar_occurrences(
+                                        &scope.routine_id,
+                                        &scope.account_id,
+                                        &staged,
+                                    )
+                                    .map_err(|error| error.to_string())?;
+                            }
+                            vault
+                                .stage_delivered_calendar_occurrences(
+                                    &scope.routine_id,
+                                    &scope.account_id,
+                                    &staged,
+                                )
+                                .map_err(|error| error.to_string())?;
+                            Ok(json!(selected))
+                        } else {
+                            Ok(json!(events))
+                        }
+                    }
                     .await
-                    .map_err(|error| error.to_string())
-                    .map(|items| json!(items))
                 } else {
                     let limit = self
                         .routine_scope
@@ -810,6 +868,26 @@ fn resolve_mail_folder_id(
             matches_scope.then(|| scope.mail_folder_id.clone())
         }
     }
+}
+
+fn select_pending_calendar_occurrences(
+    events: Vec<CalendarItem>,
+    trigger: vak_mail_calendar::CalendarEventTrigger,
+    pending: &[String],
+) -> (Vec<CalendarItem>, Vec<String>) {
+    let mut selected = Vec::new();
+    let mut staged = Vec::new();
+    for event in events {
+        let (Some(starts_at), Some(ends_at)) = (event.starts_at, event.ends_at) else {
+            continue;
+        };
+        let key = trigger.occurrence_key(&event.provider_id, starts_at, ends_at);
+        if pending.contains(&key) {
+            selected.push(event);
+            staged.push(key);
+        }
+    }
+    (selected, staged)
 }
 
 fn cited_mail_thread(
@@ -1000,6 +1078,46 @@ mod tests {
             can_cancel: false,
         };
         assert!(event_overlaps_range(&all_day, range));
+    }
+
+    #[test]
+    fn event_trigger_reads_only_the_queued_timed_occurrences() {
+        let trigger = vak_mail_calendar::CalendarEventTrigger {
+            boundary: vak_mail_calendar::CalendarEventBoundary::Start,
+            offset_minutes: 5,
+            max_lateness_minutes: 10,
+        };
+        let starts = DateTime::parse_from_rfc3339("2026-09-30T10:00:00Z")
+            .expect("valid test timestamp")
+            .with_timezone(&Utc);
+        let ends = starts + chrono::Duration::hours(1);
+        let event = |provider_id: &str, start: Option<DateTime<Utc>>| CalendarItem {
+            provider_id: provider_id.into(),
+            version: None,
+            title: provider_id.into(),
+            starts_at: start,
+            ends_at: start.map(|value| value + chrono::Duration::hours(1)),
+            starts_on: None,
+            ends_on: None,
+            all_day: start.is_none(),
+            location: None,
+            description: None,
+            attendee_count: 0,
+            recurring: false,
+            private: false,
+            can_cancel: false,
+        };
+        let expected = trigger.occurrence_key("wanted", starts, ends);
+        let events = vec![
+            event("wanted", Some(starts)),
+            event("other", Some(starts)),
+            event("all-day", None),
+        ];
+        let (selected, staged) =
+            select_pending_calendar_occurrences(events, trigger, &[expected.clone()]);
+        assert_eq!(selected.len(), 1);
+        assert_eq!(selected[0].provider_id, "wanted");
+        assert_eq!(staged, [expected]);
     }
 
     #[tokio::test]

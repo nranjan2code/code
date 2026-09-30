@@ -657,6 +657,19 @@ remains open.
   and requeues interrupted or failed dispatches. This is queue groundwork only;
   event polling, TaskDef dispatch, and owner controls remain open. The focused
   recovery/isolation test passes.
+- 2026-10-01: Connected calendar event triggers to the existing `TaskDef`
+  scheduler. Bounded provider polls queue due occurrence keys; the brokered
+  read stages exact matches and drops stale candidates only when the provider
+  returned a non-full page. Full pages retain unmatched keys to avoid losing
+  items hidden by truncation. A triggered
+  run is prompted to use the brokered calendar tool, which searches only the
+  configured catch-up window and stages only provider events matching queued
+  keys. Existing account revision checks, Agent-vault isolation, lease and run
+  settlement paths remain in force. Settings now configures start/end boundary,
+  signed offset, catch-up limit, and scheduled or one-minute cadence, and shows
+  poll freshness for event-trigger routines. Focused core, vault and server
+  tests, client typecheck/status tests, and the web build pass. Live-provider,
+  browser and end-to-end scheduled-run acceptance remain open.
 
 - 2026-10-01: Conversation citations now follow at most 20 additional
   same-thread pages (420 messages total) to locate a cited message. Provider

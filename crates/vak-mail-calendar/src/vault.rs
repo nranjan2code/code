@@ -797,6 +797,67 @@ impl AccountVault {
         })
     }
 
+    /// Replace unclaimed calendar candidates with the latest successful
+    /// provider observation. A moved or cancelled event must not leave an
+    /// obsolete occurrence blocking future polls; failed reads never call
+    /// this method, so their prior queue remains recoverable.
+    pub fn reconcile_calendar_occurrences(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        observed_keys: &[String],
+    ) -> Result<bool, VaultError> {
+        validate_calendar_occurrence_keys(routine_id, account_id, observed_keys)?;
+        self.with_routine_cursors(|mut cursors| {
+            let index = match cursors
+                .iter()
+                .position(|cursor| cursor.routine_id == routine_id)
+            {
+                Some(index) => {
+                    if cursors[index].account_id != account_id {
+                        return Err(VaultError::InvalidReference);
+                    }
+                    index
+                }
+                None => {
+                    if cursors.len() >= MAX_ROUTINE_CURSORS {
+                        return Err(VaultError::TooLarge);
+                    }
+                    cursors.push(RoutineCursor {
+                        routine_id: routine_id.to_owned(),
+                        account_id: account_id.to_owned(),
+                        seen_ids: Vec::new(),
+                        pending_ids: Vec::new(),
+                        delivered_ids: Vec::new(),
+                        seen_calendar_occurrences: Vec::new(),
+                        pending_calendar_occurrences: Vec::new(),
+                        delivered_calendar_occurrences: Vec::new(),
+                        provider_cursor: None,
+                    });
+                    cursors.len() - 1
+                }
+            };
+            let cursor = &mut cursors[index];
+            if !cursor.delivered_calendar_occurrences.is_empty() {
+                return Err(VaultError::Conflict);
+            }
+            let mut pending = Vec::new();
+            for key in observed_keys {
+                if cursor.seen_calendar_occurrences.contains(key) || pending.contains(key) {
+                    continue;
+                }
+                if pending.len() >= MAX_ROUTINE_PENDING_IDS {
+                    return Err(VaultError::TooLarge);
+                }
+                pending.push(key.clone());
+            }
+            cursor.pending_calendar_occurrences = pending;
+            let has_pending = !cursor.pending_calendar_occurrences.is_empty();
+            self.write_routine_cursors(&cursors)?;
+            Ok(has_pending)
+        })
+    }
+
     pub fn pending_calendar_occurrences(
         &self,
         routine_id: &str,
@@ -2191,6 +2252,34 @@ mod tests {
             !reopened
                 .queue_calendar_occurrences(&routine_id, &account_id, &keys(1))
                 .unwrap()
+        );
+        assert!(
+            reopened
+                .queue_calendar_occurrences(&routine_id, &account_id, &keys(2))
+                .unwrap()
+        );
+        assert!(
+            reopened
+                .reconcile_calendar_occurrences(&routine_id, &account_id, &keys(3))
+                .unwrap()
+        );
+        assert_eq!(
+            reopened
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap(),
+            keys(3),
+            "a successful poll replaces occurrences for events that moved"
+        );
+        assert!(
+            !reopened
+                .reconcile_calendar_occurrences(&routine_id, &account_id, &[])
+                .unwrap()
+        );
+        assert!(
+            reopened
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap()
+                .is_empty()
         );
         assert!(matches!(
             reopened.queue_calendar_occurrences(&routine_id, &account_id, &["not-a-key".into()]),

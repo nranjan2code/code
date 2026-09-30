@@ -1,10 +1,11 @@
 const CONTINUOUS_WATCH_INTERVAL_SECS = 60;
 const OVERDUE_AFTER_MS = 3 * CONTINUOUS_WATCH_INTERVAL_SECS * 1000;
 
-/** Provider-check freshness for the Settings routine list. Cron watches use
- * their own schedule and are not compared with the one-minute threshold. */
+/** Provider-check freshness for Settings. Cron-based mail and calendar
+ * routines use their own schedule, not the one-minute threshold. */
 export function mailCalendarWatchFreshness(task, nowMs = Date.now()) {
-  if (!task.mail_calendar_scope?.watch_new_mail) return "not_watching";
+  const scope = task.mail_calendar_scope;
+  if (!scope?.watch_new_mail && !scope?.calendar_event_trigger) return "not_watching";
 
   const checkedAt = task.mail_calendar_last_check_at;
   if (!checkedAt) return "unknown";

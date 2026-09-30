@@ -185,6 +185,102 @@ pub(crate) async fn mail_watch_has_unseen(
         .map_err(|_| "the private mail watch cursor is unavailable".to_string())
 }
 
+/// Poll the configured calendar window and durably queue only event
+/// occurrences whose configured boundary has become due. Provider content is
+/// parsed by the same isolated worker used by the brokered calendar tool.
+pub(crate) async fn calendar_event_has_due(
+    agent_id: &str,
+    scope: &RoutineScope,
+    last_check_at: Option<DateTime<Utc>>,
+    previous_run_succeeded: bool,
+    worker_exe: &std::path::Path,
+) -> Result<Option<bool>, String> {
+    scope.validate().map_err(|error| error.to_string())?;
+    let Some(trigger) = scope.calendar_event_trigger else {
+        return Err("the scheduled routine has no calendar event trigger".into());
+    };
+    let ledger = ConnectionLedger::for_agent(agent_id)
+        .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
+    let accounts = ledger
+        .read_all()
+        .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
+    let audience = format!("agent:{agent_id}");
+    let account = accounts
+        .into_iter()
+        .find(|account| {
+            account.id == scope.account_id
+                && account.admits(agent_id, &audience, Capability::CalendarRead)
+        })
+        .ok_or_else(|| "the selected calendar account is no longer authorized".to_string())?;
+    let vault = AccountVault::for_agent(agent_id)
+        .map_err(|_| "calendar credentials are unavailable".to_string())?;
+    vault
+        .resolve_delivered_calendar_occurrences(
+            &scope.routine_id,
+            &scope.account_id,
+            previous_run_succeeded,
+        )
+        .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())?;
+    if vault
+        .has_unresolved_calendar_occurrences(&scope.routine_id, &scope.account_id)
+        .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())?
+    {
+        // Keep retry candidates durable until the brokered run can fetch and
+        // stage the exact event. Do not advance its polling window here.
+        return Ok(None);
+    }
+    let now = Utc::now();
+    let catch_up_floor = now - chrono::Duration::minutes(i64::from(trigger.max_lateness_minutes));
+    let checked_after = last_check_at.unwrap_or(catch_up_floor).max(catch_up_floor);
+    let offset = chrono::Duration::minutes(i64::from(trigger.offset_minutes));
+    let range = vak_mail_calendar::provider::CalendarRange {
+        from: checked_after - offset - chrono::Duration::minutes(1),
+        to: now - offset + chrono::Duration::minutes(1),
+        limit: usize::from(scope.max_items).clamp(1, 100),
+    };
+    if range.from >= range.to {
+        return Ok(Some(false));
+    }
+    let events = vak_core::mail_calendar::calendar_events_with_worker(
+        &ProviderReadClient::new(),
+        &account,
+        &vault,
+        agent_id,
+        &audience,
+        range,
+        worker_exe,
+    )
+    .await
+    .map_err(|_| {
+        "the calendar event trigger could not check its bounded provider window".to_string()
+    })?;
+    let still_authorized = ledger.read_all().ok().is_some_and(|latest| {
+        latest.iter().any(|current| {
+            current.id == account.id
+                && current.revision == account.revision
+                && current.admits(agent_id, &audience, Capability::CalendarRead)
+        })
+    });
+    if !still_authorized {
+        return Err("the calendar account changed during the trigger check".into());
+    }
+    let keys = events
+        .iter()
+        .filter_map(|event| {
+            let (Some(starts_at), Some(ends_at)) = (event.starts_at, event.ends_at) else {
+                return None;
+            };
+            trigger
+                .is_due_between(starts_at, ends_at, checked_after, now)
+                .then(|| trigger.occurrence_key(&event.provider_id, starts_at, ends_at))
+        })
+        .collect::<Vec<_>>();
+    vault
+        .reconcile_calendar_occurrences(&scope.routine_id, &scope.account_id, &keys)
+        .map(Some)
+        .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())
+}
+
 #[derive(Deserialize)]
 pub(super) struct AccountQuery {
     agent_id: String,

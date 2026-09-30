@@ -30,18 +30,22 @@ session; deleting an account or routine removes its matching vault history.
 
 Scheduled and one-minute continuous read-only routines use `TaskDef`, start
 paused for a one-off preview, and store a bounded encrypted mail backlog with
-provider cursors in the Agent vault. Continuous watches show an overdue warning
+provider cursors in the Agent vault. Event-relative triggers also use the
+existing `TaskDef` cadence: bounded provider polls queue opaque due-occurrence
+keys in the Agent vault, and the scheduled run's brokered calendar read returns
+only events matching those keys. The brokered read drops unmatched pending keys
+when the provider returns a non-full page; full pages retain them because the
+provider may have more results. Continuous watches show an overdue warning
 after three minutes without a successful provider poll. Settings separately
 reports whether the Vakyartha service API is reachable; a reachable process
-does not prove provider freshness or detect sleep between checks. The full
-event-relative trigger contracts and a separate encrypted Agent-vault queue
-for occurrence keys are implemented as groundwork; event polling and TaskDef
-dispatch remain open. The full conversation workspace, Apple provider effects,
-broader Microsoft/event update
-and cancellation profiles, RSVP, event-relative routine execution, provider
-reconciliation, live-provider conformance, full connected source-to-Review
-browser acceptance, and 24-hour service-recovery acceptance remain open. Apple
-Calendar has not been verified with a live credential.
+does not prove provider freshness or detect sleep between checks. Owners can
+select event start or end, an offset, a catch-up limit, and scheduled or
+about-once-a-minute polling in the routine editor. The full conversation
+workspace, Apple provider effects, broader Microsoft/event update and
+cancellation profiles, RSVP, complete event-trigger browser acceptance,
+broader provider reconciliation, live-provider conformance, full connected
+source-to-Review browser acceptance, and 24-hour service-recovery acceptance
+remain open. Apple Calendar has not been verified with a live credential.
 Mail previews and conversation pages also carry bounded sender, To, and Cc
 fields from Google, Microsoft Graph, and Apple IMAP. Bcc is not requested from
 Microsoft and is never projected into the owner or Agent result.
