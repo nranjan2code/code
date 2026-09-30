@@ -4,8 +4,8 @@
 //! after an ambiguous result. This client never follows redirects or retries.
 
 use crate::{
-    Capability, ConnectedAccount, MailAddress, MailDraft, Provider, provider::ProviderReadError,
-    vault::AccountVault,
+    CalendarDraft, Capability, ConnectedAccount, MailAddress, MailDraft, Provider,
+    provider::ProviderReadError, vault::AccountVault,
 };
 use base64::Engine;
 use reqwest::{Response, StatusCode};
@@ -50,6 +50,7 @@ impl From<ProviderReadError> for ProviderEffectError {
 pub struct ProviderEffectClient {
     http: reqwest::Client,
     google_gmail_base: String,
+    google_calendar_base: String,
     microsoft_graph_base: String,
 }
 
@@ -63,6 +64,7 @@ impl ProviderEffectClient {
         Ok(Self {
             http,
             google_gmail_base: "https://gmail.googleapis.com/gmail/v1".into(),
+            google_calendar_base: "https://www.googleapis.com/calendar/v3".into(),
             microsoft_graph_base: "https://graph.microsoft.com/v1.0".into(),
         })
     }
@@ -120,6 +122,94 @@ impl ProviderEffectClient {
             Provider::AppleIcloud => Err(ProviderEffectError::Unsupported),
         }
     }
+
+    /// Create one timed event without attendees, recurrence, or reminders.
+    /// Times are the exact instants in the reviewed draft and are sent as UTC.
+    /// This deliberately cannot invite people or mutate an existing event.
+    pub async fn create_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        draft: &CalendarDraft,
+    ) -> Result<ProviderAcceptance, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider == Provider::AppleIcloud {
+            return Err(ProviderEffectError::Unsupported);
+        }
+        validate_event_create(draft)?;
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let response = match account.provider {
+            Provider::Google => self
+                .http
+                .post(format!(
+                    "{}/calendars/primary/events?sendUpdates=none",
+                    self.google_calendar_base
+                ))
+                .bearer_auth(token.as_str())
+                .json(&google_create_event_payload(draft))
+                .send()
+                .await
+                .map_err(|_| ProviderEffectError::Unknown)?,
+            Provider::Microsoft => self
+                .http
+                .post(format!("{}/me/events", self.microsoft_graph_base))
+                .bearer_auth(token.as_str())
+                .json(&graph_create_event_payload(draft))
+                .send()
+                .await
+                .map_err(|_| ProviderEffectError::Unknown)?,
+            Provider::AppleIcloud => return Err(ProviderEffectError::Unsupported),
+        };
+        classify_created_event_response(response).await
+    }
+}
+
+/// Only create the semantics shown by the current event Review: one timed
+/// event, no attendees/invitations, no recurrence, and no existing instance.
+pub fn validate_event_create(draft: &CalendarDraft) -> Result<(), ProviderEffectError> {
+    draft
+        .validate()
+        .map_err(|_| ProviderEffectError::Rejected)?;
+    if draft.all_day
+        || !draft.attendee_addresses.is_empty()
+        || draft.recurrence.is_some()
+        || draft.occurrence_id.is_some()
+    {
+        return Err(ProviderEffectError::Unsupported);
+    }
+    Ok(())
+}
+
+fn google_create_event_payload(draft: &CalendarDraft) -> Value {
+    json!({
+        "summary": draft.title,
+        "description": draft.description,
+        "location": draft.location,
+        "start": {"dateTime": draft.starts_at.to_rfc3339(), "timeZone": "UTC"},
+        "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"},
+        "attendees": [],
+        "reminders": {"useDefault": false, "overrides": []}
+    })
+}
+
+fn graph_create_event_payload(draft: &CalendarDraft) -> Value {
+    json!({
+        "subject": draft.title,
+        "body": {"contentType": "Text", "content": draft.description},
+        "location": {"displayName": draft.location.as_deref().unwrap_or("")},
+        "start": {"dateTime": draft.starts_at.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": "UTC"},
+        "end": {"dateTime": draft.ends_at.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": "UTC"},
+        "attendees": [],
+        "isReminderOn": false
+    })
 }
 
 /// Validate the currently supported plain-text send profile before a durable
@@ -257,6 +347,30 @@ async fn classify_graph_response(
     }
 }
 
+async fn classify_created_event_response(
+    response: Response,
+) -> Result<ProviderAcceptance, ProviderEffectError> {
+    match response.status() {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            return Err(ProviderEffectError::ReauthorizationRequired);
+        }
+        StatusCode::CREATED | StatusCode::OK => {}
+        status if status.is_redirection() || status.is_server_error() => {
+            return Err(ProviderEffectError::Unknown);
+        }
+        _ => return Err(ProviderEffectError::Rejected),
+    }
+    let value = response_json(response).await?;
+    let id = value
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+        .ok_or(ProviderEffectError::Unknown)?;
+    Ok(ProviderAcceptance {
+        provider_item_id: Some(id.to_owned()),
+    })
+}
+
 async fn response_json(response: Response) -> Result<Value, ProviderEffectError> {
     if response
         .content_length()
@@ -285,6 +399,84 @@ mod tests {
     use axum::{Json, Router, routing::post};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    fn timed_event() -> CalendarDraft {
+        CalendarDraft {
+            title: "Review meeting".into(),
+            description: "Draft description".into(),
+            location: Some("Room 2".into()),
+            starts_at: "2026-10-01T09:00:00Z".parse().unwrap(),
+            ends_at: "2026-10-01T10:00:00Z".parse().unwrap(),
+            time_zone: "Asia/Kolkata".into(),
+            all_day: false,
+            attendee_addresses: vec![],
+            recurrence: None,
+            occurrence_id: None,
+        }
+    }
+
+    #[test]
+    fn reviewed_event_profile_has_no_invites_or_reminders() {
+        let draft = timed_event();
+        validate_event_create(&draft).unwrap();
+        let google = google_create_event_payload(&draft);
+        assert_eq!(google["attendees"], json!([]));
+        assert_eq!(
+            google["reminders"],
+            json!({"useDefault": false, "overrides": []})
+        );
+        assert_eq!(google["start"]["timeZone"], "UTC");
+        assert_eq!(google["start"]["dateTime"], "2026-10-01T09:00:00+00:00");
+        let graph = graph_create_event_payload(&draft);
+        assert_eq!(graph["attendees"], json!([]));
+        assert_eq!(graph["isReminderOn"], false);
+        assert_eq!(graph["start"]["timeZone"], "UTC");
+        assert_eq!(graph["start"]["dateTime"], "2026-10-01T09:00:00");
+    }
+
+    #[test]
+    fn reviewed_event_profile_rejects_all_day_attendees_and_recurrence() {
+        let mut draft = timed_event();
+        draft.all_day = true;
+        assert_eq!(
+            validate_event_create(&draft),
+            Err(ProviderEffectError::Unsupported)
+        );
+        let mut draft = timed_event();
+        draft.attendee_addresses.push(MailAddress {
+            address: "person@example.com".into(),
+            display_name: None,
+        });
+        assert_eq!(
+            validate_event_create(&draft),
+            Err(ProviderEffectError::Unsupported)
+        );
+        let mut draft = timed_event();
+        draft.recurrence = Some("FREQ=DAILY".into());
+        assert_eq!(
+            validate_event_create(&draft),
+            Err(ProviderEffectError::Unsupported)
+        );
+    }
+
+    #[tokio::test]
+    async fn created_event_response_requires_provider_id_and_classifies_unknown() {
+        let app = Router::new().route(
+            "/event",
+            post(|| async { (axum::http::StatusCode::CREATED, r#"{"id":"event-1"}"#) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let response = reqwest::Client::new()
+            .post(format!("http://{address}/event"))
+            .send()
+            .await
+            .unwrap();
+        let accepted = classify_created_event_response(response).await.unwrap();
+        assert_eq!(accepted.provider_item_id.as_deref(), Some("event-1"));
+        server.abort();
+    }
 
     #[tokio::test]
     async fn graph_send_uses_fixed_payload_and_reports_only_provider_acceptance() {

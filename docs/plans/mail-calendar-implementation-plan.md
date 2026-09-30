@@ -6,8 +6,9 @@ the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
 the first Stage 4 increment adds scheduled read-only routines and a best-effort
 scheduled mail watch on `TaskDef`; the first Stage 3 increment adds an
-owner-confirmed, permission-checked, digest-bound plain email send for Google
-and Microsoft.
+owner-confirmed, permission-checked, digest-bound plain email send and a
+limited timed event create for Google and Microsoft without attendees,
+recurrence, or reminders.
 The maintainer authorized continuing against the current 4.x storage model on
 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is
@@ -43,6 +44,8 @@ provider hosts and delegated scopes. Current API contracts:
 [Graph messages.list](https://learn.microsoft.com/graph/api/user-list-messages?view=graph-rest-1.0),
 [Graph calendarView](https://learn.microsoft.com/graph/api/user-list-calendarview?view=graph-rest-1.0), and
 [Graph getSchedule](https://learn.microsoft.com/graph/api/calendar-getschedule?view=graph-rest-1.0).
+The limited create adapters follow [Google events.insert](https://developers.google.com/workspace/calendar/api/v3/reference/events/insert)
+and [Microsoft Graph create event](https://learn.microsoft.com/graph/api/user-post-events?view=graph-rest-1.0).
 
 The third adapter is not a generic arbitrary-host IMAP/CalDAV feature. Custom
 servers, Yahoo, Fastmail, Exchange EWS, and generic SMTP are out of scope for
@@ -247,11 +250,22 @@ then writes a cross-process single-use action claim before dispatch. Receipts
 are encrypted in the Agent vault, included as status in the candidate list,
 and removed on account disconnect. Unknown network outcomes cannot be retried;
 accepted means provider accepted, not delivered. Attachments, aliases, reply
-semantics, calendar writes, model-initiated effects, standing grants and full
+semantics, event updates/cancellations/RSVP, model-initiated effects, standing grants and full
 provider reconciliation remain unavailable. The first server integration
 test proves stale digests and accounts without `mail_send` are rejected before
 a claim or provider call. The effect adapter tests cover provider payloads and
 ambiguous responses.
+
+**Implemented increment (2026-09-30):** the same work area now has an opt-in
+`calendar_write` grant and exact-review create action for Google and Microsoft.
+It accepts only one timed event with no attendees, recurrence, occurrence
+target, or reminders. Provider payloads explicitly disable reminders and
+include no invitees; event times are submitted as UTC instants. A distinct
+`mail_calendar_event_create` Core permission decision and durable claim protect
+the effect. CalendarWrite provider scopes can authorize broader operations
+than this package currently exposes, so credentials remain private and the
+broker enforces the narrower action. Event updates, cancellations, RSVP, and
+provider reconciliation remain disabled.
 
 ## Stage 4 — scheduled and continuous routines
 
@@ -981,3 +995,15 @@ authorization and approval boundary on every execution path.
   durable single-use claims, and disconnect cleanup. This is only adapter and
   journal groundwork: no route, effect-aware Review UI, permission-engine
   wiring, calendar writes, or provider conformance has shipped yet.
+- 2026-09-30: Added the first reviewed calendar effect for Google and
+  Microsoft. The owner-only endpoint binds the exact saved event candidate,
+  account capability, Agent permission decision, and durable single-use claim.
+  The provider adapters create only timed standalone events; they send UTC
+  instants, include no attendees, and disable default reminders. Calendar-write
+  consent is broader than the create-only broker contract and is disclosed in
+  Settings and the design doc. Unit tests cover provider payload semantics,
+  unsupported attendee/recurrence/all-day candidates, OAuth scopes, ledger
+  grant validation, permission asks/denies, and response classification.
+  `npm run build:web`, 69 mail-calendar tests, 4 permission tests, and
+  `cargo check --locked -p vak-server` pass. Full server integration tests are
+  still compiling; no live provider test or signed-in browser review has run.

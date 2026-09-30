@@ -163,13 +163,21 @@ const MAIL_CALENDAR_CAPABILITY_LABELS: Record<api.MailCalendarCapability, string
   mail_read: "Read email",
   mail_prepare: "Prepare email drafts",
   mail_send: "Send email",
+  calendar_write: "Create calendar events after review",
   calendar_free_busy: "Check availability",
   calendar_read: "Read calendar events",
-  calendar_write: "Change calendar events",
 };
 
 function describeMailCalendarCapabilities(capabilities: api.MailCalendarCapability[]): string {
   return capabilities.map((capability) => MAIL_CALENDAR_CAPABILITY_LABELS[capability]).join(", ") || "No access";
+}
+
+function supportsCalendarCreate(candidate: api.MailCalendarCandidate | null | undefined): boolean {
+  return !!candidate && candidate.action.kind === "create_event"
+    && !candidate.action.draft.all_day
+    && candidate.action.draft.attendee_addresses.length === 0
+    && !candidate.action.draft.recurrence
+    && !candidate.action.draft.occurrence_id;
 }
 
 const DEFAULT_MAIL_CALENDAR_CAPABILITIES: api.MailCalendarCapability[] = ["mail_read", "calendar_free_busy"];
@@ -1489,6 +1497,46 @@ export default function Settings() {
       },
     });
   };
+  const reviewAndCreateCalendarEvent = (candidate: api.MailCalendarCandidate) => {
+    if (candidate.action.kind !== "create_event" || !candidate.candidate_digest) {
+      setNotice({ kind: "error", text: "Reload this event draft before reviewing it." });
+      return;
+    }
+    const draft = candidate.action.draft;
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === candidate.account_id);
+    setConfirmConfig({
+      title: "Review this exact calendar event",
+      description: "This creates one event immediately. It will not invite attendees or set a reminder.",
+      detail: `Event: ${draft.title}\nStarts: ${new Date(draft.starts_at).toLocaleString()}\nEnds: ${new Date(draft.ends_at).toLocaleString()}\nLocation: ${draft.location || "None"}\n\nThe complete description is shown in the preview behind this review. Times are submitted as the exact instants shown. This saved revision only will be created.`,
+      confirmLabel: "Create this event",
+      isDanger: true,
+      onConfirm: async () => {
+        if (!account?.capabilities.includes("calendar_write")) {
+          setNotice({ kind: "error", text: "This account no longer has permission to create calendar events." });
+          return;
+        }
+        setMailCalendarSendingDraft(true);
+        try {
+          const result = await api.createMailCalendarEventCandidate(activeAgentId(), candidate.id, candidate.revision, candidate.candidate_digest!);
+          const state = result.receipt?.state ?? result.state ?? "unknown";
+          setMailCalendarEditingCandidate({ ...candidate, action_state: state });
+          setNotice({
+            kind: state === "provider_accepted" ? "info" : "error",
+            text: state === "provider_accepted"
+              ? "The provider accepted the event creation. No attendee invitations or reminders were requested."
+              : state === "unknown" || state === "dispatching"
+                ? "The event creation outcome is unknown. Do not retry this draft; check the provider calendar first."
+                : "The provider did not accept this event. Review the account and create a new draft before another attempt.",
+          });
+          await refreshMailCalendarCandidates();
+        } catch (error) {
+          setNotice({ kind: "error", text: `Could not create this event: ${error instanceof Error ? error.message : String(error)}. If an attempt already exists, do not retry it.` });
+        } finally {
+          setMailCalendarSendingDraft(false);
+        }
+      },
+    });
+  };
   const cancelMailCalendarDraftEditor = () => {
     if (mailCalendarDraftTimer) clearTimeout(mailCalendarDraftTimer);
     setMailCalendarEditorKind(null);
@@ -2318,9 +2366,9 @@ export default function Settings() {
               <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p></header>
               <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft reads are available to this Agent on the local owner surface.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded content directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled and continuous routines are still being built.</span></div></div>
               <Group title="Choose access">
-                <p class="settings-hint">Read access is selected by default. Email sending is optional and asks your provider for a separate send permission. Every send still requires an exact-draft review and confirmation. Calendar changes remain unavailable.</p>
+                <p class="settings-hint">Read access is selected by default. Email sending and calendar event creation are optional and request separate provider permissions. Every effect requires review and confirmation. Event creation currently supports one timed event without attendees, invitations, recurrence, or reminders. Provider calendar-write consent is broader than this action; Vak currently sends only a new-event request through the reviewed broker.</p>
                 <div class="capability-list">
-                  {([["mail_read", "Read email"], ["mail_send", "Send email after review"], ["calendar_free_busy", "Check availability"], ["calendar_read", "Read calendar events"]] as const).map(([capability, label]) => <label class="capability-item"><input type="checkbox" checked={mailCalendarCapabilities().includes(capability)} onChange={(event) => setMailCalendarCapabilities((current) => event.currentTarget.checked ? [...new Set([...current, capability])] : current.filter((item) => item !== capability))} /><span>{label}</span></label>)}
+                  {([["mail_read", "Read email"], ["mail_send", "Send email after review"], ["calendar_free_busy", "Check availability"], ["calendar_read", "Read calendar events"], ["calendar_write", "Create calendar events after review"]] as const).map(([capability, label]) => <label class="capability-item"><input type="checkbox" checked={mailCalendarCapabilities().includes(capability)} onChange={(event) => setMailCalendarCapabilities((current) => event.currentTarget.checked ? [...new Set([...current, capability])] : current.filter((item) => item !== capability))} /><span>{label}</span></label>)}
                 </div>
               </Group>
               <Group title="Connect an account">
@@ -2396,7 +2444,7 @@ export default function Settings() {
                   <div class="mail-calendar-drafts"><Show when={(mailCalendarCandidates()?.candidates.length ?? 0) > 0} fallback={<p class="settings-hint">No saved drafts yet.</p>}>
                     <For each={mailCalendarCandidates()?.candidates ?? []}>{(candidate) => {
                       const summary = () => candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.draft.title || "Event draft";
-                      return <article class="mail-calendar-draft-row"><div><strong>{summary()}</strong><span>{candidate.action.kind === "send_mail" ? "Email" : "Calendar event"} · revision {candidate.revision} · {new Date(candidate.created_at).toLocaleDateString()}{candidate.action_state ? ` · send ${candidate.action_state.replaceAll("_", " ")}` : ""}</span></div><div class="settings-actions"><button class="settings-button" onClick={() => openMailCalendarDraft(candidate)}>Open</button><button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate)}>Delete</button></div></article>;
+                      return <article class="mail-calendar-draft-row"><div><strong>{summary()}</strong><span>{candidate.action.kind === "send_mail" ? "Email" : "Calendar event"} · revision {candidate.revision} · {new Date(candidate.created_at).toLocaleDateString()}{candidate.action_state ? ` · ${candidate.action.kind === "send_mail" ? "send" : "create"} ${candidate.action_state.replaceAll("_", " ")}` : ""}</span></div><div class="settings-actions"><button class="settings-button" onClick={() => openMailCalendarDraft(candidate)}>Open</button><button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate)}>Delete</button></div></article>;
                     }}</For>
                   </Show></div>
                 </Show>
@@ -2432,6 +2480,9 @@ export default function Settings() {
                         <Show when={mailCalendarSourceRefs().length > 0}><p>Source: {mailCalendarSourceRefs().map((source) => source.label ?? source.item_id).join(", ")}</p></Show>
                         <Show when={mailCalendarEditorKind() === "mail" && mailCalendarEditingCandidate()?.action.kind === "send_mail" && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("mail_send")}>
                           <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndSendMailDraft(candidate); }}>{mailCalendarSendingDraft() ? "Sending…" : "Review and send this exact email"}</button>
+                        </Show>
+                        <Show when={mailCalendarEditorKind() === "calendar" && supportsCalendarCreate(mailCalendarEditingCandidate()) && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("calendar_write")}>
+                          <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndCreateCalendarEvent(candidate); }}>{mailCalendarSendingDraft() ? "Creating…" : "Review and create this exact event"}</button>
                         </Show>
                       </section>
                     </Show>

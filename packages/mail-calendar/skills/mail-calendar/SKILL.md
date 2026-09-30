@@ -9,8 +9,9 @@ description: Helps people manage email and calendar account connections and accu
 
 - Direct the person to **Settings → Email and calendar** to connect or
   disconnect an account. Account connections belong to the selected Agent.
-- Explain that connecting an account does not grant every Agent access and
-  does not authorize an email send or calendar change.
+- Explain that connecting an account does not grant every Agent access.
+  A selected send or calendar-write capability still requires owner Review
+  and confirmation for each supported effect.
 - Google and Microsoft account linking uses delegated sign-in. Apple iCloud
   credentials are currently saved as `connected_unverified`; they have not
   been verified and are not available to Agents.
@@ -28,8 +29,12 @@ plain-text email send is available only from the owner Settings Review flow,
 with an explicit provider send grant, a fresh exact-candidate confirmation,
 and the Agent Core permission decision. Agents cannot dispatch that effect
 through this package. Provider acceptance does not prove delivery, and an
-ambiguous attempt must not be retried. Calendar changes, attachments, Apple
-content, and reliable continuous service are not available.
+ambiguous attempt must not be retried. A limited timed event create is also
+available for Google/Microsoft through the owner Settings Review flow. It has
+no attendees, recurrence, or reminders; updates, cancellations, and RSVP are
+unavailable. Calendar-write provider consent is broader than that create-only
+operation. Attachments, Apple content, and reliable continuous service are
+not available.
 
 If asked to send, direct the owner to review and confirm the exact saved draft
 in Settings. Do not claim an Agent sent it or work around this boundary with
@@ -37,7 +42,6 @@ Bash, arbitrary HTTP requests, an MCP server, another Agent, another
 connected-service credential, or a provider's web interface. A connected
 account or provider grant is not itself permission for an Agent action.
 
-When these operations become available, follow their per-call account,
-audience, capability, permission, and Review requirements. An email send or
-calendar mutation requires approval of the exact provider effect and its
-recipients or attendees.
+Follow per-call account, audience, capability, permission, and Review
+requirements. An email send or event create requires approval of the exact
+provider effect. Never add attendees to an event create.

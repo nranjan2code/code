@@ -708,8 +708,7 @@ pub(crate) fn scopes_for(
     capabilities: &[Capability],
 ) -> Result<Vec<&'static str>, OAuthError> {
     // Admit only scopes with a provider adapter and brokered operation path.
-    // Calendar writes remain held until their review/reconciliation contract
-    // ships; mail send has its own exact-candidate approval path.
+    // CalendarWrite is currently limited to exact owner-confirmed event create.
     if capabilities.is_empty()
         || capabilities.iter().any(|capability| {
             !matches!(
@@ -718,6 +717,7 @@ pub(crate) fn scopes_for(
                     | Capability::MailSend
                     | Capability::CalendarFreeBusy
                     | Capability::CalendarRead
+                    | Capability::CalendarWrite
             )
         })
     {
@@ -1288,7 +1288,11 @@ pub(crate) fn account_grants_are_valid(
         || capabilities.iter().any(|capability| {
             !matches!(
                 capability,
-                Capability::MailRead | Capability::CalendarFreeBusy | Capability::CalendarRead
+                Capability::MailRead
+                    | Capability::MailSend
+                    | Capability::CalendarFreeBusy
+                    | Capability::CalendarRead
+                    | Capability::CalendarWrite
             )
         })
     {
@@ -2688,12 +2692,21 @@ mod tests {
     }
 
     #[test]
-    fn account_linking_rejects_calendar_write_and_prepare_capabilities() {
+    fn account_linking_rejects_prepare_but_supports_reviewed_calendar_create_scope() {
         for provider in [Provider::Google, Provider::Microsoft] {
-            for capability in [Capability::MailPrepare, Capability::CalendarWrite] {
+            for capability in [Capability::MailPrepare] {
                 assert!(scopes_for(provider, &[Capability::MailRead, capability]).is_err());
             }
         }
+        assert!(
+            scopes_for(Provider::Google, &[Capability::CalendarWrite]).is_ok_and(
+                |scopes| scopes.contains(&"https://www.googleapis.com/auth/calendar.events")
+            )
+        );
+        assert!(
+            scopes_for(Provider::Microsoft, &[Capability::CalendarWrite])
+                .is_ok_and(|scopes| scopes.contains(&"Calendars.ReadWrite"))
+        );
         assert!(
             scopes_for(Provider::Google, &[Capability::MailSend])
                 .is_ok_and(|scopes| scopes.contains(&"https://www.googleapis.com/auth/gmail.send"))

@@ -7,7 +7,7 @@ use crate::{AppState, AuthenticatedPrincipal, agent_chats, agents};
 use axum::{
     Json,
     body::Bytes,
-    extract::{ConnectInfo, Path, Query, State},
+    extract::{ConnectInfo, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Response},
 };
@@ -432,13 +432,14 @@ fn candidate_view(
     Some(value)
 }
 
-/// Commit only an exact, owner-confirmed plain email candidate. The account
+/// Commit only an exact, owner-confirmed supported provider candidate. The account
 /// lock spans revalidation, durable single-use claim, provider dispatch, and
 /// receipt persistence so local disconnect/revision paths cannot cross it.
 pub(super) async fn send_mail_candidate(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
     Path((agent_id, candidate_id)): Path<(String, String)>,
+    OriginalUri(uri): OriginalUri,
     Json(request): Json<SendCandidateRequest>,
 ) -> Response {
     use axum::response::IntoResponse;
@@ -457,7 +458,7 @@ pub(super) async fn send_mail_candidate(
     {
         return (
             StatusCode::BAD_REQUEST,
-            "Review and confirm the exact email draft.",
+            "Review and confirm the exact provider action.",
         )
             .into_response();
     }
@@ -508,19 +509,14 @@ pub(super) async fn send_mail_candidate(
         )
             .into_response();
     }
-    let ProposedAction::SendMail { draft } = &candidate.action else {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Only plain email drafts can be sent by this action.",
-        )
-            .into_response();
-    };
-    if vak_mail_calendar::effect::validate_mail_draft(draft).is_err() {
-        return (
-            StatusCode::BAD_REQUEST,
-            "This send profile supports a plain-text message without attachments or aliases.",
-        )
-            .into_response();
+    let required_capability = candidate.required_capability();
+    let event_route = uri.path().ends_with("/create-event");
+    match &candidate.action {
+        ProposedAction::SendMail { draft } if !event_route && vak_mail_calendar::effect::validate_mail_draft(draft).is_ok() => {},
+        ProposedAction::CreateEvent { draft } if event_route && vak_mail_calendar::effect::validate_event_create(draft).is_ok() => {},
+        ProposedAction::SendMail { .. } => return (StatusCode::BAD_REQUEST, "This send profile supports plain text without attachments, aliases, or reply semantics.").into_response(),
+        ProposedAction::CreateEvent { .. } => return (StatusCode::BAD_REQUEST, "This event profile supports one timed event without attendees, recurrence, or reminders.").into_response(),
+        _ => return (StatusCode::BAD_REQUEST, "This action is not yet supported for provider changes.").into_response(),
     }
     if !candidate.source_refs.iter().all(|source| {
         source
@@ -539,12 +535,16 @@ pub(super) async fn send_mail_candidate(
         Ok(accounts) => accounts.into_iter().find(|account| {
             account.id == candidate.account_id
                 && account.owner_agent_id == agent_id
-                && account.admits(&agent_id, &candidate.audience_id, Capability::MailSend)
+                && account.admits(&agent_id, &candidate.audience_id, required_capability)
         }),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     let Some(account) = account else {
-        return (StatusCode::FORBIDDEN, "This account cannot send email.").into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            "This account does not grant this provider action.",
+        )
+            .into_response();
     };
     if account
         .access_token_expires_at
@@ -552,14 +552,14 @@ pub(super) async fn send_mail_candidate(
     {
         return (
             StatusCode::PRECONDITION_REQUIRED,
-            "Refresh this account's sign-in before sending.",
+            "Refresh this account's sign-in before making this change.",
         )
             .into_response();
     }
     if !vault.credential_available(&account.id) {
         return (
             StatusCode::CONFLICT,
-            "Sign in to this account again before sending.",
+            "Sign in to this account again before making this change.",
         )
             .into_response();
     }
@@ -588,12 +588,21 @@ pub(super) async fn send_mail_candidate(
         "revision": candidate.revision,
     });
     if matches!(
-        engine.evaluate("mail_calendar_send", &permission_args, mode, core.cwd()),
+        engine.evaluate(
+            if required_capability == Capability::MailSend {
+                "mail_calendar_send"
+            } else {
+                "mail_calendar_event_create"
+            },
+            &permission_args,
+            mode,
+            core.cwd()
+        ),
         vak_permission::Decision::Deny { .. }
     ) {
         return (
             StatusCode::FORBIDDEN,
-            "The Agent's permission rules deny email sending.",
+            "The Agent's permission rules deny this provider change.",
         )
             .into_response();
     }
@@ -631,7 +640,7 @@ pub(super) async fn send_mail_candidate(
             return (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({
-                    "error": "This draft already has a send attempt; it will not be retried.",
+                    "error": "This draft already has a provider action attempt; it will not be retried.",
                     "receipt": prior,
                 })),
             )
@@ -639,10 +648,20 @@ pub(super) async fn send_mail_candidate(
         }
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    match client
-        .send_mail(&account, &vault, &agent_id, &candidate.audience_id, draft)
-        .await
-    {
+    let result = match &candidate.action {
+        ProposedAction::SendMail { draft } => {
+            client
+                .send_mail(&account, &vault, &agent_id, &candidate.audience_id, draft)
+                .await
+        }
+        ProposedAction::CreateEvent { draft } => {
+            client
+                .create_event(&account, &vault, &agent_id, &candidate.audience_id, draft)
+                .await
+        }
+        _ => Err(ProviderEffectError::Unsupported),
+    };
+    match result {
         Ok(accepted) => {
             receipt.state = ActionState::ProviderAccepted;
             receipt.provider_item_id = accepted.provider_item_id;
@@ -664,13 +683,21 @@ pub(super) async fn send_mail_candidate(
                 .into(),
             );
             if error == ProviderEffectError::ReauthorizationRequired {
-                mark_account_reauthentication_required(&state, &account, "provider_send_rejected");
+                mark_account_reauthentication_required(
+                    &state,
+                    &account,
+                    "provider_effect_rejected",
+                );
             }
         }
     }
     record_account_event(
         &state,
-        "mail_send_effect",
+        if required_capability == Capability::MailSend {
+            "mail_send_effect"
+        } else {
+            "calendar_event_create_effect"
+        },
         &agent_id,
         &account.id,
         account.provider,

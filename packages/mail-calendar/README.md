@@ -34,8 +34,13 @@ unchanged saved candidate on the owner Settings surface. It requires a
 separately selected Google or Microsoft send grant, Core permission approval,
 and explicit review of the exact recipients, subject, and message. The
 provider accepting a request is not delivery confirmation; ambiguous outcomes
-cannot be retried. Agent/model initiated sends, calendar changes, attachments,
-the third provider, multi-instance routine leases, and reliable continuous
+cannot be retried. A limited timed event create is also available for Google
+and Microsoft from an unchanged saved candidate. It has no attendees,
+recurrence, or reminders and requires its own selected calendar-write grant,
+Core permission approval, and exact review. The provider scope can authorize
+more than this create-only operation; the credential remains private and the
+broker enforces the narrower contract. Agent/model initiated effects, event
+updates/cancel/RSVP, attachments, the third provider, multi-instance routine leases, and reliable continuous
 service recovery remain unimplemented. This uses current 4.x storage. Before a
 read, the product explains that disconnect removes the
 saved credential and blocks future reads, while content recorded in append-only

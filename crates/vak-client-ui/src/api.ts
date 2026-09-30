@@ -241,6 +241,12 @@ export function sendMailCalendarCandidate(agentId: string, candidateId: string, 
     body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
   });
 }
+export function createMailCalendarEventCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ receipt?: { state: "provider_accepted" | "failed" | "unknown" | "dispatching"; provider_item_id?: string | null; detail_code?: string | null }; state?: "dispatching" }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/create-event`, {
+    method: "POST",
+    body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest, confirm: true }),
+  });
+}
 
 export async function disconnectMailCalendarAccount(agentId: string, accountId: string): Promise<{ disconnected: boolean; already_disconnected: boolean; provider_grant_revoked: boolean; provider_revocation: "confirmed" | "unsupported" | "unconfirmed" | "not_retried"; content_erased: boolean }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/disconnect`, { method: "POST", body: "{}" });

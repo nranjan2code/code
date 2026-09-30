@@ -1013,7 +1013,7 @@ async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native
         assert_eq!(params.get("state").map(|value| value.len()), Some(43));
         let state = params.get("state").unwrap().to_string();
 
-        for forbidden in ["mail_prepare", "calendar_write"] {
+        for forbidden in ["mail_prepare"] {
             let rejected = client
                 .post(format!("http://{addr}/mail-calendar/accounts/vak/oauth"))
                 .bearer_auth(&token)
@@ -1031,33 +1031,41 @@ async fn mail_calendar_native_oauth_start_is_owner_authenticated_and_uses_native
             );
         }
 
-        let send_scope = client
+        let calendar_write_scope = client
             .post(format!("http://{addr}/mail-calendar/accounts/vak/oauth"))
             .bearer_auth(&token)
-            .json(&serde_json::json!({
-                "provider": provider,
-                "capabilities": ["mail_send"]
-            }))
+            .json(&serde_json::json!({ "provider": provider, "capabilities": ["calendar_write", "mail_send"] }))
             .send()
             .await
             .unwrap();
-        assert_eq!(send_scope.status(), reqwest::StatusCode::OK);
-        let send_result: serde_json::Value = send_scope.json().await.unwrap();
-        let send_url = url::Url::parse(send_result["authorization_url"].as_str().unwrap()).unwrap();
-        let scopes = send_url
+        assert_eq!(calendar_write_scope.status(), reqwest::StatusCode::OK);
+        let calendar_result: serde_json::Value = calendar_write_scope.json().await.unwrap();
+        let calendar_url =
+            url::Url::parse(calendar_result["authorization_url"].as_str().unwrap()).unwrap();
+        let calendar_scopes = calendar_url
             .query_pairs()
             .find(|(key, _)| key == "scope")
             .map(|(_, value)| value.into_owned())
             .unwrap_or_default();
         assert!(
-            scopes.split_whitespace().any(|scope| {
+            calendar_scopes
+                .split_whitespace()
+                .any(|scope| if provider == "google" {
+                    scope == "https://www.googleapis.com/auth/calendar.events"
+                } else {
+                    scope == "Calendars.ReadWrite"
+                })
+        );
+
+        assert!(
+            calendar_scopes.split_whitespace().any(|scope| {
                 if provider == "google" {
                     scope == "https://www.googleapis.com/auth/gmail.send"
                 } else {
                     scope == "Mail.Send"
                 }
             }),
-            "{provider} must request only its mail-send scope"
+            "{provider} must request its explicit mail-send scope"
         );
 
         let callback_host = if provider == "microsoft" {
@@ -1214,6 +1222,37 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     let candidate_digest = created["candidate_digest"].as_str().unwrap().to_owned();
     assert_eq!(created["candidate"]["candidate_digest"], candidate_digest);
 
+    let event_candidate_response = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": account_id,
+            "source_refs": [],
+            "action": {
+                "kind": "create_event",
+                "draft": {
+                    "title": "Review meeting", "description": "", "location": null,
+                    "starts_at": "2026-10-01T09:00:00Z", "ends_at": "2026-10-01T10:00:00Z",
+                    "time_zone": "Asia/Kolkata", "all_day": false, "attendee_addresses": [],
+                    "recurrence": null, "occurrence_id": null
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(event_candidate_response.status(), reqwest::StatusCode::OK);
+    let event_candidate: serde_json::Value = event_candidate_response.json().await.unwrap();
+    let event_id = event_candidate["candidate"]["id"].as_str().unwrap();
+    let event_digest = event_candidate["candidate_digest"].as_str().unwrap();
+    let event_attempt = client
+        .post(format!("{candidates_url}/{event_id}/create-event"))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({ "expected_revision": 1, "candidate_digest": event_digest, "confirm": true }))
+        .send().await.unwrap();
+    assert_eq!(event_attempt.status(), reqwest::StatusCode::FORBIDDEN);
+    assert!(vault.list_action_receipts().unwrap().is_empty());
+
     let send_url = format!("{candidates_url}/{candidate_id}/send");
     let unconfirmed = client
         .post(&send_url)
@@ -1279,7 +1318,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         .await
         .unwrap();
     assert_eq!(second.status(), reqwest::StatusCode::OK);
-    assert_eq!(vault.list_candidates().unwrap().len(), 2);
+    assert_eq!(vault.list_candidates().unwrap().len(), 3);
 
     let disconnected = client
         .post(format!(

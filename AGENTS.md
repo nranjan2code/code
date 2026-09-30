@@ -94,7 +94,10 @@ Read before changing behaviour in these areas:
   on the local owner surface are implemented on `codex/mail-calendar` against
   current 4.x storage. Channel reads fail closed. The
   bounded Agent-vault working area with local email/event drafts is
-  implemented. Full source editing, calendar effects and reconciliation,
+  implemented. Owner-reviewed plain-text send and a constrained timed event
+  create are available for Google and Microsoft through separate opt-in grants,
+  Core permission checks, and durable single-use claims. Event create has no
+  attendees, recurrence, or reminders; update/cancel/RSVP and reconciliation,
   standing grants, and reliable
   continuous routines remain in progress. Scheduled read-only routines now
   support an explicitly best-effort email watch with bounded encrypted

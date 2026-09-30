@@ -1417,7 +1417,7 @@ mod tests {
     }
 
     #[test]
-    fn account_ledger_rejects_provider_write_capabilities() {
+    fn account_ledger_accepts_only_exactly_scoped_provider_write_capabilities() {
         let agent_id = "agent-1";
         let account_id = Uuid::now_v7().to_string();
         let ledger = ConnectionLedger {
@@ -1439,7 +1439,43 @@ mod tests {
                 account,
             },
         );
+        assert!(
+            result.is_ok(),
+            "an explicitly granted exact send scope is valid"
+        );
+
+        let mut unsupported = connected_account(agent_id, &Uuid::now_v7().to_string(), 1);
+        unsupported.status = AccountStatus::Pending;
+        unsupported.capabilities = BTreeSet::from([Capability::MailPrepare]);
+        unsupported.provider_scopes = BTreeSet::from(["openid".to_owned(), "email".to_owned()]);
+        let result = ledger.apply_event(
+            &mut BTreeMap::new(),
+            &ConnectionEvent::Pending {
+                record_id: Uuid::now_v7().to_string(),
+                account: unsupported,
+            },
+        );
         assert!(matches!(result, Err(LedgerError::InvalidRecord)));
+
+        let mut calendar = connected_account(agent_id, &Uuid::now_v7().to_string(), 1);
+        calendar.status = AccountStatus::Pending;
+        calendar.capabilities = BTreeSet::from([Capability::CalendarWrite]);
+        calendar.provider_scopes = BTreeSet::from([
+            "openid".to_owned(),
+            "email".to_owned(),
+            "https://www.googleapis.com/auth/calendar.events".to_owned(),
+        ]);
+        assert!(
+            ledger
+                .apply_event(
+                    &mut BTreeMap::new(),
+                    &ConnectionEvent::Pending {
+                        record_id: Uuid::now_v7().to_string(),
+                        account: calendar
+                    },
+                )
+                .is_ok()
+        );
     }
 
     #[test]

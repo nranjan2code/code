@@ -4,11 +4,13 @@ Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-onl
 Google/Microsoft previews, a broker-owned local-surface read tool, a bounded
 Agent-vault working area for local drafts, and the first scheduled read-only
 `TaskDef` routines with best-effort encrypted bounded email-ID deduplication
-implemented. Stage 3 now has an initial exact-candidate email-send path for
-Google/Microsoft, with explicit provider scope opt-in, owner confirmation,
-permission-engine evaluation, and a durable single-use claim. Calendar effects,
-full provider reconciliation, reliable continuous routines, and the third
-provider remain open, 2026-09-30.**
+implemented. Stage 3 has exact-candidate email send and one limited timed event
+create profile for Google/Microsoft. Both require opt-in provider scopes, owner
+confirmation, permission-engine evaluation, and a durable single-use claim.
+Event creation has no attendees, recurrence, or reminders and saves the
+reviewed instants as UTC. Event update/cancel/RSVP, full provider
+reconciliation, reliable continuous routines, and the third provider remain
+open, 2026-09-30.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -26,11 +28,14 @@ enable provider content access. Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
 share grant. Reads supplied to the model are retained in current append-only
 session history. Local drafts and scheduled read-only routines are implemented.
-The first plain-text email effect is implemented for Google and Microsoft;
-its Review confirmation is owner-only and sends only an unchanged saved
-candidate revision. Unknown outcomes remain non-retryable and appear in the
-local candidate list. Calendar changes, Agent-initiated effects, and provider
-reconciliation are not implemented. OAuth authorization attempts are bounded and single-use;
+The first plain-text email effect and one timed event-create profile are
+implemented for Google and Microsoft. Both require an unchanged saved
+candidate revision and owner-only confirmation. Unknown outcomes remain
+non-retryable and appear in the local candidate list. Event update, cancel,
+RSVP, Agent-initiated effects, and provider reconciliation are not implemented.
+Google and Microsoft calendar-write consent is broader than this limited
+create operation; the credential stays in the Agent vault and effects remain
+broker-only. OAuth authorization attempts are bounded and single-use;
 disconnect serializes with new links and atomically advances a durable,
 Agent/provider OAuth fence in the append-only connection ledger. Each OAuth
 attempt captures that fence at initiation; callback credential persistence
@@ -58,8 +63,9 @@ as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
 surface grant. Local drafts, scheduled read-only routines, and an explicitly
-best-effort scheduled email watch are implemented. Email send has a first
-effect-aware owner confirmation path; event create/update/cancel/RSVP, standing
+best-effort scheduled email watch are implemented. Email send and a constrained
+timed event create have effect-aware owner confirmation paths; event
+update/cancel/RSVP, standing
 grants, complete receipt reconciliation, durable continuous service recovery,
 and the third provider remain in progress. The
 account-deletion limitation below is disclosed before content features are
