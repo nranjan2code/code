@@ -832,7 +832,10 @@ async fn response_json(response: Response) -> Result<Value, ProviderEffectError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::{Json, Router, routing::post};
+    use axum::{
+        Json, Router,
+        routing::{get, post},
+    };
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
@@ -849,6 +852,133 @@ mod tests {
             recurrence: None,
             occurrence_id: None,
         }
+    }
+
+    #[tokio::test]
+    async fn graph_reply_rechecks_source_then_posts_only_the_reviewed_reply() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-reply-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                crate::vault::AccountSecretMaterial::new(
+                    "graph:subject".into(),
+                    Some("owner@example.com".into()),
+                    None,
+                    Some("mock-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let account = ConnectedAccount {
+            id: account_id.clone(),
+            provider: Provider::Microsoft,
+            status: crate::AccountStatus::Connected,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::MailRead, Capability::MailSend]
+                .into_iter()
+                .collect(),
+            provider_scopes: ["Mail.Read".into(), "Mail.Send".into()]
+                .into_iter()
+                .collect(),
+            credential_ref: credential_ref.clone(),
+            principal_ref: credential_ref,
+            revision: 1,
+            connected_at: chrono::Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: false,
+            revoked_at: None,
+        };
+        let source_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let reply_payload = Arc::new(Mutex::new(None));
+        let app = Router::new()
+            .route("/v1.0/me/messages/source-1", get({
+                let source_reads = Arc::clone(&source_reads);
+                move || {
+                    let source_reads = Arc::clone(&source_reads);
+                    async move {
+                        source_reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Json(json!({"id":"source-1", "conversationId":"conversation-1", "subject":"Project plan"}))
+                    }
+                }
+            }))
+            .route("/v1.0/me/messages/source-1/reply", post({
+                let reply_payload = Arc::clone(&reply_payload);
+                move |Json(payload): Json<Value>| {
+                    let reply_payload = Arc::clone(&reply_payload);
+                    async move {
+                        *reply_payload.lock().unwrap() = Some(payload);
+                        axum::http::StatusCode::ACCEPTED
+                    }
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.microsoft_graph_base = format!("http://{address}/v1.0");
+        let draft = MailDraft {
+            from_alias: None,
+            to: vec![MailAddress {
+                address: "recipient@example.com".into(),
+                display_name: None,
+            }],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Project plan".into(),
+            body_text: "Reviewed reply".into(),
+            attachment_refs: vec![],
+            reply_to_message_id: Some("source-1".into()),
+            reply_to_thread_id: Some("conversation-1".into()),
+        };
+
+        let mut no_read = account.clone();
+        no_read.capabilities.remove(&Capability::MailRead);
+        assert_eq!(
+            client
+                .send_mail(
+                    &no_read,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &draft
+                )
+                .await,
+            Err(ProviderEffectError::NotAdmitted)
+        );
+        assert_eq!(source_reads.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let accepted = client
+            .send_mail(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                &draft,
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.provider_item_id, None);
+        assert_eq!(source_reads.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let payload = reply_payload.lock().unwrap().clone().unwrap();
+        assert_eq!(
+            payload.pointer("/message/body/content"),
+            Some(&json!("Reviewed reply"))
+        );
+        assert_eq!(
+            payload.pointer("/message/toRecipients/0/emailAddress/address"),
+            Some(&json!("recipient@example.com"))
+        );
+        assert!(payload.pointer("/message/subject").is_none());
+        vault.remove(&account_id).unwrap();
+        server.abort();
     }
 
     #[test]
