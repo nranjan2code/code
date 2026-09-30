@@ -24,6 +24,8 @@ pub const MAX_EVENT_TITLE_BYTES: usize = 512;
 /// Maximum content-free provider-ID scan and durable backlog size for one
 /// unattended mail routine.
 pub const MAX_ROUTINE_MAIL_BACKLOG: usize = 100;
+/// Maximum number of messages returned for one explicitly selected thread page.
+pub const MAX_MAIL_THREAD_MESSAGES: usize = 20;
 
 pub type AccountId = String;
 pub type CandidateId = String;
@@ -79,6 +81,7 @@ pub struct RoutineScope {
 #[serde(rename_all = "snake_case")]
 pub enum RoutineOperation {
     RecentMail,
+    MailThread,
     CalendarEvents,
     FreeBusy,
 }

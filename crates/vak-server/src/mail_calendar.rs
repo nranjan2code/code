@@ -46,11 +46,15 @@ pub(crate) fn validate_routine_scope(agent_id: &str, scope: &RoutineScope) -> Re
     for operation in &scope.operations {
         let capability = match operation {
             RoutineOperation::RecentMail => Capability::MailRead,
+            RoutineOperation::MailThread => Capability::MailRead,
             RoutineOperation::CalendarEvents => Capability::CalendarRead,
             RoutineOperation::FreeBusy => Capability::CalendarFreeBusy,
         };
         if !account.admits(agent_id, &audience, capability) {
             return Err("the selected account does not grant every requested routine read".into());
+        }
+        if operation == &RoutineOperation::MailThread && account.provider == Provider::AppleIcloud {
+            return Err("conversation reads are not available for Apple accounts".into());
         }
     }
     let vault = AccountVault::for_agent(agent_id)
@@ -1236,6 +1240,7 @@ pub(super) async fn thread_preview(
             &format!("agent:{agent_id}"),
             &request.thread_id,
             request.cursor.as_deref(),
+            vak_mail_calendar::MAX_MAIL_THREAD_MESSAGES,
         )
         .await;
     match result {

@@ -20,7 +20,6 @@ use std::{
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
-const MAX_THREAD_MESSAGES: usize = 20;
 const MAX_THREAD_PAGE_BYTES: usize = 512 * 1024;
 const MAX_MAIL_FOLDERS: usize = 100;
 pub const MAX_MAIL_ATTACHMENTS: usize = 20;
@@ -833,9 +832,13 @@ impl ProviderReadClient {
         audience: &str,
         thread_id: &str,
         cursor: Option<&str>,
+        limit: usize,
     ) -> Result<MailThread, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
-        if thread_id.is_empty() || thread_id.len() > 512 || thread_id.chars().any(char::is_control)
+        if thread_id.is_empty()
+            || thread_id.len() > 512
+            || thread_id.chars().any(char::is_control)
+            || !(1..=crate::MAX_MAIL_THREAD_MESSAGES).contains(&limit)
         {
             return Err(ProviderReadError::InvalidSearch);
         }
@@ -850,7 +853,7 @@ impl ProviderReadClient {
                 if !valid_google_label_id(thread_id) {
                     return Err(ProviderReadError::InvalidSearch);
                 }
-                let offset = decode_google_thread_cursor(cursor, thread_id)?;
+                let offset = decode_google_thread_cursor(cursor, thread_id, limit)?;
                 let url = graph_url_segments(
                     &self.google_gmail_base,
                     &["users", "me", "threads", thread_id],
@@ -876,11 +879,7 @@ impl ProviderReadClient {
                     .get("messages")
                     .and_then(Value::as_array)
                     .ok_or(ProviderReadError::InvalidResponse)?;
-                let page = rows
-                    .iter()
-                    .skip(offset)
-                    .take(MAX_THREAD_MESSAGES)
-                    .collect::<Vec<_>>();
+                let page = rows.iter().skip(offset).take(limit).collect::<Vec<_>>();
                 let mut messages = Vec::with_capacity(page.len());
                 let mut page_bytes = 0usize;
                 for row in &page {
@@ -925,22 +924,25 @@ impl ProviderReadClient {
                     messages.push(item);
                 }
                 let next = offset.saturating_add(messages.len());
-                let next_cursor =
-                    (rows.len() > next).then(|| encode_google_thread_cursor(thread_id, next));
+                let next_cursor = (rows.len() > next)
+                    .then(|| encode_google_thread_cursor(thread_id, limit, next));
                 (messages, next_cursor)
             }
             Provider::Microsoft => {
                 let escaped = thread_id.replace('\'', "''");
                 let url = match cursor {
-                    Some(cursor) => {
-                        decode_graph_thread_cursor(cursor, thread_id, &self.microsoft_graph_base)?
-                    }
+                    Some(cursor) => decode_graph_thread_cursor(
+                        cursor,
+                        thread_id,
+                        &self.microsoft_graph_base,
+                        limit,
+                    )?,
                     None => {
                         let mut url =
                             url::Url::parse(&format!("{}/me/messages", self.microsoft_graph_base))
                                 .map_err(|_| ProviderReadError::InvalidResponse)?;
                         url.query_pairs_mut()
-                            .append_pair("$top", &MAX_THREAD_MESSAGES.to_string())
+                    .append_pair("$top", &limit.to_string())
                             .append_pair("$select", "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments")
                             .append_pair("$filter", &format!("conversationId eq '{escaped}'"))
                             .append_pair("$orderby", "receivedDateTime asc");
@@ -961,7 +963,7 @@ impl ProviderReadClient {
                     .and_then(Value::as_array)
                     .ok_or(ProviderReadError::InvalidResponse)?;
                 let mut messages = Vec::new();
-                for row in rows.iter().take(MAX_THREAD_MESSAGES) {
+                for row in rows.iter().take(limit) {
                     let item =
                         parse_graph_message(row).ok_or(ProviderReadError::InvalidResponse)?;
                     if item.thread_id.as_deref() != Some(thread_id) || item.provider_id.is_empty() {
@@ -973,7 +975,12 @@ impl ProviderReadClient {
                     .get("@odata.nextLink")
                     .and_then(Value::as_str)
                     .map(|url| {
-                        encode_graph_thread_cursor(url, thread_id, &self.microsoft_graph_base)
+                        encode_graph_thread_cursor(
+                            url,
+                            thread_id,
+                            &self.microsoft_graph_base,
+                            limit,
+                        )
                     })
                     .transpose()?;
                 (messages, next_cursor)
@@ -2465,21 +2472,32 @@ fn validate_graph_delta_url(value: &str, graph_base: &str) -> Result<(), Provide
     Ok(())
 }
 
-fn encode_google_thread_cursor(thread_id: &str, offset: usize) -> String {
-    format!("gmail-thread-v1:{thread_id}:{offset}")
+fn encode_google_thread_cursor(thread_id: &str, limit: usize, offset: usize) -> String {
+    format!("gmail-thread-v1:{thread_id}:{limit}:{offset}")
 }
 
 fn decode_google_thread_cursor(
     cursor: Option<&str>,
     thread_id: &str,
+    limit: usize,
 ) -> Result<usize, ProviderReadError> {
     let Some(cursor) = cursor else { return Ok(0) };
     let prefix = format!("gmail-thread-v1:{thread_id}:");
-    let offset = cursor
+    let value = cursor
         .strip_prefix(&prefix)
-        .filter(|value| !value.is_empty() && value.len() <= 6)
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|offset| *offset > 0 && *offset <= 100_000 && *offset % MAX_THREAD_MESSAGES == 0)
+        .ok_or(ProviderReadError::InvalidSearch)?;
+    let (_, offset) = value
+        .split_once(':')
+        .filter(|(_, offset)| !offset.is_empty() && offset.len() <= 6)
+        .and_then(|(cursor_limit, offset)| {
+            Some((
+                cursor_limit.parse::<usize>().ok()?,
+                offset.parse::<usize>().ok()?,
+            ))
+        })
+        .filter(|(cursor_limit, offset)| {
+            *cursor_limit == limit && *offset > 0 && *offset <= 100_000 && *offset % limit == 0
+        })
         .ok_or(ProviderReadError::InvalidSearch)?;
     Ok(offset)
 }
@@ -2488,35 +2506,46 @@ fn encode_graph_thread_cursor(
     value: &str,
     thread_id: &str,
     graph_base: &str,
+    limit: usize,
 ) -> Result<String, ProviderReadError> {
-    validate_graph_thread_url(value, thread_id, graph_base)?;
+    validate_graph_thread_url(value, thread_id, graph_base, limit)?;
     let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value.as_bytes());
     if encoded.len() > MAX_GRAPH_WATCH_CURSOR_BYTES {
         return Err(ProviderReadError::InvalidResponse);
     }
-    Ok(format!("graph-thread-v1:{encoded}"))
+    Ok(format!("graph-thread-v1:{limit}:{encoded}"))
 }
 
 fn decode_graph_thread_cursor(
     cursor: &str,
     thread_id: &str,
     graph_base: &str,
+    limit: usize,
 ) -> Result<url::Url, ProviderReadError> {
-    let encoded = cursor
+    let value = cursor
         .strip_prefix("graph-thread-v1:")
-        .filter(|value| !value.is_empty() && value.len() <= MAX_GRAPH_WATCH_CURSOR_BYTES)
         .ok_or(ProviderReadError::InvalidSearch)?;
+    let (cursor_limit, encoded) = value
+        .split_once(':')
+        .ok_or(ProviderReadError::InvalidSearch)?;
+    if cursor_limit.parse::<usize>().ok() != Some(limit)
+        || encoded.is_empty()
+        || encoded.len() > MAX_GRAPH_WATCH_CURSOR_BYTES
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(encoded)
         .map_err(|_| ProviderReadError::InvalidSearch)?;
     let value = std::str::from_utf8(&bytes).map_err(|_| ProviderReadError::InvalidSearch)?;
-    validate_graph_thread_url(value, thread_id, graph_base)
+    validate_graph_thread_url(value, thread_id, graph_base, limit)
 }
 
 fn validate_graph_thread_url(
     value: &str,
     thread_id: &str,
     graph_base: &str,
+    limit: usize,
 ) -> Result<url::Url, ProviderReadError> {
     let base = url::Url::parse(graph_base).map_err(|_| ProviderReadError::InvalidResponse)?;
     let next = url::Url::parse(value).map_err(|_| ProviderReadError::InvalidSearch)?;
@@ -2537,7 +2566,10 @@ fn validate_graph_thread_url(
         || next.password().is_some()
         || next.fragment().is_some()
         || pairs.get("$filter").map(|value| value.as_ref()) != Some(expected_filter.as_str())
-        || pairs.get("$top").map(|value| value.as_ref()) != Some("20")
+        || pairs
+            .get("$top")
+            .and_then(|value| value.parse::<usize>().ok())
+            != Some(limit)
         || pairs.get("$select").map(|value| value.as_ref())
             != Some(
                 "id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments",
@@ -3080,31 +3112,40 @@ mod tests {
 
     #[test]
     fn conversation_cursors_are_bound_to_the_thread_and_provider_origin() {
-        assert_eq!(decode_google_thread_cursor(None, "thread_1").unwrap(), 0);
         assert_eq!(
-            decode_google_thread_cursor(Some("gmail-thread-v1:thread_1:20"), "thread_1").unwrap(),
+            decode_google_thread_cursor(None, "thread_1", 20).unwrap(),
+            0
+        );
+        assert_eq!(
+            decode_google_thread_cursor(Some("gmail-thread-v1:thread_1:20:20"), "thread_1", 20)
+                .unwrap(),
             20
         );
         for cursor in [
-            "gmail-thread-v1:other_thread:20",
-            "gmail-thread-v1:thread_1:21",
-            "gmail-thread-v1:thread_1:100001",
-            "gmail-thread-v1:thread_1:NaN",
+            "gmail-thread-v1:other_thread:20:20",
+            "gmail-thread-v1:thread_1:20:21",
+            "gmail-thread-v1:thread_1:20:100001",
+            "gmail-thread-v1:thread_1:20:NaN",
         ] {
-            assert!(decode_google_thread_cursor(Some(cursor), "thread_1").is_err());
+            assert!(decode_google_thread_cursor(Some(cursor), "thread_1", 20).is_err());
         }
+        assert!(
+            decode_google_thread_cursor(Some("gmail-thread-v1:thread_1:5:5"), "thread_1", 10)
+                .is_err()
+        );
 
         let graph = "https://graph.example/v1.0";
         let valid = "https://graph.example/v1.0/me/messages?$top=20&$select=id,conversationId,from,subject,receivedDateTime,bodyPreview,body,hasAttachments&$filter=conversationId%20eq%20%27conv%27%2742%27&$orderby=receivedDateTime%20asc&$skiptoken=next";
-        let cursor = encode_graph_thread_cursor(valid, "conv'42", graph).unwrap();
-        assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph).is_ok());
-        assert!(decode_graph_thread_cursor(&cursor, "other", graph).is_err());
+        let cursor = encode_graph_thread_cursor(valid, "conv'42", graph, 20).unwrap();
+        assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph, 20).is_ok());
+        assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph, 5).is_err());
+        assert!(decode_graph_thread_cursor(&cursor, "other", graph, 20).is_err());
         for invalid in [
             "https://attacker.example/v1.0/me/messages?$top=20&$filter=conversationId%20eq%20%27conv%27%2742%27",
             "https://graph.example/v1.0/me/messages?$top=100&$filter=conversationId%20eq%20%27conv%27%2742%27",
             "https://graph.example/v1.0/me/messages?$top=20&$filter=conversationId%20eq%20%27other%27",
         ] {
-            assert!(encode_graph_thread_cursor(invalid, "conv'42", graph).is_err());
+            assert!(encode_graph_thread_cursor(invalid, "conv'42", graph, 20).is_err());
         }
     }
     use crate::{AccountStatus, vault::AccountSecretMaterial};
@@ -3379,14 +3420,14 @@ mod tests {
             microsoft_graph_base: format!("http://{address}/graph/v1.0"),
         };
         let thread = client
-            .mail_thread(&account, &vault, &agent_id, &audience, "thread_1", None)
+            .mail_thread(&account, &vault, &agent_id, &audience, "thread_1", None, 5)
             .await
             .unwrap();
-        assert_eq!(thread.messages.len(), 20);
+        assert_eq!(thread.messages.len(), 5);
         assert_eq!(thread.messages[0].subject, "Message 0");
         assert_eq!(
             thread.next_cursor.as_deref(),
-            Some("gmail-thread-v1:thread_1:20")
+            Some("gmail-thread-v1:thread_1:5:5")
         );
         let second_page = client
             .mail_thread(
@@ -3396,16 +3437,34 @@ mod tests {
                 &audience,
                 "thread_1",
                 thread.next_cursor.as_deref(),
+                5,
             )
             .await
             .unwrap();
-        assert_eq!(second_page.messages.len(), 1);
-        assert_eq!(second_page.messages[0].subject, "Message 20");
-        assert!(second_page.next_cursor.is_none());
+        assert_eq!(second_page.messages.len(), 5);
+        assert_eq!(second_page.messages[0].subject, "Message 5");
+        assert_eq!(
+            second_page.next_cursor.as_deref(),
+            Some("gmail-thread-v1:thread_1:5:10")
+        );
+        assert!(matches!(
+            client
+                .mail_thread(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    "thread_1",
+                    thread.next_cursor.as_deref(),
+                    10,
+                )
+                .await,
+            Err(ProviderReadError::InvalidSearch)
+        ));
         mismatch.store(true, Ordering::SeqCst);
         assert!(matches!(
             client
-                .mail_thread(&account, &vault, &agent_id, &audience, "thread_1", None)
+                .mail_thread(&account, &vault, &agent_id, &audience, "thread_1", None, 20)
                 .await,
             Err(ProviderReadError::InvalidResponse)
         ));
@@ -3468,11 +3527,25 @@ mod tests {
             microsoft_graph_base: graph_base,
         };
         let thread = client
-            .mail_thread(&account, &vault, &agent_id, &audience, "conv'42", None)
+            .mail_thread(&account, &vault, &agent_id, &audience, "conv'42", None, 20)
             .await
             .unwrap();
         assert_eq!(thread.messages.len(), 1);
         assert!(thread.next_cursor.is_some());
+        assert!(matches!(
+            client
+                .mail_thread(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    "conv'42",
+                    thread.next_cursor.as_deref(),
+                    5,
+                )
+                .await,
+            Err(ProviderReadError::InvalidSearch)
+        ));
         let next = client
             .mail_thread(
                 &account,
@@ -3481,6 +3554,7 @@ mod tests {
                 &audience,
                 "conv'42",
                 thread.next_cursor.as_deref(),
+                20,
             )
             .await
             .unwrap();

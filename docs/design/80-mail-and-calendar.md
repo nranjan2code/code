@@ -3,8 +3,9 @@
 Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only
 bounded Google/Microsoft previews with selected Gmail labels and Microsoft
 top-level folders (Apple remains Inbox-only), explicit phrase search across all
-three providers, paginated Google/Microsoft conversation previews, a broker-owned
-local-surface read tool, and an Agent-vault working area for local drafts are
+three providers, paginated Google/Microsoft conversation previews, brokered
+Agent reads of selected Google/Microsoft threads with per-message source
+citations, and an Agent-vault working area for local drafts are
 implemented. The work area supports saved candidates, exact-payload preview
 and Review, email send, Google standalone-event update, and limited event create
 for Google/Microsoft. Review requires opt-in provider scopes, owner confirmation,
@@ -116,9 +117,12 @@ thread/conversation ID, or subject. Google serialization uses validated
 provider Message-ID and References headers with the selected Gmail thread ID;
 Microsoft uses the selected message's `/reply` operation. IDs remain fixed-host
 path segments. Apple replies remain unsupported. Subject text alone never
-establishes thread membership. The
-complete thread workspace, source citations, and cross-folder Agent access
-remain open. Local drafts,
+establishes thread membership. The Agent tool can now read a bounded selected
+Google/Microsoft thread page with a routine-scoped `mail_thread` permission.
+Each message is separately labelled as untrusted and carries a citation bound
+to provider, account, audience, thread, and message IDs. Click-through citation
+navigation, the full thread workspace, and cross-folder Agent access remain
+open. Local drafts,
 scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at

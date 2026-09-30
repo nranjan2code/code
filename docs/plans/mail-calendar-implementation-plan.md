@@ -255,8 +255,10 @@ channel audiences fail closed until explicitly shareable grants are built.
 The tool never exposes vault handles to workers. Returned provider content is
 model-visible and enters append-only session history, which current storage
 cannot selectively erase. The UI and tool description disclose this before
-reads. Do not claim complete account deletion. Provider health/freshness,
-citations and safe prompt-injection handling remain to be completed. The
+reads. Do not claim complete account deletion. Per-message citation metadata
+is present for selected Google/Microsoft threads, but click-through citation
+navigation is open. Provider health/freshness and further prompt-injection
+handling remain to be completed. The
 provider exit requirements for
 bounded responses, no remote HTML loads, prompt-injection containment,
 revocation during a read, and no message-read mutation apply here. Each
@@ -340,8 +342,20 @@ reviewed candidate, and re-fetch the source immediately before dispatch. A
 changed source ID, thread/conversation ID, or subject fails closed. Gmail sends
 validated `In-Reply-To`/`References` headers and `threadId`; Graph uses its
 message-scoped `/reply` endpoint. IDs are appended as fixed-host path segments.
-The complete conversation workspace, Agent thread citations, and live-provider
-conformance remain open.
+The complete conversation workspace, click-through citation navigation, and
+live-provider conformance remain open.
+
+**Implemented increment (2026-09-30):** the brokered Agent read tool can read
+one selected Google or Microsoft conversation page using the `thread_id` from
+`recent_mail`. `MailRead` admission is rechecked after provider I/O; routines
+must explicitly grant the `mail_thread` operation and stay within their
+configured per-run item ceiling. Page size is limited to the requested ceiling
+and at most 20; provider continuation cursors are bound to their thread and
+page size. Every result carries a per-message source record bound to provider,
+account, Agent audience, thread, and message IDs, and wraps bodies as untrusted
+external content. Apple conversation reads remain unavailable. Click-through
+source navigation, cross-folder Agent access, and live-provider conformance
+remain open.
 
 ## Stage 3 — reviewed provider effects
 
