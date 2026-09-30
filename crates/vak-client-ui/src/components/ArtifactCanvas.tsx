@@ -19,9 +19,10 @@ import {
 import { activate } from "../App";
 import Icon from "./Icon";
 import { subjectCandidateId, subjectExecutionId, subjectPath, subjectSessionId } from "../canvasSubject";
-import type { LineSelection } from "../canvasStack";
+import { sameSelection, type Selection } from "../canvasSelection";
 import { viewerSpec } from "../canvasViewers";
-import CanvasFeedback from "./canvas/CanvasFeedback";
+import CanvasContext from "./canvas/CanvasContext";
+import NewVersionNotice from "./canvas/NewVersionNotice";
 import { createDraftThread, type DraftSubject } from "./canvas/draftThread";
 import type { ViewerHandle } from "./canvas/types";
 import { VIEWERS } from "./canvas/viewers";
@@ -218,9 +219,7 @@ export default function ArtifactCanvas() {
                 <Icon name="diff" size={14} /> Review changes
               </button>
             </Show>
-            <Show when={spec()?.feedback === "on_request"}>
-              <button type="button" class="artifact-canvas-btn" aria-expanded={!!canvasEntry()?.feedbackOpen} onClick={() => updateCanvasEntry({ feedbackOpen: !canvasEntry()?.feedbackOpen })}>{canvasEntry()?.feedbackOpen ? "Hide comments" : "Comment"}</button>
-            </Show>
+            <button type="button" class="artifact-canvas-btn" aria-expanded={!!canvasEntry()?.feedbackOpen} onClick={() => updateCanvasEntry({ feedbackOpen: !canvasEntry()?.feedbackOpen })}>{canvasEntry()?.feedbackOpen ? "Hide comments" : "Comment"}</button>
             <button
               type="button"
               class="artifact-canvas-close"
@@ -244,6 +243,12 @@ export default function ArtifactCanvas() {
           </div>
         </Show>
 
+        <Show when={draft()}>{(version) =>
+          <Show when={canvasEntry()}>{(entry) =>
+            <NewVersionNotice entry={entry()} draft={version()} thread={thread} onReview={(candidateId) => returnToReview(candidateId)} />
+          }</Show>
+        }</Show>
+
         {/* Keyed by identity: another tab in front is a new viewer, with its own load and error state. */}
         <Show when={entryKey()} keyed>{(key) => {
           let last = canvasEntry()!;
@@ -252,6 +257,11 @@ export default function ArtifactCanvas() {
             if (found?.key === key) last = found;
             return last;
           };
+          // What each viewer is handed changes only when it changes: a reader's
+          // selection or unsent note must not look like a new subject.
+          const subjectNow = createMemo(() => current().subject);
+          const viewNow = createMemo(() => current().view);
+          const selectionNow = createMemo(() => current().selection, undefined, { equals: sameSelection });
           return (
             <>
               <div class="artifact-canvas-body">
@@ -264,19 +274,19 @@ export default function ArtifactCanvas() {
                   </div>
                 }>
                   <Dynamic
-                    component={VIEWERS[viewerSpec(current().subject).type]}
-                    subject={current().subject}
-                    view={current().view}
+                    component={VIEWERS[viewerSpec(subjectNow()).type]}
+                    subject={subjectNow()}
+                    view={viewNow()}
                     reloadKey={reloadKey()}
-                    selection={current().selection}
-                    onSelect={(selection: LineSelection | null) => updateCanvasEntry({ selection }, key)}
+                    selection={selectionNow()}
+                    onSelect={(selection: Selection | null) => updateCanvasEntry(selection ? { selection, feedbackOpen: true, panel: "discussion" } : { selection }, key)}
                     onReview={returnToReview}
                     register={setHandle}
                   />
                 </ErrorBoundary>
               </div>
               <Show when={current().feedbackOpen}>
-                <CanvasFeedback entry={current()} thread={thread} />
+                <CanvasContext entry={current()} thread={thread} />
               </Show>
             </>
           );

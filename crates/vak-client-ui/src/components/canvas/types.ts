@@ -1,5 +1,5 @@
 import type { CanvasSubject } from "../../canvasSubject";
-import type { LineSelection } from "../../canvasStack";
+import type { Selection } from "../../canvasSelection";
 
 /** What a viewer can do for the frame beyond drawing itself. */
 export interface ViewerHandle {
@@ -13,8 +13,8 @@ export interface ViewerProps {
   view: string | null;
   /** Changes when the reader asks to reload. */
   reloadKey: number;
-  selection: LineSelection | null;
-  onSelect: (selection: LineSelection | null) => void;
+  selection: Selection | null;
+  onSelect: (selection: Selection | null) => void;
   /** Present when the subject came from a review and can return to it. */
   onReview?: (candidateId?: string) => void;
   register: (handle: ViewerHandle | null) => void;

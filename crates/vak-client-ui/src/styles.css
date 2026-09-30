@@ -5846,6 +5846,23 @@ html[data-theme="light"] .artifact-canvas-body {
 
 .artifact-canvas-feedback-compose button:disabled { opacity: 0.45; cursor: default; }
 .artifact-canvas-feedback small { display: block; margin-top: 6px; }
+.artifact-canvas-feedback-compose button.artifact-canvas-btn { padding: 5px var(--space-2); border: 1px solid var(--border); background: transparent; color: var(--text-soft); font-weight: 500; }
+.artifact-canvas-feedback-compose textarea { flex: 1 1 260px; min-width: 0; }
+.artifact-canvas-feedback-actions { display: flex; gap: var(--space-2); align-items: center; }
+.artifact-canvas-context-tabs { display: flex; gap: var(--space-1); margin-bottom: var(--space-2); }
+.artifact-canvas-context-tabs button { border: none; border-radius: 8px; padding: var(--space-1) var(--space-2); background: transparent; color: var(--text-muted); font-size: var(--fs-meta); font-weight: 500; cursor: pointer; }
+.artifact-canvas-context-tabs button.active { background: var(--surface); color: var(--text); }
+.artifact-canvas-selection { display: flex; flex-basis: 100%; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-2); border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font-size: var(--fs-meta); }
+.artifact-canvas-selection span { flex: 1; }
+.artifact-canvas-notice { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-4); border-bottom: 1px solid var(--border-soft); background: var(--surface-raised, var(--surface)); color: var(--text); font-size: var(--fs-meta); flex-shrink: 0; }
+.artifact-canvas-notice span { flex: 1 1 220px; }
+.artifact-canvas-activity, .artifact-canvas-changes { display: grid; gap: var(--space-1); max-height: 180px; margin: 0; padding: 0; overflow: auto; list-style: none; font-size: var(--fs-meta); color: var(--text); }
+.artifact-canvas-activity li, .artifact-canvas-changes li { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-1) 0; border-bottom: 1px solid var(--border-soft); }
+.artifact-canvas-activity time { color: var(--muted); }
+.artifact-canvas-change { min-width: 64px; color: var(--muted); }
+.artifact-canvas-change[data-change="new"] { color: var(--green); }
+.artifact-canvas-change[data-change="removed"] { color: var(--red); }
+.artifact-canvas-comments article .artifact-canvas-btn { margin-top: var(--space-1); }
 
 /* --- Footer (security) -------------------------------------------------- */
 .artifact-canvas-footer {

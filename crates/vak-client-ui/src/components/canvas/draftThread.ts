@@ -1,61 +1,58 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup } from "solid-js";
 import * as api from "../../api";
 import { watchCoworking } from "../../streamHub";
 import type { CanvasSubject } from "../../canvasSubject";
+import { newerVersions, versionNumber, versionsOf } from "../../draftVersions";
 
 export type DraftSubject = Extract<CanvasSubject, { kind: "draft_file" }>;
 
 /**
- * The comments on a saved draft and which version of the draft it is, kept
- * current while people work on it together. Empty for anything that is not a
- * saved draft.
+ * What surrounds a saved draft: the comments on this version, the versions
+ * saved for its result and what happened to them, kept current while people
+ * work on it together. Empty for anything that is not a saved draft. A newer
+ * version is only ever reported here; it never replaces the one being read.
  */
 export function createDraftThread(draft: () => DraftSubject | undefined) {
   const [comments, setComments] = createSignal<api.SandboxCandidateComment[]>([]);
-  const [version, setVersion] = createSignal<number | null>(null);
+  const [records, setRecords] = createSignal<api.SandboxRecord[]>([]);
+
+  const versions = createMemo(() => versionsOf(records(), draft()?.executionId));
+  const version = createMemo(() => {
+    const subject = draft();
+    return subject ? versionNumber(versions(), subject.candidateId) : null;
+  });
+  const newer = createMemo(() => {
+    const subject = draft();
+    return subject ? newerVersions(versions(), subject.candidateId) : [];
+  });
+
+  const load = async (subject: DraftSubject, alive: () => boolean) => {
+    const [commentsResult, recordsResult] = await Promise.allSettled([
+      api.listSandboxCandidateComments(subject.sessionId, subject.candidateId),
+      api.listSessionSandboxRecords(subject.sessionId),
+    ]);
+    if (!alive()) return;
+    // A failed refresh keeps what is already shown: offline is not an empty history.
+    if (commentsResult.status === "fulfilled") setComments(commentsResult.value.comments);
+    if (recordsResult.status === "fulfilled") setRecords(recordsResult.value.records);
+  };
 
   createEffect(() => {
     const subject = draft();
     setComments([]);
-    setVersion(null);
+    setRecords([]);
     if (!subject) return;
     let disposed = false;
-    void Promise.allSettled([
-      api.listSandboxCandidateComments(subject.sessionId, subject.candidateId),
-      api.listSessionSandboxRecords(subject.sessionId),
-    ]).then(([commentsResult, recordsResult]) => {
-      if (disposed) return;
-      if (commentsResult.status === "fulfilled") setComments(commentsResult.value.comments);
-      if (recordsResult.status === "fulfilled") {
-        const versions = recordsResult.value.records.filter((record) => record.kind === "Candidate" && (!subject.executionId || record.record.execution_id === subject.executionId));
-        const index = versions.findIndex((record) => record.kind === "Candidate" && record.record.candidate.candidate_id === subject.candidateId);
-        if (index >= 0) setVersion(index + 1);
-      }
-    });
-    onCleanup(() => { disposed = true; });
-  });
-
-  createEffect(() => {
-    const subject = draft();
-    if (!subject) return;
-    const { sessionId, candidateId } = subject;
-    let disposed = false;
-    const stop = watchCoworking(sessionId, () => {
-      void api.listSandboxCandidateComments(sessionId, candidateId)
-        .then(({ comments: latest }) => {
-          if (!disposed && draft()?.candidateId === candidateId) setComments(latest);
-        })
-        .catch(() => { /* Preserve the visible comment history while offline. */ });
+    void load(subject, () => !disposed && draft()?.candidateId === subject.candidateId);
+    const stop = watchCoworking(subject.sessionId, () => {
+      void load(subject, () => !disposed && draft()?.candidateId === subject.candidateId);
     });
     onCleanup(() => { disposed = true; stop(); });
   });
 
-  const refresh = (subject: DraftSubject) =>
-    api.listSandboxCandidateComments(subject.sessionId, subject.candidateId)
-      .then(({ comments: latest }) => setComments(latest))
-      .catch(() => { /* The accepted comment remains durable. */ });
+  const refresh = (subject: DraftSubject) => load(subject, () => draft()?.candidateId === subject.candidateId);
 
-  return { comments, version, refresh };
+  return { comments, records, versions, version, newer, refresh };
 }
 
 export type DraftThread = ReturnType<typeof createDraftThread>;

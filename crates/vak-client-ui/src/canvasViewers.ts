@@ -5,6 +5,7 @@
 
 import { displayType, type ArtifactDisplayType, type CanvasSubject } from "./canvasSubject.ts";
 import type { CanvasMode } from "./canvasStack.ts";
+import type { SelectionKind } from "./canvasSelection.ts";
 
 export interface ViewChoice {
   id: string;
@@ -27,8 +28,10 @@ export interface ViewerSpec {
   devices: boolean;
   /** Can be opened in a window of its own. */
   popout: boolean;
-  /** Whether the comment area is always there or opened on request. */
+  /** Whether the comment area is open when the subject opens or only on request. */
   feedback: "always" | "on_request";
+  /** What a reader can point at in the given view, or nothing: a preview page or an image has no place a comment could name. */
+  selects: (view: string | null) => SelectionKind | null;
   /** The footer that says what the frame is allowed to do. */
   safetyFooter: boolean;
 }
@@ -39,11 +42,11 @@ const PREVIEW_OR_CODE: readonly ViewChoice[] = [
 ];
 
 const SPECS: Record<ArtifactDisplayType, ViewerSpec> = {
-  html: { type: "html", badge: "Preview", views: PREVIEW_OR_CODE, defaultView: () => "preview", layout: "split", reloadable: true, devices: true, popout: true, feedback: "always", safetyFooter: true },
-  server: { type: "server", badge: "Live preview", views: [], defaultView: () => null, layout: "split", reloadable: true, devices: true, popout: true, feedback: "always", safetyFooter: true },
-  code: { type: "code", badge: "Preview", views: [], defaultView: () => null, layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", safetyFooter: true },
-  table: { type: "table", badge: "Data", views: [{ ...PREVIEW_OR_CODE[0], title: "View data table" }, PREVIEW_OR_CODE[1]], defaultView: () => "preview", layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", safetyFooter: true },
-  image: { type: "image", badge: "Image", views: [], defaultView: () => null, layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", safetyFooter: true },
+  html: { type: "html", badge: "Preview", views: PREVIEW_OR_CODE, defaultView: () => "preview", layout: "split", reloadable: true, devices: true, popout: true, feedback: "always", selects: (view) => (view === "source" ? "lines" : null), safetyFooter: true },
+  server: { type: "server", badge: "Live preview", views: [], defaultView: () => null, layout: "split", reloadable: true, devices: true, popout: true, feedback: "always", selects: () => null, safetyFooter: true },
+  code: { type: "code", badge: "Preview", views: [], defaultView: () => null, layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", selects: () => "lines", safetyFooter: true },
+  table: { type: "table", badge: "Data", views: [{ ...PREVIEW_OR_CODE[0], title: "View data table" }, PREVIEW_OR_CODE[1]], defaultView: () => "preview", layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", selects: (view) => (view === "source" ? "lines" : null), safetyFooter: true },
+  image: { type: "image", badge: "Image", views: [], defaultView: () => null, layout: "split", reloadable: false, devices: false, popout: false, feedback: "always", selects: () => null, safetyFooter: true },
   pdf: {
     type: "pdf",
     badge: "PDF",
@@ -55,9 +58,10 @@ const SPECS: Record<ArtifactDisplayType, ViewerSpec> = {
     devices: false,
     popout: false,
     feedback: "on_request",
+    selects: (view) => (view === "text" ? "anchor" : null),
     safetyFooter: false,
   },
-  office: { type: "office", badge: "Document", views: [], defaultView: () => null, layout: "focused", reloadable: false, devices: false, popout: false, feedback: "on_request", safetyFooter: false },
+  office: { type: "office", badge: "Document", views: [], defaultView: () => null, layout: "focused", reloadable: false, devices: false, popout: false, feedback: "on_request", selects: () => "anchor", safetyFooter: false },
 };
 
 export function viewerSpec(subject: CanvasSubject): ViewerSpec {
@@ -74,5 +78,7 @@ export function freshEntry(subject: CanvasSubject, narrow: boolean) {
     selection: null,
     draft: "",
     feedbackOpen: spec.feedback === "always",
+    panel: "discussion" as const,
+    dismissedVersion: 0,
   };
 }

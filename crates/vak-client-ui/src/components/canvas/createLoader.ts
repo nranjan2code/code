@@ -1,4 +1,4 @@
-import { createEffect, createSignal, onCleanup, untrack } from "solid-js";
+import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js";
 
 export interface Loader<T> {
   data: () => T | undefined;
@@ -32,8 +32,12 @@ export function createLoader<S, T>(
     setData(undefined);
   };
 
+  // A source is what to load, not when it was read: an equal one, however many
+  // times it is produced, loads nothing again (a reader picking a line must
+  // not reload the page they are reading).
+  const wantedSource = createMemo(source, undefined, { equals: sameSource });
   createEffect(() => {
-    const wanted = source();
+    const wanted = wantedSource();
     attempt();
     const mine = ++generation;
     const current = () => mine === generation;
@@ -63,6 +67,11 @@ export function createLoader<S, T>(
   });
 
   return { data, loading, error, reload: () => setAttempt((count) => count + 1) };
+}
+
+function sameSource(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) return a.length === b.length && a.every((item, index) => item === b[index]);
+  return a === b;
 }
 
 /** Reads a file's text, or says why it cannot be. */
