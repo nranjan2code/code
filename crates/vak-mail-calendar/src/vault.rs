@@ -8,7 +8,7 @@
 use crate::{ActionCandidate, ActionReceipt, ActionState};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::path::PathBuf;
 use uuid::Uuid;
 use zeroize::{Zeroize, Zeroizing};
@@ -38,6 +38,13 @@ pub enum VaultError {
     TooLarge,
     #[error("mail and calendar candidate revision changed")]
     Conflict,
+}
+
+/// Cross-process exclusive claim for one Agent's mail/calendar routine.
+/// Keep this value alive for the full run; closing the file releases the OS
+/// advisory lock, including when the process exits or crashes.
+pub struct RoutineLease {
+    _lock_file: File,
 }
 
 /// Secret material accepted from a provider setup flow. Keep this type out of
@@ -224,6 +231,40 @@ impl AccountVault {
     pub fn credential_ref(account_id: &str) -> Result<String, VaultError> {
         validate_account_id(account_id)?;
         Ok(format!("vak_mail_calendar_{account_id}"))
+    }
+
+    /// Try to claim one routine run across server processes. `None` means
+    /// another process currently owns the run; errors fail closed.
+    pub fn try_acquire_routine_lease(
+        &self,
+        routine_id: &str,
+    ) -> Result<Option<RoutineLease>, VaultError> {
+        validate_account_id(routine_id)?;
+        let agent_home = self
+            .scope_hint
+            .parent()
+            .ok_or(VaultError::InvalidReference)?;
+        let work_dir = agent_home.join("mail-calendar");
+        ensure_agent_directory(&work_dir, true)?;
+        let lock_path = work_dir.join(format!(".routine-{routine_id}.lease"));
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(lock_path).map_err(VaultError::Store)?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(RoutineLease { _lock_file: file })),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(VaultError::Store(error)),
+        }
     }
 
     pub fn store(
@@ -1008,6 +1049,33 @@ mod tests {
                 .remember_new_mail_ids(&routine_id, &other_account, &ids(&["m4"]))
                 .unwrap(),
             ids(&["m4"])
+        );
+    }
+
+    #[test]
+    fn routine_lease_serializes_independent_server_vault_handles() {
+        let agent_id = format!("mailcal-lease-{}", Uuid::now_v7());
+        let first_vault = AccountVault::for_agent(&agent_id).unwrap();
+        let second_vault = AccountVault::for_agent(&agent_id).unwrap();
+        let routine_id = Uuid::now_v7().to_string();
+
+        let lease = first_vault
+            .try_acquire_routine_lease(&routine_id)
+            .unwrap()
+            .expect("first process claim");
+        assert!(
+            second_vault
+                .try_acquire_routine_lease(&routine_id)
+                .unwrap()
+                .is_none()
+        );
+
+        drop(lease);
+        assert!(
+            second_vault
+                .try_acquire_routine_lease(&routine_id)
+                .unwrap()
+                .is_some()
         );
     }
 

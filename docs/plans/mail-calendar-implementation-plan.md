@@ -320,11 +320,13 @@ rolling set of message IDs in the encrypted Agent vault. A content-free
 provider-ID poll skips model dispatch when the bounded latest-message window
 contains no unseen IDs; only a triggered run fetches message content through
 the brokered tool. This is best-effort polling: it has no provider-native
-cursor, can miss messages outside the returned window, does not coordinate
-competing service instances with a durable lease, and has no freshness
-guarantee. The ordinary Vakyartha service must remain running for schedules to
-fire. Durable trigger leases, push subscriptions, awake-host health, and
-restart/recovery acceptance are not implemented yet. Current-storage session
+cursor and can miss messages outside the returned window. An Agent-vault OS
+advisory lease now prevents the same routine from being polled or dispatched
+by two local server processes at once; it is held through child completion
+and released by the OS on process exit. It does not coordinate separate hosts
+or provide a freshness guarantee. The ordinary Vakyartha service must remain
+running for schedules to fire. Provider push subscriptions, awake-host health,
+and restart/recovery acceptance are not implemented yet. Current-storage session
 history is append-only and cannot be selectively erased; M7 remains the
 deletion gate.
 

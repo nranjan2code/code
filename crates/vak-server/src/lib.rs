@@ -18516,6 +18516,39 @@ async fn fire_task_with_force(
             .await
             .ok_or(NotFired::Busy);
     }
+    // The scheduler and the owner's Run now endpoint can both fire the same
+    // Agent routine from separate server processes. Hold an OS-backed lease
+    // through RunFinished so another process cannot launch a duplicate watch
+    // or duplicate the model run for the same routine.
+    let mut routine_lease = if snapshot.mail_calendar_scope.is_some() {
+        let Some(agent_id) = snapshot.agent_id.as_deref() else {
+            return Err(refuse_task(
+                state,
+                &snapshot,
+                "The mail and calendar routine has no pinned Agent.".into(),
+            ));
+        };
+        let vault = vak_mail_calendar::vault::AccountVault::for_agent(agent_id).map_err(|_| {
+            refuse_task(
+                state,
+                &snapshot,
+                "The Agent's mail and calendar vault is unavailable.".into(),
+            )
+        })?;
+        match vault.try_acquire_routine_lease(id) {
+            Ok(Some(lease)) => Some(lease),
+            Ok(None) => return Err(NotFired::Busy),
+            Err(_) => {
+                return Err(refuse_task(
+                    state,
+                    &snapshot,
+                    "The routine could not claim its cross-process run lease.".into(),
+                ));
+            }
+        }
+    } else {
+        None
+    };
     if !force_mail_watch_run
         && let Some(scope) = snapshot
             .mail_calendar_scope
@@ -18654,8 +18687,12 @@ async fn fire_task_with_force(
         let task_name = snapshot.name.clone();
         let deliver_to = snapshot.deliver_to.clone();
         let mail_calendar_task = snapshot.mail_calendar_scope.is_some();
+        let routine_lease = routine_lease.take();
         let rx = h.events_tx.subscribe();
         tokio::spawn(async move {
+            // Keep the cross-process lease until the child settles or this
+            // watcher is dropped during process shutdown.
+            let _routine_lease = routine_lease;
             use tokio_stream::StreamExt;
             use tokio_stream::wrappers::BroadcastStream;
             let mut stream = BroadcastStream::new(rx);

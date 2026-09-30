@@ -107,8 +107,10 @@ Read before changing behaviour in these areas:
   uses the existing `TaskDef` scheduler, pins an Agent revision/account/read
   allowlist, restricts its unattended child to the brokered mail/calendar
   tool, and pauses when its account is disconnected. The watch polls only
-  provider IDs and skips model dispatch when unchanged, but has no native
-  cursor or multi-instance lease. Disconnect removes credentials and unsent
+  provider IDs and skips model dispatch when unchanged. An Agent-vault OS
+  lease prevents duplicate runs of one routine across local server processes
+  through child completion; native provider cursors and multi-host fencing
+  remain outstanding. Disconnect removes credentials and unsent
   drafts for that account and fences future reads, but cannot erase
   content already recorded in append-only Agent sessions; disclose this until
   lifecycle erasure ships. A first Stage 3 increment enables explicitly

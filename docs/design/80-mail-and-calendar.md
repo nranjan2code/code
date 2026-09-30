@@ -71,9 +71,11 @@ as proof that saved sign-in material can be loaded. Owner-only bounded
 previews for Gmail and Microsoft are implemented. The Agent read tool uses
 the connected account's declared capability and the owning Agent's local
 surface grant. Local drafts, scheduled read-only routines, and an explicitly
-best-effort scheduled email watch are implemented. Email send, a constrained
-timed event create, and Google standalone event update have effect-aware owner
-confirmation paths; other event update/cancel/RSVP, standing
+best-effort scheduled email watch are implemented. A per-routine OS lease
+prevents duplicate local server-process runs through child completion; it does
+not provide multi-host coordination or a provider-native cursor. Email send,
+a constrained timed event create, and Google standalone event update have
+effect-aware owner confirmation paths; other event update/cancel/RSVP, standing
 grants, complete receipt reconciliation, durable continuous service recovery,
 and the third provider remain in progress. The
 account-deletion limitation below is disclosed before content features are
