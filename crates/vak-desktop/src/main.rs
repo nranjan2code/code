@@ -1337,7 +1337,7 @@ mod tests {
                     assert_eq!(body["path"], "/tmp/shared-workspace");
                     assert_eq!(body["trust"], true);
                     axum::Json(serde_json::json!({
-                        "version": "5.3.0",
+                        "version": env!("CARGO_PKG_VERSION"),
                         "cwd": "/tmp/shared-workspace",
                         "recent_workspaces": ["/tmp/shared-workspace"]
                     }))
