@@ -72,6 +72,10 @@ enum WorkerTask {
     IcalendarParse {
         data: String,
     },
+    CalDavDiscoveryParse {
+        data: String,
+        mode: crate::mail_calendar::DiscoveryMode,
+    },
 }
 
 /// Which projection of an Office file a view asks for (docs/design/72, P4).
@@ -608,6 +612,20 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::CalDavDiscoveryParse { data, mode } => {
+            let (content, is_error) =
+                match crate::mail_calendar::parse_caldav_discovery(&data, mode) {
+                    Ok(content) => (content, false),
+                    Err(error) => (error, true),
+                };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::VerifyTargets { root, checks } => {
             let results = vak_sandbox::default_target_verifiers().verify(&root, &checks);
             let content = serde_json::to_string(&results).unwrap_or_default();
@@ -756,6 +774,34 @@ pub async fn parse_icalendar(worker_exe: &Path, data: &str) -> Result<Value, Str
         let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
         serde_json::from_str(&content)
             .map_err(|_| "calendar worker returned an invalid result".to_owned())
+    }
+}
+
+/// Extract only the expected hrefs or calendar collections from untrusted
+/// CalDAV discovery XML inside the same network-denied worker boundary.
+pub async fn parse_caldav_discovery(
+    worker_exe: &Path,
+    data: &str,
+    mode: crate::mail_calendar::DiscoveryMode,
+) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("CalDAV discovery response exceeds its parser limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("CalDAV discovery requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-caldav-discovery-")
+            .tempdir()
+            .map_err(|_| "CalDAV parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::CalDavDiscoveryParse {
+            data: data.to_owned(),
+            mode,
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content)
+            .map_err(|_| "CalDAV worker returned invalid discovery data".to_owned())
     }
 }
 

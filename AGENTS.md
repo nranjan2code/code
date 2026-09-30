@@ -117,10 +117,14 @@ Read before changing behaviour in these areas:
   opted-in Google/Microsoft plain-text email sending through an owner-confirmed
   exact-candidate Review, Agent Core permission evaluation, and an encrypted
   single-use action claim. Provider acceptance is not delivery; unknown
-  outcomes cannot be retried. Apple Mail-only links now verify sign-in against
+  outcomes cannot be retried. Apple MailRead-only links verify sign-in against
   fixed-host IMAP and allow bounded inbox metadata reads through a read-only
-  session with a 512 KiB transport budget; body text and Apple Calendar are
-  unavailable. Microsoft event update/cancel/RSVP, attachments, aliases, reply
+  session with a 512 KiB transport budget. CalendarRead-only links verify
+  fixed-host CalDAV and expose bounded previews after worker-isolated discovery
+  and parsing, followed by a local time-range overlap check; Apple free/busy,
+  mail bodies and event changes are unavailable, and mixed capability
+  selections remain unverified.
+  Microsoft event update/cancel/RSVP, attachments, aliases, reply
   semantics, and model-initiated effects remain unavailable. Current 4.x
   session history cannot be selectively erased, so account-deletion erasure
   remains incomplete);

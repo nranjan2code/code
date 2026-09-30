@@ -3,13 +3,22 @@
 use chrono::{DateTime, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use ical::IcalParser;
 use quick_xml::{Reader, events::Event as XmlEvent};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::io::Cursor;
 
 const MAX_CALENDAR_BYTES: usize = 256 * 1024;
 const MAX_EVENTS: usize = 100;
 const MAX_FIELD_CHARS: usize = 1024;
 const MAX_XML_DEPTH: usize = 64;
+const MAX_DISCOVERY_RESULTS: usize = 32;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DiscoveryMode {
+    CurrentUserPrincipal,
+    CalendarHomeSet,
+    CalendarCollections,
+}
 
 /// Parse a bounded VCALENDAR document inside `__tool_worker`.
 pub(crate) fn parse_calendar_data(data: &str) -> Result<String, String> {
@@ -98,9 +107,9 @@ pub(crate) fn parse_calendar_data(data: &str) -> Result<String, String> {
             "version": null,
             "title": if private { "Private event".to_owned() } else { value("SUMMARY").map(unescape_text).map(|s| bounded(&s)).filter(|s| !s.is_empty()).unwrap_or_else(|| "(no title)".into()) },
             "starts_at": starts_at,
-            "ends_at": if private { None::<DateTime<Utc>> } else { ends_at },
+                    "ends_at": ends_at,
             "starts_on": starts_on,
-            "ends_on": if private { None::<String> } else { ends_on },
+                    "ends_on": ends_on,
             "all_day": all_day,
             "location": if private { None::<String> } else { value("LOCATION").map(unescape_text).map(|s| bounded(&s)).filter(|s| !s.is_empty()) },
             "description": if private { None::<String> } else { value("DESCRIPTION").map(unescape_text).map(|s| bounded(&s)).filter(|s| !s.is_empty()) },
@@ -216,6 +225,184 @@ fn local_name(name: &[u8]) -> &[u8] {
     name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
 }
 
+/// Read only the hrefs and calendar collection labels needed for CalDAV
+/// discovery; this XML parser is called from the isolated worker only.
+pub(crate) fn parse_caldav_discovery(
+    document: &str,
+    mode: DiscoveryMode,
+) -> Result<String, String> {
+    if document.is_empty() || document.len() > MAX_CALENDAR_BYTES || document.contains('\0') {
+        return Err("CalDAV discovery response exceeds its size limit".into());
+    }
+    let mut reader = Reader::from_str(document);
+    reader.config_mut().check_end_names = true;
+    let mut stack = Vec::<Vec<u8>>::new();
+    let mut depth = 0usize;
+    let mut target_property: Option<Vec<u8>> = None;
+    let mut collecting: Option<Vec<u8>> = None;
+    let mut text = String::new();
+    let mut hrefs = Vec::<String>::new();
+    let mut results = Vec::<Value>::new();
+    let mut response_href: Option<String> = None;
+    let mut response_displayname: Option<String> = None;
+    let mut response_calendar = false;
+    loop {
+        match reader.read_event() {
+            Ok(XmlEvent::Start(start)) => {
+                depth += 1;
+                if depth > MAX_XML_DEPTH {
+                    return Err("CalDAV XML nesting exceeds its limit".into());
+                }
+                let name = local_name(start.name().as_ref()).to_vec();
+                if matches!(
+                    name.as_slice(),
+                    b"current-user-principal" | b"calendar-home-set"
+                ) {
+                    target_property = Some(name.clone());
+                }
+                if name.as_slice() == b"response" {
+                    response_href = None;
+                    response_displayname = None;
+                    response_calendar = false;
+                }
+                if mode == DiscoveryMode::CalendarCollections
+                    && name.as_slice() == b"calendar"
+                    && stack
+                        .iter()
+                        .any(|parent| parent.as_slice() == b"resourcetype")
+                {
+                    response_calendar = true;
+                }
+                let target_name = match mode {
+                    DiscoveryMode::CurrentUserPrincipal => b"current-user-principal".as_slice(),
+                    DiscoveryMode::CalendarHomeSet => b"calendar-home-set".as_slice(),
+                    DiscoveryMode::CalendarCollections => b"response".as_slice(),
+                };
+                if name.as_slice() == b"href"
+                    && (target_property.as_deref() == Some(target_name)
+                        || mode == DiscoveryMode::CalendarCollections
+                            && stack.iter().any(|parent| parent.as_slice() == b"response"))
+                {
+                    collecting = Some(b"href".to_vec());
+                    text.clear();
+                } else if name.as_slice() == b"displayname"
+                    && mode == DiscoveryMode::CalendarCollections
+                {
+                    collecting = Some(b"displayname".to_vec());
+                    text.clear();
+                }
+                stack.push(name);
+            }
+            Ok(XmlEvent::Empty(start)) => {
+                let name = local_name(start.name().as_ref()).to_vec();
+                if mode == DiscoveryMode::CalendarCollections
+                    && name.as_slice() == b"calendar"
+                    && stack
+                        .iter()
+                        .any(|parent| parent.as_slice() == b"resourcetype")
+                {
+                    response_calendar = true;
+                }
+            }
+            Ok(XmlEvent::Text(value)) if collecting.is_some() => {
+                let decoded = value
+                    .decode()
+                    .map_err(|_| "CalDAV discovery XML text is invalid".to_owned())?;
+                let unescaped = quick_xml::escape::unescape(&decoded)
+                    .map_err(|_| "CalDAV discovery XML entity is invalid".to_owned())?;
+                text.push_str(&unescaped);
+                if text.len() > 2048 {
+                    return Err("CalDAV discovery value exceeds its size limit".into());
+                }
+            }
+            Ok(XmlEvent::CData(value)) if collecting.is_some() => {
+                text.push_str(
+                    &value
+                        .decode()
+                        .map_err(|_| "CalDAV discovery XML text is invalid".to_owned())?,
+                );
+                if text.len() > 2048 {
+                    return Err("CalDAV discovery value exceeds its size limit".into());
+                }
+            }
+            Ok(XmlEvent::GeneralRef(reference)) if collecting.is_some() => {
+                let character = reference
+                    .resolve_char_ref()
+                    .map_err(|_| "CalDAV discovery XML reference is invalid".to_owned())?
+                    .or_else(|| {
+                        reference
+                            .decode()
+                            .ok()
+                            .and_then(|name| match name.as_ref() {
+                                "amp" => Some('&'),
+                                "apos" => Some('\''),
+                                "gt" => Some('>'),
+                                "lt" => Some('<'),
+                                "quot" => Some('"'),
+                                _ => None,
+                            })
+                    })
+                    .ok_or_else(|| "CalDAV discovery XML reference is unsupported".to_owned())?;
+                text.push(character);
+            }
+            Ok(XmlEvent::End(end)) => {
+                let name = local_name(end.name().as_ref()).to_vec();
+                if name.as_slice() == b"href" && collecting.as_deref() == Some(b"href") {
+                    if !text.is_empty() && !text.chars().any(char::is_control) && text.len() <= 2048
+                    {
+                        if mode == DiscoveryMode::CalendarCollections {
+                            response_href = Some(std::mem::take(&mut text));
+                        } else {
+                            hrefs.push(std::mem::take(&mut text));
+                        }
+                    }
+                    collecting = None;
+                } else if name.as_slice() == b"displayname"
+                    && collecting.as_deref() == Some(b"displayname")
+                {
+                    response_displayname = Some(bounded(&text));
+                    text.clear();
+                    collecting = None;
+                }
+                if name.as_slice() == b"current-user-principal"
+                    || name.as_slice() == b"calendar-home-set"
+                {
+                    target_property = None;
+                }
+                if name.as_slice() == b"response" && mode == DiscoveryMode::CalendarCollections {
+                    if response_calendar && let Some(href) = response_href.take() {
+                        results.push(json!({
+                            "href": href,
+                            "display_name": response_displayname.take().filter(|s| !s.is_empty()),
+                        }));
+                        if results.len() > MAX_DISCOVERY_RESULTS {
+                            return Err("CalDAV response contains too many calendars".into());
+                        }
+                    }
+                }
+                stack.pop();
+                depth = depth.saturating_sub(1);
+            }
+            Ok(XmlEvent::DocType(_)) => {
+                return Err("CalDAV XML document type is forbidden".into());
+            }
+            Ok(XmlEvent::Eof) => break,
+            Ok(_) => {}
+            Err(_) => return Err("CalDAV discovery XML is invalid".into()),
+        }
+    }
+    let output = match mode {
+        DiscoveryMode::CalendarCollections => json!(results),
+        _ => {
+            hrefs.sort();
+            hrefs.dedup();
+            hrefs.truncate(MAX_DISCOVERY_RESULTS);
+            json!(hrefs)
+        }
+    };
+    serde_json::to_string(&output).map_err(|_| "CalDAV discovery could not be encoded".into())
+}
+
 enum IcalTime {
     Date(NaiveDate),
     DateTime(DateTime<Utc>),
@@ -291,6 +478,7 @@ mod tests {
         assert_eq!(parsed[1]["title"], "Private event");
         assert_eq!(parsed[1]["description"], Value::Null);
         assert_eq!(parsed[1]["starts_on"], "2026-10-01");
+        assert_eq!(parsed[1]["ends_on"], "2026-10-02");
     }
 
     #[test]
@@ -305,5 +493,47 @@ mod tests {
         let floating = "BEGIN:VCALENDAR\r\nBEGIN:VEVENT\r\nUID:x\r\nDTSTART:20260930T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
         assert!(parse_calendar_data(floating).is_err());
         assert!(parse_calendar_data(&"x".repeat(MAX_CALENDAR_BYTES + 1)).is_err());
+    }
+
+    #[test]
+    fn discovery_parser_extracts_scoped_principal_home_and_calendar_collections() {
+        let principal = r#"<d:multistatus xmlns:d="DAV:"><d:response><d:propstat><d:prop><d:current-user-principal><d:href>/principal/owner</d:href></d:current-user-principal></d:prop></d:propstat></d:response></d:multistatus>"#;
+        let homeset = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:propstat><d:prop><c:calendar-home-set><d:href>/calendars/owner</d:href></c:calendar-home-set></d:prop></d:propstat></d:response></d:multistatus>"#;
+        let collections = r#"<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/calendars/owner/work</d:href><d:propstat><d:prop><d:displayname>Work</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/calendars/owner/files</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response></d:multistatus>"#;
+        let principal: Value = serde_json::from_str(
+            &parse_caldav_discovery(principal, DiscoveryMode::CurrentUserPrincipal).unwrap(),
+        )
+        .unwrap();
+        let homeset: Value = serde_json::from_str(
+            &parse_caldav_discovery(homeset, DiscoveryMode::CalendarHomeSet).unwrap(),
+        )
+        .unwrap();
+        let collections: Value = serde_json::from_str(
+            &parse_caldav_discovery(collections, DiscoveryMode::CalendarCollections).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(principal, json!(["/principal/owner"]));
+        assert_eq!(homeset, json!(["/calendars/owner"]));
+        assert_eq!(
+            collections,
+            json!([{"href":"/calendars/owner/work","display_name":"Work"}])
+        );
+    }
+
+    #[test]
+    fn discovery_parser_rejects_dtd_and_excessive_depth() {
+        assert!(
+            parse_caldav_discovery(
+                "<!DOCTYPE a [<!ENTITY x 'y'>]><a>&x;</a>",
+                DiscoveryMode::CalendarCollections,
+            )
+            .is_err()
+        );
+        let deep = format!(
+            "{}<d:href>/a</d:href>{}",
+            "<d:a>".repeat(65),
+            "</d:a>".repeat(65)
+        );
+        assert!(parse_caldav_discovery(&deep, DiscoveryMode::CalendarHomeSet).is_err());
     }
 }

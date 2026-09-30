@@ -6,10 +6,11 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use std::path::Path;
 use vak_mail_calendar::{
-    AccountStatus, Capability, RoutineOperation, RoutineScope,
+    AccountStatus, Capability, Provider, RoutineOperation, RoutineScope,
     connection_ledger::ConnectionLedger,
-    provider::{CalendarRange, ProviderReadClient},
+    provider::{CalendarItem, CalendarRange, ProviderReadClient},
     vault::AccountVault,
 };
 
@@ -17,6 +18,123 @@ pub struct MailCalendarTool {
     pub agent_id: Option<String>,
     pub audience_id: Option<String>,
     pub routine_scope: Option<RoutineScope>,
+    pub worker_exe: std::path::PathBuf,
+}
+
+const MAX_ICLOUD_CALENDARS: usize = 8;
+
+/// Read a bounded calendar view. Apple CalDAV response XML and iCalendar
+/// payloads cross the worker boundary before they become typed events.
+pub async fn calendar_events_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    range: CalendarRange,
+    worker_exe: &Path,
+) -> Result<Vec<CalendarItem>, vak_mail_calendar::provider::ProviderReadError> {
+    if account.provider != Provider::AppleIcloud {
+        let mut events = client
+            .calendar_events(account, vault, agent_id, audience, range)
+            .await?;
+        events.retain(|event| event_overlaps_range(event, range));
+        events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        events.truncate(range.limit.clamp(1, 100));
+        return Ok(events);
+    }
+    let entry = vak_mail_calendar::provider::IcloudCalDavPath::well_known()?;
+    let principal_xml = client
+        .icloud_caldav_current_principal_xml(account, vault, agent_id, audience)
+        .await?;
+    let principals = vak_tools::broker::parse_caldav_discovery(
+        worker_exe,
+        &principal_xml,
+        vak_tools::mail_calendar::DiscoveryMode::CurrentUserPrincipal,
+    )
+    .await
+    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let principal_href = first_href(&principals)?;
+    let principal =
+        vak_mail_calendar::provider::IcloudCalDavPath::from_href(&entry, principal_href)?;
+
+    let home_xml = client
+        .icloud_caldav_calendar_home_xml(account, vault, agent_id, audience, &principal)
+        .await?;
+    let homes = vak_tools::broker::parse_caldav_discovery(
+        worker_exe,
+        &home_xml,
+        vak_tools::mail_calendar::DiscoveryMode::CalendarHomeSet,
+    )
+    .await
+    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let home_href = first_href(&homes)?;
+    let calendar_home =
+        vak_mail_calendar::provider::IcloudCalDavPath::from_href(&principal, home_href)?;
+
+    let collections_xml = client
+        .icloud_caldav_calendar_collections_xml(account, vault, agent_id, audience, &calendar_home)
+        .await?;
+    let collections = vak_tools::broker::parse_caldav_discovery(
+        worker_exe,
+        &collections_xml,
+        vak_tools::mail_calendar::DiscoveryMode::CalendarCollections,
+    )
+    .await
+    .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let calendars = collections
+        .as_array()
+        .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    if calendars.len() > MAX_ICLOUD_CALENDARS {
+        return Err(vak_mail_calendar::provider::ProviderReadError::InvalidResponse);
+    }
+    let mut events = Vec::new();
+    for collection in calendars {
+        let href = collection
+            .get("href")
+            .and_then(Value::as_str)
+            .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+        let calendar =
+            vak_mail_calendar::provider::IcloudCalDavPath::from_href(&calendar_home, href)?;
+        let response = client
+            .icloud_caldav_calendar_query_xml(account, vault, agent_id, audience, &calendar, range)
+            .await?;
+        let parsed = vak_tools::broker::parse_icalendar(worker_exe, &response)
+            .await
+            .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+        let mut parsed: Vec<CalendarItem> = serde_json::from_value(parsed)
+            .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+        events.append(&mut parsed);
+    }
+    // Provider-side CalDAV time-range filters are useful, but the provider
+    // response is untrusted. Enforce the requested window again locally.
+    events.retain(|event| event_overlaps_range(event, range));
+    events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    events.truncate(range.limit.clamp(1, 100));
+    Ok(events)
+}
+
+fn event_overlaps_range(event: &CalendarItem, range: CalendarRange) -> bool {
+    if event.all_day {
+        let from = range.from.date_naive().to_string();
+        let to = range.to.date_naive().to_string();
+        let starts = event.starts_on.as_deref().unwrap_or("");
+        let ends = event.ends_on.as_deref().unwrap_or(starts);
+        return !starts.is_empty() && starts < to.as_str() && ends > from.as_str();
+    }
+    let Some(starts) = event.starts_at else {
+        return false;
+    };
+    let ends = event.ends_at.unwrap_or(starts);
+    starts < range.to && ends > range.from
+}
+
+fn first_href(values: &Value) -> Result<&str, vak_mail_calendar::provider::ProviderReadError> {
+    values
+        .as_array()
+        .and_then(|values| values.first())
+        .and_then(Value::as_str)
+        .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)
 }
 
 #[async_trait::async_trait]
@@ -175,6 +293,7 @@ impl vak_tools::Tool for MailCalendarTool {
                 client
                     .recent_mail(account, &vault, agent_id, &account_audience, limit)
                     .await
+                    .map_err(|error| error.to_string())
                     .map(|items| json!(items))
             }
             "calendar_events" | "free_busy" => {
@@ -195,16 +314,18 @@ impl vak_tools::Tool for MailCalendarTool {
                                 .as_ref()
                                 .map_or(100, |scope| u64::from(scope.max_items)),
                         ) as usize;
-                    client
-                        .calendar_events(
-                            account,
-                            &vault,
-                            agent_id,
-                            &account_audience,
-                            CalendarRange { from, to, limit },
-                        )
-                        .await
-                        .map(|items| json!(items))
+                    calendar_events_with_worker(
+                        &client,
+                        account,
+                        &vault,
+                        agent_id,
+                        &account_audience,
+                        CalendarRange { from, to, limit },
+                        &self.worker_exe,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                    .map(|items| json!(items))
                 } else {
                     let limit = self
                         .routine_scope
@@ -213,6 +334,7 @@ impl vak_tools::Tool for MailCalendarTool {
                     client
                         .free_busy(account, &vault, agent_id, &account_audience, from, to)
                         .await
+                        .map_err(|error| error.to_string())
                         .map(|items| json!(items.into_iter().take(limit).collect::<Vec<_>>()))
                 }
             }
@@ -299,12 +421,75 @@ mod tests {
     use super::*;
     use vak_tools::Tool;
 
+    #[test]
+    fn calendar_range_filter_keeps_overlaps_and_rejects_out_of_range_results() {
+        let from = DateTime::parse_from_rfc3339("2026-09-30T10:00:00Z")
+            .expect("valid test timestamp")
+            .with_timezone(&Utc);
+        let to = DateTime::parse_from_rfc3339("2026-09-30T11:00:00Z")
+            .expect("valid test timestamp")
+            .with_timezone(&Utc);
+        let range = CalendarRange {
+            from,
+            to,
+            limit: 20,
+        };
+        let timed = |start: &str, end: &str| CalendarItem {
+            provider_id: "event".into(),
+            version: None,
+            title: "event".into(),
+            starts_at: Some(
+                DateTime::parse_from_rfc3339(start)
+                    .expect("valid timestamp")
+                    .with_timezone(&Utc),
+            ),
+            ends_at: Some(
+                DateTime::parse_from_rfc3339(end)
+                    .expect("valid timestamp")
+                    .with_timezone(&Utc),
+            ),
+            starts_on: None,
+            ends_on: None,
+            all_day: false,
+            location: None,
+            description: None,
+            attendee_count: 0,
+            recurring: false,
+            private: false,
+        };
+        assert!(event_overlaps_range(
+            &timed("2026-09-30T09:30:00Z", "2026-09-30T10:15:00Z"),
+            range
+        ));
+        assert!(!event_overlaps_range(
+            &timed("2026-09-30T11:00:00Z", "2026-09-30T11:30:00Z"),
+            range
+        ));
+        let all_day = CalendarItem {
+            provider_id: "all-day".into(),
+            version: None,
+            title: "all day".into(),
+            starts_at: None,
+            ends_at: None,
+            starts_on: Some("2026-09-29".into()),
+            ends_on: Some("2026-10-01".into()),
+            all_day: true,
+            location: None,
+            description: None,
+            attendee_count: 0,
+            recurring: false,
+            private: false,
+        };
+        assert!(event_overlaps_range(&all_day, range));
+    }
+
     #[tokio::test]
     async fn channel_audience_cannot_use_agent_level_connection() {
         let tool = MailCalendarTool {
             agent_id: Some("agent-one".into()),
             audience_id: Some("telegram:private-chat".into()),
             routine_scope: None,
+            worker_exe: std::path::PathBuf::new(),
         };
         let result = tool
             .execute(
@@ -326,6 +511,7 @@ mod tests {
             agent_id: None,
             audience_id: Some("local".into()),
             routine_scope: None,
+            worker_exe: std::path::PathBuf::new(),
         };
         let result = tool
             .execute(
@@ -354,6 +540,7 @@ mod tests {
                 max_items: 5,
                 watch_new_mail: false,
             }),
+            worker_exe: std::path::PathBuf::new(),
         };
         let result = tool
             .execute(
@@ -379,6 +566,7 @@ mod tests {
                 max_items: 5,
                 watch_new_mail: false,
             }),
+            worker_exe: std::path::PathBuf::new(),
         };
         let result = tool
             .execute(

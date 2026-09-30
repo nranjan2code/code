@@ -27,6 +27,8 @@ const MAX_TEXT_BYTES: usize = 16 * 1024;
 const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
 const ICLOUD_IMAP_PORT: u16 = 993;
 const ICLOUD_CALDAV_URL: &str = "https://caldav.icloud.com/.well-known/caldav";
+const ICLOUD_CALDAV_ORIGIN: &str = "https://caldav.icloud.com";
+const MAX_CALDAV_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_IMAP_SESSION_BYTES: usize = 512 * 1024;
 type IcloudSession =
     async_imap::Session<BudgetIo<async_native_tls::TlsStream<tokio::net::TcpStream>>>;
@@ -174,6 +176,42 @@ pub struct CalendarRange {
     pub from: DateTime<Utc>,
     pub to: DateTime<Utc>,
     pub limit: usize,
+}
+
+/// An Apple CalDAV URL validated to remain on the fixed HTTPS service host.
+/// Construct paths from provider-returned hrefs with `from_href`; arbitrary
+/// hosts and URL components fail closed before the credential is loaded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IcloudCalDavPath(url::Url);
+
+impl IcloudCalDavPath {
+    pub fn well_known() -> Result<Self, ProviderReadError> {
+        Self::validate(
+            url::Url::parse(ICLOUD_CALDAV_URL).map_err(|_| ProviderReadError::Unavailable)?,
+        )
+    }
+
+    pub fn from_href(base: &Self, href: &str) -> Result<Self, ProviderReadError> {
+        let url = base
+            .0
+            .join(href)
+            .map_err(|_| ProviderReadError::InvalidResponse)?;
+        Self::validate(url)
+    }
+
+    fn validate(url: url::Url) -> Result<Self, ProviderReadError> {
+        if url.scheme() != "https"
+            || url.host_str() != Some("caldav.icloud.com")
+            || url.port().is_some_and(|port| port != 443)
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        Ok(Self(url))
+    }
 }
 
 #[derive(Clone)]
@@ -353,6 +391,159 @@ impl ProviderReadClient {
             }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
+    }
+
+    pub async fn icloud_caldav_current_principal_xml(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+    ) -> Result<String, ProviderReadError> {
+        self.icloud_caldav_propfind(
+            account,
+            vault,
+            agent_id,
+            audience,
+            &IcloudCalDavPath::well_known()?,
+            "0",
+            "<d:propfind xmlns:d=\"DAV:\"><d:prop><d:current-user-principal/></d:prop></d:propfind>",
+        )
+        .await
+    }
+
+    pub async fn icloud_caldav_calendar_home_xml(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        principal: &IcloudCalDavPath,
+    ) -> Result<String, ProviderReadError> {
+        self.icloud_caldav_propfind(
+            account,
+            vault,
+            agent_id,
+            audience,
+            principal,
+            "0",
+            "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><c:calendar-home-set/></d:prop></d:propfind>",
+        )
+        .await
+    }
+
+    pub async fn icloud_caldav_calendar_collections_xml(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        calendar_home: &IcloudCalDavPath,
+    ) -> Result<String, ProviderReadError> {
+        self.icloud_caldav_propfind(
+            account,
+            vault,
+            agent_id,
+            audience,
+            calendar_home,
+            "1",
+            "<d:propfind xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><d:prop><d:displayname/><d:resourcetype/></d:prop></d:propfind>",
+        )
+        .await
+    }
+
+    pub async fn icloud_caldav_calendar_query_xml(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        calendar: &IcloudCalDavPath,
+        range: CalendarRange,
+    ) -> Result<String, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
+        if account.provider != Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        validate_range(range.from, range.to)?;
+        let (login, password) = vault
+            .icloud_imap_credentials(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let body = format!(
+            "<c:calendar-query xmlns:d=\"DAV:\" xmlns:c=\"urn:ietf:params:xml:ns:caldav\"><c:filter><c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\"><c:time-range start=\"{}\" end=\"{}\"/></c:comp-filter></c:comp-filter></c:filter><d:prop><d:getetag/><c:calendar-data/></d:prop></c:calendar-query>",
+            range.from.format("%Y%m%dT%H%M%SZ"),
+            range.to.format("%Y%m%dT%H%M%SZ"),
+        );
+        self.icloud_caldav_request(
+            "REPORT",
+            calendar,
+            Some("0"),
+            &body,
+            login.as_str(),
+            password.as_str(),
+        )
+        .await
+    }
+
+    async fn icloud_caldav_propfind(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        path: &IcloudCalDavPath,
+        depth: &str,
+        body: &str,
+    ) -> Result<String, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
+        if account.provider != Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        let (login, password) = vault
+            .icloud_imap_credentials(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        self.icloud_caldav_request(
+            "PROPFIND",
+            path,
+            Some(depth),
+            body,
+            login.as_str(),
+            password.as_str(),
+        )
+        .await
+    }
+
+    async fn icloud_caldav_request(
+        &self,
+        method: &str,
+        path: &IcloudCalDavPath,
+        depth: Option<&str>,
+        body: &str,
+        login: &str,
+        password: &str,
+    ) -> Result<String, ProviderReadError> {
+        if path.0.origin().ascii_serialization() != ICLOUD_CALDAV_ORIGIN {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let method = reqwest::Method::from_bytes(method.as_bytes())
+            .map_err(|_| ProviderReadError::Unsupported)?;
+        let mut request = self
+            .http
+            .request(method, path.0.clone())
+            .basic_auth(login, Some(password))
+            .header(
+                reqwest::header::CONTENT_TYPE,
+                "application/xml; charset=utf-8",
+            )
+            .body(body.to_owned());
+        if let Some(depth) = depth {
+            request = request.header("Depth", depth);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?;
+        read_caldav_multistatus(response).await
     }
 
     async fn google_mail(
@@ -667,14 +858,7 @@ async fn verify_icloud_calendar_credentials_at(
         .send()
         .await
         .map_err(|_| ProviderReadError::Unavailable)?;
-    match response.status() {
-        StatusCode::MULTI_STATUS => Ok(()),
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-            Err(ProviderReadError::ReauthenticationRequired)
-        }
-        status if status.is_redirection() => Err(ProviderReadError::InvalidResponse),
-        _ => Err(ProviderReadError::Unavailable),
-    }
+    read_caldav_multistatus(response).await.map(|_| ())
 }
 
 fn admit(
@@ -954,6 +1138,35 @@ async fn parse_response(mut response: Response, limit: usize) -> Result<Value, P
         body.extend_from_slice(&chunk);
     }
     serde_json::from_slice(&body).map_err(|_| ProviderReadError::InvalidResponse)
+}
+
+async fn read_caldav_multistatus(mut response: Response) -> Result<String, ProviderReadError> {
+    match response.status() {
+        StatusCode::MULTI_STATUS => {}
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            return Err(ProviderReadError::ReauthenticationRequired);
+        }
+        status if status.is_redirection() => return Err(ProviderReadError::InvalidResponse),
+        _ => return Err(ProviderReadError::Unavailable),
+    }
+    if response
+        .content_length()
+        .is_some_and(|size| size > MAX_CALDAV_RESPONSE_BYTES as u64)
+    {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+    {
+        if body.len().saturating_add(chunk.len()) > MAX_CALDAV_RESPONSE_BYTES {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    String::from_utf8(body).map_err(|_| ProviderReadError::InvalidResponse)
 }
 
 fn parse_google_message(value: &Value) -> MailItem {
@@ -1387,6 +1600,20 @@ mod tests {
     }
 
     #[test]
+    fn icloud_caldav_href_validation_never_changes_the_authenticated_origin() {
+        let base = IcloudCalDavPath::well_known().unwrap();
+        let principal = IcloudCalDavPath::from_href(&base, "/principal/owner").unwrap();
+        assert_eq!(
+            principal.0.origin().ascii_serialization(),
+            ICLOUD_CALDAV_ORIGIN
+        );
+        assert!(IcloudCalDavPath::from_href(&base, "//attacker.invalid/path").is_err());
+        assert!(IcloudCalDavPath::from_href(&base, "https://attacker.invalid/path").is_err());
+        assert!(IcloudCalDavPath::from_href(&base, "http://caldav.icloud.com/path").is_err());
+        assert!(IcloudCalDavPath::from_href(&base, "/principal/owner?redirect=1").is_err());
+    }
+
+    #[test]
     fn graph_calendar_values_without_offsets_are_interpreted_as_utc() {
         assert_eq!(
             parse_provider_datetime("2026-09-30T10:30:00").unwrap(),
@@ -1424,6 +1651,32 @@ mod tests {
                         .unwrap()
                 }),
             );
+        let app = app
+            .route(
+                "/multistatus",
+                axum::routing::any(|| async {
+                    axum::http::Response::builder()
+                        .status(StatusCode::MULTI_STATUS)
+                        .body(axum::body::Body::from("<d:multistatus/>"))
+                        .unwrap()
+                }),
+            )
+            .route(
+                "/large-multistatus",
+                axum::routing::any(|| async {
+                    axum::http::Response::builder()
+                        .status(StatusCode::MULTI_STATUS)
+                        .body(axum::body::Body::from(vec![
+                            b'x';
+                            MAX_CALDAV_RESPONSE_BYTES + 1
+                        ]))
+                        .unwrap()
+                }),
+            )
+            .route(
+                "/unauthorized",
+                axum::routing::any(|| async { StatusCode::UNAUTHORIZED }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -1450,6 +1703,42 @@ mod tests {
         assert!(matches!(
             parse_response(redirect, 64).await,
             Err(ProviderReadError::Unavailable)
+        ));
+        let multistatus = http
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                format!("http://{address}/multistatus"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            read_caldav_multistatus(multistatus).await.unwrap(),
+            "<d:multistatus/>"
+        );
+        let large = http
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                format!("http://{address}/large-multistatus"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert!(matches!(
+            read_caldav_multistatus(large).await,
+            Err(ProviderReadError::InvalidResponse)
+        ));
+        let unauthorized = http
+            .request(
+                reqwest::Method::from_bytes(b"PROPFIND").unwrap(),
+                format!("http://{address}/unauthorized"),
+            )
+            .send()
+            .await
+            .unwrap();
+        assert!(matches!(
+            read_caldav_multistatus(unauthorized).await,
+            Err(ProviderReadError::ReauthenticationRequired)
         ));
         task.abort();
     }

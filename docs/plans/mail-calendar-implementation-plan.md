@@ -21,30 +21,34 @@ Agent session history may remain until future lifecycle work provides lineage
 and erasure. This limitation must be visible before a content feature is
 enabled.
 
-On 2026-09-30, implementation extended Apple support to verified Mail-only
-accounts: the setup request checks IMAP login before storing the credential,
-and the adapter reads at most 20 inbox envelopes in a read-only mailbox with
-a transport byte cap. This is not Apple Calendar support, and the metadata-only
-mail view does not provide message body text. Calendar selections remain
-unverified. This increment still uses the current storage model and therefore
-does not provide selective erasure of copied session content.
+On 2026-09-30, the first Apple increment verified Mail-only accounts by checking
+IMAP login before storing the credential, then reading at most 20 inbox
+envelopes in a read-only mailbox with a transport byte cap. At that point,
+Calendar selections were unverified and mail bodies were unavailable. The
+later CalDAV increment below adds the separately verified CalendarRead path.
+These increments still use the current storage model and do not provide
+selective erasure of copied session content.
 
-A CalDAV groundwork increment adds only a fixed-endpoint, no-redirect authenticated
-PROPFIND probe. It is deliberately not wired into account admission: a valid
-credential response alone does not establish safe calendar discovery or event
-reads. Apple Calendar remains unavailable until bounded CalDAV discovery and
-event retrieval, capability checks, and worker-isolated iCalendar parsing are
-implemented together. An unauthenticated probe of `caldav.icloud.com` received
-an Apple 401 Basic challenge; this is endpoint evidence, not proof of valid
-credentials or a supported Apple API contract.
+A fixed-host CalDAV read path now verifies CalendarRead-only iCloud account
+links, discovers the principal and calendar collections with authenticated
+PROPFIND, validates every discovered href against the Apple HTTPS origin, and
+retrieves a bounded time-range query. Both discovery XML and calendar data
+cross the network-denied worker boundary before becoming preview or model
+content. Only one capability at a time is verified for Apple: MailRead or
+CalendarRead. Combinations including CalendarFreeBusy remain
+`connected_unverified`, and Apple free/busy and event changes remain
+unavailable. No credentialed live Apple Calendar request has been made; local
+fixtures verify response bounds, origin checks, and worker parsing, so the
+provider's authenticated discovery semantics still need live verification.
 
-The isolated parser foundation now accepts bounded VCALENDAR data and
-CalDAV multistatus XML, projects at most 100 events, refuses ambiguous or
-unsupported local times, and redacts details for private events. It runs only
-through the versioned tool-worker broker, with an empty private scratch
+The worker parser accepts bounded standalone VCALENDAR data and CalDAV
+multistatus XML, projects at most 100 events, refuses ambiguous or unsupported
+local times, and redacts private event details while preserving busy times. It
+runs through the versioned tool-worker broker, with a private empty scratch
 directory and the network-denied verification sandbox on supported platforms.
-This parser is not yet connected to a live provider adapter or preview route;
-Apple Calendar remains unavailable.
+After parsing, the broker also applies the requested time-range overlap filter
+locally to every provider response. This prevents a provider response that
+ignores the requested range from broadening the preview.
 
 ## Scope and provider matrix
 
@@ -57,7 +61,7 @@ implementation.
 |---|---|---|
 | Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
 | Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Local app-specific password over fixed-host IMAP for Mail; CalDAV remains gated | A Mail-only account verifies TLS IMAP sign-in and is admitted for `MailRead`; bounded recent inbox metadata uses read-only `EXAMINE` and a 512 KiB session budget. It does not fetch message bodies. Any account that selects Calendar remains `connected_unverified` until CalDAV discovery, authentication, parsing, and capability checks are implemented. Apple documents broader third-party authorization for supported apps, but not a general-purpose server OAuth contract for iCloud Mail/Calendar. |
+| Apple iCloud | Local app-specific password over fixed-host IMAP and CalDAV | Exactly `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata; exactly `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded calendar previews through worker-isolated discovery and parsing. Mail bodies, Apple free/busy, effects, and mixed capability selections are unavailable or `connected_unverified`. Apple documents broader third-party authorization for supported apps, but not a general-purpose server OAuth contract for iCloud Mail/Calendar. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -1100,3 +1104,19 @@ authorization and approval boundary on every execution path.
   `cargo test -p vak-tools mail_calendar --lib` and
   `cargo test -p vak-server --test mail_calendar_worker` pass; server check
   passes.
+- 2026-09-30: Added a local time-window overlap check after provider parsing.
+  The broker drops events outside the requested interval even if a provider
+  ignores its range filter, while retaining timed events that overlap the
+  boundary and all-day events whose exclusive date range overlaps. This runs
+  for Google, Microsoft, and Apple results. The focused Core regression passes.
+- 2026-09-30: Connected Apple CalendarRead to the verified local read path.
+  The owner preview and broker-owned Agent read now discover the CalDAV
+  principal, home set and collections through authenticated fixed-origin
+  requests, reject cross-origin hrefs, issue range-bounded calendar-query
+  REPORTs, and send each response to the network-denied worker for parsing.
+  CalendarRead-only Apple links can activate after a fixed-host authenticated
+  CalDAV probe; mixed selections and CalendarFreeBusy remain unverified. The
+  Settings copy describes this single-capability boundary. Verification:
+  package tests (76 plus registry), worker integration tests, the focused
+  account lifecycle HTTP test, server check, and web build pass. No credentialed
+  live Apple request was made.

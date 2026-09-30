@@ -921,19 +921,20 @@ pub(super) async fn calendar_preview(
         &account.capabilities,
         "requested",
     );
-    match vak_mail_calendar::provider::ProviderReadClient::default()
-        .calendar_events(
-            &account,
-            &vault,
-            &agent_id,
-            &format!("agent:{agent_id}"),
-            vak_mail_calendar::provider::CalendarRange {
-                from: request.from,
-                to: request.to,
-                limit: request.limit.unwrap_or(50),
-            },
-        )
-        .await
+    match vak_core::mail_calendar::calendar_events_with_worker(
+        &vak_mail_calendar::provider::ProviderReadClient::default(),
+        &account,
+        &vault,
+        &agent_id,
+        &format!("agent:{agent_id}"),
+        vak_mail_calendar::provider::CalendarRange {
+            from: request.from,
+            to: request.to,
+            limit: request.limit.unwrap_or(50),
+        },
+        &state.core.tool_worker_exe(),
+    )
+    .await
     {
         Ok(events) => {
             record_account_event(
@@ -1404,6 +1405,8 @@ pub(super) async fn connect_icloud(
     let audit_capabilities = capabilities.clone();
     let verified_mail_only =
         capabilities.len() == 1 && capabilities.contains(&Capability::MailRead);
+    let verified_calendar_only =
+        capabilities.len() == 1 && capabilities.contains(&Capability::CalendarRead);
     if !valid_email || !valid_password || !apple_read_only {
         request.app_specific_password.0.zeroize();
         return (
@@ -1449,6 +1452,43 @@ pub(super) async fn connect_icloud(
             return StatusCode::BAD_REQUEST.into_response();
         }
     };
+    // Avoid sending credentials to the provider for a link that is already
+    // known to be active. The conditional append below remains the
+    // cross-process authority for races that occur after this read.
+    let existing_icloud_links = match ledger.read_all() {
+        Ok(links) => links,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    for linked in existing_icloud_links
+        .iter()
+        .filter(|linked| linked.provider == Provider::AppleIcloud && linked.revoked_at.is_none())
+    {
+        if linked.status == AccountStatus::Pending {
+            return (
+                StatusCode::CONFLICT,
+                "Another iCloud account connection for this Agent is still pending. Finish its cleanup before trying again.",
+            )
+                .into_response();
+        }
+        if matches!(
+            linked.status,
+            AccountStatus::Connected
+                | AccountStatus::ConnectedUnverified
+                | AccountStatus::ReauthenticationRequired
+        ) {
+            let stored = match vault.load(&linked.id) {
+                Ok(stored) => stored,
+                Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+            };
+            if stored.has_same_principal_ignoring_ascii_case(&material) {
+                return (
+                    StatusCode::CONFLICT,
+                    "This iCloud account is already connected to this Agent. Disconnect it before changing its access selection.",
+                )
+                    .into_response();
+            }
+        }
+    }
     if verified_mail_only {
         let (imap_login, imap_password) = match material.icloud_imap_credentials() {
             Ok(credentials) => credentials,
@@ -1464,6 +1504,25 @@ pub(super) async fn connect_icloud(
             return (
                 StatusCode::UNAUTHORIZED,
                 "iCloud Mail sign-in could not be verified. Check the email and app-specific password.",
+            )
+                .into_response();
+        }
+    }
+    if verified_calendar_only {
+        let (caldav_login, caldav_password) = match material.icloud_imap_credentials() {
+            Ok(credentials) => credentials,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        if vak_mail_calendar::provider::verify_icloud_calendar_credentials(
+            caldav_login.as_str(),
+            caldav_password.as_str(),
+        )
+        .await
+        .is_err()
+        {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "iCloud Calendar sign-in could not be verified. Check the email and app-specific password.",
             )
                 .into_response();
         }
@@ -1536,9 +1595,10 @@ pub(super) async fn connect_icloud(
         }
     }
     // The current schema has one account status for all selected capabilities.
-    // Admit only a mail-only iCloud link after IMAP verification; calendar
-    // selections stay unverified until CalDAV verification is implemented.
-    account.status = if verified_mail_only {
+    // Keep broader combinations unverified because one account status covers
+    // every selected capability. Mail-only and calendar-only links each have
+    // an independently verified fixed-host read path.
+    account.status = if verified_mail_only || verified_calendar_only {
         AccountStatus::Connected
     } else {
         AccountStatus::ConnectedUnverified
@@ -1560,7 +1620,7 @@ pub(super) async fn connect_icloud(
         &account_id,
         Provider::AppleIcloud,
         &audit_capabilities,
-        if verified_mail_only {
+        if verified_mail_only || verified_calendar_only {
             "connected"
         } else {
             "connected_unverified"

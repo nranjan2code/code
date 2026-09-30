@@ -1246,7 +1246,7 @@ export default function Settings() {
       await api.connectIcloudAccount(activeAgentId(), email, appPassword, selectedCapabilities);
       appPassword = "";
       await refreshMailCalendarAccounts();
-      setNotice({ kind: "info", text: selectedCapabilities.length === 1 && selectedCapabilities[0] === "mail_read" ? "iCloud Mail sign-in was verified. Inbox previews show bounded message metadata; calendar and message bodies are not available." : "The iCloud credential is stored in this Agent's secure vault, but this capability combination remains unverified and unavailable." });
+      setNotice({ kind: "info", text: selectedCapabilities.length === 1 && selectedCapabilities[0] === "mail_read" ? "iCloud Mail sign-in was verified. Inbox previews show bounded message metadata; message bodies are not available." : selectedCapabilities.length === 1 && selectedCapabilities[0] === "calendar_read" ? "iCloud Calendar sign-in was verified. Calendar previews use bounded reads; event changes are not available." : "The iCloud credential is stored in this Agent's secure vault, but this capability combination remains unverified and unavailable." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect the iCloud account: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -2440,7 +2440,7 @@ export default function Settings() {
                   <Row title="Apple iCloud email" description="Enter your iCloud email and an app-specific password generated at account.apple.com. Your Apple Account password is never requested.">
                     <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
                   </Row>
-                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. Choose only “Read email” for verified iCloud Mail; its preview is limited to message metadata and never fetches bodies. Any selection that includes calendar access remains unverified and unavailable until the CalDAV path is implemented. Remove the password at Apple to revoke it.</p>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. For now, connect one verified access at a time: choose only “Read email” for bounded message metadata, or only “Read calendar events” for a bounded calendar preview. Availability checks, message bodies, and event changes are unavailable. Other capability combinations remain unverified. Remove the password at Apple to revoke it.</p>
                 </Show>
                 <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
               </Group>
