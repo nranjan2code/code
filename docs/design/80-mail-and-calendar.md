@@ -10,8 +10,9 @@ Google events without attendees. These require opt-in provider scopes, owner
 confirmation, permission-engine evaluation, and a durable single-use claim.
 Event creation has no attendees, recurrence, or reminders and saves the
 reviewed instants as UTC. Other event update/cancel/RSVP, full provider
-reconciliation, reliable continuous routines, and the third provider remain
-open, 2026-09-30.**
+reconciliation and reliable continuous routines remain open, 2026-09-30.
+iCloud Mail-only links now verify fixed-host IMAP sign-in and support bounded,
+read-only inbox metadata. iCloud Calendar remains unverified and unavailable.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,
@@ -22,10 +23,14 @@ owner surface are implemented in that
 branch. OAuth and Apple activation hold the shared connection-ledger lock
 across the Agent-vault credential write and pending-to-connected event, so a
 concurrent disconnect either prevents the new credential write or runs after
-activation and removes it. Apple enrollment records only read capabilities,
-stores the password in the Agent vault, reports `connected_unverified`, and
-reports no token expiry; it does not verify the credential with Apple or
-enable provider content access. Google and Microsoft Agent reads are limited
+activation and removes it. Apple enrollment records only read capabilities
+and stores the password in the Agent vault. A Mail-only selection verifies
+the app-specific password against `imap.mail.me.com:993` using TLS, read-only
+`EXAMINE`, and a fixed session byte budget. Such an account is admitted only
+for `MailRead`; inbox metadata is bounded to 20 items and message bodies are
+not fetched. A selection that includes calendar access remains
+`connected_unverified` and unavailable until a CalDAV verifier and bounded
+calendar adapter exist. Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
 share grant. Provider previews redact private-event titles, locations,
 descriptions, and attendee counts while preserving only the busy time. Reads
@@ -51,11 +56,11 @@ checks it under the same cross-process ledger lock as the vault write. A
 disconnect in another server process therefore invalidates a callback already
 in flight. The separate in-memory callback fence table is capped so eviction
 invalidates stale commits instead of authorizing them.
-The account API and Settings surface the unverified state directly. The
-generic account admission contract also refuses every Apple iCloud connection
-while that credential path remains unverified, even if the record stores a
-read capability. A future reviewed verifier must explicitly change
-this gate before an iCloud adapter can use the credential.
+The account API and Settings surface the unverified state directly. Apple
+accounts are admitted only when they are verified and selected for MailRead
+alone. A selection that includes any calendar capability remains
+`connected_unverified`, and the read adapter refuses it. Mail verification
+does not change calendar admission.
 The repository-local native package is `packages/mail-calendar`. Its only
 component is an inert skill that explains account setup and current limits; it
 declares no executable, MCP, command, hook, or data-access capability. The
@@ -80,7 +85,9 @@ grants, complete receipt reconciliation, durable continuous service recovery,
 and the third provider remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.
-No crypto-shred guarantee is made. Apple remains unverified and unavailable.
+No crypto-shred guarantee is made. Apple Calendar remains unverified and
+unavailable; Apple Mail is available only for a verified Mail-only account
+and currently returns metadata without message bodies.
 Provider-specific API details and consent requirements must be rechecked
 against current provider documentation before each implementation milestone.
 
@@ -225,20 +232,21 @@ adding one must not change the policy or Review contract. Google and Microsoft
 use delegated OAuth. Apple now documents Apple Account authorization for
 supported third-party apps, and app-specific passwords when an app does not
 support that flow ([Apple's iCloud third-party app guide](https://support.apple.com/en-us/121539)).
-The current Vakyartha branch implements only the app-specific-password
-fallback with IMAP/SMTP and CalDAV; the credential has broader protocol access
-than Vak's selected capabilities and must be disclosed as such. Apple's
-support guide describes the user authorization and revocation experience.
+The current Vakyartha branch implements the local app-specific-password
+fallback for a verified, Mail-only IMAP read path. The credential has broader
+protocol access than Vak's selected capabilities and must be disclosed as
+such. Apple's support guide describes the user authorization and revocation
+experience.
 Apple's manual iCloud Mail configuration documents IMAP at
 `imap.mail.me.com:993` and an app-specific password
 ([server settings](https://support.apple.com/en-us/102525)). The current
-enrollment only stores the credential: it does not perform an IMAP login or
-verify that the supplied identity/password are valid. A future credential
-probe must authenticate without selecting a mailbox, listing messages, or
-fetching content, and must report mail verification separately from calendar
-verification; a successful IMAP login says nothing about CalDAV access. Until
-both account services have a reviewed verification and authorization contract,
-Apple stays `connected_unverified` and unavailable to Agents.
+The Mail-only connection path authenticates and runs `EXAMINE INBOX` before
+storing the credential, then the preview reads at most 20 message envelopes
+and body structures with a 512 KiB protocol-session limit. It does not fetch
+message bodies. Calendar selections remain `connected_unverified`; a successful
+IMAP login says nothing about CalDAV access. Calendar support still requires
+fixed-host CalDAV discovery, credential verification, bounded parsing, and
+capability checks.
 Apple's developer OAuth service is Account & Organizational Data Sharing; its
 documented scopes are for the Apple School Manager Roster API
 (`edu.users.read`, `edu.classes.read`), not iCloud Mail or Calendar

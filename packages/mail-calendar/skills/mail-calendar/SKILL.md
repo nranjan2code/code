@@ -13,8 +13,9 @@ description: Helps people manage email and calendar account connections and accu
   A selected send or calendar-write capability still requires owner Review
   and confirmation for each supported effect.
 - Google and Microsoft account linking uses delegated sign-in. Apple iCloud
-  credentials are currently saved as `connected_unverified`; they have not
-  been verified and are not available to Agents.
+  uses a local app-specific password. A Mail-only selection verifies against
+  fixed-host IMAP and admits only inbox reads; selections that include
+  Calendar remain `connected_unverified` and unavailable.
 - For an account that needs cleanup, direct the person back to its account row
   in Settings. Do not ask them to paste passwords, OAuth codes, access tokens,
   or refresh tokens into chat.
@@ -22,8 +23,9 @@ description: Helps people manage email and calendar account connections and accu
 ## Current action boundary
 
 This package contributes guidance only; it declares no provider tools. In the
-application, the owner can preview bounded Google/Microsoft data, save local
-email/event drafts, and configure scoped scheduled read routines. Agent reads
+application, the owner can preview bounded Google/Microsoft data and Apple
+Mail metadata, save local email/event drafts, and configure scoped scheduled
+read routines. Agent reads
 are brokered and currently limited to the local owner surface. A first
 plain-text email send is available only from the owner Settings Review flow,
 with an explicit provider send grant, a fresh exact-candidate confirmation,
@@ -35,8 +37,9 @@ no attendees, recurrence, or reminders. Google also allows exact-reviewed
 updates to public standalone timed events without attendees; it rechecks and
 conditionally matches the source ETag. Microsoft event updates, cancellations,
 and RSVP are unavailable. Calendar-write provider consent is broader than the
-supported operations. Attachments, Apple content, and reliable continuous service are
-not available.
+supported operations. Apple Mail previews never fetch message bodies; Apple
+Calendar and provider effects are unavailable. Attachments and reliable
+continuous service are not available.
 
 If asked to send, direct the owner to review and confirm the exact saved draft
 in Settings. Do not claim an Agent sent it or work around this boundary with

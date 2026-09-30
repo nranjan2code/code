@@ -12,12 +12,107 @@ use reqwest::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::Duration as StdDuration;
+use std::{
+    io,
+    pin::Pin,
+    task::{Context, Poll},
+};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
 const MAX_EVENT_ITEMS: usize = 100;
 const MAX_RESPONSE_BYTES: usize = 512 * 1024;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
+const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
+const ICLOUD_IMAP_PORT: u16 = 993;
+const MAX_IMAP_SESSION_BYTES: usize = 512 * 1024;
+type IcloudSession =
+    async_imap::Session<BudgetIo<async_native_tls::TlsStream<tokio::net::TcpStream>>>;
+
+/// A per-connection byte budget around the IMAP parser. The provider library
+/// does not expose a response-size limit; stopping the underlying stream keeps
+/// hostile literals and oversized protocol responses from growing without a
+/// bound before our own item limits can run.
+#[derive(Debug)]
+struct BudgetIo<T> {
+    inner: T,
+    read_remaining: usize,
+    write_remaining: usize,
+}
+
+impl<T> BudgetIo<T> {
+    fn new(inner: T, read_limit: usize, write_limit: usize) -> Self {
+        Self {
+            inner,
+            read_remaining: read_limit,
+            write_remaining: write_limit,
+        }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for BudgetIo<T> {
+    fn poll_read(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        output: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        let this = self.get_mut();
+        if this.read_remaining == 0 {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "IMAP read budget exceeded",
+            )));
+        }
+        let allowed = this.read_remaining.min(output.remaining()).min(8192);
+        if allowed == 0 {
+            return Poll::Ready(Ok(()));
+        }
+        let mut chunk = [0_u8; 8192];
+        let mut bounded = ReadBuf::new(&mut chunk[..allowed]);
+        match Pin::new(&mut this.inner).poll_read(cx, &mut bounded) {
+            Poll::Ready(Ok(())) => {
+                let filled = bounded.filled();
+                output.put_slice(filled);
+                this.read_remaining -= filled.len();
+                Poll::Ready(Ok(()))
+            }
+            other => other,
+        }
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for BudgetIo<T> {
+    fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        input: &[u8],
+    ) -> Poll<io::Result<usize>> {
+        let this = self.get_mut();
+        if this.write_remaining == 0 {
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "IMAP write budget exceeded",
+            )));
+        }
+        let allowed = input.len().min(this.write_remaining);
+        match Pin::new(&mut this.inner).poll_write(cx, &input[..allowed]) {
+            Poll::Ready(Ok(written)) => {
+                this.write_remaining -= written;
+                Poll::Ready(Ok(written))
+            }
+            other => other,
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+    }
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderReadError {
@@ -120,6 +215,9 @@ impl ProviderReadClient {
     ) -> Result<Vec<MailItem>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
         let limit = limit.clamp(1, MAX_MAIL_ITEMS);
+        if account.provider == Provider::AppleIcloud {
+            return icloud_recent_mail(account, vault, limit).await;
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
@@ -142,6 +240,9 @@ impl ProviderReadClient {
         limit: usize,
     ) -> Result<Vec<String>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if account.provider == Provider::AppleIcloud {
+            return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_MAIL_ITEMS)).await;
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
@@ -514,6 +615,22 @@ impl ProviderReadClient {
     }
 }
 
+/// Verify an iCloud app-specific password against the fixed TLS IMAP endpoint.
+/// This proves only Mail access; it does not verify or authorize Calendar.
+pub async fn verify_icloud_mail_credentials(
+    login: &str,
+    password: &str,
+) -> Result<(), ProviderReadError> {
+    let mut session = icloud_imap_session(login, password).await?;
+    let result = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)
+        .map(|_| ());
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
 fn admit(
     account: &ConnectedAccount,
     vault: &AccountVault,
@@ -524,10 +641,235 @@ fn admit(
     if vault.agent_id() != account.owner_agent_id || !account.admits(agent, audience, capability) {
         return Err(ProviderReadError::NotAdmitted);
     }
-    if account.provider == Provider::AppleIcloud {
-        return Err(ProviderReadError::Unsupported);
-    }
     Ok(())
+}
+
+async fn icloud_recent_mail(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    limit: usize,
+) -> Result<Vec<MailItem>, ProviderReadError> {
+    let (login, password) = vault
+        .icloud_imap_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let result = icloud_fetch_recent_mail(&mut session, limit).await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+async fn icloud_fetch_recent_mail<T>(
+    session: &mut async_imap::Session<BudgetIo<T>>,
+    limit: usize,
+) -> Result<Vec<MailItem>, ProviderReadError>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?;
+    if mailbox.exists == 0 {
+        return Ok(Vec::new());
+    }
+    let uid_validity = mailbox
+        .uid_validity
+        .ok_or(ProviderReadError::InvalidResponse)?;
+    let first = mailbox
+        .exists
+        .saturating_sub(limit.min(u32::MAX as usize) as u32 - 1)
+        .max(1);
+    let mut fetched = tokio::time::timeout(
+        StdDuration::from_secs(10),
+        session.fetch(
+            format!("{first}:{}", mailbox.exists),
+            "UID ENVELOPE INTERNALDATE RFC822.SIZE BODYSTRUCTURE",
+        ),
+    )
+    .await
+    .map_err(|_| ProviderReadError::Unavailable)?
+    .map_err(map_imap_error)?;
+    use futures::TryStreamExt;
+    let mut output = Vec::with_capacity(limit.min(MAX_MAIL_ITEMS));
+    while let Some(message) = tokio::time::timeout(StdDuration::from_secs(10), fetched.try_next())
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?
+    {
+        let Some(uid) = message.uid else {
+            return Err(ProviderReadError::InvalidResponse);
+        };
+        let Some(envelope) = message.envelope() else {
+            continue;
+        };
+        let body_structure = message
+            .bodystructure()
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let subject = envelope
+            .subject
+            .as_deref()
+            .map(|value| bounded_mail_text(value, 512))
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "(no subject)".into());
+        let from = envelope
+            .from
+            .as_ref()
+            .and_then(|addresses| addresses.first())
+            .and_then(|address| {
+                let mailbox = address.mailbox.as_deref()?;
+                let host = address.host.as_deref()?;
+                let address = format!(
+                    "{}@{}",
+                    bounded_mail_text(mailbox, 256),
+                    bounded_mail_text(host, 256)
+                );
+                (!address.starts_with('@') && !address.ends_with('@') && address.len() <= 512)
+                    .then_some(address)
+            });
+        let received_at = message.internal_date().map(|date| date.with_timezone(&Utc));
+        let has_attachments = imap_body_has_attachments(body_structure);
+        output.push(MailItem {
+            provider_id: format!("{uid_validity}:{uid}"),
+            thread_id: None,
+            from,
+            preview: subject.clone(),
+            subject,
+            received_at,
+            body_text: None,
+            has_attachments,
+        });
+    }
+    output.sort_by(|left, right| right.received_at.cmp(&left.received_at));
+    output.truncate(limit.min(MAX_MAIL_ITEMS));
+    Ok(output)
+}
+
+async fn icloud_recent_mail_ids(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    limit: usize,
+) -> Result<Vec<String>, ProviderReadError> {
+    let (login, password) = vault
+        .icloud_imap_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let result = async {
+        let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        if mailbox.exists == 0 {
+            return Ok(Vec::new());
+        }
+        let uid_validity = mailbox
+            .uid_validity
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let first = mailbox
+            .exists
+            .saturating_sub(limit.min(u32::MAX as usize) as u32 - 1)
+            .max(1);
+        let mut fetched = tokio::time::timeout(
+            StdDuration::from_secs(10),
+            session.fetch(format!("{first}:{}", mailbox.exists), "UID"),
+        )
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)?;
+        use futures::TryStreamExt;
+        let mut ids = Vec::with_capacity(limit.min(MAX_MAIL_ITEMS));
+        while let Some(message) =
+            tokio::time::timeout(StdDuration::from_secs(10), fetched.try_next())
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?
+                .map_err(map_imap_error)?
+        {
+            if let Some(uid) = message.uid {
+                ids.push(format!("{uid_validity}:{uid}"));
+            } else {
+                return Err(ProviderReadError::InvalidResponse);
+            }
+        }
+        Ok(ids)
+    }
+    .await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+async fn icloud_imap_session(
+    login: &str,
+    password: &str,
+) -> Result<IcloudSession, ProviderReadError> {
+    let tcp = tokio::time::timeout(
+        StdDuration::from_secs(10),
+        tokio::net::TcpStream::connect((ICLOUD_IMAP_HOST, ICLOUD_IMAP_PORT)),
+    )
+    .await
+    .map_err(|_| ProviderReadError::Unavailable)?
+    .map_err(|_| ProviderReadError::Unavailable)?;
+    let tls = tokio::time::timeout(
+        StdDuration::from_secs(10),
+        async_native_tls::connect(ICLOUD_IMAP_HOST, tcp),
+    )
+    .await
+    .map_err(|_| ProviderReadError::Unavailable)?
+    .map_err(|_| ProviderReadError::Unavailable)?;
+    let client = async_imap::Client::new(BudgetIo::new(tls, MAX_IMAP_SESSION_BYTES, 64 * 1024));
+    tokio::time::timeout(StdDuration::from_secs(15), client.login(login, password))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(|(error, _client)| match error {
+            async_imap::error::Error::No(_) => ProviderReadError::ReauthenticationRequired,
+            _ => ProviderReadError::Unavailable,
+        })
+}
+
+fn map_imap_error(error: async_imap::error::Error) -> ProviderReadError {
+    match error {
+        async_imap::error::Error::No(_) => ProviderReadError::ReauthenticationRequired,
+        async_imap::error::Error::Io(ref error) if error.kind() == io::ErrorKind::InvalidData => {
+            ProviderReadError::InvalidResponse
+        }
+        async_imap::error::Error::Parse(_) => ProviderReadError::InvalidResponse,
+        _ => ProviderReadError::Unavailable,
+    }
+}
+
+fn bounded_mail_text(bytes: &[u8], max_bytes: usize) -> String {
+    String::from_utf8_lossy(&bytes[..bytes.len().min(max_bytes)])
+        .chars()
+        .filter(|ch| !ch.is_control() || *ch == ' ')
+        .take(max_bytes)
+        .collect()
+}
+
+fn imap_body_has_attachments(body: &async_imap::imap_proto::types::BodyStructure<'_>) -> bool {
+    use async_imap::imap_proto::types::BodyStructure;
+    let (common, nested) = match body {
+        BodyStructure::Basic { common, .. } | BodyStructure::Text { common, .. } => (common, None),
+        BodyStructure::Message { common, body, .. } => {
+            (common, Some(std::slice::from_ref(body.as_ref())))
+        }
+        BodyStructure::Multipart { common, bodies, .. } => (common, Some(bodies.as_slice())),
+    };
+    let explicit_attachment = common
+        .disposition
+        .as_ref()
+        .is_some_and(|disposition| disposition.ty.eq_ignore_ascii_case("attachment"));
+    let named_part = common.ty.params.as_ref().is_some_and(|params| {
+        params
+            .iter()
+            .any(|(name, value)| name.eq_ignore_ascii_case("name") && !value.trim().is_empty())
+    }) || common.disposition.as_ref().is_some_and(|disposition| {
+        disposition.params.as_ref().is_some_and(|params| {
+            params.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("filename") && !value.trim().is_empty()
+            })
+        })
+    });
+    explicit_attachment
+        || named_part
+        || nested.is_some_and(|parts| parts.iter().any(imap_body_has_attachments))
 }
 
 fn validate_range(from: DateTime<Utc>, to: DateTime<Utc>) -> Result<(), ProviderReadError> {
@@ -854,6 +1196,96 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use uuid::Uuid;
+
+    #[tokio::test]
+    async fn icloud_recent_mail_reads_bounded_metadata_from_a_read_only_mailbox() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_stream, server_stream) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            let mut stream = BufReader::new(server_stream);
+            stream
+                .get_mut()
+                .write_all(b"* OK iCloud test server\r\n")
+                .await
+                .unwrap();
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split_whitespace().next().unwrap_or("A0000").to_owned();
+                let command = line.split_whitespace().nth(1).unwrap_or("");
+                let response = if line.contains(" LOGIN ") {
+                    format!("{tag} OK authenticated\r\n")
+                } else if command.eq_ignore_ascii_case("CAPABILITY") {
+                    format!("* CAPABILITY IMAP4rev1\r\n{tag} OK capabilities\r\n")
+                } else if line.contains(" EXAMINE ") {
+                    format!(
+                        "* 1 EXISTS\r\n* 0 RECENT\r\n* OK [UIDVALIDITY 7] valid\r\n{tag} OK [READ-ONLY] selected\r\n"
+                    )
+                } else if line.contains(" FETCH ") {
+                    format!(
+                        "* 1 FETCH (UID 31 ENVELOPE (NIL \"Hello\" ((NIL NIL \"sender\" \"example.test\")) NIL NIL NIL NIL NIL NIL \"<m31>\") INTERNALDATE \"30-Sep-2026 12:00:00 +0000\" RFC822.SIZE 20 BODYSTRUCTURE (\"TEXT\" \"PLAIN\" (\"CHARSET\" \"UTF-8\") NIL NIL \"7BIT\" 5 1))\r\n{tag} OK fetched\r\n"
+                    )
+                } else if command.eq_ignore_ascii_case("LOGOUT") {
+                    format!("* BYE logging out\r\n{tag} OK logout\r\n")
+                } else {
+                    format!("{tag} BAD unsupported test command {command}\r\n")
+                };
+                if stream
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if command.eq_ignore_ascii_case("LOGOUT") {
+                    break;
+                }
+            }
+        });
+        let client = async_imap::Client::new(BudgetIo::new(client_stream, 8192, 8192));
+        let mut session = client
+            .login("owner@icloud.com", "test-secret")
+            .await
+            .unwrap();
+        let messages = icloud_fetch_recent_mail(&mut session, 1).await.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].provider_id, "7:31");
+        assert_eq!(messages[0].subject, "Hello");
+        assert_eq!(messages[0].from.as_deref(), Some("sender@example.test"));
+        assert!(!messages[0].has_attachments);
+        assert!(messages[0].body_text.is_none());
+        session.logout().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn icloud_imap_transport_stops_at_the_configured_byte_budget() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let (mut writer, reader) = tokio::io::duplex(32);
+        writer.write_all(b"abcdefgh").await.unwrap();
+        drop(writer);
+        let mut bounded = BudgetIo::new(reader, 4, 16);
+        let mut bytes = [0; 8];
+        assert_eq!(bounded.read(&mut bytes).await.unwrap(), 4);
+        assert_eq!(&bytes[..4], b"abcd");
+        assert_eq!(
+            bounded.read(&mut bytes).await.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+
+        let (reader, _peer) = tokio::io::duplex(32);
+        let mut bounded = BudgetIo::new(reader, 16, 3);
+        assert_eq!(bounded.write(b"abcd").await.unwrap(), 3);
+        assert_eq!(
+            bounded.write(b"e").await.unwrap_err().kind(),
+            io::ErrorKind::InvalidData
+        );
+    }
 
     #[test]
     fn private_google_event_suppresses_details_but_keeps_busy_time() {

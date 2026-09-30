@@ -21,6 +21,14 @@ Agent session history may remain until future lifecycle work provides lineage
 and erasure. This limitation must be visible before a content feature is
 enabled.
 
+On 2026-09-30, implementation extended Apple support to verified Mail-only
+accounts: the setup request checks IMAP login before storing the credential,
+and the adapter reads at most 20 inbox envelopes in a read-only mailbox with
+a transport byte cap. This is not Apple Calendar support, and the metadata-only
+mail view does not provide message body text. Calendar selections remain
+unverified. This increment still uses the current storage model and therefore
+does not provide selective erasure of copied session content.
+
 ## Scope and provider matrix
 
 The first three provider targets are Google Workspace/Gmail, Microsoft
@@ -32,7 +40,7 @@ implementation.
 |---|---|---|
 | Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
 | Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Apple Account authorization when a supported client flow is available; app-specific-password fallback for IMAP/SMTP and CalDAV | The current implementation uses the local app-specific-password fallback. It grants broader authority than selected Vak capabilities, so content access and effects stay disabled until a separately reviewed adapter and credential verification contract exist. Apple documents Account & Organizational Data Sharing OAuth for Apple School Manager Roster API scopes, not iCloud Mail/Calendar; EventKit is a native on-device calendar permission, not an unattended server grant. Apple documents IMAP for Mail, but not a complete server-side Mail and Calendar API contract. |
+| Apple iCloud | Local app-specific password over fixed-host IMAP for Mail; CalDAV remains gated | A Mail-only account verifies TLS IMAP sign-in and is admitted for `MailRead`; bounded recent inbox metadata uses read-only `EXAMINE` and a 512 KiB session budget. It does not fetch message bodies. Any account that selects Calendar remains `connected_unverified` until CalDAV discovery, authentication, parsing, and capability checks are implemented. Apple documents broader third-party authorization for supported apps, but not a general-purpose server OAuth contract for iCloud Mail/Calendar. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -1042,3 +1050,14 @@ authorization and approval boundary on every execution path.
   `npm run build:web`, 69 mail-calendar tests, 4 permission tests, and
   `cargo check --locked -p vak-server` pass. Full server integration tests are
   still compiling; no live provider test or signed-in browser review has run.
+- 2026-09-30: Added a verified Apple Mail-only path. Selecting MailRead alone
+  now verifies the app-specific password against fixed-host TLS IMAP and a
+  read-only INBOX `EXAMINE` before the credential is committed. Recent reads
+  fetch only bounded envelopes and body structures (20 items, 512 KiB per
+  session); routine preflight fetches only UIDs. A local protocol fixture
+  covers the IMAP response mapping, and a duplex-stream test proves the read
+  and write budgets stop excess bytes. Apple Calendar selections remain
+  `connected_unverified`; Apple mail bodies and provider effects are not
+  available. Verification: 74 mail-calendar tests pass, including the state
+  registry test; `cargo check -p vak-server` and formatting pass. End-to-end
+  behavior has not been tested against Apple's live IMAP service.

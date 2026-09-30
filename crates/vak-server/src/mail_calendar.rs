@@ -1402,6 +1402,8 @@ pub(super) async fn connect_icloud(
             )
         });
     let audit_capabilities = capabilities.clone();
+    let verified_mail_only =
+        capabilities.len() == 1 && capabilities.contains(&Capability::MailRead);
     if !valid_email || !valid_password || !apple_read_only {
         request.app_specific_password.0.zeroize();
         return (
@@ -1447,6 +1449,25 @@ pub(super) async fn connect_icloud(
             return StatusCode::BAD_REQUEST.into_response();
         }
     };
+    if verified_mail_only {
+        let (imap_login, imap_password) = match material.icloud_imap_credentials() {
+            Ok(credentials) => credentials,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        if vak_mail_calendar::provider::verify_icloud_mail_credentials(
+            imap_login.as_str(),
+            imap_password.as_str(),
+        )
+        .await
+        .is_err()
+        {
+            return (
+                StatusCode::UNAUTHORIZED,
+                "iCloud Mail sign-in could not be verified. Check the email and app-specific password.",
+            )
+                .into_response();
+        }
+    }
     let now = Utc::now();
     let mut account = ConnectedAccount {
         id: account_id.clone(),
@@ -1514,7 +1535,14 @@ pub(super) async fn connect_icloud(
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     }
-    account.status = AccountStatus::ConnectedUnverified;
+    // The current schema has one account status for all selected capabilities.
+    // Admit only a mail-only iCloud link after IMAP verification; calendar
+    // selections stay unverified until CalDAV verification is implemented.
+    account.status = if verified_mail_only {
+        AccountStatus::Connected
+    } else {
+        AccountStatus::ConnectedUnverified
+    };
     account.revision = 2;
     let linked_account_id = account_id.clone();
     if ledger
@@ -1532,7 +1560,11 @@ pub(super) async fn connect_icloud(
         &account_id,
         Provider::AppleIcloud,
         &audit_capabilities,
-        "connected_unverified",
+        if verified_mail_only {
+            "connected"
+        } else {
+            "connected_unverified"
+        },
     );
     Json(serde_json::json!({ "connected": true })).into_response()
 }

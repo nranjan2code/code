@@ -1181,7 +1181,7 @@ export default function Settings() {
   });
   createEffect(() => {
     const accounts = mailCalendarAccounts()?.accounts ?? [];
-    const usable = accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud");
+    const usable = accounts.filter((account) => account.status === "connected" && !account.revoked_at);
     if (!usable.some((account) => account.id === mailCalendarEditorAccount())) {
       setMailCalendarEditorAccount(usable[0]?.id ?? "");
     }
@@ -1235,6 +1235,7 @@ export default function Settings() {
   };
   const connectIcloud = async () => {
     const email = icloudEmail();
+    const selectedCapabilities = mailCalendarCapabilities();
     let appPassword = icloudAppPassword();
     // Do not keep the secret in reactive UI state while the request is in
     // flight; retain only the short-lived local needed for this submission.
@@ -1242,10 +1243,10 @@ export default function Settings() {
     setIcloudEmail("");
     setMailCalendarBusy(true);
     try {
-      await api.connectIcloudAccount(activeAgentId(), email, appPassword, mailCalendarCapabilities());
+      await api.connectIcloudAccount(activeAgentId(), email, appPassword, selectedCapabilities);
       appPassword = "";
       await refreshMailCalendarAccounts();
-      setNotice({ kind: "info", text: "The iCloud credential is stored in this Agent's secure vault. Provider content is not enabled yet." });
+      setNotice({ kind: "info", text: selectedCapabilities.length === 1 && selectedCapabilities[0] === "mail_read" ? "iCloud Mail sign-in was verified. Inbox previews show bounded message metadata; calendar and message bodies are not available." : "The iCloud credential is stored in this Agent's secure vault, but this capability combination remains unverified and unavailable." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect the iCloud account: ${error instanceof Error ? error.message : String(error)}` });
     } finally {
@@ -2425,7 +2426,7 @@ export default function Settings() {
 
             <Show when={page() === "mail-calendar"}>
               <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p></header>
-              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft reads are available to this Agent on the local owner surface.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded content directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled and continuous routines are still being built.</span></div></div>
+              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft reads are available here; verified Apple Mail-only accounts can preview inbox metadata.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
               <Group title="Choose access">
                 <p class="settings-hint">Read access is selected by default. Email sending and calendar event creation are optional and request separate provider permissions. Every effect requires review and confirmation. Event creation currently supports one timed event without attendees, invitations, recurrence, or reminders. Provider calendar-write consent is broader than this action; Vak currently sends only a new-event request through the reviewed broker.</p>
                 <div class="capability-list">
@@ -2439,7 +2440,7 @@ export default function Settings() {
                   <Row title="Apple iCloud email" description="Enter your iCloud email and an app-specific password generated at account.apple.com. Your Apple Account password is never requested.">
                     <div class="settings-actions"><input type="email" autocomplete="username" value={icloudEmail()} onInput={(event) => setIcloudEmail(event.currentTarget.value)} placeholder="name@icloud.com" /><input type="password" autocomplete="new-password" value={icloudAppPassword()} onInput={(event) => setIcloudAppPassword(event.currentTarget.value)} placeholder="App-specific password" /><button class="settings-button" disabled={mailCalendarBusy() || !icloudEmail() || !icloudAppPassword() || mailCalendarCapabilities().some((capability) => !["mail_read", "calendar_free_busy", "calendar_read"].includes(capability))} onClick={() => void connectIcloud()}>Connect iCloud</button></div>
                   </Row>
-                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. It is stored for owner-managed cleanup, but it is not verified or available to Agents. Owner preview remains unavailable until Apple credentials can be verified with a reviewed access boundary. Remove the password at Apple to revoke it.</p>
+                  <p class="settings-hint">Apple's app-specific password can authorize more than the selected access. Choose only “Read email” for verified iCloud Mail; its preview is limited to message metadata and never fetches bodies. Any selection that includes calendar access remains unverified and unavailable until the CalDAV path is implemented. Remove the password at Apple to revoke it.</p>
                 </Show>
                 <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
               </Group>
@@ -2466,7 +2467,7 @@ export default function Settings() {
                               : account.status === "connected" && !account.refresh_token_available
                                 ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
                               : "Connected";
-                      const canPreview = account.status === "connected" && account.credential_available && account.provider !== "apple_icloud" && !account.revoked_at;
+                      const canPreview = account.status === "connected" && account.credential_available && !account.revoked_at;
                       return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.provider === "apple_icloud" ? "App-specific password" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><span class="settings-actions"><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span></Row>;
                     }}</For>
                   </Show>
@@ -2493,12 +2494,12 @@ export default function Settings() {
                 </div>}</Show>
               </Group>
               <Group title="Working area">
-                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Email sends and Google updates are external effects: each requires an unchanged saved draft, the matching account grant, full preview, and your confirmation. Google updates are limited to standalone events with no attendees. Event creation does not invite attendees.</p>
-                <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud").length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified Google or Microsoft account to start a local draft.</p>}>
+                <p class="settings-hint">Prepare an email or event as a private local draft. Drafts autosave to this Agent's secure vault after the first save. Email sends and Google updates are external effects: each requires an unchanged saved draft, the matching account grant, full preview, and your confirmation. Google updates are limited to standalone events with no attendees. Event creation does not invite attendees. Apple Mail currently provides inbox metadata and local reply drafts; sending is unavailable.</p>
+                <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account to start a local draft.</p>}>
                   <div class="mail-calendar-work-actions">
-                    <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud") ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
+                    <label>Account<select aria-label="Draft account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple Mail" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
                     <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount()} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "mail")}>New email draft</button>
-                    <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount()} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "calendar")}>New event draft</button>
+                    <button class="settings-button" disabled={mailCalendarBusy() || !mailCalendarEditorAccount() || mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditorAccount())?.provider === "apple_icloud"} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount(), "calendar")}>New event draft</button>
                   </div>
                 </Show>
                 <Show when={!mailCalendarCandidates.loading} fallback={<p class="settings-hint">Loading secure drafts…</p>}>
@@ -2555,10 +2556,10 @@ export default function Settings() {
               </Group>
               <Group title="Scheduled routines">
                 <p class="settings-hint">A routine runs on this server schedule and stores its result only in this Agent's run history. Its run can access only the selected account and reads below; it cannot use other tools or change provider data. The server must stay running for schedules to fire. Account disconnect pauses matching routines.</p>
-                <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud").length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified Google or Microsoft account with read access to schedule a routine.</p>}>
+                <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account with read access to schedule a routine.</p>}>
                   <div class="mail-calendar-editor">
                     <label>Routine name<input value={mailCalendarRoutineName()} onInput={(event) => setMailCalendarRoutineName(event.currentTarget.value)} /></label>
-                    <label>Account<select aria-label="Routine account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at && account.provider !== "apple_icloud") ?? []}>{(account) => <option value={account.id}>{(account.provider === "google" ? "Google" : "Microsoft") + (account.identity_masked ? " · " + account.identity_masked : "")}</option>}</For></select></label>
+                    <label>Account<select aria-label="Routine account" value={mailCalendarEditorAccount()} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{(account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple Mail" : "Microsoft") + (account.identity_masked ? " · " + account.identity_masked : "")}</option>}</For></select></label>
                     <fieldset class="mail-calendar-routine-operations"><legend>Allow these reads</legend>
                       <For each={([
                         ["recent_mail", "Recent email", "mail_read"],

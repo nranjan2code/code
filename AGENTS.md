@@ -117,8 +117,13 @@ Read before changing behaviour in these areas:
   opted-in Google/Microsoft plain-text email sending through an owner-confirmed
   exact-candidate Review, Agent Core permission evaluation, and an encrypted
   single-use action claim. Provider acceptance is not delivery; unknown
-  outcomes cannot be retried. Attachments, aliases, reply semantics, calendar
-  writes, and model-initiated effects remain unavailable);
+  outcomes cannot be retried. Apple Mail-only links now verify sign-in against
+  fixed-host IMAP and allow bounded inbox metadata reads through a read-only
+  session with a 512 KiB transport budget; body text and Apple Calendar are
+  unavailable. Microsoft event update/cancel/RSVP, attachments, aliases, reply
+  semantics, and model-initiated effects remain unavailable. Current 4.x
+  session history cannot be selectively erased, so account-deletion erasure
+  remains incomplete);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,

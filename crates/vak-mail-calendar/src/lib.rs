@@ -122,11 +122,6 @@ impl ConnectedAccount {
     pub fn admits(&self, agent: &str, audience: &str, capability: Capability) -> bool {
         self.status == AccountStatus::Connected
             && self.revoked_at.is_none()
-            // iCloud currently has only an unverified, broader-authority
-            // app-specific-password enrollment path. Do not let a persisted
-            // capability grant become usable until a reviewed provider
-            // verifier and appropriately scoped adapter exist.
-            && self.provider != Provider::AppleIcloud
             && self.owner_agent_id == agent
             && self.allowed_audiences.contains(audience)
             && self.capabilities.contains(&capability)
@@ -827,6 +822,15 @@ mod contract_tests {
         unverified_icloud.provider = Provider::AppleIcloud;
         unverified_icloud.status = AccountStatus::ConnectedUnverified;
         assert!(!unverified_icloud.admits("agent-a", "conversation-a", Capability::MailRead));
+
+        let mut verified_icloud_mail = unverified_icloud.clone();
+        verified_icloud_mail.status = AccountStatus::Connected;
+        assert!(verified_icloud_mail.admits("agent-a", "conversation-a", Capability::MailRead));
+        assert!(!verified_icloud_mail.admits(
+            "agent-a",
+            "conversation-a",
+            Capability::CalendarRead
+        ));
 
         let mut pending = account;
         pending.status = AccountStatus::Pending;

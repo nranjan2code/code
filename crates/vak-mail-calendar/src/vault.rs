@@ -151,6 +151,14 @@ impl AccountSecretMaterial {
     pub fn has_same_principal_ignoring_ascii_case(&self, other: &Self) -> bool {
         self.principal.eq_ignore_ascii_case(&other.principal)
     }
+
+    pub fn icloud_imap_credentials(
+        &self,
+    ) -> Result<(Zeroizing<String>, Zeroizing<String>), VaultError> {
+        let login = self.app_login.clone().ok_or(VaultError::Unavailable)?;
+        let password = self.app_password.clone().ok_or(VaultError::Unavailable)?;
+        Ok((Zeroizing::new(login), Zeroizing::new(password)))
+    }
 }
 
 impl Drop for AccountSecretMaterial {
@@ -887,6 +895,22 @@ impl AccountVault {
     ) -> Result<Option<Zeroizing<String>>, VaultError> {
         let material = self.load(account_id)?;
         Ok(material.display_identity.clone().map(Zeroizing::new))
+    }
+
+    /// Load only the vaulted iCloud IMAP principal and app-specific password.
+    /// Callers must first admit the Agent/account/capability and must never
+    /// place either value in logs, URLs, or child-process environments.
+    pub(crate) fn icloud_imap_credentials(
+        &self,
+        account_id: &str,
+    ) -> Result<(Zeroizing<String>, Zeroizing<String>), VaultError> {
+        let material = self.load(account_id)?;
+        let login = material.app_login.clone().ok_or(VaultError::Unavailable)?;
+        let password = material
+            .app_password
+            .clone()
+            .ok_or(VaultError::Unavailable)?;
+        Ok((Zeroizing::new(login), Zeroizing::new(password)))
     }
 }
 

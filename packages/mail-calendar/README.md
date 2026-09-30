@@ -20,8 +20,11 @@ setup guidance in their Agent. Account linking and cleanup remain in Settings
 The owner can preview bounded Gmail and Microsoft inbox, event, and free/busy
 results in Settings. A broker-owned Agent tool also reads these accounts on the
 local owner surface after exact Agent and capability checks; channel audiences
-are blocked until an explicit share flow exists. Apple remains unverified and
-unavailable. A bounded Agent-vault working area now stores local email and
+are blocked until an explicit share flow exists. A Mail-only Apple account can
+verify its app-specific password against fixed-host TLS IMAP and preview up to
+20 inbox envelopes in a read-only session with a 512 KiB byte budget. It does
+not fetch message bodies. Any Apple link that selects Calendar remains
+unverified and unavailable until a CalDAV adapter is complete. A bounded Agent-vault working area now stores local email and
 event drafts with revision checks and disconnect cleanup. The first scheduled
 read-only routine slice uses the existing TaskDef scheduler and is scoped to
 one Agent revision, one account, and selected read operations. A scheduled
@@ -43,7 +46,7 @@ broker enforces the narrower contract. Google also supports an exact-reviewed
 update for public standalone timed events without attendees. It rechecks the
 source ETag and conditionally patches only event fields; stale versions require
 a fresh draft. Microsoft updates, cancel/RSVP, Agent/model initiated effects,
-attachments, the third provider, multi-instance routine leases, and reliable continuous
+attachments, Apple Calendar, multi-instance routine leases, and reliable continuous
 service recovery remain unimplemented. This uses current 4.x storage. Before a
 read, the product explains that disconnect removes the
 saved credential and blocks future reads, while content recorded in append-only
