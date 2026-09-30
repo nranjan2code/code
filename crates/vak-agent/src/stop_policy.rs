@@ -73,6 +73,8 @@ pub struct ReceiptSummary {
     pub total_tool_calls: u32,
     /// Number of tool calls that completed with ToolRunOutput::Ok.
     pub successful_tool_calls: u32,
+    /// Successful tool results that produced a declared user-facing artifact.
+    pub artifact_deliveries: u32,
     /// Number of tool calls that completed with ToolRunOutput::Err.
     pub failed_tool_calls: u32,
     /// Number of substantive bash invocations.
@@ -314,6 +316,15 @@ impl StopPolicy {
                 return Some(BlockReason::VerificationMissing);
             }
             return stale_code.then_some(BlockReason::VerificationStale);
+        }
+        if spec.expects_artifact() && receipts.artifact_deliveries == 0 {
+            return Some(BlockReason::ExecutionReceiptMissing {
+                act: spec
+                    .deliverable_act()
+                    .unwrap_or("create the requested artifact")
+                    .to_string(),
+                hint: "produce the artifact itself; a description or link to an older result is not delivery".into(),
+            });
         }
         if spec.stop == StopProfile::Effect || spec.requires_execution() {
             if !receipts.has_execution_receipt() {

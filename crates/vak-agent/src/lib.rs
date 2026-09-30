@@ -2485,7 +2485,7 @@ impl Agent {
                         continue;
                     }
                 }
-                if let Some(reason) = self
+                if let Some((reason, exhausted)) = self
                     .stop_gate(
                         &prompt_owned,
                         &response,
@@ -2501,6 +2501,13 @@ impl Agent {
                     // requirement (§1, §6).
                     self.record_capacity_instruction_failure(response.usage.prompt_tokens())
                         .await;
+                    if exhausted {
+                        return TurnOutcome::Failed {
+                            error: LlmError::InvalidRequest(format!(
+                                "completion requirements remain unmet after the bounded recovery budget: {reason}"
+                            )),
+                        };
+                    }
                     match self.guard_continue(reason, &events, turn).await {
                         Ok(true) => {
                             turn += 1;
@@ -3021,6 +3028,13 @@ impl Agent {
                 match out {
                     ToolRunOutput::Ok(_) => {
                         receipts.successful_tool_calls += 1;
+                        if call_names
+                            .get(id)
+                            .zip(call_inputs.get(id))
+                            .is_some_and(|(name, input)| self.tool_produces_artifact(name, input))
+                        {
+                            receipts.artifact_deliveries += 1;
+                        }
                         if inspection_ids.contains(id) {
                             receipts.successful_inspections += 1;
                         }
@@ -4226,8 +4240,8 @@ impl Agent {
         Ok(reply.text_content())
     }
 
-    /// Internal premature-completion gate. Returns a continuation reason
-    /// when the stop policy fires and budget remains.
+    /// Internal premature-completion gate. Returns a continuation reason and
+    /// whether the recovery budget has been exhausted.
     async fn stop_gate(
         &self,
         prompt: &str,
@@ -4236,7 +4250,7 @@ impl Agent {
         verification_stale: bool,
         blocks_left: &mut u32,
         user_completion_released: bool,
-    ) -> Option<String> {
+    ) -> Option<(String, bool)> {
         let policy = self.config.stop_policy.as_ref()?;
         if user_completion_released {
             return None;
@@ -4248,14 +4262,14 @@ impl Agent {
             receipts,
             verification_stale,
         )?;
-        if !matches!(reason, BlockReason::UserCompletionRequired) && *blocks_left == 0 {
-            return None;
-        }
         if matches!(reason, BlockReason::UserCompletionRequired) {
-            return Some(reason.message());
+            return Some((reason.message(), false));
+        }
+        if *blocks_left == 0 {
+            return Some((reason.message(), true));
         }
         *blocks_left -= 1;
-        Some(reason.message())
+        Some((reason.message(), false))
     }
 
     /// Records this turn's host-supplied tail (`<turn_context>`, `<stance>`)
@@ -4349,6 +4363,16 @@ impl Agent {
             .tools
             .iter()
             .any(|tool| tool.name() == name && tool.presents_cards())
+    }
+
+    /// Whether this tool declares that a successful result produces the
+    /// artifact requested by an authoring outcome.
+    fn tool_produces_artifact(&self, name: &str, input: &Value) -> bool {
+        self.config
+            .tools
+            .iter()
+            .find(|tool| tool.name() == name)
+            .is_some_and(|tool| tool.produces_artifact(input))
     }
 
     /// Appends the model's response and returns its ledger entry id, so

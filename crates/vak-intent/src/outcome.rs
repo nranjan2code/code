@@ -1112,6 +1112,12 @@ impl OutcomeSpec {
         self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution())
     }
 
+    /// Whether the requested primary output is a generated artifact. This is
+    /// derived from the typed act, not file-name or domain-specific wording.
+    pub fn expects_artifact(&self) -> bool {
+        self.acts.contains(&Act::Author)
+    }
+
     /// Whether this outcome requires inspection, search, or enumeration.
     pub fn requires_inspection(&self) -> bool {
         self.acts.iter().any(|act| act.requires_inspection())
