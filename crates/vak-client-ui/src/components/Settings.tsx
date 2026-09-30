@@ -1362,6 +1362,19 @@ export default function Settings() {
       if (requestGeneration === mailCalendarPreviewGeneration) setMailCalendarBusy(false);
     }
   };
+  const shiftMailCalendarPreviewRange = (preview: { accountId: string; kind: "mail" | "calendar" | "freebusy" }, days: number) => {
+    if (preview.kind === "mail") return;
+    const from = new Date(`${mailCalendarRangeFrom()}T12:00:00`);
+    const to = new Date(`${mailCalendarRangeTo()}T12:00:00`);
+    if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime())) return;
+    from.setDate(from.getDate() + days);
+    to.setDate(to.getDate() + days);
+    const range = { from: toLocalDateInput(from), to: toLocalDateInput(to) };
+    setMailCalendarRangeFrom(range.from);
+    setMailCalendarRangeTo(range.to);
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
+    if (account) void loadMailCalendarPreview(account, preview.kind, range);
+  };
   const readAppleMailMessage = async (accountId: string, message: api.MailCalendarMailPreview) => {
     if (mailCalendarBusy() || !message.provider_id) return;
     const requestedAgentId = activeAgentId();
@@ -2535,12 +2548,14 @@ export default function Settings() {
                   <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? "Recent inbox" : preview.kind === "calendar" ? "Calendar preview" : "Availability preview"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
                   <Show when={preview.kind === "calendar" || preview.kind === "freebusy"}>
                     <div class="mail-calendar-work-actions" aria-label="Calendar preview date range">
+                      <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, -7)}>Previous 7 days</button>
                       <label>From<input aria-label="Preview start date" type="date" value={mailCalendarRangeFrom()} onInput={(event) => setMailCalendarRangeFrom(event.currentTarget.value)} /></label>
                       <label>Through<input aria-label="Preview end date" type="date" value={mailCalendarRangeTo()} onInput={(event) => setMailCalendarRangeTo(event.currentTarget.value)} /></label>
                       <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => {
                         const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
                         if (account) void loadMailCalendarPreview(account, preview.kind, { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() });
                       }}>{mailCalendarBusy() ? "Refreshing…" : "Refresh dates"}</button>
+                      <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, 7)}>Next 7 days</button>
                     </div>
                     <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone || "this device's time zone"}. Choose up to 30 days.</p>
                   </Show>

@@ -12,7 +12,7 @@ email send and a
 limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
 Calendar and availability previews now support an owner-selected, device-time-
-zone date range up to 30 days with a visible refresh time. Folder selection and
+zone date range up to 30 days, previous/next seven-day navigation, and a visible refresh time. Folder selection and
 the complete connected-account workspace remain open.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
@@ -1247,3 +1247,7 @@ authorization and approval boundary on every execution path.
   to audit events; results remain transient previews. TypeScript, UI build, and
   compile checks pass; provider request tests and browser fixture verification
   remain to run.
+- 2026-09-30: Added previous/next seven-day controls to calendar and availability
+  previews. Navigation preserves the selected range length, updates the date
+  fields, and refreshes the same account immediately using local calendar-day
+  arithmetic so daylight-saving transitions do not shift the chosen dates.
