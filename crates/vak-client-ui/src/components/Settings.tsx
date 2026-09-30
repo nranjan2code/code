@@ -35,6 +35,7 @@ import type { SettingsPageId } from "../store";
 import type { ConfigSnapshot, SessionSummary, TaskDef } from "../types";
 import * as api from "../api";
 import { overlappingMailCalendarEventIds } from "../mailCalendarConflicts.mjs";
+import { mailCalendarWatchFreshness } from "../mailCalendarRoutineStatus.mjs";
 import { MailCalendarAgenda } from "./MailCalendarAgenda";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
 import { watchConfig } from "../streamHub";
@@ -1133,6 +1134,12 @@ export default function Settings() {
     () => page() === "mail-calendar" ? activeAgentId() : null,
     async () => (await api.listTasks()).tasks.filter((task) => !!task.mail_calendar_scope),
   );
+  const [mailCalendarClockNow, setMailCalendarClockNow] = createSignal(Date.now());
+  createEffect(() => {
+    if (page() !== "mail-calendar") return;
+    const timer = window.setInterval(() => setMailCalendarClockNow(Date.now()), 30_000);
+    onCleanup(() => window.clearInterval(timer));
+  });
   const refreshMailCalendarOnFocus = () => {
     if (page() === "mail-calendar") void refreshMailCalendarAccounts();
   };
@@ -3110,16 +3117,20 @@ export default function Settings() {
                 </Show>
                 <Show when={mailCalendarTasks.loading} fallback={<div class="mail-calendar-drafts"><Show when={(mailCalendarTasks()?.length ?? 0) > 0} fallback={<p class="settings-hint">No scheduled mail/calendar routines yet.</p>}>
                   <For each={mailCalendarTasks() ?? []}>{(task) => {
+                    const isWatching = task.mail_calendar_scope?.watch_new_mail;
+                    const watchFreshness = mailCalendarWatchFreshness(task, mailCalendarClockNow());
                     const status = !task.enabled ? "Paused"
                       : task.last_run_status === "working" ? "Running"
                       : ["failed", "refused", "interrupted", "account_disconnected"].includes(task.last_run_status ?? "") ? "Needs attention"
+                      : isWatching && watchFreshness === "overdue" ? "Check overdue"
                       : task.mail_calendar_scope?.watch_new_mail ? "Watching" : "Scheduled";
                     const frequency = task.mail_calendar_scope?.watch_new_mail && task.interval_secs <= 60
                       ? "Checks about once a minute"
                       : task.schedule ?? `${Math.max(1, Math.round(task.interval_secs / 60))} minute interval`;
-                    const isWatching = task.mail_calendar_scope?.watch_new_mail;
                     const lastActivity = isWatching
-                      ? task.mail_calendar_last_check_at ? `last successful check ${relTime(task.mail_calendar_last_check_at)}` : "no successful check yet"
+                      ? task.mail_calendar_last_check_at
+                        ? `last successful check ${relTime(task.mail_calendar_last_check_at)}${watchFreshness === "overdue" ? " · check overdue; the service may be asleep or disconnected" : ""}`
+                        : "no successful check yet"
                       : task.last_run_at ? `last run ${relTime(task.last_run_at)}` : "not run yet";
                     return <article class="mail-calendar-draft-row"><div><strong>{task.name}</strong><span>{status} · {frequency} · {lastActivity}{task.enabled && task.next_run_at ? ` · next ${new Date(task.next_run_at).toLocaleString()}` : ""}</span></div><div class="settings-actions"><Show when={task.last_session_id}><button class="settings-button" onClick={() => setTranscriptViewId(task.last_session_id!)}>Open latest run</button></Show><button class="settings-button" disabled={!task.enabled && mailCalendarAccounts()?.accounts.some((account) => account.id === task.mail_calendar_scope?.account_id && !!account.revoked_at)} onClick={() => void runMailCalendarRoutine(task)}>{!task.enabled && !task.last_session_id ? "Preview run" : "Run now"}</button><button class="settings-button" onClick={() => void toggleMailCalendarRoutine(task)}>{task.enabled ? "Pause" : "Resume"}</button><button class="settings-button danger" onClick={() => deleteMailCalendarRoutine(task)}>Delete</button></div></article>;
                   }}</For>

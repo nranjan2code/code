@@ -18,6 +18,8 @@ review and a separate owner confirmation.
 Scheduled and one-minute continuous read-only routines use `TaskDef`, are
 saved paused for a one-off read-only preview, and use a bounded encrypted
 Agent-vault mail backlog with provider cursors. Starting a
+continuous watch also shows an overdue warning after three minutes without a
+successful provider poll; that freshness signal does not prove host health.
 local draft from a selected conversation message preserves its source reference
 and can create a provider-threaded reply on Google or Microsoft. The full conversation workspace,
 Apple conversation grouping/effects, event update/cancellation beyond the

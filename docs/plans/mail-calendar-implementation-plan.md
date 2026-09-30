@@ -560,6 +560,14 @@ TaskDef kinds retain their existing create-and-run behavior. Server regression
 coverage verifies this creation default, and the owner UI labels the first
 manual execution “Preview run”.
 
+**Implemented increment (2026-10-01):** a continuous one-minute watch now
+shows a plain-language overdue state when it has not completed a provider
+check for more than three minutes. The timestamp continues to distinguish
+source freshness from run status; scheduled watches are not judged by the
+continuous threshold, and an overdue label does not claim to diagnose host
+health. Pure client tests cover unknown, current, overdue, and scheduled
+states.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -617,6 +625,11 @@ authorization and approval boundary on every execution path.
   Resume it. Generic scheduled tasks keep their prior active-on-create
   behavior. The server creation-default test and web build verify this
   increment; broader preview/browser acceptance remains open.
+- 2026-10-01: Continuous watches now surface a stale-check warning after three
+  minutes without a successful provider poll, updating while the Settings page
+  stays open. Cron-scheduled watches keep their own cadence and are not marked
+  overdue by this continuous-mode threshold. Client status tests and the web
+  build verify the distinction; this does not establish awake-host health.
 - 2026-10-01: Added explicit accessible names to the Google, Microsoft, and
   Apple app-password email and password fields after the running preview
   exposed anonymous text fields in its accessibility tree. The UI typecheck
@@ -1585,6 +1598,8 @@ authorization and approval boundary on every execution path.
   test pass. The production web build, workspace formatting check, and
   `git diff --check` pass. This verifies synthetic/provider-double behavior,
   not live provider conformance or the sustained 24-hour service acceptance;
-  those remain open. The local preview uses an empty workspace under the
-  installed `~/vak-home` and an isolated `VAK_HOME` profile under the local
-  application-support directory. No account or credential has been connected.
+  those remain open. The local preview uses the separate empty workspace
+  `~/vak-home/.mail-calendar-routine-preview-check`; its isolated `VAK_HOME`
+  data profile is `~/Library/Application Support/vak/mail-calendar-routine-preview-check`.
+  `vak-home` is the workspace, not the data home. No account or credential has
+  been connected.
