@@ -1703,7 +1703,7 @@ pub(super) fn add_chart<R2: Read + Seek>(
         .trim_end_matches(".xml")
         .parse::<u32>()
         .unwrap_or(1);
-    let chart_rel;
+
     let drawing_part = match work.related(&sheet_part, "drawing")? {
         Some(part) => part,
         None => free_part_name(work, "xl/drawings/drawing", ".xml"),
@@ -1721,7 +1721,7 @@ pub(super) fn add_chart<R2: Read + Seek>(
     );
     work.put(&chart_part, chart_xml.into_bytes());
     work.set_override(&chart_part, CHART_TYPE)?;
-    chart_rel = work.add_relationship(&drawing_part, R_CHART, &chart_part)?;
+    let chart_rel = work.add_relationship(&drawing_part, R_CHART, &chart_part)?;
 
     let anchor = chart_anchor(
         &chart_rel,
@@ -2158,6 +2158,7 @@ pub(super) fn add_excel_image<R2: Read + Seek>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn excel_picture_anchor(
     id: usize,
     column: u32,
@@ -2184,6 +2185,7 @@ fn excel_picture_anchor(
     )
 }
 
+#[allow(clippy::type_complexity)]
 fn chart_range(range: &str) -> Result<((u32, u32), (u32, u32)), EditError> {
     let mut parts = range.split(':');
     let first = parts.next().unwrap_or_default();
@@ -2212,6 +2214,7 @@ fn cached_cell(value: &str) -> (&str, bool) {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn native_chart_xml(
     kind: &str,
     title: &str,

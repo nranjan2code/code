@@ -1960,10 +1960,18 @@ mod tests {
         let state = test_state();
         let token = (*state.auth_token).clone();
         let app = authed_app(&state);
-        let req = Request::builder()
+        // `?token=` is loopback-only (invariant 34), so the request is the
+        // desktop shell's: a loopback Host from a loopback peer.
+        let mut req = Request::builder()
             .uri(format!("/sessions/does-not-exist/events?token={token}"))
+            .header(axum::http::header::HOST, "127.0.0.1")
             .body(Body::empty())
             .unwrap();
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                [127, 0, 0, 1],
+                50_000,
+            ))));
         let resp = app.oneshot(req).await.unwrap();
         // The session id is bogus, so any status is acceptable EXCEPT
         // 401: this asserts the request got past authentication, which

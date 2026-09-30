@@ -3255,12 +3255,14 @@ fn act_is_effectful_classification() {
 /// reads (`spec.requires_execution()` in `vak-agent/src/stop_policy.rs`).
 /// `Author` producing prose is proven by the response itself, so it is
 /// absent; `Orchestrate` dispatching a worker is proven by a tool call
-/// rather than a shell command or a file write, so it is absent too and
-/// lives under `requires_tool` instead. `Verify` has no other way to be
-/// proven than running the check, so it stays alongside the effectful acts.
+/// rather than a shell command or a file write, so it lives under
+/// `requires_tool`. `Verify` lives there too: checking a pasted paragraph or
+/// a translation is proven by a source, a computation or a careful reading
+/// as often as by a command, and a check the request demands be *proven* is
+/// the evidence axis's job (`StopProfile::Verification`).
 #[test]
 fn act_requires_execution_and_requires_tool_classification() {
-    for act in [Act::Modify, Act::Operate, Act::Govern, Act::Verify] {
+    for act in [Act::Modify, Act::Operate, Act::Govern] {
         assert!(act.requires_execution(), "{act:?} should require execution");
         assert!(act.requires_tool(), "{act:?} should require a tool");
     }
@@ -3271,15 +3273,17 @@ fn act_requires_execution_and_requires_tool_classification() {
         Act::Analyze,
         Act::Author,
         Act::Orchestrate,
+        Act::Verify,
     ] {
         assert!(
             !act.requires_execution(),
             "{act:?} should not require an execution/file receipt"
         );
     }
-    // Orchestrate still needs proof that a worker or flow actually ran —
-    // just not specifically a shell command or a file write.
+    // Orchestrate and Verify still need a tool or, for Verify, a substantive
+    // answer about material the request carried.
     assert!(Act::Orchestrate.requires_tool());
+    assert!(Act::Verify.requires_tool());
     for act in [Act::Converse, Act::Answer, Act::Analyze, Act::Author] {
         assert!(!act.requires_tool(), "{act:?} should not require a tool");
     }

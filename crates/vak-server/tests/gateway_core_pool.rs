@@ -109,22 +109,25 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
         .unwrap();
     assert_eq!(approve_res.status(), 200, "approve must succeed");
 
-    // Second message: now allowed. Provider auth still fails (no credential
-    // configured / injected for the pooled Core), so the turn itself can't
-    // finish — but session creation happens *before* that check, so the
-    // pooled Core for `other_dir` must already have started and minted a
-    // session there by the time we inspect it.
+    // Second message: now allowed. Whether or not the turn can reach a
+    // provider, session creation happens first, so the pooled Core for
+    // `other_dir` must already have started and minted a session there by
+    // the time we inspect it.
     let res = client
         .post(format!("{base}/gateway/inbound"))
         .json(&msg)
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        res.status(),
-        503,
-        "session should have been created against the other workspace's pooled Core \
-         before the provider-credential check fails"
+    // Admitted either way: 202 when the route is keyless (the default
+    // local provider starts the run), 503 when a keyed provider has no
+    // credential. Session creation precedes both, which is what the checks
+    // below are about.
+    let status = res.status();
+    assert!(
+        status == reqwest::StatusCode::ACCEPTED
+            || status == reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "an approved chat must be admitted to the other workspace's pooled Core, got {status}"
     );
 
     // Confirm: the pool now reports the other workspace as warm.

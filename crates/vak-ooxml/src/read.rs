@@ -699,10 +699,10 @@ fn chart_table(bytes: &[u8], part: &str, limits: &Limits) -> Result<Option<Table
                 if matches!(local, "tx" | "cat" | "val" | "xVal" | "yVal") {
                     field = None;
                 }
-                if local == "ser" {
-                    if let Some(series) = current.take() {
-                        chart_series.push(series);
-                    }
+                if local == "ser"
+                    && let Some(series) = current.take()
+                {
+                    chart_series.push(series);
                 }
                 if local == "title" {
                     title_depth = None;
@@ -1933,6 +1933,7 @@ fn excel<R: Read + Seek>(package: &mut Package<R>, document: &mut Document) -> R
     Ok(())
 }
 
+#[allow(clippy::type_complexity)]
 fn spreadsheet_table_info(
     bytes: &[u8],
     part: &str,
@@ -2171,10 +2172,9 @@ fn sheet_rows(
                     if let Some(state) = cell.take() {
                         if let Some(style) =
                             state.style_index.and_then(|index| style_defs.get(index))
+                            && let Some(row) = rows.last_mut()
                         {
-                            if let Some(row) = rows.last_mut() {
-                                row.cell_styles.push((state.column, style.clone()));
-                            }
+                            row.cell_styles.push((state.column, style.clone()));
                         }
                         let shown = match state.kind.as_deref() {
                             Some("s") => state
@@ -2272,17 +2272,17 @@ fn spreadsheet_styles(bytes: &[u8], part: &str, limits: &Limits) -> Result<Vec<C
                     }
                 }
                 "color" if font.is_some() => {
-                    if let Some(color) = element.attr("rgb").and_then(normalize_argb) {
-                        if let Some(font) = font.as_mut() {
-                            font.color = Some(color);
-                        }
+                    if let Some(color) = element.attr("rgb").and_then(normalize_argb)
+                        && let Some(font) = font.as_mut()
+                    {
+                        font.color = Some(color);
                     }
                 }
                 "fgColor" | "bgColor" if section == "fills" => {
-                    if let Some(color) = element.attr("rgb").and_then(normalize_argb) {
-                        if fill.is_none() || element.local() == "fgColor" {
-                            fill = Some(color);
-                        }
+                    if let Some(color) = element.attr("rgb").and_then(normalize_argb)
+                        && (fill.is_none() || element.local() == "fgColor")
+                    {
+                        fill = Some(color);
                     }
                 }
                 "xf" if section == "cellXfs" => {
@@ -3048,6 +3048,7 @@ fn visio_shapes(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

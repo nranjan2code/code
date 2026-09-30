@@ -1454,6 +1454,7 @@ pub(crate) fn free_part_name<R: std::io::Read + std::io::Seek>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

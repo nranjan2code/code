@@ -102,7 +102,12 @@ async fn spawn_server(
     let addr = listener.local_addr().unwrap();
     let app = vak_server::router(core);
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     (format!("http://{addr}"), handle)
 }
@@ -280,7 +285,12 @@ async fn secured_operations_center_uses_the_bound_port() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router_with_port(core, false, addr.port());
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let client = reqwest::Client::new();
 

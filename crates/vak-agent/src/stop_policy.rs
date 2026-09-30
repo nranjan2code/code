@@ -115,11 +115,12 @@ impl ReceiptSummary {
 
 /// Whether the answer names the failure it leaves standing, by quoting the
 /// error's own words: a distinctive identifier (`unknown_capability`) or a
-/// pair of adjacent words ("disk full", "read-only mode", "exit code").
+/// pair of adjacent words ("disk full", "read-only mode", "exit code"), or
+/// the tool's name with a distinctive word of the error ("bash denied").
 /// Keywords ("no issues", "error-free") read as a report and let a false
 /// success through, and they only work in English; the error's words are
 /// the same whatever language the rest of the answer is written in.
-fn reports_blocker(text: &str, error: &str) -> bool {
+fn reports_blocker(text: &str, tool: &str, error: &str) -> bool {
     fn words(text: &str) -> Vec<String> {
         text.to_lowercase()
             .split(|c: char| !(c.is_alphanumeric() || c == '-' || c == '_'))
@@ -134,7 +135,19 @@ fn reports_blocker(text: &str, error: &str) -> bool {
     let identifier = error
         .iter()
         .any(|word| (word.contains('_') || word.chars().count() >= 12) && answer.contains(word));
+    // The tool named together with a distinctive word of its error ("bash
+    // denied"). Words any success claim can carry do not count.
+    const GENERIC: [&str; 6] = ["error", "errors", "failed", "failure", "issue", "problem"];
+    let tool = tool.to_lowercase();
+    let named_with_cause = answer.contains(&tool)
+        && error.iter().any(|word| {
+            word.chars().count() >= 5
+                && *word != tool
+                && !GENERIC.contains(&word.as_str())
+                && answer.contains(word)
+        });
     identifier
+        || named_with_cause
         || error.windows(2).any(|pair| {
             pair[0].chars().count() + pair[1].chars().count() >= 7
                 && pair.iter().any(|word| word.chars().count() >= 4)
@@ -270,7 +283,7 @@ impl StopPolicy {
             return Some(reason);
         }
         if let Some((tool, error)) = &receipts.unresolved_error
-            && !reports_blocker(final_text, error)
+            && !reports_blocker(final_text, tool, error)
         {
             return Some(BlockReason::UnresolvedToolFailure {
                 tool: tool.clone(),
@@ -786,6 +799,37 @@ mod tests {
                 "{report}"
             );
         }
+    }
+
+    #[test]
+    fn a_denial_is_reported_by_naming_the_tool_and_its_cause() {
+        let p = StopPolicy::default();
+        let receipts = ReceiptSummary {
+            total_tool_calls: 1,
+            failed_tool_calls: 1,
+            unresolved_error: Some(("bash".into(), "denied by user: bash needs approval".into())),
+            ..Default::default()
+        };
+        assert_eq!(
+            p.evaluate_receipts(
+                "run it",
+                "bash denied: moving on without it",
+                None,
+                &receipts,
+                false
+            ),
+            None
+        );
+        assert!(matches!(
+            p.evaluate_receipts(
+                "run it",
+                "Ran bash without any error.",
+                None,
+                &receipts,
+                false
+            ),
+            Some(BlockReason::UnresolvedToolFailure { .. })
+        ));
     }
 
     #[test]

@@ -1362,10 +1362,10 @@ impl Core {
 
     /// Current Bedrock region, including a live persisted preference refresh.
     pub fn effective_bedrock_region(&self) -> String {
-        if let Some(url) = vak_config::get_var("VAK_BEDROCK_BASE_URL") {
-            if let Some(region) = url.split('.').nth(1) {
-                return region.to_owned();
-            }
+        if let Some(url) = vak_config::get_var("VAK_BEDROCK_BASE_URL")
+            && let Some(region) = url.split('.').nth(1)
+        {
+            return region.to_owned();
         }
         Self::read_override(&self.inner.bedrock_region_override)
             .unwrap_or_else(|| self.inner.config.bedrock_region.clone())
@@ -8356,7 +8356,8 @@ mod channel_mcp_network_tests {
     /// stripped far weaker project keys.
     #[test]
     fn untrusted_project_prompt_cannot_delete_the_safety_floor() {
-        for file in [".vak/prompts/identity.md"] {
+        {
+            let file = ".vak/prompts/identity.md";
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();

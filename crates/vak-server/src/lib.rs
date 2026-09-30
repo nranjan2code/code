@@ -1918,26 +1918,23 @@ async fn patch_finops(
         )
             .into_response();
     }
-    if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
-        if body.price_override.is_none() {
-            return StatusCode::OK.into_response();
-        }
+    if body.max_run_usd.is_none() && body.max_day_usd.is_none() && body.price_override.is_none() {
+        return StatusCode::OK.into_response();
     }
-    if let Some(price) = &body.price_override {
-        if price.model.trim().is_empty()
+    if let Some(price) = &body.price_override
+        && (price.model.trim().is_empty()
             || price.model.len() > 256
             || price.model.chars().any(char::is_control)
             || !price.input.is_finite()
             || price.input < 0.0
             || !price.output.is_finite()
-            || price.output < 0.0
-        {
-            return (
+            || price.output < 0.0)
+    {
+        return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "model id must be non-empty and rates must be non-negative finite values" })),
             )
                 .into_response();
-        }
     }
     if body.price_override.is_some() && (body.max_run_usd.is_some() || body.max_day_usd.is_some()) {
         return (
@@ -4471,6 +4468,7 @@ async fn list_sessions(
 }
 
 /// Bounded scan: header line for created_at + first user message as title.
+#[allow(clippy::type_complexity)]
 fn summarize_jsonl(
     path: &std::path::Path,
 ) -> (

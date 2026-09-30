@@ -281,11 +281,11 @@ async fn agent_identity_survives_clients_restart_and_followups_without_cross_tal
         assert!(
             requests
                 .iter()
-                .any(|r| r.system.as_deref().unwrap_or("").contains("You are Newsy."))
+                .any(|r| r.system.as_deref().unwrap_or("").contains("You are Newsy,"))
         );
         let other = requests
             .iter()
-            .find(|r| r.system.as_deref().unwrap_or("").contains("You are Other."))
+            .find(|r| r.system.as_deref().unwrap_or("").contains("You are Other,"))
             .unwrap();
         assert!(
             !other

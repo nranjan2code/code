@@ -79,7 +79,12 @@ async fn spawn_secured(
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     let handle = tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     (format!("http://{addr}"), token, cwd, handle)
 }
@@ -264,7 +269,12 @@ async fn sessions_list_attach_and_title_roundtrip() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);
@@ -341,7 +351,12 @@ async fn persisted_conversation_accepts_followup_and_streams_without_explicit_at
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(resumed);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);
@@ -394,7 +409,12 @@ async fn sessions_list_hides_abandoned_header_only_drafts() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     let body: serde_json::Value = client_with(&token)
@@ -507,7 +527,11 @@ async fn mode_switch_and_diff_endpoint() {
         .await
         .unwrap();
     assert_eq!(switched.status(), 200);
-    let health: serde_json::Value = reqwest::get(format!("{base}/health"))
+    // The full health report is for authenticated callers; an anonymous
+    // probe gets readiness only.
+    let health: serde_json::Value = client
+        .get(format!("{base}/health"))
+        .send()
         .await
         .unwrap()
         .json()
@@ -1328,7 +1352,12 @@ async fn archive_toggle_is_reflected_in_session_list() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);
@@ -1462,7 +1491,12 @@ async fn delete_all_archived_never_touches_a_different_workspaces_session() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core_b);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);
@@ -1508,7 +1542,12 @@ async fn skills_listing_and_pascalcase_mode() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);
@@ -1580,7 +1619,12 @@ async fn providers_listing_and_key_storage_roundtrip() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);
@@ -1831,7 +1875,8 @@ async fn the_first_task_is_read_only_even_in_a_full_access_workspace() {
     assert!(
         started["prompt"]
             .as_str()
-            .is_some_and(|p| p.contains("Do not modify files")),
+            .is_some_and(|p| p == vak_core::onboarding::FIRST_TASK_PROMPT
+                && p.contains("Do not change anything")),
         "the prompt is ours, not the caller's"
     );
 }
@@ -1924,7 +1969,12 @@ async fn bot_token_storage_roundtrip() {
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router(core);
     tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap();
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
     let base = format!("http://{addr}");
     let client = client_with(&token);

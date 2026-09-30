@@ -528,7 +528,7 @@ fn a_workbook_chart_keeps_its_source_data_and_cached_labels() {
         ["Category | Sales", "Jan | 120", "Feb | ", "Mar | 132"]
     );
     assert!(
-        chart_xml.contains("A1:B4") == false,
+        !chart_xml.contains("A1:B4"),
         "chart stores separate category/value references"
     );
     assert!(chart_xml.contains("Sheet1!$A$2:$A$4"), "{chart_xml}");
