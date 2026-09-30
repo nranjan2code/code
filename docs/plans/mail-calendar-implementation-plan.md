@@ -729,3 +729,7 @@ authorization and approval boundary on every execution path.
   The HTTP lifecycle test verifies events omit mailbox identity and credential
   values, and distinguishes an unconfirmed provider revocation from local
   credential cleanup.
+- 2026-09-30: Disconnect now distinguishes confirmed, unsupported, unconfirmed,
+  and not-retried provider-revocation outcomes in its response and audit entry.
+  Settings gives provider-specific guidance for unsupported revocation and
+  does not imply that a cleanup retry reattempted provider revocation.

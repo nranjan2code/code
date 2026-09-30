@@ -1245,6 +1245,15 @@ pub(super) async fn disconnect_account(
     } else {
         vak_mail_calendar::oauth::revoke_provider_grant(&vault, &account).await
     };
+    let provider_revocation = if already_disconnected {
+        "not_retried"
+    } else if provider_grant_revoked {
+        "confirmed"
+    } else if account.provider == Provider::Google {
+        "unconfirmed"
+    } else {
+        "unsupported"
+    };
     if vault.remove(&account_id).is_err() {
         record_account_event(
             &state,
@@ -1264,13 +1273,9 @@ pub(super) async fn disconnect_account(
         &account_id,
         account.provider,
         &account.capabilities,
-        if provider_grant_revoked {
-            "provider_revocation_confirmed"
-        } else {
-            "provider_revocation_unconfirmed"
-        },
+        provider_revocation,
     );
-    Json(serde_json::json!({ "disconnected": true, "already_disconnected": already_disconnected, "provider_grant_revoked": provider_grant_revoked, "content_erased": false })).into_response()
+    Json(serde_json::json!({ "disconnected": true, "already_disconnected": already_disconnected, "provider_grant_revoked": provider_grant_revoked, "provider_revocation": provider_revocation, "content_erased": false })).into_response()
 }
 
 fn operator(principal: &AuthenticatedPrincipal) -> bool {

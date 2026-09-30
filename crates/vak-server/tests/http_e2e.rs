@@ -648,6 +648,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     let disconnect_result: serde_json::Value = disconnected.json().await.unwrap();
     assert_eq!(disconnect_result["disconnected"], true);
     assert_eq!(disconnect_result["provider_grant_revoked"], false);
+    assert_eq!(disconnect_result["provider_revocation"], "unsupported");
     assert_eq!(disconnect_result["content_erased"], false);
     let vault = vak_mail_calendar::vault::AccountVault::for_agent("vak").unwrap();
     assert!(vault.load(apple_id).is_err());
@@ -677,6 +678,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert_eq!(retried.status(), reqwest::StatusCode::OK);
     let retry_result: serde_json::Value = retried.json().await.unwrap();
     assert_eq!(retry_result["already_disconnected"], true);
+    assert_eq!(retry_result["provider_revocation"], "not_retried");
     assert_eq!(retry_result["content_erased"], false);
     assert!(vault.load(apple_id).is_err());
 
@@ -810,7 +812,12 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert!(account_events.iter().any(|event| {
         event.label == "account_disconnected"
             && event.detail.contains(apple_id)
-            && event.detail.contains("provider_revocation_unconfirmed")
+            && event.detail.contains("unsupported")
+    }));
+    assert!(account_events.iter().any(|event| {
+        event.label == "account_disconnected"
+            && event.detail.contains(apple_id)
+            && event.detail.contains("not_retried")
     }));
     let serialized_account_events = serde_json::to_string(&account_events).unwrap();
     assert!(!serialized_account_events.contains("owner@example.com"));

@@ -1177,10 +1177,12 @@ export default function Settings() {
       const result = await api.disconnectMailCalendarAccount(activeAgentId(), account.id);
       await refreshMailCalendarAccounts();
       setNotice({ kind: "info", text: result.already_disconnected
-        ? "Local credential cleanup was retried. Provider grant revocation is not confirmed, and provider content was not erased."
-        : result.provider_grant_revoked
+        ? "Local credential cleanup was retried. Provider revocation was not attempted again, and provider content was not erased."
+        : result.provider_revocation === "confirmed"
           ? "The account was disconnected and its provider grant was revoked."
-          : "Local access was removed. Revoke this app's access with the provider to ensure its grant is removed." });
+          : result.provider_revocation === "unsupported"
+            ? "Local access was removed. This provider does not offer grant revocation through Vakyartha; manage connected-app access with the provider."
+            : "Local access was removed, but the provider did not confirm revocation. Check connected-app access with the provider." });
     },
   });
   const refreshMailCalendarAccount = async (account: api.MailCalendarAccount) => {
