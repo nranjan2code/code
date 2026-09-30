@@ -147,7 +147,10 @@ Read before changing behaviour in these areas:
   enforcing the preview limits. Live provider checks, source-to-Review browser
   acceptance, full conversation workspace, and the 24-hour service recovery
   test remain open. Current 4.x session history cannot be selectively erased,
-  so account-deletion erasure remains incomplete);
+  so account-deletion erasure remains incomplete. Calendar event-relative
+  routines use the existing `TaskDef` cadence, a bounded provider poll, opaque
+  encrypted Agent-vault occurrence keys, and brokered reads of matching events;
+  live-provider, browser, and 24-hour recovery acceptance remain open);
   implementation stages and provider support matrix are in
   `docs/plans/mail-calendar-implementation-plan.md`.
 - **Proposals, not behaviour** — `56-personal-multi-machine-system.md`,

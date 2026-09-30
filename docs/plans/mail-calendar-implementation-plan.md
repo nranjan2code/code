@@ -7,8 +7,9 @@ provider-reverified message citations, and
 the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
 save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
 the owner calendar preview now has grouped agenda, day, and week layouts;
-the first Stage 4 increment adds scheduled read-only routines and a bounded,
-encrypted scheduled mail-watch backlog on `TaskDef`; the first Stage 3
+the first Stage 4 increment adds scheduled read-only routines, a bounded,
+encrypted scheduled mail-watch backlog, and calendar event-relative triggers
+through the existing `TaskDef`; the first Stage 3
 increment adds an owner-confirmed, permission-checked, digest-bound plain
 email send and a
 limited timed event create for Google and Microsoft without attendees,
@@ -492,9 +493,12 @@ automation history. Multi-host watchers remain off until fencing is present.
 
 **Remaining implementation:** the typed routine contract now defines a
 calendar event start/end boundary, signed offset, bounded catch-up window, and
-opaque occurrence key. Provider polling, durable event queue/deduplication,
-TaskDef firing, and the owner setup/preview controls are still required before
-event-relative routines are available.
+opaque occurrence key. Event triggers are wired to bounded TaskDef polling,
+the Agent-vault occurrence queue, brokered matching reads, and owner settings.
+Remaining checks include provider pagination/truncation reconciliation, live
+provider behavior, complete scheduled-run browser acceptance, and sustained
+sleep/restart/outage recovery. Local polling is best effort while the service
+host is awake; it is not a 24/7 freshness guarantee.
 
 **Implemented increment (2026-09-30):** owner Settings can create, pause,
 resume, run once, inspect, and delete a scheduled read-only routine using the
@@ -654,9 +658,8 @@ remains open.
 - 2026-10-01: Added a separate encrypted Agent-vault queue for opaque calendar
   occurrence keys. It persists across process restarts, deduplicates completed,
   pending, and staged occurrences, enforces account/Agent scope and queue bounds,
-  and requeues interrupted or failed dispatches. This is queue groundwork only;
-  event polling, TaskDef dispatch, and owner controls remain open. The focused
-  recovery/isolation test passes.
+  and requeues interrupted or failed dispatches. The focused recovery/isolation
+  test passes.
 - 2026-10-01: Connected calendar event triggers to the existing `TaskDef`
   scheduler. Bounded provider polls queue due occurrence keys; the brokered
   read stages exact matches and drops stale candidates only when the provider
@@ -670,6 +673,11 @@ remains open.
   poll freshness for event-trigger routines. Focused core, vault and server
   tests, client typecheck/status tests, and the web build pass. Live-provider,
   browser and end-to-end scheduled-run acceptance remain open.
+- 2026-10-01: Added a 1,910-event synthetic server test for event-relative
+  polling: 1,500 matching occurrences are selected, while late, future, and
+  all-day events are rejected; occurrence keys contain no event title. Added
+  an Agent-vault overflow test proving a 101-item reconciliation fails without
+  partially replacing the queue.
 
 - 2026-10-01: Conversation citations now follow at most 20 additional
   same-thread pages (420 messages total) to locate a cited message. Provider

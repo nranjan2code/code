@@ -1857,10 +1857,12 @@ fn validate_calendar_occurrence_keys(
     occurrence_keys: &[String],
 ) -> Result<(), VaultError> {
     validate_routine_mail_ids(routine_id, account_id, &[])?;
-    if occurrence_keys.len() > MAX_ROUTINE_PENDING_IDS
-        || occurrence_keys
-            .iter()
-            .any(|key| !valid_calendar_occurrence_key(key))
+    if occurrence_keys.len() > MAX_ROUTINE_PENDING_IDS {
+        return Err(VaultError::TooLarge);
+    }
+    if occurrence_keys
+        .iter()
+        .any(|key| !valid_calendar_occurrence_key(key))
     {
         return Err(VaultError::InvalidReference);
     }
@@ -1870,7 +1872,8 @@ fn validate_calendar_occurrence_keys(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountSecretMaterial, AccountVault, RoutineRunStatus, RoutineRunTrigger, Uuid, VaultError,
+        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, RoutineRunStatus,
+        RoutineRunTrigger, Uuid, VaultError,
     };
     use crate::{ActionCandidate, ActionState, MailAddress, MailDraft, ProposedAction, SourceRef};
 
@@ -2275,6 +2278,19 @@ mod tests {
                 .reconcile_calendar_occurrences(&routine_id, &account_id, &[])
                 .unwrap()
         );
+        assert!(
+            reopened
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap()
+                .is_empty()
+        );
+        let overflow = (0..=MAX_ROUTINE_PENDING_IDS)
+            .map(|value| format!("calendar:{value:064x}"))
+            .collect::<Vec<_>>();
+        assert!(matches!(
+            reopened.reconcile_calendar_occurrences(&routine_id, &account_id, &overflow),
+            Err(VaultError::TooLarge)
+        ));
         assert!(
             reopened
                 .pending_calendar_occurrences(&routine_id, &account_id, 10)

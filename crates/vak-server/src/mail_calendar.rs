@@ -264,7 +264,20 @@ pub(crate) async fn calendar_event_has_due(
     if !still_authorized {
         return Err("the calendar account changed during the trigger check".into());
     }
-    let keys = events
+    let keys = due_calendar_occurrence_keys(&events, trigger, checked_after, now);
+    vault
+        .reconcile_calendar_occurrences(&scope.routine_id, &scope.account_id, &keys)
+        .map(Some)
+        .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())
+}
+
+fn due_calendar_occurrence_keys(
+    events: &[vak_mail_calendar::provider::CalendarItem],
+    trigger: vak_mail_calendar::CalendarEventTrigger,
+    checked_after: DateTime<Utc>,
+    now: DateTime<Utc>,
+) -> Vec<String> {
+    events
         .iter()
         .filter_map(|event| {
             let (Some(starts_at), Some(ends_at)) = (event.starts_at, event.ends_at) else {
@@ -274,11 +287,7 @@ pub(crate) async fn calendar_event_has_due(
                 .is_due_between(starts_at, ends_at, checked_after, now)
                 .then(|| trigger.occurrence_key(&event.provider_id, starts_at, ends_at))
         })
-        .collect::<Vec<_>>();
-    vault
-        .reconcile_calendar_occurrences(&scope.routine_id, &scope.account_id, &keys)
-        .map(Some)
-        .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())
+        .collect()
 }
 
 #[derive(Deserialize)]
@@ -2456,15 +2465,66 @@ fn record_account_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        OAUTH_CALLBACK_COOKIE, is_loopback_request, oauth_callback_cookie, oauth_callback_page,
-        oauth_callback_set_cookie, oauth_callback_uri, registered_agent, same_provider_principal,
-        valid_agent, valid_microsoft_personal_email, valid_provider_app_password,
-        valid_provider_email, verified_icloud_calendar_selection,
+        OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
+        oauth_callback_cookie, oauth_callback_page, oauth_callback_set_cookie, oauth_callback_uri,
+        registered_agent, same_provider_principal, valid_agent, valid_microsoft_personal_email,
+        valid_provider_app_password, valid_provider_email, verified_icloud_calendar_selection,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
     use std::collections::BTreeSet;
     use vak_mail_calendar::vault::AccountSecretMaterial;
-    use vak_mail_calendar::{Capability, Provider};
+    use vak_mail_calendar::{CalendarEventBoundary, CalendarEventTrigger, Capability, Provider};
+
+    #[test]
+    fn large_simulated_calendar_batch_filters_due_timed_occurrences_only() {
+        use chrono::{Duration, TimeZone, Utc};
+        use vak_mail_calendar::provider::CalendarItem;
+
+        let now = Utc.with_ymd_and_hms(2026, 10, 1, 12, 0, 0).unwrap();
+        let checked_after = now - Duration::minutes(2);
+        let trigger = CalendarEventTrigger {
+            boundary: CalendarEventBoundary::Start,
+            offset_minutes: 5,
+            max_lateness_minutes: 2,
+        };
+        let make_event = |id: String, starts_at: Option<chrono::DateTime<Utc>>| CalendarItem {
+            provider_id: id,
+            version: None,
+            title: "private subject must not enter occurrence key".into(),
+            starts_at,
+            ends_at: starts_at.map(|start| start + Duration::minutes(30)),
+            starts_on: None,
+            ends_on: None,
+            all_day: starts_at.is_none(),
+            location: None,
+            description: None,
+            attendee_count: 0,
+            recurring: false,
+            private: false,
+            can_cancel: false,
+        };
+        let mut events = (0..1_500)
+            .map(|index| make_event(format!("due-{index}"), Some(now + Duration::minutes(4))))
+            .collect::<Vec<_>>();
+        events.extend((0..200).map(|index| {
+            make_event(
+                format!("too-late-{index}"),
+                Some(now + Duration::minutes(2)),
+            )
+        }));
+        events.extend(
+            (0..200).map(|index| {
+                make_event(format!("future-{index}"), Some(now + Duration::minutes(6)))
+            }),
+        );
+        events.extend((0..10).map(|index| make_event(format!("all-day-{index}"), None)));
+
+        let keys = due_calendar_occurrence_keys(&events, trigger, checked_after, now);
+        assert_eq!(keys.len(), 1_500);
+        assert!(keys.iter().all(|key| key.starts_with("calendar:")));
+        assert!(keys.iter().all(|key| !key.contains("private")));
+        assert_eq!(keys.iter().collect::<BTreeSet<_>>().len(), 1_500);
+    }
 
     #[test]
     fn app_password_validation_is_provider_specific_and_accepts_google_display_spacing() {
