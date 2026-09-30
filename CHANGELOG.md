@@ -1,3 +1,11 @@
+## 5.2.11 — 2026-09-30
+
+- Hold a turn open for the person only with the explicit `/until-done …` command; "keep working until the tests pass" now names a condition instead of keeping a turn running until someone types done.
+- Shorten the Office and PDF tool's instructions by moving each format's styles, layouts and default sheet into the fields that use them.
+- Keep an MCP server's latest failure out of the cached system prompt and report it, with the fix, when the server is used.
+- End a turn honestly when a runtime correction cannot be recorded, instead of retrying without it.
+- Give workflow agent steps a prompt written for their own tools and reader, and record an Agent's added instructions under their own name.
+
 ## 5.2.10 — 2026-09-30
 
 - Make every prompt universal and true to the runtime, from a full audit of every model-facing text (`docs/audits/prompts-universal-2026-09-30.md`): the assistant introduces itself as Vakyartha, replies in the person's language, checks work the way each result can be checked, and knows which blocks come from the runtime rather than the person.
