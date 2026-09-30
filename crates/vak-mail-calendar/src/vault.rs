@@ -197,6 +197,8 @@ struct RoutineCursor {
     pending_ids: Vec<String>,
     #[serde(default)]
     delivered_ids: Vec<String>,
+    #[serde(default)]
+    provider_cursor: Option<String>,
 }
 
 impl Drop for VaultPayload {
@@ -424,7 +426,24 @@ impl AccountVault {
         account_id: &str,
         item_ids: &[String],
     ) -> Result<bool, VaultError> {
+        self.queue_mail_ids_with_cursor(routine_id, account_id, item_ids, None)
+    }
+
+    /// Atomically persist IDs discovered through a provider cursor and the
+    /// cursor position that follows them, so restart cannot skip a page.
+    pub fn queue_mail_ids_with_cursor(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        item_ids: &[String],
+        provider_cursor: Option<&str>,
+    ) -> Result<bool, VaultError> {
         validate_routine_mail_ids(routine_id, account_id, item_ids)?;
+        if provider_cursor.is_some_and(|cursor| {
+            cursor.is_empty() || cursor.len() > 2048 || cursor.chars().any(char::is_control)
+        }) {
+            return Err(VaultError::InvalidReference);
+        }
         self.with_routine_cursors(|mut cursors| {
             let index = match cursors
                 .iter()
@@ -446,11 +465,15 @@ impl AccountVault {
                         seen_ids: Vec::new(),
                         pending_ids: Vec::new(),
                         delivered_ids: Vec::new(),
+                        provider_cursor: None,
                     });
                     cursors.len() - 1
                 }
             };
             let cursor = &mut cursors[index];
+            if let Some(provider_cursor) = provider_cursor {
+                cursor.provider_cursor = Some(provider_cursor.to_owned());
+            }
             for item_id in item_ids {
                 if cursor.seen_ids.iter().any(|seen| seen == item_id)
                     || cursor.pending_ids.iter().any(|pending| pending == item_id)
@@ -470,6 +493,28 @@ impl AccountVault {
             let has_pending = !cursor.pending_ids.is_empty();
             self.write_routine_cursors(&cursors)?;
             Ok(has_pending)
+        })
+    }
+
+    /// Return the encrypted provider continuation token for one routine.
+    pub fn routine_provider_cursor(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+    ) -> Result<Option<String>, VaultError> {
+        validate_account_id(account_id)?;
+        validate_account_id(routine_id)?;
+        self.with_routine_cursors(|cursors| {
+            let Some(cursor) = cursors
+                .iter()
+                .find(|cursor| cursor.routine_id == routine_id)
+            else {
+                return Ok(None);
+            };
+            if cursor.account_id != account_id {
+                return Err(VaultError::InvalidReference);
+            }
+            Ok(cursor.provider_cursor.clone())
         })
     }
 
@@ -850,6 +895,11 @@ impl AccountVault {
                         || cursor.seen_ids.len() > MAX_ROUTINE_SEEN_IDS
                         || cursor.pending_ids.len() > MAX_ROUTINE_PENDING_IDS
                         || cursor.delivered_ids.len() > MAX_ROUTINE_PENDING_IDS
+                        || cursor.provider_cursor.as_ref().is_some_and(|value| {
+                            value.is_empty()
+                                || value.len() > 2048
+                                || value.chars().any(char::is_control)
+                        })
                         || cursor.pending_ids.len() + cursor.delivered_ids.len()
                             > MAX_ROUTINE_PENDING_IDS
                         || cursor.seen_ids.iter().any(|id| {
@@ -1218,7 +1268,12 @@ mod tests {
         let first = AccountVault::for_agent(&agent_id).unwrap();
         assert!(
             first
-                .queue_unseen_mail_ids(&routine_id, &account_id, &ids(&["m1", "m2", "m3"]))
+                .queue_mail_ids_with_cursor(
+                    &routine_id,
+                    &account_id,
+                    &ids(&["m1", "m2", "m3"]),
+                    Some("apple-imap:7:42"),
+                )
                 .unwrap()
         );
         assert!(
@@ -1228,6 +1283,13 @@ mod tests {
         );
 
         let reopened = AccountVault::for_agent(&agent_id).unwrap();
+        assert_eq!(
+            reopened
+                .routine_provider_cursor(&routine_id, &account_id)
+                .unwrap()
+                .as_deref(),
+            Some("apple-imap:7:42")
+        );
         assert_eq!(
             reopened
                 .pending_mail_ids(&routine_id, &account_id, 2)

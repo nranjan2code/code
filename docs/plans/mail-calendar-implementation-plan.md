@@ -355,9 +355,11 @@ provider IDs into a bounded encrypted Agent-vault backlog and fetches at most
 the routine's configured batch by explicit IDs. The content-free poll does
 not fetch message bodies. Fetched IDs remain staged until the scheduler
 observes a completed run; failed or interrupted runs requeue them, preserving
-at-least-once recovery across local restarts. There is no provider-native
-cursor yet: more than 100 arrivals between checks can push older mail outside
-the scan window, and backlog overflow fails closed. An Agent-vault OS
+at-least-once recovery across local restarts. Apple now advances a bounded
+UIDVALIDITY/UID cursor so arrivals beyond one page can be drained on later
+checks. Gmail and Microsoft still use the latest 100 IDs per check, so a larger
+arrival burst can push older mail outside that window; backlog overflow fails
+closed. An Agent-vault OS
 advisory lease now prevents duplicate polls or dispatches by
 local server processes; it is held through child completion
 and released by the OS on process exit. It does not coordinate separate hosts
@@ -383,7 +385,7 @@ Missed scheduled slots now use each task's configured IANA timezone during
 startup catch-up, with instant-based comparison across daylight-saving gaps
 and folds. A server regression covers a New York fall-back slot missed while
 the process was down. This corrects the shared `TaskDef` scheduler; it does
-not provide provider-native cursors or turn best-effort polling into a 24/7
+not provide Google/Microsoft provider-native cursors or turn best-effort polling into a 24/7
 availability guarantee.
 
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
@@ -1188,3 +1190,11 @@ authorization and approval boundary on every execution path.
   releasing unused capacity after results or failures. Core regression tests
   verify reservations cannot exceed the configured ceiling and cancelled work
   does not strand capacity.
+- 2026-09-30: Added bounded Apple IMAP watch pagination using UIDVALIDITY and
+  UIDNEXT. Each page searches at most 100 UID values, persists the resulting
+  cursor atomically with queued IDs in the encrypted routine vault, and drains
+  later pages after the current backlog is handled. A UIDVALIDITY change fails
+  visibly instead of comparing unrelated mailbox IDs; the owner must recreate
+  that routine to establish a new baseline. Local protocol, cursor, vault
+  restart, worker, HTTP, formatting, and diff checks pass. Gmail and Microsoft
+  remain on the latest-100 scan and still need native history/delta pagination.

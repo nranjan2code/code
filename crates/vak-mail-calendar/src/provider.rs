@@ -131,6 +131,10 @@ pub enum ProviderReadError {
     Unavailable,
     #[error("provider response was invalid or exceeded its size limit")]
     InvalidResponse,
+    #[error(
+        "the Apple mailbox UIDVALIDITY changed; delete and recreate the routine to establish a new cursor, which may leave a gap"
+    )]
+    WatchCursorReset,
     #[error("requested time range is outside the allowed window")]
     InvalidRange,
     #[error("credential vault is unavailable")]
@@ -338,6 +342,28 @@ impl ProviderReadClient {
             .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
             .map(str::to_owned)
             .collect())
+    }
+
+    /// Return one bounded watch page and its continuation position. Apple
+    /// advances by UIDVALIDITY/UIDNEXT; providers without a native page
+    /// adapter retain the bounded recent-window behavior for now.
+    pub async fn mail_watch_page(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<(Vec<String>, Option<String>), ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        let limit = limit.clamp(1, MAX_WATCH_SCAN_ITEMS);
+        if account.provider == Provider::AppleIcloud {
+            return icloud_mail_watch_page(account, vault, cursor, limit).await;
+        }
+        self.recent_mail_ids(account, vault, agent_id, audience, limit)
+            .await
+            .map(|ids| (ids, None))
     }
 
     /// Fetch a small explicit set of message IDs. Scheduled watches use this
@@ -1132,6 +1158,107 @@ async fn icloud_recent_mail_ids(
     result
 }
 
+async fn icloud_mail_watch_page(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<(Vec<String>, Option<String>), ProviderReadError> {
+    let (login, password) = vault
+        .icloud_imap_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let result = async {
+        let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        icloud_watch_ids_in_mailbox(&mut session, &mailbox, cursor, limit).await
+    }
+    .await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+async fn icloud_watch_ids_in_mailbox<T>(
+    session: &mut async_imap::Session<BudgetIo<T>>,
+    mailbox: &async_imap::types::Mailbox,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<(Vec<String>, Option<String>), ProviderReadError>
+where
+    T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let uid_validity = mailbox
+        .uid_validity
+        .ok_or(ProviderReadError::InvalidResponse)?;
+    let uid_next = mailbox.uid_next.ok_or(ProviderReadError::InvalidResponse)?;
+    let highest_uid = uid_next.saturating_sub(1);
+    let (first_uid, end_uid) = icloud_watch_uid_window(cursor, uid_validity, highest_uid, limit)?;
+    let mut ids = Vec::new();
+    if mailbox.exists > 0 && first_uid <= end_uid {
+        let query = format!("UID {first_uid}:{end_uid}");
+        let found = tokio::time::timeout(StdDuration::from_secs(10), session.uid_search(query))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        if found.len() > limit {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        let mut found = found.into_iter().collect::<Vec<_>>();
+        found.sort_unstable();
+        ids.extend(found.into_iter().map(|uid| format!("{uid_validity}:{uid}")));
+    }
+    let next_cursor = format!("apple-imap:{uid_validity}:{end_uid}");
+    Ok((ids, Some(next_cursor)))
+}
+
+fn parse_icloud_watch_cursor(cursor: &str) -> Result<(u32, u32), ProviderReadError> {
+    let mut parts = cursor.split(':');
+    if parts.next() != Some("apple-imap") {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let validity = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .ok_or(ProviderReadError::InvalidResponse)?;
+    let uid = parts
+        .next()
+        .and_then(|part| part.parse::<u32>().ok())
+        .ok_or(ProviderReadError::InvalidResponse)?;
+    if parts.next().is_some() {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    Ok((validity, uid))
+}
+
+fn icloud_watch_uid_window(
+    cursor: Option<&str>,
+    uid_validity: u32,
+    highest_uid: u32,
+    limit: usize,
+) -> Result<(u32, u32), ProviderReadError> {
+    let width = limit.clamp(1, MAX_WATCH_SCAN_ITEMS).min(u32::MAX as usize) as u32;
+    let first = if let Some(cursor) = cursor {
+        let (stored_validity, stored_uid) = parse_icloud_watch_cursor(cursor)?;
+        if stored_validity != uid_validity {
+            // UID values cannot be compared across a UIDVALIDITY change.
+            // Fail visibly; silently restarting could replay or skip mail.
+            return Err(ProviderReadError::WatchCursorReset);
+        }
+        stored_uid.saturating_add(1)
+    } else {
+        highest_uid.saturating_sub(width - 1).max(1)
+    };
+    let end = if cursor.is_some() {
+        highest_uid.min(first.saturating_add(width - 1))
+    } else {
+        highest_uid
+    };
+    Ok((first, end))
+}
+
 async fn icloud_mail_by_ids(
     account: &ConnectedAccount,
     vault: &AccountVault,
@@ -1173,7 +1300,7 @@ where
         .map_err(|_| ProviderReadError::Unavailable)?
         .map_err(map_imap_error)?;
     if mailbox.uid_validity != Some(parsed[0].0) {
-        return Err(ProviderReadError::InvalidResponse);
+        return Err(ProviderReadError::WatchCursorReset);
     }
     let mut fetched = tokio::time::timeout(
         StdDuration::from_secs(10),
@@ -1878,6 +2005,107 @@ mod tests {
         assert_eq!(items[0].provider_id, "7:31");
         assert_eq!(items[0].subject, "Selected");
         assert!(items[0].body_text.is_none());
+        session.logout().await.unwrap();
+        server.await.unwrap();
+    }
+
+    #[test]
+    fn icloud_watch_cursor_is_uidvalidity_scoped_and_strictly_parsed() {
+        assert_eq!(
+            parse_icloud_watch_cursor("apple-imap:17:204").unwrap(),
+            (17, 204)
+        );
+        for invalid in [
+            "google:17:204",
+            "apple-imap:0:204",
+            "apple-imap:17:-1",
+            "apple-imap:17:204:extra",
+            "apple-imap:17:204\n",
+        ] {
+            assert!(matches!(
+                parse_icloud_watch_cursor(invalid),
+                Err(ProviderReadError::InvalidResponse)
+            ));
+        }
+        assert_eq!(
+            icloud_watch_uid_window(None, 17, 250, 100).unwrap(),
+            (151, 250)
+        );
+        assert_eq!(
+            icloud_watch_uid_window(Some("apple-imap:17:250"), 17, 420, 100).unwrap(),
+            (251, 350)
+        );
+        assert_eq!(
+            icloud_watch_uid_window(Some("apple-imap:17:350"), 17, 420, 100).unwrap(),
+            (351, 420)
+        );
+        assert!(matches!(
+            icloud_watch_uid_window(Some("apple-imap:17:350"), 18, 420, 100),
+            Err(ProviderReadError::WatchCursorReset)
+        ));
+    }
+
+    #[tokio::test]
+    async fn icloud_watch_page_queries_only_the_next_bounded_uid_range() {
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+        let (client_stream, server_stream) = tokio::io::duplex(8192);
+        let server = tokio::spawn(async move {
+            let mut stream = BufReader::new(server_stream);
+            stream
+                .get_mut()
+                .write_all(b"* OK iCloud test server\r\n")
+                .await
+                .unwrap();
+            loop {
+                let mut line = String::new();
+                if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    break;
+                }
+                let tag = line.split_whitespace().next().unwrap_or("A0000").to_owned();
+                let command = line.split_whitespace().nth(1).unwrap_or("");
+                let response = if line.contains(" LOGIN ") {
+                    format!("{tag} OK authenticated\r\n")
+                } else if command.eq_ignore_ascii_case("CAPABILITY") {
+                    format!("* CAPABILITY IMAP4rev1\r\n{tag} OK capabilities\r\n")
+                } else if line.to_ascii_uppercase().contains("UID SEARCH") {
+                    assert!(line.contains("UID SEARCH UID 351:420"), "{line}");
+                    format!("* SEARCH 351 355 420\r\n{tag} OK searched\r\n")
+                } else if command.eq_ignore_ascii_case("LOGOUT") {
+                    format!("* BYE logging out\r\n{tag} OK logout\r\n")
+                } else {
+                    format!("{tag} BAD unsupported test command {command}\r\n")
+                };
+                if stream
+                    .get_mut()
+                    .write_all(response.as_bytes())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+                if command.eq_ignore_ascii_case("LOGOUT") {
+                    break;
+                }
+            }
+        });
+        let client = async_imap::Client::new(BudgetIo::new(client_stream, 8192, 8192));
+        let mut session = client
+            .login("owner@icloud.com", "test-secret")
+            .await
+            .unwrap();
+        let mailbox = async_imap::types::Mailbox {
+            exists: 3,
+            uid_validity: Some(7),
+            uid_next: Some(421),
+            ..Default::default()
+        };
+        let (ids, cursor) =
+            icloud_watch_ids_in_mailbox(&mut session, &mailbox, Some("apple-imap:7:350"), 100)
+                .await
+                .unwrap();
+        assert_eq!(ids, vec!["7:351", "7:355", "7:420"]);
+        assert_eq!(cursor.as_deref(), Some("apple-imap:7:420"));
         session.logout().await.unwrap();
         server.await.unwrap();
     }

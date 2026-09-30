@@ -98,16 +98,25 @@ pub(crate) async fn mail_watch_has_unseen(
     {
         return Ok(true);
     }
-    let item_ids = ProviderReadClient::new()
-        .recent_mail_ids(
+    let cursor = vault
+        .routine_provider_cursor(&scope.routine_id, &scope.account_id)
+        .map_err(|_| "the private mail watch cursor is unavailable".to_string())?;
+    let (item_ids, next_cursor) = ProviderReadClient::new()
+        .mail_watch_page(
             &account,
             &vault,
             agent_id,
             &audience,
+            cursor.as_deref(),
             vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
         )
         .await
-        .map_err(|_| "the mail watch could not check its bounded provider window".to_string())?;
+        .map_err(|error| match error {
+            vak_mail_calendar::provider::ProviderReadError::WatchCursorReset => {
+                "the Apple mailbox changed its UID validity; delete and recreate this watch to establish a fresh cursor, which may leave a gap".to_string()
+            }
+            _ => "the mail watch could not check its bounded provider window".to_string(),
+        })?;
     let still_authorized = ledger.read_all().ok().is_some_and(|latest| {
         latest.iter().any(|current| {
             current.id == account.id
@@ -119,7 +128,12 @@ pub(crate) async fn mail_watch_has_unseen(
         return Err("the mail account changed during the watch check".into());
     }
     vault
-        .queue_unseen_mail_ids(&scope.routine_id, &scope.account_id, &item_ids)
+        .queue_mail_ids_with_cursor(
+            &scope.routine_id,
+            &scope.account_id,
+            &item_ids,
+            next_cursor.as_deref(),
+        )
         .map_err(|_| "the private mail watch cursor is unavailable".to_string())
 }
 
@@ -1198,6 +1212,7 @@ fn provider_preview_error(error: vak_mail_calendar::provider::ProviderReadError)
             "reauthentication_required",
         ),
         E::InvalidRange | E::InvalidResponse => (StatusCode::BAD_REQUEST, "invalid_request"),
+        E::WatchCursorReset => (StatusCode::CONFLICT, "watch_cursor_reset"),
         E::Vault => (StatusCode::SERVICE_UNAVAILABLE, "credential_unavailable"),
         E::Unavailable => (StatusCode::BAD_GATEWAY, "provider_unavailable"),
     };

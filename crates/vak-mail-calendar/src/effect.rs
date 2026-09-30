@@ -43,7 +43,7 @@ impl From<ProviderReadError> for ProviderEffectError {
             ProviderReadError::ReauthenticationRequired => Self::ReauthorizationRequired,
             ProviderReadError::Vault => Self::ReauthorizationRequired,
             ProviderReadError::Unavailable | ProviderReadError::InvalidResponse => Self::Unknown,
-            ProviderReadError::InvalidRange => Self::Rejected,
+            ProviderReadError::InvalidRange | ProviderReadError::WatchCursorReset => Self::Rejected,
         }
     }
 }

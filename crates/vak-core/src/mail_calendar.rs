@@ -435,21 +435,26 @@ impl vak_tools::Tool for MailCalendarTool {
                                 .has_unresolved_mail_ids(&scope.routine_id, &scope.account_id)
                                 .map_err(|error| error.to_string())?
                             {
-                                let ids = client
-                                    .recent_mail_ids(
+                                let cursor = vault
+                                    .routine_provider_cursor(&scope.routine_id, &scope.account_id)
+                                    .map_err(|error| error.to_string())?;
+                                let (ids, next_cursor) = client
+                                    .mail_watch_page(
                                         account,
                                         &vault,
                                         agent_id,
                                         &account_audience,
+                                        cursor.as_deref(),
                                         vak_mail_calendar::MAX_ROUTINE_MAIL_BACKLOG,
                                     )
                                     .await
                                     .map_err(|error| error.to_string())?;
                                 vault
-                                    .queue_unseen_mail_ids(
+                                    .queue_mail_ids_with_cursor(
                                         &scope.routine_id,
                                         &scope.account_id,
                                         &ids,
+                                        next_cursor.as_deref(),
                                     )
                                     .map_err(|error| error.to_string())?;
                             }
