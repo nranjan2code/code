@@ -72,36 +72,37 @@ pub(super) async fn list_accounts(
                 Ok(vault) => vault,
                 Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
             };
-            let credentials = accounts
+            let account_views = accounts
                 .iter()
                 .map(|account| {
-                    if account.revoked_at.is_some() || account.status == AccountStatus::Pending {
+                    // Do not decrypt every account credential into a retained
+                    // collection just to render owner metadata. At most the
+                    // candidate and one active replacement are live together.
+                    let credential = if account.revoked_at.is_some()
+                        || account.status == AccountStatus::Pending
+                    {
                         Err(vak_mail_calendar::vault::VaultError::Unavailable)
                     } else {
                         vault.load(&account.id)
-                    }
-                })
-                .collect::<Vec<_>>();
-            let account_views = accounts
-                .iter()
-                .enumerate()
-                .map(|(index, account)| {
-                    let credential = &credentials[index];
+                    };
                     let superseded_by_active_link = account.status
                         == AccountStatus::ReauthenticationRequired
                         && credential.as_ref().is_ok_and(|candidate| {
-                            accounts.iter().enumerate().any(|(other_index, other)| {
-                                other_index != index
-                                    && other.provider == account.provider
-                                    && other.status == AccountStatus::Connected
-                                    && other.revoked_at.is_none()
-                                    && credentials[other_index].as_ref().is_ok_and(|other_secret| {
-                                        same_provider_principal(
-                                            account.provider,
-                                            candidate,
-                                            other_secret,
-                                        )
-                                    })
+                            accounts.iter().any(|other| {
+                                if other.id == account.id
+                                    || other.provider != account.provider
+                                    || other.status != AccountStatus::Connected
+                                    || other.revoked_at.is_some()
+                                {
+                                    return false;
+                                }
+                                vault.load(&other.id).is_ok_and(|other_secret| {
+                                    same_provider_principal(
+                                        account.provider,
+                                        candidate,
+                                        &other_secret,
+                                    )
+                                })
                             })
                         });
                     AccountView {

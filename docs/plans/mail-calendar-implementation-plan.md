@@ -820,3 +820,11 @@ authorization and approval boundary on every execution path.
   Calendar/CalDAV; Apple remains unavailable to Agents until both services
   have reviewed verification and authorization contracts. All 52 domain tests,
   the state-registry test, and all 16 server HTTP tests pass.
+- 2026-09-30: Reduced owner account-inventory secret exposure. It now loads
+  each account credential only while rendering that account, and loads a
+  replacement credential only while comparing one reauthentication-required
+  row, instead of retaining every decrypted account credential together. The
+  owner/Agent account lifecycle HTTP test passes. Server Clippy still reports
+  existing warnings outside the inventory path, including the disconnect
+  block in the same module; it reported no warning in the changed inventory
+  code. Formatting and diff checks pass.
