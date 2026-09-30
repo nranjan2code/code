@@ -209,6 +209,8 @@ link before reconnecting that identity with a different selection. While a
 link is pending, another link for that provider and Agent is rejected until it
 finishes or is cleaned up. Principal comparison stays inside the Agent vault;
 the connection ledger contains no identity fingerprint or mailbox address.
+A link marked reauthentication-required is not active: its access is fenced,
+and the owner may connect again and then remove the old entry.
 
 Reads select message IDs, threads, folders, calendars, or a bounded time
 window. Search is a deliberate, scoped operation with a result cap. Free/busy

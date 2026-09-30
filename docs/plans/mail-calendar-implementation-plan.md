@@ -760,6 +760,11 @@ authorization and approval boundary on every execution path.
   same-provider links reject a second attempt before its secret exists. iCloud account
   email matching is case-insensitive, and the ledger retains no identity
   fingerprint. OAuth domain and owner/Agent HTTP regressions pass.
+- 2026-09-30: Kept the recovery path usable with the active-principal guard:
+  reauthentication-required links are already fenced from admission, so the
+  owner can reconnect that identity and remove the old entry as Settings says.
+  The OAuth regression covers active-duplicate rejection, pending-link
+  conflict, and reconnect after reauthentication is required.
 - 2026-09-30: Rechecked Apple's documented third-party account authorization.
   Apple Support describes Apple Account authorization and revocation for
   supported apps. The developer OAuth flow reviewed applies to the Apple School

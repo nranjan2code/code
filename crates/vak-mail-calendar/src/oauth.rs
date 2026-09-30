@@ -159,10 +159,7 @@ impl RedeemedAuthorization {
                     if linked.status == AccountStatus::Pending {
                         return Err(OAuthExchangeError::AccountLinkInProgress);
                     }
-                    if !matches!(
-                        linked.status,
-                        AccountStatus::Connected | AccountStatus::ReauthenticationRequired
-                    ) {
+                    if linked.status != AccountStatus::Connected {
                         continue;
                     }
                     let stored = vault
@@ -2408,6 +2405,15 @@ mod tests {
             Capability::CalendarRead,
         );
         distinct.persist(&vault, &ledger).unwrap();
+        ledger
+            .append_reauthentication_required(&first_account_id, Utc::now())
+            .unwrap();
+        let reconnected = make_redeemed(
+            Provider::Google,
+            "google:stable-subject",
+            Capability::MailRead,
+        );
+        reconnected.persist(&vault, &ledger).unwrap();
         let accounts = ledger.read_all().unwrap();
         assert_eq!(
             accounts
@@ -2418,7 +2424,14 @@ mod tests {
                 .count(),
             2
         );
-        assert!(vault.load(&first_account_id).is_ok());
+        assert_eq!(
+            accounts
+                .iter()
+                .find(|account| account.id == first_account_id)
+                .unwrap()
+                .status,
+            AccountStatus::ReauthenticationRequired
+        );
     }
 
     #[test]
