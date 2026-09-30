@@ -318,9 +318,9 @@ pub fn plan_selected(input: PlanInput) -> WorkingSetPlan {
         };
         plan.spent = plan.spent.saturating_add(cost);
         plan.per_turn.push((turn.id.clone(), fidelity));
-        plan.selected_records
-            .as_mut()
-            .map(|sources| sources.push((turn.id.clone(), closing.clone())));
+        if let Some(sources) = plan.selected_records.as_mut() {
+            sources.push((turn.id.clone(), closing.clone()));
+        }
         plan.retrieved.push(turn.id.clone());
     }
     plan
