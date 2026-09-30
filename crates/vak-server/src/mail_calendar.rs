@@ -65,6 +65,15 @@ pub(crate) async fn validate_routine_scope(
     if !vault.credential_available(&scope.account_id) {
         return Err("the selected account's saved credential is unavailable".into());
     }
+    if account.provider == Provider::Google
+        && vault.has_app_password(&account.id)
+        && scope.operations.contains(&RoutineOperation::MailThread)
+    {
+        return Err(
+            "Gmail App Password accounts support selected-message reads, not conversation reads"
+                .into(),
+        );
+    }
     if let Some(folder_id) = scope.mail_folder_id.as_deref() {
         let folders = ProviderReadClient::new()
             .list_mail_folders(&account, &vault, agent_id, &audience)
@@ -185,6 +194,7 @@ struct AccountView {
     provider: Provider,
     status: AccountStatus,
     identity_masked: Option<String>,
+    auth_method: Option<&'static str>,
     credential_available: bool,
     superseded_by_active_link: bool,
     capabilities: Vec<Capability>,
@@ -261,6 +271,13 @@ pub(super) async fn list_accounts(
                             .as_ref()
                             .ok()
                             .and_then(AccountSecretMaterial::masked_display_identity),
+                        auth_method: credential.as_ref().ok().map(|material| {
+                            if material.uses_app_password() {
+                                "app_password"
+                            } else {
+                                "oauth"
+                            }
+                        }),
                         credential_available: credential.is_ok(),
                         superseded_by_active_link,
                         capabilities: account.capabilities.iter().copied().collect(),
@@ -1601,8 +1618,10 @@ fn same_provider_principal(
     left: &AccountSecretMaterial,
     right: &AccountSecretMaterial,
 ) -> bool {
-    if provider == Provider::AppleIcloud {
-        left.has_same_principal_ignoring_ascii_case(right)
+    if provider == Provider::AppleIcloud
+        || (provider == Provider::Google && (left.uses_app_password() || right.uses_app_password()))
+    {
+        left.has_same_display_identity_ignoring_ascii_case(right)
     } else {
         left.has_same_principal(right)
     }
@@ -1785,13 +1804,13 @@ pub(super) async fn begin_oauth(
 }
 
 #[derive(Deserialize)]
-struct IcloudConnectRequest {
+struct AppPasswordConnectRequest {
     email: SensitiveInput,
     app_specific_password: SensitiveInput,
     capabilities: Vec<Capability>,
 }
 
-impl Drop for IcloudConnectRequest {
+impl Drop for AppPasswordConnectRequest {
     fn drop(&mut self) {
         self.email.0.zeroize();
         self.app_specific_password.0.zeroize();
@@ -1814,29 +1833,34 @@ impl<'de> Deserialize<'de> for SensitiveInput {
 /// Store an iCloud app-specific password without exposing it to a provider
 /// request here. Content reads remain disabled until the lifecycle erasure
 /// gate is implemented.
-pub(super) async fn connect_icloud(
+pub(super) async fn connect_app_password(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    OriginalUri(uri): OriginalUri,
     Path(agent_id): Path<String>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    let provider = if uri.path().ends_with("/google-app-password") {
+        Provider::Google
+    } else {
+        Provider::AppleIcloud
+    };
     if !operator(&principal) {
         return StatusCode::FORBIDDEN.into_response();
     }
     if !valid_agent(&state, &agent_id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    let Some(_provider_guard) =
-        active_provider_link_guard(&state, &agent_id, Provider::AppleIcloud).await
+    let Some(_provider_guard) = active_provider_link_guard(&state, &agent_id, provider).await
     else {
         return StatusCode::NOT_FOUND.into_response();
     };
     if state.core.config().server.public_url.is_some() || !is_loopback_request(&headers, peer) {
         return (
             StatusCode::FORBIDDEN,
-            "iCloud app-specific passwords can only be added to a local server.",
+            "App passwords can only be added to a local server.",
         )
             .into_response();
     }
@@ -1844,7 +1868,7 @@ pub(super) async fn connect_icloud(
         wipe_request_bytes(body);
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     }
-    let parsed = serde_json::from_slice::<IcloudConnectRequest>(&body);
+    let parsed = serde_json::from_slice::<AppPasswordConnectRequest>(&body);
     wipe_request_bytes(body);
     let mut request = match parsed {
         Ok(request) => request,
@@ -1852,36 +1876,34 @@ pub(super) async fn connect_icloud(
     };
     let email = Zeroizing::new(request.email.0.trim().to_owned());
     request.email.0.zeroize();
-    let valid_email = valid_icloud_email(&email);
-    let valid_password = (16..=32).contains(&request.app_specific_password.0.len())
-        && request
-            .app_specific_password
-            .0
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-');
+    let valid_email = valid_provider_email(&email);
+    let valid_password = valid_provider_app_password(provider, &request.app_specific_password.0);
     let capabilities = request
         .capabilities
         .iter()
         .copied()
         .collect::<BTreeSet<_>>();
-    let apple_read_only = capabilities.len() == request.capabilities.len()
+    let supported_read_only = capabilities.len() == request.capabilities.len()
         && !capabilities.is_empty()
         && capabilities.iter().all(|capability| {
-            matches!(
-                capability,
-                Capability::MailRead | Capability::CalendarFreeBusy | Capability::CalendarRead
-            )
+            matches!(capability, Capability::MailRead)
+                || (provider == Provider::AppleIcloud
+                    && matches!(
+                        capability,
+                        Capability::CalendarFreeBusy | Capability::CalendarRead
+                    ))
         });
     let audit_capabilities = capabilities.clone();
     let verified_mail_only =
         capabilities.len() == 1 && capabilities.contains(&Capability::MailRead);
-    let verified_calendar_only =
-        capabilities.len() == 1 && capabilities.contains(&Capability::CalendarRead);
-    if !valid_email || !valid_password || !apple_read_only {
+    let verified_calendar_only = provider == Provider::AppleIcloud
+        && capabilities.len() == 1
+        && capabilities.contains(&Capability::CalendarRead);
+    if !valid_email || !valid_password || !supported_read_only {
         request.app_specific_password.0.zeroize();
         return (
             StatusCode::BAD_REQUEST,
-            "Enter a valid iCloud email, app-specific password, and read-only access selection.",
+            "Enter a valid provider email, app password, and supported read-only access selection.",
         )
             .into_response();
     }
@@ -1907,6 +1929,10 @@ pub(super) async fn connect_icloud(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    let mut app_password = std::mem::take(&mut *request.app_specific_password.0);
+    if provider == Provider::Google {
+        app_password.retain(|character| character != ' ');
+    }
     let material = match AccountSecretMaterial::new(
         email.to_string(),
         Some(email.to_string()),
@@ -1914,7 +1940,7 @@ pub(super) async fn connect_icloud(
         None,
         None,
         Some(email.to_string()),
-        Some(std::mem::take(&mut *request.app_specific_password.0)),
+        Some(app_password),
     ) {
         Ok(material) => material,
         Err(_) => {
@@ -1925,18 +1951,18 @@ pub(super) async fn connect_icloud(
     // Avoid sending credentials to the provider for a link that is already
     // known to be active. The conditional append below remains the
     // cross-process authority for races that occur after this read.
-    let existing_icloud_links = match ledger.read_all() {
+    let existing_provider_links = match ledger.read_all() {
         Ok(links) => links,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    for linked in existing_icloud_links
+    for linked in existing_provider_links
         .iter()
-        .filter(|linked| linked.provider == Provider::AppleIcloud && linked.revoked_at.is_none())
+        .filter(|linked| linked.provider == provider && linked.revoked_at.is_none())
     {
         if linked.status == AccountStatus::Pending {
             return (
                 StatusCode::CONFLICT,
-                "Another iCloud account connection for this Agent is still pending. Finish its cleanup before trying again.",
+                "Another account connection for this provider is still pending. Finish its cleanup before trying again.",
             )
                 .into_response();
         }
@@ -1950,16 +1976,31 @@ pub(super) async fn connect_icloud(
                 Ok(stored) => stored,
                 Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
             };
-            if stored.has_same_principal_ignoring_ascii_case(&material) {
+            if same_provider_principal(provider, &stored, &material) {
                 return (
                     StatusCode::CONFLICT,
-                    "This iCloud account is already connected to this Agent. Disconnect it before changing its access selection.",
+                    "This account is already connected to this Agent. Disconnect it before changing its access selection.",
                 )
                     .into_response();
             }
         }
     }
-    if verified_mail_only {
+    if verified_mail_only && provider == Provider::Google {
+        let (imap_login, imap_password) = match material.icloud_imap_credentials() {
+            Ok(credentials) => credentials,
+            Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+        };
+        if vak_mail_calendar::provider::verify_google_imap_credentials(
+            imap_login.as_str(),
+            imap_password.as_str(),
+        )
+        .await
+        .is_err()
+        {
+            return (StatusCode::UNAUTHORIZED,
+                "Gmail App Password sign-in could not be verified. Check the email and app password.").into_response();
+        }
+    } else if verified_mail_only {
         let (imap_login, imap_password) = match material.icloud_imap_credentials() {
             Ok(credentials) => credentials,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -2000,7 +2041,7 @@ pub(super) async fn connect_icloud(
     let now = Utc::now();
     let mut account = ConnectedAccount {
         id: account_id.clone(),
-        provider: Provider::AppleIcloud,
+        provider,
         status: AccountStatus::Pending,
         owner_agent_id: agent_id.clone(),
         allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
@@ -2015,11 +2056,12 @@ pub(super) async fn connect_icloud(
         revoked_at: None,
     };
     match ledger.append_pending_if(account.clone(), |existing| {
-        for linked in existing.iter().filter(|linked| {
-            linked.provider == Provider::AppleIcloud && linked.revoked_at.is_none()
-        }) {
+        for linked in existing
+            .iter()
+            .filter(|linked| linked.provider == provider && linked.revoked_at.is_none())
+        {
             if linked.status == AccountStatus::Pending {
-                return Err(IcloudPendingCheckError::LinkInProgress);
+                return Err(AppPasswordPendingCheckError::LinkInProgress);
             }
             if !matches!(
                 linked.status,
@@ -2031,31 +2073,31 @@ pub(super) async fn connect_icloud(
             }
             let stored = vault
                 .load(&linked.id)
-                .map_err(|_| IcloudPendingCheckError::VaultUnavailable)?;
-            if stored.has_same_principal_ignoring_ascii_case(&material) {
-                return Err(IcloudPendingCheckError::AlreadyConnected);
+                .map_err(|_| AppPasswordPendingCheckError::VaultUnavailable)?;
+            if same_provider_principal(provider, &stored, &material) {
+                return Err(AppPasswordPendingCheckError::AlreadyConnected);
             }
         }
         Ok(())
     }) {
         Ok(()) => {}
         Err(vak_mail_calendar::connection_ledger::ConditionalAppendError::Check(
-            IcloudPendingCheckError::AlreadyConnected,
+            AppPasswordPendingCheckError::AlreadyConnected,
         )) => {
             request.app_specific_password.0.zeroize();
             return (
                 StatusCode::CONFLICT,
-                "This iCloud account is already connected to this Agent. Disconnect it before changing its access selection.",
+                "This account is already connected to this Agent. Disconnect it before changing its access selection.",
             )
                 .into_response();
         }
         Err(vak_mail_calendar::connection_ledger::ConditionalAppendError::Check(
-            IcloudPendingCheckError::LinkInProgress,
+            AppPasswordPendingCheckError::LinkInProgress,
         )) => {
             request.app_specific_password.0.zeroize();
             return (
                 StatusCode::CONFLICT,
-                "Another iCloud account connection for this Agent is still pending. Finish its cleanup before trying again.",
+                "Another account connection for this provider is still pending. Finish its cleanup before trying again.",
             )
                 .into_response();
         }
@@ -2088,7 +2130,7 @@ pub(super) async fn connect_icloud(
         "account_connected",
         &agent_id,
         &account_id,
-        Provider::AppleIcloud,
+        provider,
         &audit_capabilities,
         if verified_mail_only || verified_calendar_only {
             "connected"
@@ -2132,7 +2174,7 @@ fn is_loopback_request(headers: &HeaderMap, peer: SocketAddr) -> bool {
 }
 
 #[derive(Debug)]
-enum IcloudPendingCheckError {
+enum AppPasswordPendingCheckError {
     AlreadyConnected,
     LinkInProgress,
     VaultUnavailable,
@@ -2144,7 +2186,7 @@ fn wipe_request_bytes(body: Bytes) {
     }
 }
 
-fn valid_icloud_email(email: &str) -> bool {
+fn valid_provider_email(email: &str) -> bool {
     if email.len() > 320 || !email.is_ascii() {
         return false;
     }
@@ -2171,6 +2213,24 @@ fn valid_icloud_email(email: &str) -> bool {
                     .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
         });
     valid_local && valid_domain
+}
+
+fn valid_provider_app_password(provider: Provider, password: &str) -> bool {
+    match provider {
+        Provider::Google => {
+            password
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || byte == b' ')
+                && password.bytes().filter(u8::is_ascii_alphanumeric).count() == 16
+        }
+        Provider::AppleIcloud => {
+            (16..=32).contains(&password.len())
+                && password
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+        }
+        Provider::Microsoft => false,
+    }
 }
 
 fn record_account_event(
@@ -2203,11 +2263,74 @@ fn record_account_event(
 mod tests {
     use super::{
         OAUTH_CALLBACK_COOKIE, is_loopback_request, oauth_callback_cookie, oauth_callback_page,
-        oauth_callback_set_cookie, oauth_callback_uri, registered_agent, valid_agent,
-        valid_icloud_email,
+        oauth_callback_set_cookie, oauth_callback_uri, registered_agent, same_provider_principal,
+        valid_agent, valid_provider_app_password, valid_provider_email,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
     use vak_mail_calendar::Provider;
+    use vak_mail_calendar::vault::AccountSecretMaterial;
+
+    #[test]
+    fn app_password_validation_is_provider_specific_and_accepts_google_display_spacing() {
+        assert!(valid_provider_app_password(
+            Provider::Google,
+            "abcd efgh ijkl mnop"
+        ));
+        assert!(valid_provider_app_password(
+            Provider::Google,
+            "abcdefghijklmnop"
+        ));
+        assert!(!valid_provider_app_password(
+            Provider::Google,
+            "ordinary-account-password"
+        ));
+        assert!(!valid_provider_app_password(
+            Provider::Google,
+            "abcd\nefghijklmnop"
+        ));
+        assert!(valid_provider_app_password(
+            Provider::AppleIcloud,
+            "abcd-efgh-ijkl-mnop"
+        ));
+        assert!(!valid_provider_app_password(
+            Provider::Microsoft,
+            "app-password-123456"
+        ));
+    }
+
+    #[test]
+    fn google_oauth_and_app_password_links_for_same_email_are_duplicates() {
+        let oauth = AccountSecretMaterial::new(
+            "google:opaque-subject".into(),
+            Some("owner@gmail.com".into()),
+            None,
+            Some("access-token".into()),
+            Some("refresh-token".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        let app_password = AccountSecretMaterial::new(
+            "OWNER@gmail.com".into(),
+            Some("OWNER@gmail.com".into()),
+            None,
+            None,
+            None,
+            Some("OWNER@gmail.com".into()),
+            Some("abcdefghijklmnop".into()),
+        )
+        .unwrap();
+        assert!(same_provider_principal(
+            Provider::Google,
+            &oauth,
+            &app_password
+        ));
+        assert!(!same_provider_principal(
+            Provider::Microsoft,
+            &oauth,
+            &app_password
+        ));
+    }
 
     #[tokio::test]
     async fn callback_page_clears_the_query_and_only_closes_on_success() {
@@ -2266,12 +2389,13 @@ mod tests {
 
     #[test]
     fn accepts_icloud_style_addresses_and_rejects_malformed_authorities() {
-        assert!(valid_icloud_email("owner+vak@icloud.com"));
-        assert!(valid_icloud_email("name@me.com"));
-        assert!(!valid_icloud_email("name@@icloud.com"));
-        assert!(!valid_icloud_email("name@-icloud.com"));
-        assert!(!valid_icloud_email("name@icloud..com"));
-        assert!(!valid_icloud_email("nämé@icloud.com"));
+        assert!(valid_provider_email("owner+vak@icloud.com"));
+        assert!(valid_provider_email("name@me.com"));
+        assert!(valid_provider_email("user@gmail.com"));
+        assert!(!valid_provider_email("name@@icloud.com"));
+        assert!(!valid_provider_email("name@-icloud.com"));
+        assert!(!valid_provider_email("name@icloud..com"));
+        assert!(!valid_provider_email("nämé@icloud.com"));
     }
 
     #[test]
@@ -2886,12 +3010,20 @@ pub(super) async fn refresh_account(
         .load(&refreshed.id)
         .ok()
         .and_then(|secret| secret.masked_display_identity());
+    let auth_method = vault.load(&refreshed.id).ok().map(|material| {
+        if material.uses_app_password() {
+            "app_password"
+        } else {
+            "oauth"
+        }
+    });
     Json(serde_json::json!({
         "account": AccountView {
             id: refreshed.id,
             provider: refreshed.provider,
             status: refreshed.status,
             identity_masked,
+            auth_method,
             credential_available: true,
             superseded_by_active_link: false,
             capabilities: refreshed.capabilities.into_iter().collect(),

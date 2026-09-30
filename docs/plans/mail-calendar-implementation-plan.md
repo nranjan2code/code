@@ -81,9 +81,9 @@ implementation.
 
 | Provider | Authentication and APIs | Initial security boundary |
 |---|---|---|
-| Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API | Incremental granted-scope verification; separate read and effect capabilities; provider OAuth review requirements are a release gate |
-| Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
-| Apple iCloud | Local app-specific password over fixed-host IMAP and CalDAV | Exactly `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected plain-text message reads parsed in the worker; exactly `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded calendar previews through worker-isolated discovery and parsing. Apple free/busy, effects, HTML-only message bodies, and mixed capability selections are unavailable or `connected_unverified`. Apple documents broader third-party authorization for supported apps, but not a general-purpose server OAuth contract for iCloud Mail/Calendar. |
+| Google Workspace | Delegated OAuth authorization code with PKCE; Gmail API and Calendar API. Alternate: Google App Password over fixed-host Gmail IMAP. | Incremental OAuth scope verification and separate effect capabilities. App Password is less secure, long-lived and broader than MailRead; its local-only route verifies TLS IMAP access, stores only in the Agent vault, and permits Inbox metadata plus selected worker-parsed messages, scheduled UID watches, and MailRead only. It never grants Calendar or send. |
+| Microsoft 365 / Outlook | Delegated Entra OAuth with PKCE; Microsoft Graph | `Mail.Read`, `Calendars.ReadBasic` for free/busy, and `Calendars.Read` for event details; no tenant-wide application permissions. Exchange Online disables Basic Authentication, so no app-password fallback is offered. Graph `getSchedule` does not support personal Microsoft accounts, so free/busy must report unsupported for that account type unless a separately reviewed least-privilege adapter is available. |
+| Apple iCloud | Local app-specific password over fixed-host IMAP and CalDAV; future Apple authorization only if a supported Mail/Calendar grant is documented and verified | Exactly `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected plain-text message reads parsed in the worker; exactly `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded calendar previews through worker-isolated discovery and parsing. Apple free-busy, effects, HTML-only message bodies, and mixed capability selections are unavailable or `connected_unverified`. Apple app-specific passwords are broader than per-operation grants and must carry an explicit warning. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -206,9 +206,12 @@ entry point, and no claim of complete account-deletion erasure is made.
 ### Stage 1A — account linking
 
 Build Agent-owned account records, OAuth callback/state handling for Google
-and Microsoft, and the iCloud app-specific credential form. Provider clients use
-fixed hosts; OAuth tokens and the iCloud credential remain in the credential
-service. OAuth refresh preserves the existing grant ceiling and rotates
+and Microsoft, and local app-password forms for Google Mail and iCloud. Google
+App Password setup verifies `imap.gmail.com:993` with read-only `EXAMINE`, and
+its account receives only `MailRead`; it never grants Calendar or send. Both
+password forms are refused on public or hosted listeners and keep credential
+material in the Agent credential vault. Provider clients use fixed hosts;
+OAuth tokens and app passwords remain in the credential service. OAuth refresh preserves the existing grant ceiling and rotates
 refresh tokens inside the Agent vault. Google supports the provider's per-token
 revocation endpoint; Microsoft disconnection reports when its broader
 revocation is not available to this app.
@@ -1430,3 +1433,14 @@ authorization and approval boundary on every execution path.
   capabilities, and vault credential after provider folder discovery, so a
   disconnect or scope reduction during that round-trip cannot leave a newly
   created routine bound to stale authorization.
+- 2026-09-30: Added local Google App Password sign-in as a Gmail IMAP
+  MailRead-only alternative. The connection is verified at the fixed TLS
+  endpoint, stored in the owning Agent vault, excluded from public/hosted
+  setup, and cannot request Calendar or send access. It supports bounded
+  Inbox metadata, selected-message MIME parsing through the isolated worker,
+  and the existing bounded UID watch. OAuth conversation operations are
+  rejected for this credential type. Password-format and provider-host tests,
+  the mail/calendar crate suite (104 tests), focused server validation and
+  account-lifecycle HTTP tests, UI typecheck, and production web build pass.
+  No live provider sign-in was made; owner-provided credentials should be
+  entered only in the local Settings form.

@@ -63,6 +63,10 @@ pub struct AccountSecretMaterial {
 }
 
 impl AccountSecretMaterial {
+    pub fn uses_app_password(&self) -> bool {
+        self.app_login.is_some() && self.app_password.is_some()
+    }
+
     pub fn new(
         mut principal: String,
         mut display_identity: Option<String>,
@@ -152,6 +156,16 @@ impl AccountSecretMaterial {
     /// provider-issued stable subject, so compare it case-insensitively.
     pub fn has_same_principal_ignoring_ascii_case(&self, other: &Self) -> bool {
         self.principal.eq_ignore_ascii_case(&other.principal)
+    }
+
+    /// Compare account identities when one side uses a provider app password
+    /// whose principal is an email address and the other uses OAuth's opaque
+    /// subject identifier. The full identity remains vault-owned.
+    pub fn has_same_display_identity_ignoring_ascii_case(&self, other: &Self) -> bool {
+        self.display_identity
+            .as_deref()
+            .zip(other.display_identity.as_deref())
+            .is_some_and(|(left, right)| left.eq_ignore_ascii_case(right))
     }
 
     pub fn icloud_imap_credentials(
@@ -1129,6 +1143,20 @@ impl AccountVault {
             .ok_or(VaultError::Unavailable)?;
         Ok((Zeroizing::new(login), Zeroizing::new(password)))
     }
+
+    /// Load the local app-password credential used by fixed-host IMAP
+    /// adapters. Callers must already have admitted the Agent/account/read.
+    pub(crate) fn app_password_credentials(
+        &self,
+        account_id: &str,
+    ) -> Result<(Zeroizing<String>, Zeroizing<String>), VaultError> {
+        self.icloud_imap_credentials(account_id)
+    }
+
+    pub fn has_app_password(&self, account_id: &str) -> bool {
+        self.load(account_id)
+            .is_ok_and(|material| material.app_login.is_some() && material.app_password.is_some())
+    }
 }
 
 fn ensure_agent_directory(path: &std::path::Path, private: bool) -> Result<(), VaultError> {
@@ -1451,6 +1479,32 @@ mod tests {
         let masked = material.masked_display_identity().unwrap();
         assert_eq!(masked, "o***@example.com");
         assert!(!masked.contains("owner"));
+    }
+
+    #[test]
+    fn oauth_and_app_password_links_for_the_same_mailbox_compare_by_private_identity() {
+        let oauth = AccountSecretMaterial::new(
+            "google:opaque-subject".into(),
+            Some("owner@gmail.com".into()),
+            None,
+            Some("access-token".into()),
+            Some("refresh-token".into()),
+            None,
+            None,
+        )
+        .unwrap();
+        let app_password = AccountSecretMaterial::new(
+            "OWNER@gmail.com".into(),
+            Some("OWNER@gmail.com".into()),
+            None,
+            None,
+            None,
+            Some("OWNER@gmail.com".into()),
+            Some("abcdabcdefghijklmnop".into()),
+        )
+        .unwrap();
+        assert!(!oauth.has_same_principal(&app_password));
+        assert!(oauth.has_same_display_identity_ignoring_ascii_case(&app_password));
     }
 
     #[test]

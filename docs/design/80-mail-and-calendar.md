@@ -42,7 +42,7 @@ Agent-scoped credential storage, bounded Google/Microsoft PKCE linking, an
 connection Settings panel with masked display identities, local-only Apple
 app-specific-password enrollment, and a broker-owned read tool for the local
 owner surface are implemented in that
-branch. OAuth and Apple activation hold the shared connection-ledger lock
+branch. OAuth, Apple, and Google App Password activation hold the shared connection-ledger lock
 across the Agent-vault credential write and pending-to-connected event, so a
 concurrent disconnect either prevents the new credential write or runs after
 activation and removes it. Apple enrollment records only read capabilities
@@ -57,6 +57,15 @@ the fixed-host CalDAV authentication probe. The adapter discovers the
 principal, home set and calendar collections, validates each href against
 `https://caldav.icloud.com`, and sends bounded event reports to the isolated
 worker. Mixed Apple capability combinations remain unverified.
+Google also supports a separate local-only App Password path. It verifies
+`imap.gmail.com:993` with TLS and read-only `EXAMINE`, stores the credential in
+the same Agent vault, and grants only `MailRead`. Gmail inbox metadata and
+selected MIME bodies use the bounded IMAP adapter and isolated worker; routine
+watches use a provider-specific bounded UID cursor. Conversation reads,
+Calendar, sending, and all provider writes are unavailable for this sign-in
+method. The UI warns that the long-lived App Password is less secure than
+OAuth and identifies provider-side revocation. Microsoft Exchange Online has
+no app-password alternative; its connection remains OAuth-only.
 Google and Microsoft Agent reads are limited
 to the local owner surface; channel audiences fail closed without an explicit
 share grant. Provider previews redact private-event titles, locations,
@@ -785,6 +794,32 @@ remain visible. Provide keyboard editing, labelled controls, screen-reader
 status updates, and non-colour indicators throughout.
 
 ## Provider feasibility notes
+
+### Sign-in choices and password-based fallbacks
+
+The connection screen must show the sign-in methods that actually work for
+each provider, with separate capability labels and a plain-language warning
+for every password-based fallback. OAuth is the preferred method because it
+does not collect the provider account password and can request narrower
+permissions. Never accept an ordinary account password as a fallback.
+
+| Provider | Preferred method | Additional method | Boundary and warning |
+| --- | --- | --- | --- |
+| Google | Local OAuth authorization with PKCE | Google App Password over fixed-host Gmail IMAP | App Password is a long-lived account credential and is less secure than OAuth. The local-only enrollment path verifies it against `imap.gmail.com:993`, stores it only in the owning Agent's credential vault, supports bounded Inbox metadata and selected worker-parsed message reads, and grants MailRead only. No Calendar, send, or provider-write access. Never request the user's ordinary Google password. |
+| Microsoft | Local delegated OAuth authorization with PKCE | None for Exchange Online | Exchange Online disables Basic Authentication for IMAP/POP/SMTP, so an app password is not a supported substitute. Do not offer password collection or imply that an app password will work. Microsoft OAuth setup requires a public-client registration. |
+| Apple iCloud | Supported Apple authorization flow when available and verified | Apple app-specific password over fixed-host IMAP and CalDAV | App-specific password is broader and longer-lived than OAuth; it is stored only in the owning Agent's credential vault and is revocable from Apple Account settings. Current support is read-only and separately verified as MailRead or CalendarRead. Never request the Apple Account password. |
+
+Password-based alternatives are local-device setup only: refuse them on a
+public/hosted listener, do not put values in the connection ledger, logs,
+session history, config, environment files, or repository, and zeroize request
+buffers. Show a warning before the user reveals the secret field and a clear
+revocation instruction after connection. Do not broaden a password-based
+account's capabilities just because its protocol technically permits writes.
+For Gmail, the App Password form accepts Google's 16-character value (with
+display spaces), verifies it using TLS and read-only `EXAMINE`, and stores it
+in the Agent vault. OAuth remains the recommended Google method. The Gmail
+mail watch uses a bounded UID cursor and the same encrypted Agent backlog as
+other providers.
 
 These are constraints to validate during adapter design, not frozen scope
 names in Vak's product contract:

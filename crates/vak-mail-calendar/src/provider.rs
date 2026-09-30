@@ -32,6 +32,7 @@ const MAX_SELECTED_MESSAGE_RESPONSE_BYTES: usize = 256 * 1024;
 const MAX_MESSAGE_BYTES: usize = 128 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
 const ICLOUD_IMAP_HOST: &str = "imap.mail.me.com";
+const GMAIL_IMAP_HOST: &str = "imap.gmail.com";
 const ICLOUD_IMAP_PORT: u16 = 993;
 const ICLOUD_CALDAV_URL: &str = "https://caldav.icloud.com/.well-known/caldav";
 const ICLOUD_CALDAV_ORIGIN: &str = "https://caldav.icloud.com";
@@ -313,6 +314,12 @@ impl ProviderReadClient {
                 name: "Inbox".into(),
             }]);
         }
+        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+            return Ok(vec![MailFolder {
+                provider_id: "INBOX".into(),
+                name: "Inbox".into(),
+            }]);
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
@@ -407,6 +414,12 @@ impl ProviderReadClient {
             }
             return icloud_recent_mail(account, vault, limit).await;
         }
+        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+            if folder_id.is_some_and(|folder| folder != "INBOX") {
+                return Err(ProviderReadError::Unsupported);
+            }
+            return icloud_recent_mail(account, vault, limit).await;
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
@@ -457,6 +470,13 @@ impl ProviderReadClient {
             return icloud_search_mail(account, vault, &query, limit.clamp(1, MAX_MAIL_ITEMS))
                 .await;
         }
+        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
+            if folder_id.is_some_and(|folder| folder != "INBOX") {
+                return Err(ProviderReadError::Unsupported);
+            }
+            return icloud_search_mail(account, vault, &query, limit.clamp(1, MAX_MAIL_ITEMS))
+                .await;
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
@@ -496,6 +516,10 @@ impl ProviderReadClient {
     ) -> Result<Vec<String>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
         if account.provider == Provider::AppleIcloud {
+            return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_WATCH_SCAN_ITEMS))
+                .await;
+        }
+        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
             return icloud_recent_mail_ids(account, vault, limit.clamp(1, MAX_WATCH_SCAN_ITEMS))
                 .await;
         }
@@ -570,6 +594,9 @@ impl ProviderReadClient {
             return icloud_mail_watch_page(account, vault, cursor, limit).await;
         }
         if account.provider == Provider::Google {
+            if vault.has_app_password(&account.id) {
+                return icloud_mail_watch_page(account, vault, cursor, limit).await;
+            }
             let token = vault
                 .access_token(&account.id)
                 .map_err(|_| ProviderReadError::Vault)?;
@@ -768,6 +795,9 @@ impl ProviderReadClient {
             return Err(ProviderReadError::InvalidResponse);
         }
         if account.provider == Provider::AppleIcloud {
+            return icloud_mail_by_ids(account, vault, item_ids).await;
+        }
+        if account.provider == Provider::Google && vault.has_app_password(&account.id) {
             return icloud_mail_by_ids(account, vault, item_ids).await;
         }
         let token = vault
@@ -1168,7 +1198,9 @@ impl ProviderReadClient {
         provider_id: &str,
     ) -> Result<Vec<u8>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::MailRead)?;
-        if account.provider != Provider::AppleIcloud {
+        if account.provider != Provider::AppleIcloud
+            && !(account.provider == Provider::Google && vault.has_app_password(&account.id))
+        {
             return Err(ProviderReadError::Unsupported);
         }
         icloud_message_mime(account, vault, provider_id).await
@@ -1716,7 +1748,23 @@ pub async fn verify_icloud_mail_credentials(
     login: &str,
     password: &str,
 ) -> Result<(), ProviderReadError> {
-    let mut session = icloud_imap_session(login, password).await?;
+    let mut session = imap_session(ICLOUD_IMAP_HOST, login, password).await?;
+    let result = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+        .await
+        .map_err(|_| ProviderReadError::Unavailable)?
+        .map_err(map_imap_error)
+        .map(|_| ());
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
+/// Verify a Google App Password against Gmail's fixed TLS IMAP endpoint.
+/// The resulting account receives MailRead only.
+pub async fn verify_google_imap_credentials(
+    login: &str,
+    password: &str,
+) -> Result<(), ProviderReadError> {
+    let mut session = imap_session(GMAIL_IMAP_HOST, login, password).await?;
     let result = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
         .await
         .map_err(|_| ProviderReadError::Unavailable)?
@@ -1797,9 +1845,14 @@ async fn icloud_recent_mail(
     limit: usize,
 ) -> Result<Vec<MailItem>, ProviderReadError> {
     let (login, password) = vault
-        .icloud_imap_credentials(&account.id)
+        .app_password_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
-    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
     let result = icloud_fetch_recent_mail(&mut session, limit).await;
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
@@ -1812,9 +1865,14 @@ async fn icloud_search_mail(
     limit: usize,
 ) -> Result<Vec<MailItem>, ProviderReadError> {
     let (login, password) = vault
-        .icloud_imap_credentials(&account.id)
+        .app_password_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
-    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
     let result = async {
         let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
             .await
@@ -1941,9 +1999,14 @@ async fn icloud_recent_mail_ids(
     limit: usize,
 ) -> Result<Vec<String>, ProviderReadError> {
     let (login, password) = vault
-        .icloud_imap_credentials(&account.id)
+        .app_password_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
-    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
     let result = async {
         let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
             .await
@@ -1994,15 +2057,31 @@ async fn icloud_mail_watch_page(
     limit: usize,
 ) -> Result<(Vec<String>, Option<String>), ProviderReadError> {
     let (login, password) = vault
-        .icloud_imap_credentials(&account.id)
+        .app_password_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
-    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
     let result = async {
         let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
             .await
             .map_err(|_| ProviderReadError::Unavailable)?
             .map_err(map_imap_error)?;
-        icloud_watch_ids_in_mailbox(&mut session, &mailbox, cursor, limit).await
+        icloud_watch_ids_in_mailbox(
+            &mut session,
+            &mailbox,
+            cursor,
+            limit,
+            if account.provider == Provider::Google {
+                "gmail-imap"
+            } else {
+                "apple-imap"
+            },
+        )
+        .await
     }
     .await;
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
@@ -2014,10 +2093,14 @@ async fn icloud_watch_ids_in_mailbox<T>(
     mailbox: &async_imap::types::Mailbox,
     cursor: Option<&str>,
     limit: usize,
+    cursor_kind: &str,
 ) -> Result<(Vec<String>, Option<String>), ProviderReadError>
 where
     T: AsyncRead + AsyncWrite + Unpin + std::fmt::Debug + Send,
 {
+    if cursor.is_some_and(|cursor| !cursor.starts_with(&format!("{cursor_kind}:"))) {
+        return Err(ProviderReadError::InvalidResponse);
+    }
     let uid_validity = mailbox
         .uid_validity
         .ok_or(ProviderReadError::InvalidResponse)?;
@@ -2038,13 +2121,13 @@ where
         found.sort_unstable();
         ids.extend(found.into_iter().map(|uid| format!("{uid_validity}:{uid}")));
     }
-    let next_cursor = format!("apple-imap:{uid_validity}:{end_uid}");
+    let next_cursor = format!("{cursor_kind}:{uid_validity}:{end_uid}");
     Ok((ids, Some(next_cursor)))
 }
 
 fn parse_icloud_watch_cursor(cursor: &str) -> Result<(u32, u32), ProviderReadError> {
     let mut parts = cursor.split(':');
-    if parts.next() != Some("apple-imap") {
+    if !matches!(parts.next(), Some("apple-imap" | "gmail-imap")) {
         return Err(ProviderReadError::InvalidResponse);
     }
     let validity = parts
@@ -2094,9 +2177,14 @@ async fn icloud_mail_by_ids(
     item_ids: &[String],
 ) -> Result<Vec<MailItem>, ProviderReadError> {
     let (login, password) = vault
-        .icloud_imap_credentials(&account.id)
+        .app_password_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
-    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
     let result = icloud_fetch_mail_by_ids(&mut session, item_ids).await;
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
@@ -2268,28 +2356,42 @@ async fn icloud_message_mime(
 ) -> Result<Vec<u8>, ProviderReadError> {
     let (expected_validity, uid) = parse_icloud_provider_id(provider_id)?;
     let (login, password) = vault
-        .icloud_imap_credentials(&account.id)
+        .app_password_credentials(&account.id)
         .map_err(|_| ProviderReadError::Vault)?;
-    let mut session = icloud_imap_session(login.as_str(), password.as_str()).await?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
     let result = icloud_fetch_message_mime(&mut session, expected_validity, uid).await;
     let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
     result
 }
 
-async fn icloud_imap_session(
+fn imap_host(provider: Provider) -> Result<&'static str, ProviderReadError> {
+    match provider {
+        Provider::Google => Ok(GMAIL_IMAP_HOST),
+        Provider::AppleIcloud => Ok(ICLOUD_IMAP_HOST),
+        Provider::Microsoft => Err(ProviderReadError::Unsupported),
+    }
+}
+
+async fn imap_session(
+    host: &'static str,
     login: &str,
     password: &str,
 ) -> Result<IcloudSession, ProviderReadError> {
     let tcp = tokio::time::timeout(
         StdDuration::from_secs(10),
-        tokio::net::TcpStream::connect((ICLOUD_IMAP_HOST, ICLOUD_IMAP_PORT)),
+        tokio::net::TcpStream::connect((host, ICLOUD_IMAP_PORT)),
     )
     .await
     .map_err(|_| ProviderReadError::Unavailable)?
     .map_err(|_| ProviderReadError::Unavailable)?;
     let tls = tokio::time::timeout(
         StdDuration::from_secs(10),
-        async_native_tls::connect(ICLOUD_IMAP_HOST, tcp),
+        async_native_tls::connect(host, tcp),
     )
     .await
     .map_err(|_| ProviderReadError::Unavailable)?
@@ -3897,6 +3999,10 @@ mod tests {
             parse_icloud_watch_cursor("apple-imap:17:204").unwrap(),
             (17, 204)
         );
+        assert_eq!(
+            parse_icloud_watch_cursor("gmail-imap:17:204").unwrap(),
+            (17, 204)
+        );
         for invalid in [
             "google:17:204",
             "apple-imap:0:204",
@@ -3921,9 +4027,26 @@ mod tests {
             icloud_watch_uid_window(Some("apple-imap:17:350"), 17, 420, 100).unwrap(),
             (351, 420)
         );
+        assert_eq!(
+            icloud_watch_uid_window(Some("gmail-imap:17:350"), 17, 420, 100).unwrap(),
+            (351, 420)
+        );
         assert!(matches!(
             icloud_watch_uid_window(Some("apple-imap:17:350"), 18, 420, 100),
             Err(ProviderReadError::WatchCursorReset)
+        ));
+    }
+
+    #[test]
+    fn imap_hosts_are_fixed_per_supported_password_provider() {
+        assert_eq!(imap_host(Provider::Google).unwrap(), "imap.gmail.com");
+        assert_eq!(
+            imap_host(Provider::AppleIcloud).unwrap(),
+            "imap.mail.me.com"
+        );
+        assert!(matches!(
+            imap_host(Provider::Microsoft),
+            Err(ProviderReadError::Unsupported)
         ));
     }
 
@@ -3982,10 +4105,15 @@ mod tests {
             uid_next: Some(421),
             ..Default::default()
         };
-        let (ids, cursor) =
-            icloud_watch_ids_in_mailbox(&mut session, &mailbox, Some("apple-imap:7:350"), 100)
-                .await
-                .unwrap();
+        let (ids, cursor) = icloud_watch_ids_in_mailbox(
+            &mut session,
+            &mailbox,
+            Some("apple-imap:7:350"),
+            100,
+            "apple-imap",
+        )
+        .await
+        .unwrap();
         assert_eq!(ids, vec!["7:351", "7:355", "7:420"]);
         assert_eq!(cursor.as_deref(), Some("apple-imap:7:420"));
         session.logout().await.unwrap();

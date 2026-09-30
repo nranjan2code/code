@@ -139,6 +139,7 @@ export interface MailCalendarAccount {
   provider: MailCalendarProvider;
   status: MailCalendarAccountStatus;
   identity_masked: string | null;
+  auth_method?: "oauth" | "app_password" | null;
   credential_available: boolean;
   superseded_by_active_link: boolean;
   capabilities: MailCalendarCapability[];
@@ -163,6 +164,13 @@ export async function connectIcloudAccount(agentId: string, email: string, appSp
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/icloud`, {
     method: "POST",
     body: JSON.stringify({ email, app_specific_password: appSpecificPassword, capabilities }),
+  });
+}
+
+export async function connectGoogleAppPassword(agentId: string, email: string, appPassword: string): Promise<{ connected: boolean }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/google-app-password`, {
+    method: "POST",
+    body: JSON.stringify({ email, app_specific_password: appPassword, capabilities: ["mail_read"] }),
   });
 }
 

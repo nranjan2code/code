@@ -73,7 +73,7 @@ impl Drop for RoutineItemReservation {
 
 const MAX_ICLOUD_CALENDARS: usize = 8;
 
-/// Read one explicitly selected Apple inbox message. The raw MIME document is
+/// Read one explicitly selected IMAP inbox message. The raw MIME document is
 /// passed directly to the network-denied worker and never serialized by the
 /// provider or server layers.
 pub async fn read_icloud_message_with_worker(
@@ -448,9 +448,12 @@ impl vak_tools::Tool for MailCalendarTool {
                             "Read a conversation using a thread_id returned by recent_mail.",
                         );
                     };
-                    if account.provider == Provider::AppleIcloud {
+                    if account.provider == Provider::AppleIcloud
+                        || (account.provider == Provider::Google
+                            && vault.has_app_password(&account.id))
+                    {
                         return vak_tools::ToolOutput::error(
-                            "Conversation reads are available for Google and Microsoft; Apple currently supports selected-message reads only.",
+                            "Conversation reads are unavailable for this account's sign-in method.",
                         );
                     }
                     let cursor = args.get("cursor").and_then(Value::as_str);
@@ -479,7 +482,10 @@ impl vak_tools::Tool for MailCalendarTool {
                             "Read a message using an ID returned by recent_mail.",
                         );
                     };
-                    if account.provider != Provider::AppleIcloud {
+                    if account.provider != Provider::AppleIcloud
+                        && !(account.provider == Provider::Google
+                            && vault.has_app_password(&account.id))
+                    {
                         return vak_tools::ToolOutput::error(
                             "This provider already includes bounded message text in recent_mail or read_thread.",
                         );
