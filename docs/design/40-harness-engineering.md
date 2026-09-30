@@ -172,7 +172,7 @@ Example commands:
 ```text
 vak eval --generated 500 --seed 20260930 --offset 0 --report target/eval-0.json
 vak eval --generated 500 --seed 20260930 --offset 500 --report target/eval-500.json
-python3 scripts/harness_500.py --limit 0 --repeat 1 --workers 4
+python3 scripts/harness_500.py --limit 500 --repeat 1 --workers 8
 python3 scripts/compound_regression.py --repeat 2 --live --provider ollama --model gemma4:e2b-mlx
 python3 scripts/prompt_scenarios.py --provider openrouter --model <free-model> --workers 2
 ```
