@@ -19,7 +19,8 @@ Scheduled and one-minute continuous read-only routines use `TaskDef` and a
 bounded encrypted Agent-vault mail backlog with provider cursors. Starting a
 local draft from a selected conversation message preserves its source reference
 and can create a provider-threaded reply on Google or Microsoft. The full conversation workspace,
-Apple conversation grouping/effects, other event update/cancel/RSVP, complete
+Apple conversation grouping/effects, event update/cancellation beyond the
+Google standalone profiles, RSVP, complete
 provider reconciliation, live provider checks, and the 24-hour service recovery
 acceptance remain open, 2026-09-30.**
 iCloud links now verify fixed-host IMAP MailRead-only or CalDAV CalendarRead-only
@@ -143,10 +144,11 @@ cursors fail visibly and require the owner to recreate the routine; backlog
 overflow also fails closed. A per-routine OS lease prevents duplicate
 local server-process runs through
 child completion; it does not provide multi-host coordination. Email send, a
-constrained timed event create, and Google standalone event update have
-effect-aware owner confirmation paths; other event update/cancel/RSVP, standing
-grants, complete receipt reconciliation, durable continuous service recovery,
-and full provider conformance remain in progress. The
+constrained timed event create, Google standalone event update, and one Google
+standalone event cancellation profile have effect-aware owner confirmation
+paths; other event update/cancellation profiles, RSVP, standing grants,
+complete receipt reconciliation, durable continuous service recovery, and
+full provider conformance remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.
 Google and Microsoft inbox previews now show bounded attachment metadata and
@@ -736,8 +738,9 @@ connected calendar accounts with CalendarRead for the same date range; partial
 read failures are shown, compared events are read-only, and detected overlaps
 identify conflicts across accounts. This remains an incremental preview, not
 the complete calendar workspace: source selection, event attendee editing,
-proposed slots, and event occurrence/series choices remain open. A previewed
-free slot is not an atomic booking.
+proposed slots, and event occurrence/series choices remain open. Cancellation
+is limited to one standalone Google event with no attendees and does not cover
+occurrences or series. A previewed free slot is not an atomic booking.
 
 Owner mail previews can select among Gmail labels and up to 100 Microsoft
 top-level mail folders, then search only inside the selected label or folder.
