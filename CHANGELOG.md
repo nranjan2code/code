@@ -1,3 +1,14 @@
+## 5.3.1 — 2026-10-01
+
+- Keep unrelated older turns out of the model's working context, bound history
+  retrieval, and let the Agent reopen specific prior evidence when needed.
+- Avoid empty history-recall calls and carry a prior action forward only when
+  the person explicitly refers to a follow-up.
+- Center the Agent glyph and switcher in the conversation header, with a
+  compact hover/focus commitment arc while work is active.
+- Keep desktop and browser clients attached to the same local gateway and
+  conversation state.
+
 ## 5.3.0 — 2026-09-30
 
 - Make the Canvas a workspace rather than a file viewer. What it shows is named by identity (a workspace file, a run's file, one saved version, markup from the conversation, a dev server or a scheduled routine), so opening something can never quietly show a different file, and an unreadable file is an error, not a stand-in page. Each conversation keeps its own Canvas with tabs that remember the reader's view, selection and unsent note.
