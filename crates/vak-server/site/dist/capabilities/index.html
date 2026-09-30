@@ -37,7 +37,6 @@
   --muted: #565970;
   --line: #e0e5ef;
   --primary: #2f3c94;
-  --on-primary: #ffffff;
   --live: #f5a400;
   --live-ink: #8a5300;
   --soft: #f0f3fa;
@@ -54,7 +53,6 @@
   --muted: #b1b3c9;
   --line: #363a50;
   --primary: #a3adf7;
-  --on-primary: #10121a;
   --live: #f5a400;
   --live-ink: #ffd07a;
   --soft: #232838;
@@ -72,7 +70,6 @@
     --muted: #b1b3c9;
     --line: #363a50;
     --primary: #a3adf7;
-    --on-primary: #10121a;
     --live: #f5a400;
     --live-ink: #ffd07a;
     --soft: #232838;
@@ -230,28 +227,27 @@ img {
 .rail-actions {
   gap: 16px;
 }
-.button {
+.button,
+.action-link {
   display: inline-flex;
-  justify-content: center;
   align-items: center;
-  gap: 22px;
-  min-height: 46px;
-  padding: 10px 19px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
   color: var(--ink);
   font-size: 14px;
-  font-weight: 500;
-  background: var(--surface);
+  font-weight: 400;
 }
-.button:hover {
+.button:hover,
+.action-link:hover {
+  color: var(--primary);
+  border-color: var(--primary);
   text-decoration: none;
-  border-color: var(--primary);
-}
-.button.primary {
-  background: var(--primary);
-  color: var(--on-primary);
-  border-color: var(--primary);
 }
 .theme-button {
   display: grid;
@@ -1003,7 +999,7 @@ details[open] > summary:after {
 .capability-review .chapter-art { width: 56%; margin-left: -4%; }
 .calendar-story .chapter-composition { flex-direction: row-reverse; }
 .cloud-story .chapter-art { width: 48%; margin: 0; }
-.cloud-story .chapter-copy > .button { margin-top: 20px; }
+.cloud-story .chapter-copy > .action-link { margin-top: 20px; }
 .cloud-story .capability-list li { grid-template-columns: 1fr; gap: 8px; }
 @media (max-width: 1000px) {
   .cloud-story .chapter-composition { flex-direction: column; align-items: stretch; gap: 28px; }
@@ -1370,11 +1366,9 @@ details[open] > summary:after {
   .rail-nav a {
     font-size: 13px;
   }
-  .rail-actions .button {
-    font-size: 12px;
-    padding: 8px 12px;
-    gap: 10px;
-    min-height: 40px;
+  .rail-actions .action-link {
+    font-size: 13px;
+    gap: 8px;
   }
   .theme-button {
     min-width: 36px;
@@ -1987,7 +1981,7 @@ details[open] > summary:after {
                 d="M12 1v3m0 16v3M1 12h3m16 0h3M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2"
               />
             </svg></button
-          ><a class="button primary" href="/install"
+          ><a class="action-link" href="/install"
             >Get started <span aria-hidden="true">↗</span></a
           >
         </div>
@@ -2038,7 +2032,7 @@ details[open] > summary:after {
   </div>
 </section>
 <div class="wrap example-disclosure">Illustrative requests and results. What you can do depends on your files and setup.</div>
-<section class="closing-scene"><div class="wrap"><p class="eyebrow">Ask. Then go live your day.</p><h2>A little help<br />with the details.</h2><p class="chapter-lead">Bring a file and start with the question on your mind.</p><a class="button primary" href="/install">Get started <span aria-hidden="true">↗</span></a><nav class="architecture-return" aria-label="Return navigation"><a href="#main">Back to top ↑</a><a href="/">Home ↗</a></nav></div></section>
+<section class="closing-scene"><div class="wrap"><p class="eyebrow">Ask. Then go live your day.</p><h2>A little help<br />with the details.</h2><p class="chapter-lead">Bring a file and start with the question on your mind.</p><a class="action-link" href="/install">Get started <span aria-hidden="true">↗</span></a><nav class="architecture-return" aria-label="Return navigation"><a href="#main">Back to top ↑</a><a href="/">Home ↗</a></nav></div></section>
 </main>
     <footer class="footer">
       <div class="wrap footer-inner">

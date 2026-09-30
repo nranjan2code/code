@@ -89,7 +89,10 @@ The owner requested a complete visual rethink on 2026-09-27: minimal text,
 modern and peppy across generations, all eight characters actively doing
 things, no paper treatment, no repeated marketing-card grid, no em dashes.
 The public site therefore uses crisp white and charcoal, system sans type,
-large transparent character scenes and varied compositions. This is an
+large transparent character scenes and varied compositions.
+Navigation actions use regular-weight text, a small arrow and a fine underline,
+with a 44px minimum touch target. Example review buttons share the same
+quiet treatment. No action uses a solid indigo fill. This is an
 explicit site-specific departure from the old Auditor's Desk and cream-paper
 marketing treatment. It does not change the client's design tokens.
 
