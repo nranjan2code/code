@@ -1,3 +1,7 @@
+## 5.2.13 — 2026-09-30
+
+- Remove the AWS Bedrock SDK and its model availability preflight. Bedrock now follows the same provider-neutral model catalogue and invocation path as every other provider.
+
 ## 5.2.12 — 2026-09-30
 
 - Stop the continuation guard from mistaking ordinary sentences such as “They’re going to the park tomorrow” for an unfinished plan, and recognize plan markers after list bullets while accepting sentence punctuation followed by closing quotes or brackets.
