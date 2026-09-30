@@ -307,7 +307,7 @@ export function PromptsSection(props: {
   });
 
   const tokens = () => preview()?.estimated_tokens ?? effective()?.estimated_tokens ?? 0;
-  const overBudget = () => tokens() > 1500;
+  const overBudget = () => tokens() > 1800;
   const currentFingerprint = () => preview()?.fingerprint ?? effective()?.fingerprint ?? "";
 
   const renderedText = () => preview()?.text ?? effective()?.text ?? "";

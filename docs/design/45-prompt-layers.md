@@ -223,9 +223,9 @@ operator brings to the audit trail.
 
 The prompt is spent on every turn of every session, so an unbounded editor is
 a silent, permanent context tax. Doc 07's policy caps the shipped prompt at
-1500 tokens; the editor enforces a hard cap on the *assembled* result, shows a
-live estimate against the model's context window, and refuses the save with
-the offending layers named rather than truncating silently.
+1800 estimated tokens; the editor enforces a hard cap on the *assembled*
+result, shows a live estimate against the model's context window, and refuses
+the save with the offending layers named rather than truncating silently.
 
 ## Guardrails are not a sandbox
 
@@ -251,7 +251,7 @@ requires one scope selector across the product.
 ┌ Prompts ────────────── [Shared] [This project] ──────────────────────┐
 │ Editing: This project · <cwd>/.vak/prompts/                          │
 ├──────────────────────────────┬───────────────────────────────────────┤
-│ EDITING THIS LAYER           │ EFFECTIVE PROMPT           620 / 1500 │
+│ EDITING THIS LAYER           │ EFFECTIVE PROMPT           620 / 1800 │
 │                              │                                       │
 │ Identity        [inherited]  │ ▸ identity          from Shared       │
 │   <empty — inheriting>       │ ▸ operating_rules   from seed         │

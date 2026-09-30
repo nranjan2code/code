@@ -8321,7 +8321,7 @@ mod channel_mcp_network_tests {
     #[test]
     fn default_prompt_documents_identity_and_dynamic_tool_boundaries() {
         for phrase in [
-            "Your tool schemas are the callable interface this turn",
+            "Call only tools in this turn's schemas",
             "`find_tools`",
             "skill({\"name\":\"...\"})",
             "MCP servers are reached only through the `mcp` tool",
@@ -8332,18 +8332,18 @@ mod channel_mcp_network_tests {
             // surface assumption: one core drives CLI, desktop, server, and
             // chat gateways from this same text.
             "You are Vakyartha, a general-purpose agent",
-            "all equally your work",
-            "Reply in the\nlanguage the person writes in",
-            "The `Surface:` line below names the one this",
+            "answers, research, writing, documents, planning",
+            "Reply in the person's language unless asked otherwise",
+            "named by `Surface:`",
             // Checking is general: every kind of result names its own check,
             // so the prompt cannot regress to an engineering-only loop.
-            "run code\n  or its tests",
-            "cross-check facts against sources",
-            "re-read a\n  draft against what was asked",
-            "confirm that an action took effect",
+            "run code in any language",
+            "Ground answers in actual lookup results and cite sources",
+            "review drafts against the request",
+            "confirm effects",
             // Runtime-authored blocks are explained, not left to be mistaken
             // for the person's words.
-            "are written by the runtime to guide you",
+            "Runtime `<…>` blocks",
         ] {
             assert!(
                 crate::DEFAULT_SYSTEM_PROMPT.contains(phrase),
@@ -8423,7 +8423,7 @@ mod channel_mcp_network_tests {
             let untrusted = Core::new_with_trust(dir.path().to_path_buf(), false).unwrap();
             let prompt = untrusted.system_prompt();
             assert!(
-                prompt.contains("Your tool schemas are the callable interface this turn"),
+                prompt.contains("Call only tools in this turn's schemas"),
                 "{file}: untrusted project deleted the capability contract"
             );
             assert!(

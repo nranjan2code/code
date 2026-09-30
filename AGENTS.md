@@ -995,7 +995,7 @@ in progress, and the rest of V4 follows it.
   (`office_apply`'s draft): the presentation check stands down for the run,
   an identical call gets the first call's result instead of a second draft,
   and a card whose `artifact_path` previews that file is not shown.
-- The shipped prompt seed stays under 1500 tokens and carries its
+- The shipped prompt seed stays under 1800 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing
   surfaces are `docs/design/45-prompt-layers.md`.

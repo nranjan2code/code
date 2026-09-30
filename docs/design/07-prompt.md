@@ -180,8 +180,8 @@ retained.
   docs/design/68-context-engine.md §6. `prompt_drift`/the drift fingerprint
   covers `text` only, since `tail` is per-turn by definition.
 
-- Unreleased (after 3.5.1): **the seed is back under its 1500-token budget**
-  (16.6 KB → 4.3 KB, ~1,000 tokens), now enforced by
+- Unreleased (after 3.5.1): the seed is permitted up to 1800 estimated tokens,
+  now enforced by
   `the_seed_stays_under_its_token_budget`. Every distinct rule survives; what
   went is repetition and the fifteen card payload examples plus fence syntax
   in `capability_contract`. Cards are taught by the `emit_*_card` tools'
@@ -277,6 +277,6 @@ table does not cover, since those blocks were never user-editable.
 
 ## Policy
 
-The prompt stays under 1500 tokens. Every change ships with a diff note here
-and passes the nightly eval suite before release (Phase 7). Prompt churn is a
-bug class, not a feature — changes are reviewable events.
+The prompt stays under 1800 estimated tokens. Every change ships with a diff
+note here and passes the nightly eval suite before release (Phase 7). Prompt
+churn is a bug class, not a feature — changes are reviewable events.

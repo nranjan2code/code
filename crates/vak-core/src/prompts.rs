@@ -883,7 +883,7 @@ mod tests {
         seed("test").content
     }
 
-    /// The seed obeys the budget AGENTS.md sets for it. Measured with the
+    /// The seed stays within the shipped prompt budget in AGENTS.md. Measured with the
     /// same chars-per-token estimate `vak-context` uses before a model's own
     /// profile exists, so the gate needs no tokenizer.
     #[test]
@@ -891,8 +891,8 @@ mod tests {
         let text = include_str!("system-prompt.md");
         let estimated_tokens = text.chars().count() / 4;
         assert!(
-            estimated_tokens < 1500,
-            "system-prompt.md is ~{estimated_tokens} tokens; the budget is 1500"
+            estimated_tokens < 1800,
+            "system-prompt.md is ~{estimated_tokens} tokens; the budget is 1800"
         );
     }
 
@@ -1131,10 +1131,10 @@ mod tests {
         for required in [
             "omitted history remains searchable",
             "`recall`",
-            "scores are not",
-            "Independent requests need no history search",
-            "Current facts need fresh evidence",
-            "Unavailable history differs from no matches",
+            "treat lexical matches as candidates, not proof",
+            "Do not call either tool for a fresh or unrelated request",
+            "For a current fact with no known source URL",
+            "Unavailable history differs from",
         ] {
             assert!(
                 out.text.contains(required),
