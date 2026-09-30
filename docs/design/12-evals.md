@@ -57,6 +57,27 @@ preserving partial artifacts, the stop gate blocking unverified reports,
 compaction during long research sessions (append-only asserted against the
 raw JSONL), MCP meta-tool lookups, and read-only mode denials.
 
+## Generated deterministic batches
+
+`vak eval` is the continuous no-model lane: the provider is scripted, while
+the production agent loop, brokered tools, permissions, session ledger, and
+postconditions run for real. `vak eval --generated N --seed S --offset K`
+adds `N` on-demand scenarios from research, data analysis, writing, document
+conversion, and scheduling families. The `(seed, index)` pair fully defines a
+scenario, so a large corpus can be split into reproducible batches without
+materializing or checking in millions of fixtures. `--report` records the
+batch seed, offset, size, and each result. This lane measures Vakyartha's
+runtime and tool contracts; it does not claim to measure a live model's
+reasoning quality.
+
+For example, run consecutive 500-case slices with one fixed seed and retain a
+separate report for each slice:
+
+```text
+vak eval --generated 500 --seed 20260930 --offset 0 --report target/eval-0.json
+vak eval --generated 500 --seed 20260930 --offset 500 --report target/eval-500.json
+```
+
 ## Live-model evals
 
 `vak eval --live` runs `live_suite()` (create-file, sort-lines,

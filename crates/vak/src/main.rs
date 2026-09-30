@@ -595,10 +595,13 @@ async fn main() {
         }
         Some(Command::Eval {
             report,
+            generated,
+            seed,
+            offset,
             live,
             provider,
             model,
-        }) => run_eval(report, live, provider, model).await,
+        }) => run_eval(report, generated, seed, offset, live, provider, model).await,
         Some(Command::Open {
             surface,
             port,
@@ -2038,10 +2041,21 @@ fn builtin_cases() -> Vec<vak_eval::EvalCase> {
 
 async fn run_eval(
     report_path: Option<PathBuf>,
+    generated: usize,
+    scenario_seed: u64,
+    scenario_offset: u64,
     live: bool,
     provider_flag: Option<String>,
     model_flag: Option<String>,
 ) -> i32 {
+    if live && generated > 0 {
+        eprintln!("error: --generated is deterministic and cannot be combined with --live");
+        return 2;
+    }
+    if scenario_offset.checked_add(generated as u64).is_none() {
+        eprintln!("error: --offset plus --generated exceeds the scenario index range");
+        return 2;
+    }
     let mut reports = Vec::new();
     let worker_exe = match std::env::current_exe() {
         Ok(executable) => executable,
@@ -2064,6 +2078,23 @@ async fn run_eval(
                 r.error.as_deref().unwrap_or("")
             );
             reports.push(r);
+        }
+        for index in scenario_offset..(scenario_offset + generated as u64) {
+            let case = vak_eval::generated_scenario(scenario_seed, index);
+            let r = vak_eval::run_case_brokered(&case, worker_exe.clone()).await;
+            println!(
+                "{:<24} {:>6}  in {:>5} / out {:>4}  {:>5}ms  {}",
+                r.task_id,
+                if r.passed { "PASS" } else { "FAIL" },
+                r.tokens_in,
+                r.tokens_out,
+                r.duration_ms,
+                r.error.as_deref().unwrap_or("")
+            );
+            reports.push(r);
+            if reports.len() % 100 == 0 {
+                eprintln!("eval progress: {} cases", reports.len());
+            }
         }
         // Deterministic context-engine gate (docs/design/68-context-engine.md
         // "Verification") — no model calls; planner, projection and
@@ -2137,6 +2168,12 @@ async fn run_eval(
             "total": total,
             "tokens_in": tokens_in,
             "tokens_out": tokens_out,
+            "scenario_batch": {
+                "kind": if live { "live-model" } else { "scripted-deterministic" },
+                "seed": scenario_seed,
+                "offset": scenario_offset,
+                "generated": generated,
+            },
             "cases": reports,
         }))
         .unwrap_or_default();

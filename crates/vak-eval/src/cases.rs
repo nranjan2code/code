@@ -49,6 +49,12 @@ pub fn edit_file() -> EvalCase {
                 "edits": [{"old_text": "todo!()", "new_text": "println!(\"hi\");"}]
             }),
         ),
+        ScriptedTurn::tool(
+            "bash",
+            serde_json::json!({
+                "command": "mkdir -p target && rustc --edition=2024 --crate-type lib src/app.rs --out-dir target"
+            }),
+        ),
         ScriptedTurn::Text("edited".into()),
     ];
     c.verify = "grep -q 'println!(\"hi\");' src/app.rs && ! grep -q 'todo!' src/app.rs".into();
