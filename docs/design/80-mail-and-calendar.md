@@ -1,31 +1,34 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **in progress on `codex/mail-calendar`: Agent/account linking, owner-only
-bounded Google/Microsoft previews with selected Gmail labels and Microsoft
-top-level folders (Apple remains Inbox-only), explicit phrase search across all
-three providers, paginated Google/Microsoft conversation previews, brokered
-Agent reads of selected Google/Microsoft folders and threads with per-message source
-citations, and an Agent-vault working area for local drafts are
-implemented. The work area supports saved candidates, exact-payload preview
-and Review, email send, Google standalone-event update, and limited event create
-for Google/Microsoft. Review requires opt-in provider scopes, owner confirmation,
-permission-engine evaluation, and a durable single-use claim. Event creation has
-no attendees, recurrence, or reminders and saves reviewed instants as UTC.
-Google also supports conditional cancellation of one unchanged public,
-standalone, timed event with no attendees when the connected owner is its
-organizer. It uses the event ETag precondition; the UI requires exact event
-review and a separate owner confirmation.
-Scheduled and one-minute continuous read-only routines use `TaskDef`, are
-saved paused for a one-off read-only preview, and use a bounded encrypted
-Agent-vault mail backlog with provider cursors. Starting a
-continuous watch also shows an overdue warning after three minutes without a
-successful provider poll; that freshness signal does not prove host health.
-local draft from a selected conversation message preserves its source reference
-and can create a provider-threaded reply on Google or Microsoft. The full conversation workspace,
-Apple conversation grouping/effects, event update/cancellation beyond the
-Google standalone profiles, RSVP, complete
-provider reconciliation, live provider checks, and the 24-hour service recovery
-acceptance remain open, 2026-10-01.**
+Status: **in progress on `codex/mail-calendar` (2026-10-01).** Google,
+Microsoft, and Apple account linking and bounded owner previews are implemented
+using the current 4.x storage model. Google and Microsoft support OAuth and an
+optional, warned local App Password path; Apple supports verified, separate
+Mail, Calendar, or free/busy access. Owners can search all three providers,
+select Gmail labels or Microsoft top-level folders, and browse paginated Google
+or Microsoft conversations. Brokered Agent reads cover selected Google and
+Microsoft folders and threads with per-message citations; channel access fails
+closed without an explicit share grant.
+
+The Agent-vault work area stores revisioned local drafts and shows exact-payload
+previews. Google and Microsoft support reviewed plain-text email sends and a
+limited timed-event create profile; Google also supports conditional update and
+cancellation for one unchanged, public, standalone timed event without
+attendees. Provider effects require opt-in scopes, owner confirmation, Core
+permission checks, and durable single-use claims. Event creation has no
+attendees, recurrence, or reminders. A draft from a selected Google or
+Microsoft conversation message preserves its source and can create a
+provider-threaded reply.
+
+Scheduled and one-minute continuous read-only routines use `TaskDef`, start
+paused for a one-off preview, and store a bounded encrypted mail backlog with
+provider cursors in the Agent vault. Continuous watches show an overdue warning
+after three minutes without a successful provider poll; that freshness signal
+does not prove host health. The full conversation workspace, Apple provider
+effects, broader Microsoft/event update and cancellation profiles, RSVP,
+complete provider reconciliation, live-provider conformance, full connected
+source-to-Review browser acceptance, and 24-hour service-recovery acceptance
+remain open. Apple Calendar has not been verified with a live credential.
 Mail previews and conversation pages also carry bounded sender, To, and Cc
 fields from Google, Microsoft Graph, and Apple IMAP. Bcc is not requested from
 Microsoft and is never projected into the owner or Agent result.
