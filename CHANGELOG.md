@@ -1,3 +1,7 @@
+## 5.2.14 — 2026-09-30
+
+- Coordinate rate-limit cooldowns across OpenAI Chat Completions and Responses routes that share the same endpoint and credential. Preserve retry timing from streamed Responses failures and wait cancelably before dispatch.
+
 ## 5.2.13 — 2026-09-30
 
 - Remove the AWS Bedrock SDK and its model availability preflight. Bedrock now follows the same provider-neutral model catalogue and invocation path as every other provider.
