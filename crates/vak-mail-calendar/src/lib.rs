@@ -750,6 +750,35 @@ pub enum ProviderError {
 mod contract_tests {
     use super::*;
 
+    #[test]
+    fn routine_folder_scope_defaults_for_saved_legacy_tasks_and_rejects_unsafe_watches() {
+        let account_id = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let legacy: RoutineScope = serde_json::from_value(serde_json::json!({
+            "routine_id": routine_id,
+            "account_id": account_id,
+            "operations": ["recent_mail"],
+            "max_items": 5,
+            "watch_new_mail": true
+        }))
+        .unwrap();
+        assert_eq!(legacy.mail_folder_id, None);
+        assert!(legacy.validate().is_ok());
+
+        let mut invalid_watch = legacy;
+        invalid_watch.mail_folder_id = Some("SENT".into());
+        assert_eq!(
+            invalid_watch.validate(),
+            Err(ContractError::InvalidRoutineScope)
+        );
+        let mut invalid_folder = invalid_watch.clone();
+        invalid_folder.mail_folder_id = Some("\nInjected".into());
+        assert_eq!(
+            invalid_folder.validate(),
+            Err(ContractError::InvalidRoutineScope)
+        );
+    }
+
     fn candidate() -> ActionCandidate {
         ActionCandidate::new(
             "account-a".into(),

@@ -74,6 +74,27 @@ pub(crate) async fn validate_routine_scope(
             return Err("the selected mail folder does not belong to this account".into());
         }
     }
+    // Folder discovery can take a provider round-trip. Do not persist a
+    // routine against an account that was revoked or narrowed during it.
+    let still_admitted = ledger.read_all().ok().is_some_and(|latest| {
+        latest.iter().any(|current| {
+            current.id == account.id
+                && current.revision == account.revision
+                && scope.operations.iter().all(|operation| {
+                    let capability = match operation {
+                        RoutineOperation::RecentMail | RoutineOperation::MailThread => {
+                            Capability::MailRead
+                        }
+                        RoutineOperation::CalendarEvents => Capability::CalendarRead,
+                        RoutineOperation::FreeBusy => Capability::CalendarFreeBusy,
+                    };
+                    current.admits(agent_id, &audience, capability)
+                })
+        })
+    });
+    if !still_admitted || !vault.credential_available(&scope.account_id) {
+        return Err("the selected account changed while the routine was being checked".into());
+    }
     Ok(())
 }
 

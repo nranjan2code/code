@@ -1373,8 +1373,8 @@ authorization and approval boundary on every execution path.
 - 2026-09-30: Added owner-only folder/label listing and selection to mail
   previews. Gmail uses validated label IDs; Microsoft uses validated opaque
   top-level folder IDs in encoded Graph path segments; Apple remains Inbox-only.
-  Selected-folder searches stay provider-scoped. Agent tools and scheduled
-  watches continue using Inbox. Google and Microsoft request fixtures, owner
+  Selected-folder searches stay provider-scoped. Agent and scheduled reads now
+  use a verified selected folder; continuous watches remain Inbox-only. Google and Microsoft request fixtures, owner
   HTTP boundary coverage, UI typecheck, and production web build pass. Child
   folder traversal, folder pagination, and the full thread workspace remain open.
 - 2026-09-30: Added bounded owner-only conversation previews for Google and
@@ -1426,3 +1426,7 @@ authorization and approval boundary on every execution path.
   remain Inbox-only, matching their provider cursor contract. The mail/calendar
   crate suite (101 tests), 11 Core mail/calendar tests, server check, UI
   typecheck, and production web build pass.
+- 2026-09-30: Routine creation now rechecks the linked account revision,
+  capabilities, and vault credential after provider folder discovery, so a
+  disconnect or scope reduction during that round-trip cannot leave a newly
+  created routine bound to stale authorization.
