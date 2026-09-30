@@ -2465,6 +2465,18 @@ mod tests {
         let skill = fs::read_to_string(package_root.join("skills/mail-calendar/SKILL.md")).unwrap();
         assert!(skill.contains("does not provide tools to read email or calendar content"));
         assert!(skill.contains("Do not work around this boundary"));
+
+        let home = tempfile::tempdir().unwrap();
+        let store = PluginStore::new(home.path());
+        let installed = store
+            .install_local(&package_root, InstallOptions::default())
+            .unwrap();
+        assert!(!installed.enabled);
+        assert_eq!(installed.capabilities.skills, ["mail-calendar"]);
+        assert!(installed.capabilities.commands.is_empty());
+        assert!(installed.capabilities.mcp_manifests.is_empty());
+        assert!(installed.capabilities.hooks.is_empty());
+        assert!(store.enabled().unwrap().is_empty());
     }
 
     #[test]

@@ -32,7 +32,8 @@ The repository-local native package is `packages/mail-calendar`. Its only
 component is an inert skill that explains account setup and current limits; it
 declares no executable, MCP, command, hook, or data-access capability. The
 package registry inspects it through the same native manifest path used for
-other local packages. Provider operations remain unavailable to Agents.
+other local packages; installation leaves it disabled until a separate review
+and enable action. Provider operations remain unavailable to Agents.
 The owner account inventory reports whether each credential is actually
 available in the Agent vault; a connection ledger row alone is not presented
 as proof that saved sign-in material can be loaded. Account erasure remains

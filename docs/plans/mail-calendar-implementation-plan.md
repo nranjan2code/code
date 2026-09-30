@@ -837,6 +837,6 @@ authorization and approval boundary on every execution path.
 - 2026-09-30: Added the native `packages/mail-calendar` plugin package. It
   contributes one inert skill for account setup and honest action availability;
   the manifest declares no tools, MCP servers, hooks, commands, scripts, or
-  executable files. The package inspection regression passes and proves its
-  component inventory is skills-only. Content operations remain unavailable
-  behind M7.
+  executable files. The package lifecycle regression inspects and installs it,
+  proves the only component is its skill, and confirms install leaves it
+  disabled. Content operations remain unavailable behind M7.
