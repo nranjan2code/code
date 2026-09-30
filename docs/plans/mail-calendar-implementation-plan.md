@@ -569,6 +569,13 @@ continuous threshold, and an overdue label does not claim to diagnose host
 health. Pure client tests cover unknown, current, overdue, and scheduled
 states.
 
+**Implemented increment (2026-10-01):** the routine Settings header now shows
+whether the Vakyartha service API is reachable or offline, separately from each
+routine's provider-check freshness. It tells owners that unattended work
+requires the service host to stay awake. This is request-level reachability
+only; it does not detect sleep between requests, diagnose provider outages, or
+satisfy the sustained service acceptance test.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -644,6 +651,12 @@ remains open.
   Exactly one may dispatch at a time, and the lease can be reacquired after
   the winner exits. This checks local process contention, not multi-host
   coordination or the sustained 24-hour recovery gate.
+
+- 2026-10-01: Added an owner-visible service online/offline state to the
+  routine Settings header, distinct from the last successful provider poll.
+  It explains that unattended work requires the service host to stay awake.
+  This is an API reachability signal, not host-sleep diagnosis or 24-hour
+  recovery evidence.
 
 - 2026-10-01: Added owner-visible routine run history backed by bounded,
   content-free records in the encrypted Agent vault. The server verifies Agent

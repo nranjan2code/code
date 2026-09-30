@@ -27,6 +27,8 @@ import {
   backend,
   activeAgentId,
   activeAgent,
+  connection,
+  health,
   setAgentPickerOpen,
   setAgentPickerTab,
   setTranscriptViewId,
@@ -2907,7 +2909,15 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "mail-calendar"}>
-              <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p></header>
+              <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
+                <p class="settings-hint" role="status">
+                  <Show when={connection() === "offline"} fallback={connection() === "live" && health()
+                    ? "Scheduled and continuous routines run on this Vakyartha service. The computer or server running it must stay awake and connected; each routine's last successful provider check shows source freshness."
+                    : "Connecting to the Vakyartha service. Routine status and source freshness will appear when it is reachable."}>
+                    The Vakyartha service is offline, so its scheduled and continuous routines cannot run. Missed work follows the task schedule and configured catch-up behavior.
+                  </Show>
+                </p>
+              </header>
               <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
               <Group title="Choose access">
                 <p class="settings-hint">Read access is selected by default. Email sending and calendar changes are optional and request separate provider permissions. Every effect requires exact review and your confirmation. Event creation supports one timed event without attendees, invitations, recurrence, or reminders. Google event updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Provider calendar-write consent is broader than these actions; Vakyartha exposes only the reviewed operations.</p>

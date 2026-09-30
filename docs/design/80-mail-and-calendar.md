@@ -31,8 +31,9 @@ session; deleting an account or routine removes its matching vault history.
 Scheduled and one-minute continuous read-only routines use `TaskDef`, start
 paused for a one-off preview, and store a bounded encrypted mail backlog with
 provider cursors in the Agent vault. Continuous watches show an overdue warning
-after three minutes without a successful provider poll; that freshness signal
-does not prove host health. The full conversation workspace, Apple provider
+after three minutes without a successful provider poll. Settings separately
+reports whether the Vakyartha service API is reachable; a reachable process
+does not prove provider freshness or detect sleep between checks. The full conversation workspace, Apple provider
 effects, broader Microsoft/event update and cancellation profiles, RSVP,
 complete provider reconciliation, live-provider conformance, full connected
 source-to-Review browser acceptance, and 24-hour service-recovery acceptance
