@@ -181,7 +181,10 @@ pub struct MailDraft {
     /// sanitized, deterministic representation in the client.
     pub body_text: String,
     pub attachment_refs: Vec<String>,
+    #[serde(default)]
     pub reply_to_message_id: Option<String>,
+    #[serde(default)]
+    pub reply_to_thread_id: Option<String>,
 }
 
 impl MailDraft {
@@ -202,6 +205,20 @@ impl MailDraft {
                 .any(|value| value.trim().is_empty())
         {
             return Err(ContractError::LimitExceeded);
+        }
+        match (
+            self.reply_to_message_id.as_deref(),
+            self.reply_to_thread_id.as_deref(),
+        ) {
+            (None, None) => {}
+            (Some(message_id), Some(thread_id))
+                if !message_id.is_empty()
+                    && message_id.len() <= 512
+                    && !message_id.chars().any(char::is_control)
+                    && !thread_id.is_empty()
+                    && thread_id.len() <= 512
+                    && !thread_id.chars().any(char::is_control) => {}
+            _ => return Err(ContractError::LimitExceeded),
         }
         if self
             .from_alias
@@ -716,6 +733,7 @@ mod contract_tests {
                     body_text: "Hello".into(),
                     attachment_refs: Vec::new(),
                     reply_to_message_id: None,
+                    reply_to_thread_id: None,
                 },
             },
         )
@@ -756,6 +774,7 @@ mod contract_tests {
                     body_text: "Hello".into(),
                     attachment_refs: Vec::new(),
                     reply_to_message_id: None,
+                    reply_to_thread_id: None,
                 },
             })
             .unwrap();
@@ -937,6 +956,7 @@ mod contract_tests {
                 body_text: "Hello".into(),
                 attachment_refs: Vec::new(),
                 reply_to_message_id: None,
+                reply_to_thread_id: None,
             },
         };
         assert_eq!(

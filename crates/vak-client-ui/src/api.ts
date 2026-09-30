@@ -243,7 +243,7 @@ export function previewMailCalendarFreeBusy(agentId: string, accountId: string, 
 }
 
 export type MailCalendarDraftAction =
-  | { kind: "send_mail"; draft: { from_alias: string | null; to: Array<{ address: string; display_name: string | null }>; cc: Array<{ address: string; display_name: string | null }>; bcc: Array<{ address: string; display_name: string | null }>; subject: string; body_text: string; attachment_refs: string[]; reply_to_message_id: string | null } }
+  | { kind: "send_mail"; draft: { from_alias: string | null; to: Array<{ address: string; display_name: string | null }>; cc: Array<{ address: string; display_name: string | null }>; bcc: Array<{ address: string; display_name: string | null }>; subject: string; body_text: string; attachment_refs: string[]; reply_to_message_id: string | null; reply_to_thread_id: string | null } }
   | { kind: "create_event"; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } }
   | { kind: "update_event"; event_id: string; source_version: string; draft: { title: string; description: string; location: string | null; starts_at: string; ends_at: string; time_zone: string; all_day: boolean; attendee_addresses: Array<{ address: string; display_name: string | null }>; recurrence: string | null; occurrence_id: string | null } };
 export interface MailCalendarCandidate {

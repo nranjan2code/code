@@ -1215,6 +1215,7 @@ mod tests {
                     body_text: "Not sent until reviewed".into(),
                     attachment_refs: Vec::new(),
                     reply_to_message_id: Some("message-1".into()),
+                    reply_to_thread_id: Some("thread-1".into()),
                 },
             },
         )

@@ -534,6 +534,10 @@ pub(super) async fn send_mail_candidate(
             .into_response();
     }
     let required_capability = candidate.required_capability();
+    let requires_mail_read = matches!(
+        &candidate.action,
+        ProposedAction::SendMail { draft } if draft.reply_to_message_id.is_some()
+    );
     let send_route = uri.path().ends_with("/send");
     let create_route = uri.path().ends_with("/create-event");
     let update_route = uri.path().ends_with("/update-event");
@@ -541,7 +545,7 @@ pub(super) async fn send_mail_candidate(
         ProposedAction::SendMail { draft } if send_route && vak_mail_calendar::effect::validate_mail_draft(draft).is_ok() => {},
         ProposedAction::CreateEvent { draft } if create_route && vak_mail_calendar::effect::validate_event_create(draft).is_ok() => {},
         ProposedAction::UpdateEvent { event_id, source_version, draft } if update_route && vak_mail_calendar::effect::validate_event_update(event_id, source_version, draft).is_ok() => {},
-        ProposedAction::SendMail { .. } => return (StatusCode::BAD_REQUEST, "This send profile supports plain text without attachments, aliases, or reply semantics.").into_response(),
+        ProposedAction::SendMail { .. } => return (StatusCode::BAD_REQUEST, "This send profile supports plain text without attachments or sender aliases; replies require a selected message and conversation.").into_response(),
         ProposedAction::CreateEvent { .. } => return (StatusCode::BAD_REQUEST, "This event profile supports one timed event without attendees, recurrence, or reminders.").into_response(),
         ProposedAction::UpdateEvent { .. } => return (StatusCode::BAD_REQUEST, "This update profile supports one standalone timed Google event without attendees, recurrence, or reminders.").into_response(),
         _ => return (StatusCode::BAD_REQUEST, "This action is not yet supported for provider changes.").into_response(),
@@ -564,6 +568,8 @@ pub(super) async fn send_mail_candidate(
             account.id == candidate.account_id
                 && account.owner_agent_id == agent_id
                 && account.admits(&agent_id, &candidate.audience_id, required_capability)
+                && (!requires_mail_read
+                    || account.admits(&agent_id, &candidate.audience_id, Capability::MailRead))
         }),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };

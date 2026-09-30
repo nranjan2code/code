@@ -13,7 +13,7 @@ no attendees, recurrence, or reminders and saves reviewed instants as UTC.
 Scheduled and one-minute continuous read-only routines use `TaskDef` and a
 bounded encrypted Agent-vault mail backlog with provider cursors. Starting a
 local draft from a selected conversation message preserves its source reference
-but creates a new email, not a threaded reply. The full conversation workspace,
+and can create a provider-threaded reply on Google or Microsoft. The full conversation workspace,
 Apple conversation grouping/effects, other event update/cancel/RSVP, complete
 provider reconciliation, live provider checks, and the 24-hour service recovery
 acceptance remain open, 2026-09-30.**
@@ -109,8 +109,14 @@ Apple supports a selected-message preview without conversation grouping. These
 results are transient and search phrases are not logged or retained. The owner
 can start a local email draft from any message in an opened Google or Microsoft
 conversation; the candidate retains that selected provider message as its
-source reference. It creates a new message and does not claim provider-thread
-reply semantics. The
+source reference. The owner can create a provider-threaded reply. The send
+broker requires both MailRead and MailSend, re-fetches the selected provider
+message immediately before dispatch, and blocks a changed message,
+thread/conversation ID, or subject. Google serialization uses validated
+provider Message-ID and References headers with the selected Gmail thread ID;
+Microsoft uses the selected message's `/reply` operation. IDs remain fixed-host
+path segments. Apple replies remain unsupported. Subject text alone never
+establishes thread membership. The
 complete thread workspace, source citations, and cross-folder Agent access
 remain open. Local drafts,
 scheduled read-only routines, and an explicitly

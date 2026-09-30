@@ -333,6 +333,16 @@ OData quoting escaped. Apple remains selected-message-only. This does not yet
 provide cross-folder Agent reads, full thread navigation/citations, reply
 headers, or compose-in-thread semantics.
 
+**Implemented increment (2026-09-30):** the owner can draft and send a reply to
+a selected message in an opened Google or Microsoft conversation. Reply actions
+require both MailRead and MailSend, retain message and conversation IDs in the
+reviewed candidate, and re-fetch the source immediately before dispatch. A
+changed source ID, thread/conversation ID, or subject fails closed. Gmail sends
+validated `In-Reply-To`/`References` headers and `threadId`; Graph uses its
+message-scoped `/reply` endpoint. IDs are appended as fixed-host path segments.
+The complete conversation workspace, Agent thread citations, and live-provider
+conformance remain open.
+
 ## Stage 3 — reviewed provider effects
 
 Add typed send, event create/update/cancel, and RSVP operations through the

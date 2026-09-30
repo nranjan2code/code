@@ -73,9 +73,7 @@ impl ProviderEffectClient {
         })
     }
 
-    /// Send a plain-text email through the provider's fixed send endpoint.
-    /// Attachments, sender aliases, and provider-thread reply semantics remain
-    /// unsupported until they have explicit review and serialization rules.
+    /// Send a plain-text email, or reply to a selected provider message.
     pub async fn send_mail(
         &self,
         account: &ConnectedAccount,
@@ -84,8 +82,10 @@ impl ProviderEffectClient {
         audience: &str,
         draft: &MailDraft,
     ) -> Result<ProviderAcceptance, ProviderEffectError> {
+        let is_reply = draft.reply_to_message_id.is_some();
         if vault.agent_id() != account.owner_agent_id
             || !account.admits(agent_id, audience, Capability::MailSend)
+            || (is_reply && !account.admits(agent_id, audience, Capability::MailRead))
         {
             return Err(ProviderEffectError::NotAdmitted);
         }
@@ -98,10 +98,45 @@ impl ProviderEffectClient {
             .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
         match account.provider {
             Provider::Google => {
-                let raw = google_raw_message(draft);
-                let body = json!({
-                    "raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())
-                });
+                let body = if is_reply {
+                    let source_id = draft
+                        .reply_to_message_id
+                        .as_deref()
+                        .ok_or(ProviderEffectError::Rejected)?;
+                    let thread_id = draft
+                        .reply_to_thread_id
+                        .as_deref()
+                        .ok_or(ProviderEffectError::Rejected)?;
+                    let source_url = path_url(
+                        &self.google_gmail_base,
+                        &["users", "me", "messages", source_id],
+                    )?;
+                    let source_response = self
+                        .http
+                        .get(source_url)
+                        .bearer_auth(token.as_str())
+                        .query(&[
+                            ("format", "metadata"),
+                            ("metadataHeaders", "Subject"),
+                            ("metadataHeaders", "Message-ID"),
+                            ("metadataHeaders", "References"),
+                        ])
+                        .send()
+                        .await
+                        .map_err(|_| ProviderEffectError::Unknown)?;
+                    let source = checked_json(source_response).await?;
+                    let headers = validate_google_reply_source(
+                        &source,
+                        source_id,
+                        thread_id,
+                        &draft.subject,
+                    )?;
+                    let raw = google_raw_reply(draft, &headers);
+                    json!({"threadId": thread_id, "raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())})
+                } else {
+                    let raw = google_raw_message(draft);
+                    json!({"raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())})
+                };
                 let response = self
                     .http
                     .post(format!("{}/users/me/messages/send", self.google_gmail_base))
@@ -113,14 +148,47 @@ impl ProviderEffectClient {
                 classify_google_response(response).await
             }
             Provider::Microsoft => {
-                let response = self
-                    .http
-                    .post(format!("{}/me/sendMail", self.microsoft_graph_base))
-                    .bearer_auth(token.as_str())
-                    .json(&graph_send_payload(draft))
-                    .send()
-                    .await
-                    .map_err(|_| ProviderEffectError::Unknown)?;
+                let response = if is_reply {
+                    let source_id = draft
+                        .reply_to_message_id
+                        .as_deref()
+                        .ok_or(ProviderEffectError::Rejected)?;
+                    let thread_id = draft
+                        .reply_to_thread_id
+                        .as_deref()
+                        .ok_or(ProviderEffectError::Rejected)?;
+                    let source_url =
+                        path_url(&self.microsoft_graph_base, &["me", "messages", source_id])?;
+                    let source_response = self
+                        .http
+                        .get(source_url)
+                        .bearer_auth(token.as_str())
+                        .query(&[("$select", "id,conversationId,subject")])
+                        .send()
+                        .await
+                        .map_err(|_| ProviderEffectError::Unknown)?;
+                    let source = checked_json(source_response).await?;
+                    validate_graph_reply_source(&source, source_id, thread_id, &draft.subject)?;
+                    let payload = graph_reply_payload(draft);
+                    self.http
+                        .post(path_url(
+                            &self.microsoft_graph_base,
+                            &["me", "messages", source_id, "reply"],
+                        )?)
+                        .bearer_auth(token.as_str())
+                        .json(&payload)
+                        .send()
+                        .await
+                        .map_err(|_| ProviderEffectError::Unknown)?
+                } else {
+                    self.http
+                        .post(format!("{}/me/sendMail", self.microsoft_graph_base))
+                        .bearer_auth(token.as_str())
+                        .json(&graph_send_payload(draft))
+                        .send()
+                        .await
+                        .map_err(|_| ProviderEffectError::Unknown)?
+                };
                 classify_graph_response(response).await
             }
             Provider::AppleIcloud => Err(ProviderEffectError::Unsupported),
@@ -364,7 +432,6 @@ pub fn validate_mail_draft(draft: &MailDraft) -> Result<(), ProviderEffectError>
         .map_err(|_| ProviderEffectError::Rejected)?;
     if !draft.attachment_refs.is_empty()
         || draft.from_alias.is_some()
-        || draft.reply_to_message_id.is_some()
         || draft
             .to
             .iter()
@@ -405,6 +472,204 @@ fn graph_send_payload(draft: &MailDraft) -> Value {
         },
         "saveToSentItems": true
     })
+}
+
+fn graph_reply_payload(draft: &MailDraft) -> Value {
+    json!({"message": {
+        "body": {"contentType": "Text", "content": draft.body_text},
+        "toRecipients": graph_recipients(&draft.to),
+        "ccRecipients": graph_recipients(&draft.cc),
+        "bccRecipients": graph_recipients(&draft.bcc)
+    }})
+}
+
+fn path_url(base: &str, segments: &[&str]) -> Result<url::Url, ProviderEffectError> {
+    let mut url = url::Url::parse(base).map_err(|_| ProviderEffectError::Rejected)?;
+    url.path_segments_mut()
+        .map_err(|_| ProviderEffectError::Rejected)?
+        .extend(segments.iter().copied());
+    Ok(url)
+}
+
+async fn checked_json(response: Response) -> Result<Value, ProviderEffectError> {
+    match response.status() {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+            return Err(ProviderEffectError::ReauthorizationRequired);
+        }
+        StatusCode::NOT_FOUND | StatusCode::PRECONDITION_FAILED => {
+            return Err(ProviderEffectError::Conflict);
+        }
+        status if status.is_redirection() || status.is_server_error() => {
+            return Err(ProviderEffectError::Unknown);
+        }
+        status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+        _ => {}
+    }
+    response_json(response).await
+}
+
+fn validate_graph_reply_source(
+    source: &Value,
+    message_id: &str,
+    thread_id: &str,
+    subject: &str,
+) -> Result<(), ProviderEffectError> {
+    if source.get("id").and_then(Value::as_str) != Some(message_id)
+        || source.get("conversationId").and_then(Value::as_str) != Some(thread_id)
+        || source
+            .get("subject")
+            .and_then(Value::as_str)
+            .is_none_or(|actual| !reply_subjects_match(actual, subject))
+    {
+        return Err(ProviderEffectError::Conflict);
+    }
+    Ok(())
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct GoogleReplyHeaders {
+    message_id: String,
+    references: String,
+}
+
+fn validate_google_reply_source(
+    source: &Value,
+    message_id: &str,
+    thread_id: &str,
+    subject: &str,
+) -> Result<GoogleReplyHeaders, ProviderEffectError> {
+    if source.get("id").and_then(Value::as_str) != Some(message_id)
+        || source.get("threadId").and_then(Value::as_str) != Some(thread_id)
+    {
+        return Err(ProviderEffectError::Conflict);
+    }
+    let headers = source
+        .pointer("/payload/headers")
+        .and_then(Value::as_array)
+        .ok_or(ProviderEffectError::Conflict)?;
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|h| {
+                h.get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|n| n.eq_ignore_ascii_case(name))
+            })
+            .and_then(|h| h.get("value"))
+            .and_then(Value::as_str)
+    };
+    let actual_subject =
+        decode_subject_header(header("Subject").ok_or(ProviderEffectError::Conflict)?)
+            .ok_or(ProviderEffectError::Conflict)?;
+    if !reply_subjects_match(&actual_subject, subject) {
+        return Err(ProviderEffectError::Conflict);
+    }
+    let message_id = header("Message-ID")
+        .filter(|v| valid_msg_id(v))
+        .ok_or(ProviderEffectError::Conflict)?
+        .to_owned();
+    let prior_refs = header("References").unwrap_or("");
+    if prior_refs.chars().any(char::is_control) || prior_refs.len() > 8192 {
+        return Err(ProviderEffectError::Conflict);
+    }
+    let refs = prior_refs.split_ascii_whitespace().collect::<Vec<_>>();
+    if refs.iter().any(|v| !valid_msg_id(v)) {
+        return Err(ProviderEffectError::Conflict);
+    }
+    let mut references = refs.join(" ");
+    if !references.is_empty() {
+        references.push(' ');
+    }
+    references.push_str(&message_id);
+    Ok(GoogleReplyHeaders {
+        message_id,
+        references,
+    })
+}
+
+fn valid_msg_id(value: &str) -> bool {
+    value.len() >= 5
+        && value.len() <= 998
+        && value.starts_with('<')
+        && value.ends_with('>')
+        && value.is_ascii()
+        && value
+            .bytes()
+            .all(|c| c == b'<' || c == b'>' || (b'!'..=b'~').contains(&c))
+        && value[1..value.len() - 1].contains('@')
+}
+
+fn decode_subject_header(value: &str) -> Option<String> {
+    let Some(encoded) = value.strip_prefix("=?UTF-8?") else {
+        if value.chars().any(char::is_control) {
+            return None;
+        }
+        return Some(value.to_owned());
+    };
+    let (encoding, rest) = encoded.split_once('?')?;
+    let encoded = rest.strip_suffix("?=")?;
+    let bytes = match encoding.to_ascii_uppercase().as_str() {
+        "B" => base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .ok()?,
+        "Q" => {
+            let input = encoded.as_bytes();
+            let mut output = Vec::with_capacity(input.len());
+            let mut index = 0;
+            while index < input.len() {
+                match input[index] {
+                    b'_' => {
+                        output.push(b' ');
+                        index += 1;
+                    }
+                    b'=' if index + 2 < input.len() => {
+                        let hex = std::str::from_utf8(&input[index + 1..index + 3]).ok()?;
+                        output.push(u8::from_str_radix(hex, 16).ok()?);
+                        index += 3;
+                    }
+                    byte if byte.is_ascii() && !byte.is_ascii_control() => {
+                        output.push(byte);
+                        index += 1;
+                    }
+                    _ => return None,
+                }
+            }
+            output
+        }
+        _ => return None,
+    };
+    let decoded = String::from_utf8(bytes).ok()?;
+    (!decoded.chars().any(char::is_control)).then_some(decoded)
+}
+
+fn reply_subjects_match(source: &str, reply: &str) -> bool {
+    fn base(value: &str) -> &str {
+        let mut value = value.trim();
+        loop {
+            let lower = value.to_ascii_lowercase();
+            if lower.starts_with("re:") {
+                value = value[3..].trim_start();
+            } else {
+                return value;
+            }
+        }
+    }
+    base(source).eq_ignore_ascii_case(base(reply))
+}
+
+fn google_raw_reply(draft: &MailDraft, headers: &GoogleReplyHeaders) -> String {
+    let mut raw = google_raw_message(draft);
+    // Insert before MIME headers; values are restricted to validated RFC message-id tokens.
+    let mime = "MIME-Version: 1.0\r\n";
+    raw = raw.replacen(
+        mime,
+        &format!(
+            "In-Reply-To: {}\r\nReferences: {}\r\n{mime}",
+            headers.message_id, headers.references
+        ),
+        1,
+    );
+    raw
 }
 
 fn google_raw_message(draft: &MailDraft) -> String {
@@ -779,11 +1044,89 @@ mod tests {
             body_text: "body".into(),
             attachment_refs: Vec::new(),
             reply_to_message_id: None,
+            reply_to_thread_id: None,
         };
         let raw = google_raw_message(&draft);
         assert!(raw.contains("To: to@example.com\r\n"));
         assert!(raw.contains("Cc: cc@example.com\r\n"));
         assert!(raw.contains("Bcc: bcc@example.com\r\n"));
         assert!(raw.contains("Subject: =?UTF-8?B?"));
+    }
+
+    #[test]
+    fn reply_source_must_match_message_conversation_and_subject() {
+        let graph = json!({"id":"m1", "conversationId":"c1", "subject":"Re: Project"});
+        assert!(validate_graph_reply_source(&graph, "m1", "c1", "Project").is_ok());
+        assert_eq!(
+            validate_graph_reply_source(&graph, "m1", "other", "Project"),
+            Err(ProviderEffectError::Conflict)
+        );
+        assert_eq!(
+            validate_graph_reply_source(&graph, "m1", "c1", "Different"),
+            Err(ProviderEffectError::Conflict)
+        );
+    }
+
+    #[test]
+    fn google_reply_headers_are_validated_before_mime_serialization() {
+        let source = json!({"id":"m1", "threadId":"t1", "payload":{"headers":[
+            {"name":"Subject", "value":"Project"},
+            {"name":"Message-ID", "value":"<source@example.com>"},
+            {"name":"References", "value":"<prior@example.com>"}
+        ]}});
+        let headers = validate_google_reply_source(&source, "m1", "t1", "Re: Project").unwrap();
+        assert_eq!(
+            headers.references,
+            "<prior@example.com> <source@example.com>"
+        );
+        let mut draft = MailDraft {
+            from_alias: None,
+            to: vec![MailAddress {
+                address: "to@example.com".into(),
+                display_name: None,
+            }],
+            cc: vec![],
+            bcc: vec![],
+            subject: "Re: Project".into(),
+            body_text: "reply".into(),
+            attachment_refs: vec![],
+            reply_to_message_id: Some("m1".into()),
+            reply_to_thread_id: Some("t1".into()),
+        };
+        let raw = google_raw_reply(&draft, &headers);
+        assert!(raw.contains("In-Reply-To: <source@example.com>\r\n"));
+        assert!(raw.contains("References: <prior@example.com> <source@example.com>\r\n"));
+        draft.subject = "Other subject".into();
+        assert_eq!(
+            validate_google_reply_source(&source, "m1", "t1", &draft.subject),
+            Err(ProviderEffectError::Conflict)
+        );
+        let injected = json!({"id":"m1", "threadId":"t1", "payload":{"headers":[
+            {"name":"Subject", "value":"Project"}, {"name":"Message-ID", "value":"<bad>\r\nBcc: attacker@example.com"}
+        ]}});
+        assert_eq!(
+            validate_google_reply_source(&injected, "m1", "t1", "Project"),
+            Err(ProviderEffectError::Conflict)
+        );
+        assert_eq!(
+            decode_subject_header("=?UTF-8?B?SMOpbGxv?="),
+            Some("Héllo".into())
+        );
+        assert_eq!(
+            decode_subject_header("=?UTF-8?Q?H=C3=A9llo?="),
+            Some("Héllo".into())
+        );
+        assert_eq!(decode_subject_header("=?UTF-8?B?%%%?="), None);
+    }
+
+    #[test]
+    fn reply_resource_ids_stay_inside_the_fixed_provider_path() {
+        let url = path_url(
+            "https://graph.microsoft.com/v1.0",
+            &["me", "messages", "id/../../evil"],
+        )
+        .unwrap();
+        assert_eq!(url.host_str(), Some("graph.microsoft.com"));
+        assert!(url.path().contains("id%2F..%2F..%2Fevil"));
     }
 }
