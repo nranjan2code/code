@@ -45,3 +45,18 @@ async fn caldav_parser_fails_closed_when_worker_is_missing_or_input_is_oversized
     let oversized = vak_tools::broker::parse_icalendar(worker(), &"x".repeat(256 * 1024 + 1)).await;
     assert!(oversized.is_err());
 }
+
+#[tokio::test]
+async fn email_mime_is_parsed_in_the_isolated_worker() {
+    let raw = b"MIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary=b\r\n\r\n--b\r\nContent-Type: text/html\r\n\r\n<b>hidden html</b>\r\n--b\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nHello=2C selected mail\r\n--b--\r\n";
+    let parsed = vak_tools::broker::parse_mail_mime(worker(), raw)
+        .await
+        .unwrap();
+    assert_eq!(parsed["body_text"], "Hello, selected mail");
+    assert_eq!(parsed["body_status"], "available");
+    assert!(!parsed.to_string().contains("hidden html"));
+
+    let missing =
+        vak_tools::broker::parse_mail_mime(Path::new("/nonexistent/vak-tool-worker"), raw).await;
+    assert!(missing.is_err());
+}

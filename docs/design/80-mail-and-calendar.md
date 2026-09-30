@@ -16,7 +16,9 @@ access as separate account selections. Mail previews expose bounded inbox
 metadata only. Calendar previews perform fixed-origin CalDAV discovery and
 range-bounded event reads; provider XML and iCalendar content are parsed in the
 network-denied worker. CalDAV results are filtered locally against the
-requested time range after worker parsing. Apple free/busy, message bodies,
+requested time range after worker parsing. A bounded worker-side MIME parser
+now selects plain-text parts and skips HTML and attachments, but Apple IMAP
+message retrieval is not yet connected to it. Apple free/busy, message bodies,
 event changes, and mixed capability selections remain unavailable or
 unverified. No credentialed live
 Apple Calendar request has been made, so authenticated provider discovery

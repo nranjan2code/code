@@ -72,6 +72,9 @@ enum WorkerTask {
     IcalendarParse {
         data: String,
     },
+    MailMimeParse {
+        data: Vec<u8>,
+    },
     CalDavDiscoveryParse {
         data: String,
         mode: crate::mail_calendar::DiscoveryMode,
@@ -612,6 +615,19 @@ pub async fn worker_main() -> i32 {
             })
             .await;
         }
+        WorkerTask::MailMimeParse { data } => {
+            let (content, is_error) = match crate::mail_calendar::parse_mail_mime(&data) {
+                Ok(content) => (content, false),
+                Err(error) => (error, true),
+            };
+            return write_response(WorkerResponse {
+                version: PROTOCOL_VERSION,
+                content,
+                is_error,
+                events: Vec::new(),
+            })
+            .await;
+        }
         WorkerTask::CalDavDiscoveryParse { data, mode } => {
             let (content, is_error) =
                 match crate::mail_calendar::parse_caldav_discovery(&data, mode) {
@@ -774,6 +790,27 @@ pub async fn parse_icalendar(worker_exe: &Path, data: &str) -> Result<Value, Str
         let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
         serde_json::from_str(&content)
             .map_err(|_| "calendar worker returned an invalid result".to_owned())
+    }
+}
+
+/// Decode an untrusted email MIME document in the network-denied tool worker.
+pub async fn parse_mail_mime(worker_exe: &Path, data: &[u8]) -> Result<Value, String> {
+    if data.is_empty() || data.len() > 256 * 1024 {
+        return Err("email message exceeds the local size limit".into());
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    return Err("email parsing requires the network-denied worker sandbox".into());
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let scratch = tempfile::Builder::new()
+            .prefix("vak-mail-parse-")
+            .tempdir()
+            .map_err(|_| "email parser workspace is unavailable".to_owned())?;
+        let task = WorkerTask::MailMimeParse {
+            data: data.to_vec(),
+        };
+        let content = run_task(worker_exe, scratch.path(), &[scratch.path()], false, task).await?;
+        serde_json::from_str(&content).map_err(|_| "email parser returned invalid data".into())
     }
 }
 

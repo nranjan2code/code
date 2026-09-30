@@ -122,8 +122,9 @@ Read before changing behaviour in these areas:
   session with a 512 KiB transport budget. CalendarRead-only links verify
   fixed-host CalDAV and expose bounded previews after worker-isolated discovery
   and parsing, followed by a local time-range overlap check; Apple free/busy,
-  mail bodies and event changes are unavailable, and mixed capability
-  selections remain unverified.
+  Apple Mail bodies and Apple event changes are unavailable, and mixed
+  capability selections remain unverified. A worker-only bounded MIME parser
+  exists as groundwork but is not yet wired to IMAP message retrieval.
   Microsoft event update/cancel/RSVP, attachments, aliases, reply
   semantics, and model-initiated effects remain unavailable. Current 4.x
   session history cannot be selectively erased, so account-deletion erasure

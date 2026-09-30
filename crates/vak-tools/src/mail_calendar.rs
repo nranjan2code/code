@@ -11,6 +11,8 @@ const MAX_EVENTS: usize = 100;
 const MAX_FIELD_CHARS: usize = 1024;
 const MAX_XML_DEPTH: usize = 64;
 const MAX_DISCOVERY_RESULTS: usize = 32;
+const MAX_MIME_PARTS: usize = 64;
+const MAX_MAIL_BODY_CHARS: usize = 16_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -127,6 +129,51 @@ pub(crate) fn parse_calendar_data(data: &str) -> Result<String, String> {
         }
     }
     serde_json::to_string(&events).map_err(|_| "calendar results could not be encoded".into())
+}
+
+/// Decode only an explicit, non-attachment `text/plain` MIME part. This is
+/// called only inside the isolated tool worker; HTML and attachment payloads
+/// are never promoted to model-visible message text.
+pub(crate) fn parse_mail_mime(data: &[u8]) -> Result<String, String> {
+    if data.is_empty() || data.len() > MAX_CALENDAR_BYTES {
+        return Err("email message is empty or exceeds its size limit".into());
+    }
+    let parsed =
+        mailparse::parse_mail(data).map_err(|_| "email MIME structure is invalid".to_owned())?;
+    let parts: Vec<_> = parsed.parts().take(MAX_MIME_PARTS + 1).collect();
+    if parts.len() > MAX_MIME_PARTS {
+        return Err("email has too many MIME parts".into());
+    }
+    for part in parts {
+        let disposition = part.get_content_disposition();
+        if disposition.disposition == mailparse::DispositionType::Attachment
+            || disposition.params.contains_key("filename")
+            || part.ctype.params.contains_key("name")
+        {
+            continue;
+        }
+        if !part.ctype.mimetype.eq_ignore_ascii_case("text/plain") || !part.subparts.is_empty() {
+            continue;
+        }
+        let body = part
+            .get_body()
+            .map_err(|_| "email text part could not be decoded".to_owned())?;
+        let body = body.trim();
+        if body.is_empty() {
+            continue;
+        }
+        let bounded = body.chars().take(MAX_MAIL_BODY_CHARS).collect::<String>();
+        return serde_json::to_string(&json!({
+            "body_text": bounded,
+            "body_status": "available",
+        }))
+        .map_err(|_| "email text could not be encoded".into());
+    }
+    serde_json::to_string(&json!({
+        "body_text": Value::Null,
+        "body_status": "no_plain_text",
+    }))
+    .map_err(|_| "email text could not be encoded".into())
 }
 
 fn extract_calendar_data(document: &str) -> Result<Vec<String>, String> {
@@ -486,6 +533,26 @@ mod tests {
         let xml = r#"<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:propstat><d:prop><c:calendar-data>BEGIN:VCALENDAR&#13;&#10;BEGIN:VEVENT&#13;&#10;UID:ev1&#13;&#10;DTSTART:20260930T100000Z&#13;&#10;SUMMARY:Escaped &amp; safe&#13;&#10;END:VEVENT&#13;&#10;END:VCALENDAR&#13;&#10;</c:calendar-data></d:prop></d:propstat></d:response></d:multistatus>"#;
         let parsed: Value = serde_json::from_str(&parse_calendar_data(xml).unwrap()).unwrap();
         assert_eq!(parsed[0]["title"], "Escaped & safe");
+    }
+
+    #[test]
+    fn mime_parser_selects_plain_text_and_skips_html_and_attachments() {
+        let email = b"MIME-Version: 1.0\r\nContent-Type: multipart/mixed; boundary=outer\r\n\r\n--outer\r\nContent-Type: multipart/alternative; boundary=inner\r\n\r\n--inner\r\nContent-Type: text/html\r\n\r\n<p>html only</p>\r\n--inner\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\nHello=2C mail\r\n--inner--\r\n--outer\r\nContent-Type: text/plain\r\nContent-Disposition: attachment; filename=secret.txt\r\n\r\nDO NOT EXPOSE\r\n--outer--\r\n";
+        let parsed: Value = serde_json::from_str(&parse_mail_mime(email).expect("valid MIME"))
+            .expect("worker JSON");
+        assert_eq!(parsed["body_text"], "Hello, mail");
+        assert_eq!(parsed["body_status"], "available");
+        assert!(!parsed.to_string().contains("DO NOT EXPOSE"));
+    }
+
+    #[test]
+    fn mime_parser_labels_html_only_and_rejects_oversized_messages() {
+        let html = b"Content-Type: text/html\r\n\r\n<p>not plain text</p>";
+        let parsed: Value =
+            serde_json::from_str(&parse_mail_mime(html).expect("valid MIME")).expect("worker JSON");
+        assert_eq!(parsed["body_text"], Value::Null);
+        assert_eq!(parsed["body_status"], "no_plain_text");
+        assert!(parse_mail_mime(&vec![b'x'; MAX_CALENDAR_BYTES + 1]).is_err());
     }
 
     #[test]

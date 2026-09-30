@@ -46,6 +46,11 @@ multistatus XML, projects at most 100 events, refuses ambiguous or unsupported
 local times, and redacts private event details while preserving busy times. It
 runs through the versioned tool-worker broker, with a private empty scratch
 directory and the network-denied verification sandbox on supported platforms.
+The same worker now has a bounded MIME decoder that selects explicit
+`text/plain` parts, skips HTML and attachments, caps decoded text and part
+count, and explicitly labels messages without plain text. Apple Mail does not
+yet fetch and pass a selected message through this parser, so Apple message
+bodies remain unavailable.
 After parsing, the broker also applies the requested time-range overlap filter
 locally to every provider response. This prevents a provider response that
 ignores the requested range from broadening the preview.
@@ -401,6 +406,13 @@ must not carry content, and all provider effects must pass the same broker
 authorization and approval boundary on every execution path.
 
 ## Progress log
+
+- 2026-09-30: Added the isolated worker-side MIME parsing foundation needed
+  for selected Apple Mail content. It extracts bounded explicit `text/plain`
+  content, ignores HTML and attachment parts, and distinguishes HTML-only
+  messages from usable text. Unit and real-worker integration tests pass.
+  Apple IMAP message retrieval and the selected-message preview route are the
+  next integration step; the metadata-only preview remains unchanged.
 
 - 2026-09-30: Implemented a desktop-native OAuth return path for the Tauri
   bearer-authenticated UI. The owner-authenticated start creates a bounded,
