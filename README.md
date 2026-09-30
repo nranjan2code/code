@@ -14,7 +14,7 @@ Runs on your machine. Uses your choice of model. Works within the boundaries you
 
 [Get started](#get-started) · [What you can do](#put-it-to-work) · [Features](#built-for-work-that-continues) · [Documentation](docs/README.md) · [Website](https://vakyartha.com)
 
-[![Version](https://img.shields.io/badge/version-5.2.11-E66A2C?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.2.12-E66A2C?style=flat-square)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-MIT-536B58?style=flat-square)](LICENSE)
 

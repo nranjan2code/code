@@ -1,3 +1,7 @@
+## 5.2.12 — 2026-09-30
+
+- Stop the continuation guard from mistaking ordinary sentences such as “They’re going to the park tomorrow” for an unfinished plan, and recognize plan markers after list bullets while accepting sentence punctuation followed by closing quotes or brackets.
+
 ## 5.2.11 — 2026-09-30
 
 - Hold a turn open for the person only with the explicit `/until-done …` command; "keep working until the tests pass" now names a condition instead of keeping a turn running until someone types done.
