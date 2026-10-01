@@ -234,11 +234,12 @@ Canvas workspace: calendar controls, inbox filters, routines, and drafts are
 hidden while the message is open; keyboard focus moves to the subject. “Back to
 inbox” restores the same mail view and keyboard focus returns to the opened
 message. Replies are saved as Agent-scoped drafts; choosing “Draft reply in
-Canvas” reveals the existing Drafts and Review editor beneath the focused
-conversation so the owner can edit and save the reply without losing context;
-keyboard focus moves to the reply body when the saved draft opens. Sending still
-requires its separate exact-payload Review and confirmation. The message itself
-remains a read-only preview.
+Canvas” reveals a focused reply-composer panel beneath the conversation. It
+hides unrelated drafts and new-draft controls while the reply is open, moves
+keyboard focus to the reply body, and keeps Preview, Save, and exact Review in
+the same Canvas context. Closing the composer returns to the conversation.
+Sending still requires the separate exact-payload Review and confirmation. The
+message itself remains a read-only preview.
 The interactive mail tool now lists a bounded set of provider folders/labels
 on an owner's request, then accepts a selected ID for recent-mail reads only
 after verifying it against the same account. Scheduled routines cannot list

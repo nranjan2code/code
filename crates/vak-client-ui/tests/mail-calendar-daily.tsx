@@ -41,7 +41,7 @@ const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const savedCandidates: Array<Record<string, any>> = [];
 let candidateId = 0;
 const calendarReadRanges: Array<{ from: string; to: string; cursor?: string }> = [];
-const mailPreviewReads: Array<{ accountId: string; query?: string; folder_id?: string }> = [];
+const mailPreviewReads: Array<{ accountId: string; query?: string; folder_id?: string; cursor?: string }> = [];
 const fixtureErrors: string[] = [];
 let fixtureResponses = 0;
 let inventoryGate: Promise<void> | null = null;
@@ -301,6 +301,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"
     && body.action.draft.to?.[0]?.address === "reply@example.test")
     && inlineReplyEditorVisible()
+    && document.querySelector("section[aria-label='Reply composer']") !== null
     && document.querySelector(".mail-calendar-editor")?.textContent?.includes("Reply draft") === true
     && document.activeElement === document.querySelector(".mail-calendar-editor textarea[aria-label='Reply message']"));
   const replyReviewButtonReady = await waitFor(() => !!document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")
@@ -319,6 +320,9 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && replyReviewText.includes("Not set");
   document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   await waitFor(() => !document.querySelector(".sheet[role='dialog'][aria-modal='true']"));
+  document.querySelector<HTMLButtonElement>(".mail-calendar-editor .settings-preview-heading button")?.click();
+  const replyComposerReturnsToConversation = await waitFor(() => document.querySelector("section[aria-label='Reply composer']") === null
+    && document.activeElement === document.querySelector(".daily-mail-calendar-conversation-heading"));
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
   const conversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
     && document.querySelectorAll(".daily-mail-calendar-message").length === 12
@@ -376,7 +380,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   [...document.querySelectorAll<HTMLButtonElement>(".daily-mail-calendar-event-detail button")]
     .find((button) => button.textContent?.includes("Draft an update"))?.click();
   const localDraftActionWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "update_event")
-    && document.querySelector(".mail-calendar-canvas-workspace button")?.textContent?.includes("Hide drafts"));
+    && document.querySelector(".mail-calendar-canvas-workspace button")?.textContent?.includes("Hide drafts") === true);
   const draft = localDraftWrites.find(({ body }) => body.action?.kind === "update_event")?.body;
   const clickedEventStaysLocal = localDraftActionWorks
     && draft?.account_id === "g-account-0"
@@ -429,7 +433,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     document.querySelector<HTMLButtonElement>(".daily-mail-calendar-calendar-tools button:last-of-type")?.click();
   }
   const dateRangeCalendarWorks = await waitFor(() => requests.filter((path) => path.endsWith("/calendar-preview")).length === calendarsBeforeRange + 6
-    && document.querySelector(".daily-mail-calendar-calendar-heading h3")?.textContent?.includes("15 days"));
+    && document.querySelector(".daily-mail-calendar-calendar-heading h3")?.textContent?.includes("15 days") === true);
   const exclusiveThrough = new Date(`${rangeThrough}T00:00:00`); exclusiveThrough.setDate(exclusiveThrough.getDate() + 1);
   const dateRangeBoundariesCorrect = calendarReadRanges.slice(-6).length === 6
     && calendarReadRanges.slice(-6).every((range) => range.from === new Date(`${rangeFrom}T00:00:00`).toISOString() && range.to === exclusiveThrough.toISOString());
@@ -484,6 +488,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
     check(conversationHandoffWorks, "Draft reply prefers the message Reply-To, reveals its editable Agent-scoped Canvas draft, and leaves the provider untouched"),
+    check(replyComposerReturnsToConversation, "Closing the focused reply composer returns keyboard focus to the open conversation"),
     check(replyReviewShowsExactIdentities, "Reply Review fetches vault/provider-verified sender and source headers, then distinguishes them from outgoing To and Reply-To"),
     check(conversationReturnsToInbox, "Back to inbox restores the inbox and returns keyboard focus to the opened message"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),

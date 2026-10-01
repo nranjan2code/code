@@ -2337,3 +2337,11 @@ remains open.
   production build pass. The rendered browser fixture could not be rerun in
   this environment, so the new focus assertion is compiled but not yet observed
   in a browser. Provider behavior and 24-hour service recovery remain open.
+- 2026-10-01: Turned the reply handoff into a focused composer inside the
+  conversation Canvas: unrelated saved drafts and new-draft controls are hidden
+  while replying, and the panel exposes only the selected reply, Preview, Save,
+  and exact Review. Closing it returns to the conversation. The synthetic
+  fixture now asserts the panel's accessible name; the production web build and
+  TypeScript check pass. Browser behavior is not yet observed in this
+  environment. The broader conversation acceptance and service recovery remain
+  open.
