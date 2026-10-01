@@ -2576,10 +2576,20 @@ mod tests {
 
         receipt.state = ActionState::Unknown;
         receipt.detail_code = Some("outcome_unknown".into());
-        vault.settle_action(receipt).unwrap();
+        vault.settle_action(receipt.clone()).unwrap();
         assert_eq!(
             vault.list_action_receipts().unwrap()[0].state,
             ActionState::Unknown
+        );
+        receipt.state = ActionState::Confirmed;
+        receipt.provider_item_id = Some("provider-event".into());
+        receipt.detail_code = Some("provider_event_confirmed_by_reconciliation".into());
+        vault.settle_action(receipt).unwrap();
+        let settled = vault.list_action_receipts().unwrap();
+        assert_eq!(settled[0].state, ActionState::Confirmed);
+        assert_eq!(
+            settled[0].provider_item_id.as_deref(),
+            Some("provider-event")
         );
         assert!(matches!(
             vault.begin_action(&candidate),

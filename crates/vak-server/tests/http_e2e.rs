@@ -1056,7 +1056,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn mail_calendar_thread_preview_requires_owner_authentication() {
+async fn mail_calendar_provider_reads_require_owner_authentication() {
     let dir = tempfile::tempdir().unwrap();
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(dir.path().to_path_buf()).unwrap();
@@ -1093,6 +1093,29 @@ async fn mail_calendar_thread_preview_requires_owner_authentication() {
         .await
         .unwrap();
     assert_eq!(non_owner.status(), reqwest::StatusCode::NOT_FOUND);
+
+    let reconcile_url =
+        format!("http://{addr}/mail-calendar/accounts/unknown-agent/no-candidate/reconcile-event");
+    let reconcile_body =
+        serde_json::json!({"expected_revision":1,"candidate_digest":"0".repeat(64)});
+    let unauthenticated_reconcile = reqwest::Client::new()
+        .post(&reconcile_url)
+        .json(&reconcile_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated_reconcile.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let non_owner_reconcile = reqwest::Client::new()
+        .post(reconcile_url)
+        .bearer_auth(&token)
+        .json(&reconcile_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(non_owner_reconcile.status(), reqwest::StatusCode::NOT_FOUND);
 
     handle.abort();
 }

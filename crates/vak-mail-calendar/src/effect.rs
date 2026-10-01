@@ -13,6 +13,9 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+const GOOGLE_ACTION_PROPERTY: &str = "vak_action_id";
+const GRAPH_ACTION_PROPERTY_ID: &str =
+    "String {66f5a359-4659-4830-9070-00040ec6ac6e} Name vakActionId";
 
 /// Provider/action support is checked before candidates are persisted or a
 /// single-use effect claim is written. Keep this matrix aligned with the
@@ -221,6 +224,7 @@ impl ProviderEffectClient {
         vault: &AccountVault,
         agent_id: &str,
         audience: &str,
+        attempt_id: &str,
         draft: &CalendarDraft,
     ) -> Result<ProviderAcceptance, ProviderEffectError> {
         if vault.agent_id() != account.owner_agent_id
@@ -232,6 +236,9 @@ impl ProviderEffectClient {
             return Err(ProviderEffectError::Unsupported);
         }
         validate_event_create(draft)?;
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
@@ -243,7 +250,7 @@ impl ProviderEffectClient {
                     self.google_calendar_base
                 ))
                 .bearer_auth(token.as_str())
-                .json(&google_create_event_payload(draft))
+                .json(&google_create_event_payload(draft, attempt_id))
                 .send()
                 .await
                 .map_err(|_| ProviderEffectError::Unknown)?,
@@ -251,13 +258,118 @@ impl ProviderEffectClient {
                 .http
                 .post(format!("{}/me/events", self.microsoft_graph_base))
                 .bearer_auth(token.as_str())
-                .json(&graph_create_event_payload(draft))
+                .json(&graph_create_event_payload(draft, attempt_id))
                 .send()
                 .await
                 .map_err(|_| ProviderEffectError::Unknown)?,
             Provider::AppleIcloud => return Err(ProviderEffectError::Unsupported),
         };
         classify_created_event_response(response).await
+    }
+
+    /// Look up an event created by a prior ambiguous dispatch. A provider-side
+    /// private extension carries the durable attempt id; an absent result is
+    /// deliberately inconclusive because provider indexing can lag.
+    pub async fn reconcile_created_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        attempt_id: &str,
+    ) -> Result<Option<String>, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let response = match account.provider {
+            Provider::Google => self
+                .http
+                .get(format!(
+                    "{}/calendars/primary/events",
+                    self.google_calendar_base
+                ))
+                .bearer_auth(token.as_str())
+                .query(&[
+                    (
+                        "privateExtendedProperty",
+                        format!("{GOOGLE_ACTION_PROPERTY}={attempt_id}"),
+                    ),
+                    ("maxResults", "2".into()),
+                ])
+                .send()
+                .await
+                .map_err(|_| ProviderEffectError::Unknown)?,
+            Provider::Microsoft => {
+                let filter = format!(
+                    "singleValueExtendedProperties/Any(ep: ep/id eq '{GRAPH_ACTION_PROPERTY_ID}' and ep/value eq '{attempt_id}')"
+                );
+                self.http.get(format!("{}/me/events", self.microsoft_graph_base))
+                    .bearer_auth(token.as_str())
+                    .query(&[("$filter", filter), ("$top", "2".into()), ("$select", "id,singleValueExtendedProperties".into()), ("$expand", format!("singleValueExtendedProperties($filter=id eq '{GRAPH_ACTION_PROPERTY_ID}')"))])
+                    .send().await.map_err(|_| ProviderEffectError::Unknown)?
+            }
+            Provider::AppleIcloud => return Err(ProviderEffectError::Unsupported),
+        };
+        match response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let body = response_json(response).await?;
+        let items = body
+            .get("items")
+            .or_else(|| body.get("value"))
+            .and_then(Value::as_array)
+            .ok_or(ProviderEffectError::Unknown)?;
+        if items.len() != 1
+            || body.get("nextPageToken").is_some()
+            || body.get("@odata.nextLink").is_some()
+        {
+            return Ok(None);
+        }
+        let item = &items[0];
+        let id = item
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty() && id.len() <= 512 && !id.chars().any(char::is_control))
+            .ok_or(ProviderEffectError::Unknown)?;
+        let marker_matches = match account.provider {
+            Provider::Google => {
+                item.get("extendedProperties")
+                    .and_then(|v| v.get("private"))
+                    .and_then(|v| v.get(GOOGLE_ACTION_PROPERTY))
+                    .and_then(Value::as_str)
+                    == Some(attempt_id)
+            }
+            Provider::Microsoft => item
+                .get("singleValueExtendedProperties")
+                .and_then(Value::as_array)
+                .is_some_and(|props| {
+                    props.iter().any(|prop| {
+                        prop.get("id").and_then(Value::as_str) == Some(GRAPH_ACTION_PROPERTY_ID)
+                            && prop.get("value").and_then(Value::as_str) == Some(attempt_id)
+                    })
+                }),
+            Provider::AppleIcloud => false,
+        };
+        if marker_matches {
+            Ok(Some(id.to_owned()))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Update one unchanged, standalone Google event with no attendees.
@@ -508,7 +620,7 @@ fn validate_google_update_source(
     Ok(())
 }
 
-fn google_create_event_payload(draft: &CalendarDraft) -> Value {
+fn google_create_event_payload(draft: &CalendarDraft, attempt_id: &str) -> Value {
     json!({
         "summary": draft.title,
         "description": draft.description,
@@ -516,7 +628,8 @@ fn google_create_event_payload(draft: &CalendarDraft) -> Value {
         "start": {"dateTime": draft.starts_at.to_rfc3339(), "timeZone": "UTC"},
         "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"},
         "attendees": [],
-        "reminders": {"useDefault": false, "overrides": []}
+        "reminders": {"useDefault": false, "overrides": []},
+        "extendedProperties": {"private": {GOOGLE_ACTION_PROPERTY: attempt_id}}
     })
 }
 
@@ -530,7 +643,7 @@ fn google_update_event_payload(draft: &CalendarDraft) -> Value {
     })
 }
 
-fn graph_create_event_payload(draft: &CalendarDraft) -> Value {
+fn graph_create_event_payload(draft: &CalendarDraft, attempt_id: &str) -> Value {
     json!({
         "subject": draft.title,
         "body": {"contentType": "Text", "content": draft.description},
@@ -538,8 +651,13 @@ fn graph_create_event_payload(draft: &CalendarDraft) -> Value {
         "start": {"dateTime": draft.starts_at.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": "UTC"},
         "end": {"dateTime": draft.ends_at.format("%Y-%m-%dT%H:%M:%S").to_string(), "timeZone": "UTC"},
         "attendees": [],
-        "isReminderOn": false
+        "isReminderOn": false,
+        "singleValueExtendedProperties": [{"id": GRAPH_ACTION_PROPERTY_ID, "value": attempt_id}]
     })
+}
+
+fn valid_attempt_id(value: &str) -> bool {
+    uuid::Uuid::parse_str(value).is_ok_and(|id| id.get_version_num() == 7)
 }
 
 /// Validate the currently supported plain-text send profile before a durable
@@ -973,6 +1091,7 @@ mod tests {
     use super::*;
     use axum::{
         Json, Router,
+        extract::Query,
         routing::{get, post},
     };
     use serde_json::json;
@@ -1024,6 +1143,141 @@ mod tests {
             recurrence: None,
             occurrence_id: None,
         }
+    }
+
+    fn calendar_account(agent_id: &str, account_id: &str, provider: Provider) -> ConnectedAccount {
+        let credential_ref = AccountVault::credential_ref(account_id).unwrap();
+        ConnectedAccount {
+            id: account_id.into(),
+            provider,
+            status: crate::AccountStatus::Connected,
+            owner_agent_id: agent_id.into(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::CalendarWrite].into_iter().collect(),
+            provider_scopes: ["calendar.write".into()].into_iter().collect(),
+            credential_ref: credential_ref.clone(),
+            principal_ref: credential_ref,
+            revision: 1,
+            connected_at: chrono::Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: false,
+            revoked_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn created_event_reconciliation_confirms_only_a_matching_private_attempt_marker() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-reconcile-{}", uuid::Uuid::now_v7());
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let google_id = uuid::Uuid::now_v7().to_string();
+        let graph_id = uuid::Uuid::now_v7().to_string();
+        for account_id in [&google_id, &graph_id] {
+            vault
+                .store(
+                    account_id,
+                    crate::vault::AccountSecretMaterial::new(
+                        format!("provider:{account_id}"),
+                        Some("owner@example.test".into()),
+                        None,
+                        Some("mock-access-token".into()),
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let google_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let google_flag = google_visible.clone();
+        let graph_flag = google_visible.clone();
+        let google_attempt = attempt_id.clone();
+        let graph_attempt = attempt_id.clone();
+        let app = Router::new()
+            .route("/calendar/v3/calendars/primary/events", get(move |Query(query): Query<std::collections::HashMap<String, String>>| {
+                let visible = google_flag.load(std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    assert_eq!(query.get("privateExtendedProperty"), Some(&format!("{GOOGLE_ACTION_PROPERTY}={google_attempt}")));
+                    assert_eq!(query.get("maxResults").map(String::as_str), Some("2"));
+                    Json(json!({"items": if visible { vec![json!({"id":"google-event","extendedProperties":{"private":{(GOOGLE_ACTION_PROPERTY):google_attempt}}})] } else { vec![] }}))
+                }
+            }))
+            .route("/graph/v1.0/me/events", get(move |Query(query): Query<std::collections::HashMap<String, String>>| {
+                let visible = graph_flag.load(std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    assert!(query.get("$filter").is_some_and(|value| value.contains(&graph_attempt)));
+                    assert_eq!(query.get("$top").map(String::as_str), Some("2"));
+                    Json(json!({"value": if visible { vec![json!({"id":"graph-event","singleValueExtendedProperties":[{"id":GRAPH_ACTION_PROPERTY_ID,"value":graph_attempt}]})] } else { vec![] }}))
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.google_calendar_base = format!("http://{address}/calendar/v3");
+        client.microsoft_graph_base = format!("http://{address}/graph/v1.0");
+        let google = calendar_account(&agent_id, &google_id, Provider::Google);
+        let graph = calendar_account(&agent_id, &graph_id, Provider::Microsoft);
+        assert_eq!(
+            client
+                .reconcile_created_event(
+                    &google,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            client
+                .reconcile_created_event(
+                    &graph,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        google_visible.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            client
+                .reconcile_created_event(
+                    &google,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id
+                )
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("google-event")
+        );
+        assert_eq!(
+            client
+                .reconcile_created_event(
+                    &graph,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id
+                )
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("graph-event")
+        );
+        vault.remove(&google_id).unwrap();
+        vault.remove(&graph_id).unwrap();
+        server.abort();
     }
 
     #[tokio::test]
@@ -1157,7 +1411,8 @@ mod tests {
     fn reviewed_event_profile_has_no_invites_or_reminders() {
         let draft = timed_event();
         validate_event_create(&draft).unwrap();
-        let google = google_create_event_payload(&draft);
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let google = google_create_event_payload(&draft, &attempt_id);
         assert_eq!(google["attendees"], json!([]));
         assert_eq!(
             google["reminders"],
@@ -1165,11 +1420,19 @@ mod tests {
         );
         assert_eq!(google["start"]["timeZone"], "UTC");
         assert_eq!(google["start"]["dateTime"], "2026-10-01T09:00:00+00:00");
-        let graph = graph_create_event_payload(&draft);
+        assert_eq!(
+            google["extendedProperties"]["private"][GOOGLE_ACTION_PROPERTY],
+            attempt_id
+        );
+        let graph = graph_create_event_payload(&draft, &attempt_id);
         assert_eq!(graph["attendees"], json!([]));
         assert_eq!(graph["isReminderOn"], false);
         assert_eq!(graph["start"]["timeZone"], "UTC");
         assert_eq!(graph["start"]["dateTime"], "2026-10-01T09:00:00");
+        assert_eq!(
+            graph["singleValueExtendedProperties"][0]["value"],
+            attempt_id
+        );
     }
 
     #[test]

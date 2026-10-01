@@ -157,7 +157,19 @@ descriptions, and attendee counts while preserving only the busy time. Reads
 supplied to the model are retained in current append-only session history.
 Local drafts and scheduled read-only routines are implemented.
 The first plain-text email effect and one timed event-create profile are
-implemented for Google and Microsoft. Google also supports a constrained
+implemented for Google and Microsoft. Calendar creates carry a private,
+provider-side attempt marker bound to the durable single-use dispatch attempt.
+After an ambiguous response or process restart, an owner can ask the broker to
+look for that exact marker. A unique match confirms the stored receipt; no
+match or multiple matches leaves it unknown and permanently non-retryable.
+The marker contains only the opaque attempt UUID, not account identity,
+Agent identity, event content, or message content. Reconciliation is a
+read-only CalendarWrite-account operation authorized by the same Agent broker
+and permission engine. Email, update, and cancellation outcomes still need
+provider-specific reconciliation. This uses [Google private extended
+properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
+and [Microsoft Graph single-value extended properties](https://learn.microsoft.com/en-us/graph/api/singlevaluelegacyextendedproperty-post-singlevalueextendedproperties?view=graph-rest-1.0).
+Google also supports a constrained
 conditional update of one standalone timed event without attendees. These
 effects require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain

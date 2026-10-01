@@ -470,6 +470,18 @@ the effect. CalendarWrite provider scopes can authorize broader operations
 than this package currently exposes, so credentials remain private and the
 broker enforces the narrower action.
 
+**Implemented increment (2026-10-01):** timed event creates attach an opaque
+UUIDv7 from the durable action attempt to Google Calendar's private extended
+properties or Microsoft Graph's single-value extended properties. The owner
+can check an ambiguous/dispatching create through the owner-authenticated
+broker. The provider lookup is bound to that exact attempt; only one matching
+marker advances the receipt to confirmed. An absent or non-unique result stays
+unknown and cannot be retried. No event details are stored in the marker.
+Provider test doubles cover both marker formats, exact query scope, delayed
+visibility, and the positive match. Full owner-route HTTP acceptance remains
+in progress. This does not reconcile email sends, event updates, or
+cancellations and does not establish live provider conformance.
+
 **Implemented increment (2026-09-30):** Google calendar preview now retains
 the provider ETag and recurrence marker. The owner can stage an update only for
 a public, standalone, timed event with no attendees. Review binds the event ID,
@@ -2398,3 +2410,13 @@ remains open.
   and 390px phone width, with no horizontal overflow. Regular and fixture UI
   typechecks pass. This covers configuration in synthetic data; full scheduled
   provider execution and live-provider conformance remain open.
+- 2026-10-01: Added owner-triggered reconciliation for ambiguous timed event
+  creates. Google and Microsoft create requests now attach only the durable
+  UUIDv7 attempt marker; the owner broker checks for that exact marker and
+  confirms only a unique result. No result remains unknown and locked against
+  retry. The synthetic-only regression pack passed: 129 provider/vault tests
+  plus registry, 19 Core tests, 17 Server tests, four owner-authenticated HTTP
+  tests, restart/requeue, and five isolated-worker tests. The real Today Canvas
+  browser fixture passed all 44 checks at desktop and 390px, with no horizontal
+  overflow at phone width. Live-provider conformance and reconciliation for
+  mail sends, event updates, and cancellations remain open.
