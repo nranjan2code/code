@@ -381,6 +381,7 @@ impl ProviderEffectClient {
         vault: &AccountVault,
         agent_id: &str,
         audience: &str,
+        attempt_id: &str,
         event_id: &str,
         source_version: &str,
         draft: &CalendarDraft,
@@ -396,6 +397,9 @@ impl ProviderEffectClient {
             return Err(ProviderEffectError::Unsupported);
         }
         validate_event_update(event_id, source_version, draft)?;
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
@@ -432,11 +436,80 @@ impl ProviderEffectClient {
             .patch(format!("{url}?sendUpdates=none"))
             .bearer_auth(token.as_str())
             .header(reqwest::header::IF_MATCH, if_match)
-            .json(&google_update_event_payload(draft))
+            .json(&google_update_event_payload(draft, attempt_id))
             .send()
             .await
             .map_err(|_| ProviderEffectError::Unknown)?;
         classify_updated_event_response(response).await
+    }
+
+    /// Confirm an ambiguous conditional update only when the event now carries
+    /// the exact private marker from that dispatch attempt.
+    pub async fn reconcile_updated_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        attempt_id: &str,
+        event_id: &str,
+    ) -> Result<Option<String>, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider != Provider::Google {
+            return Err(ProviderEffectError::Unsupported);
+        }
+        if !valid_attempt_id(attempt_id)
+            || event_id.is_empty()
+            || event_id.len() > 512
+            || event_id.chars().any(char::is_control)
+        {
+            return Err(ProviderEffectError::Rejected);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let url = path_url(
+            &self.google_calendar_base,
+            &["calendars", "primary", "events", event_id],
+        )?;
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(token.as_str())
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            StatusCode::NOT_FOUND => return Ok(None),
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let body = response_json(response).await?;
+        let returned_id = body
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| *id == event_id)
+            .ok_or(ProviderEffectError::Unknown)?;
+        let marker = body
+            .get("extendedProperties")
+            .and_then(|properties| properties.get("private"))
+            .and_then(|private| private.get(GOOGLE_ACTION_PROPERTY))
+            .and_then(Value::as_str);
+        if marker == Some(attempt_id) {
+            Ok(Some(returned_id.to_owned()))
+        } else {
+            Ok(None)
+        }
     }
 
     /// Delete only an unchanged public, standalone, timed Google event with
@@ -633,13 +706,14 @@ fn google_create_event_payload(draft: &CalendarDraft, attempt_id: &str) -> Value
     })
 }
 
-fn google_update_event_payload(draft: &CalendarDraft) -> Value {
+fn google_update_event_payload(draft: &CalendarDraft, attempt_id: &str) -> Value {
     json!({
         "summary": draft.title,
         "description": draft.description,
         "location": draft.location,
         "start": {"dateTime": draft.starts_at.to_rfc3339(), "timeZone": "UTC"},
-        "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"}
+        "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"},
+        "extendedProperties": {"private": {GOOGLE_ACTION_PROPERTY: attempt_id}}
     })
 }
 
@@ -1281,6 +1355,125 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn ambiguous_google_event_update_reconciles_only_its_attempt_marker() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-update-reconcile-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                crate::vault::AccountSecretMaterial::new(
+                    format!("provider:{account_id}"),
+                    Some("owner@example.test".into()),
+                    None,
+                    Some("mock-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let changed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let get_changed = Arc::clone(&changed);
+        let patch_changed = Arc::clone(&changed);
+        let stored_payload = Arc::new(Mutex::new(None::<Value>));
+        let patch_payload = Arc::clone(&stored_payload);
+        let attempt_for_read = attempt_id.clone();
+        let app = Router::new().route(
+            "/calendar/v3/calendars/primary/events/abcde",
+            get(move || {
+                let changed = get_changed.load(std::sync::atomic::Ordering::SeqCst);
+                let marker = attempt_for_read.clone();
+                async move {
+                    let mut event = json!({
+                            "id":"abcde",
+                        "etag":"\"v1\"",
+                        "eventType":"default",
+                        "attendees":[],
+                        "organizer":{"self":true}
+                    });
+                    if changed {
+                        event["extendedProperties"] =
+                            json!({"private":{(GOOGLE_ACTION_PROPERTY):marker}});
+                    }
+                    Json(event)
+                }
+            })
+            .patch(move |Json(payload): Json<Value>| {
+                let changed = Arc::clone(&patch_changed);
+                let stored = Arc::clone(&patch_payload);
+                async move {
+                    *stored.lock().unwrap() = Some(payload);
+                    changed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    StatusCode::INTERNAL_SERVER_ERROR
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.google_calendar_base = format!("http://{address}/calendar/v3");
+        let account = calendar_account(&agent_id, &account_id, Provider::Google);
+
+        assert_eq!(
+            client
+                .reconcile_updated_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id,
+                    "abcde",
+                )
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            client
+                .update_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id,
+                    "abcde",
+                    "\"v1\"",
+                    &timed_event(),
+                )
+                .await,
+            Err(ProviderEffectError::Unknown)
+        );
+        assert_eq!(
+            stored_payload.lock().unwrap().as_ref().unwrap()["extendedProperties"]["private"]
+                [GOOGLE_ACTION_PROPERTY],
+            attempt_id
+        );
+        assert_eq!(
+            client
+                .reconcile_updated_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id,
+                    "abcde",
+                )
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("abcde")
+        );
+
+        vault.remove(&account_id).unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn graph_reply_rechecks_source_then_posts_only_the_reviewed_reply() {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-reply-{}", uuid::Uuid::now_v7());
@@ -1625,9 +1818,14 @@ mod tests {
 
     #[test]
     fn google_update_payload_does_not_replace_attendees_or_reminders() {
-        let payload = google_update_event_payload(&timed_event());
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let payload = google_update_event_payload(&timed_event(), &attempt_id);
         assert!(payload.get("attendees").is_none());
         assert!(payload.get("reminders").is_none());
+        assert_eq!(
+            payload["extendedProperties"]["private"][GOOGLE_ACTION_PROPERTY],
+            attempt_id
+        );
     }
 
     #[tokio::test]

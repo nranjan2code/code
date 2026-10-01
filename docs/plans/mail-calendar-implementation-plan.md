@@ -470,17 +470,19 @@ the effect. CalendarWrite provider scopes can authorize broader operations
 than this package currently exposes, so credentials remain private and the
 broker enforces the narrower action.
 
-**Implemented increment (2026-10-01):** timed event creates attach an opaque
-UUIDv7 from the durable action attempt to Google Calendar's private extended
-properties or Microsoft Graph's single-value extended properties. The owner
-can check an ambiguous/dispatching create through the owner-authenticated
-broker. The provider lookup is bound to that exact attempt; only one matching
-marker advances the receipt to confirmed. An absent or non-unique result stays
-unknown and cannot be retried. No event details are stored in the marker.
-Provider test doubles cover both marker formats, exact query scope, delayed
-visibility, and the positive match. Full owner-route HTTP acceptance remains
-in progress. This does not reconcile email sends, event updates, or
-cancellations and does not establish live provider conformance.
+**Implemented increment (2026-10-01/02):** timed event creates attach an
+opaque UUIDv7 from the durable action attempt to Google Calendar's private
+extended properties or Microsoft Graph's single-value extended properties.
+The supported conditional Google event update now carries the same kind of
+marker on that exact event. The owner can check an ambiguous/dispatching create
+or update through the owner-authenticated broker. Only the matching marker
+advances the receipt to confirmed; an absent or non-unique result stays unknown
+and cannot be retried. No event details are stored in the marker. Provider test
+doubles cover both create marker formats, the Google update marker, exact query
+scope, delayed visibility, and the positive match. Full owner-route HTTP
+acceptance remains in progress. This does not reconcile email sends, event
+cancellations, or Microsoft event updates and does not establish live provider
+conformance.
 
 **Implemented increment (2026-09-30):** Google calendar preview now retains
 the provider ETag and recurrence marker. The owner can stage an update only for
@@ -2420,3 +2422,14 @@ remains open.
   browser fixture passed all 44 checks at desktop and 390px, with no horizontal
   overflow at phone width. Live-provider conformance and reconciliation for
   mail sends, event updates, and cancellations remain open.
+- 2026-10-02: Extended ambiguous-result reconciliation to the supported
+  conditional Google event update. The exact update attempt UUID is now added
+  to the event's private extended properties, and an owner-initiated broker
+  lookup confirms only that matching marker. A missing event or marker remains
+  unknown. A loopback provider double simulated a failed response after the
+  update took effect and verified that the matching marker recovers the event.
+  The owner-authenticated Server route suite, full synthetic regression pack,
+  and real browser Canvas fixture passed. The fixture now checks ambiguous
+  update recovery visibility and passes all 45 checks at desktop and 390px with
+  no phone-width overflow. Email sends, cancellations, Microsoft updates, and
+  live-provider conformance remain open.

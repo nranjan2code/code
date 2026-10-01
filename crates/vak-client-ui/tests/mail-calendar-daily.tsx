@@ -505,6 +505,11 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && document.querySelectorAll(".mail-calendar-grid-event").length >= 60
     && document.body.textContent?.includes("google sample event 60") === true);
   savedCandidates.unshift({
+    id: "fixture-ambiguous-update", account_id: "g-account-0", agent_id: "fixture-owner", audience_id: "agent:fixture-owner",
+    revision: 1, source_refs: [], action: { kind: "update_event", event_id: "abcde", source_version: "\"etag-1\"", draft: { title: "Updated event", description: "", location: null, starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3600_000).toISOString(), time_zone: "UTC", all_day: false, attendee_addresses: [], recurrence: null, occurrence_id: null } },
+    candidate_digest: "b".repeat(64), action_state: "unknown", created_at: new Date().toISOString(),
+  });
+  savedCandidates.unshift({
     id: "fixture-ambiguous-event", account_id: "g-account-0", agent_id: "fixture-owner", audience_id: "agent:fixture-owner",
     revision: 1, source_refs: [], action: { kind: "create_event", draft: { title: "Ambiguous event", description: "", location: null, starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3600_000).toISOString(), time_zone: "UTC", all_day: false, attendee_addresses: [], recurrence: null, occurrence_id: null } },
     candidate_digest: "a".repeat(64), action_state: "unknown", created_at: new Date().toISOString(),
@@ -523,6 +528,9 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const positiveReconciliationConfirms = await waitFor(() => reconciliationChecks === 2
     && savedCandidates.find((candidate) => candidate.id === "fixture-ambiguous-event")?.action_state === "confirmed"
     && ambiguousDraftRow()?.textContent?.includes("confirmed") === true);
+  const ambiguousUpdateRow = [...document.querySelectorAll<HTMLElement>(".mail-calendar-draft-row")].find((row) => row.textContent?.includes("Updated event"));
+  const updateReconciliationAvailable = !!ambiguousUpdateRow
+    && [...ambiguousUpdateRow.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Check provider result");
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
@@ -563,6 +571,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(providerMailPagingWorks, "Canvas fetches later inbox pages from the selected provider folder and appends them without duplicates"),
     check(providerCalendarPageRequested && providerCalendarPagingWorks, "Canvas fetches later provider calendar pages and appends them to the selected calendar without duplicates"),
     check(ambiguousDraftVisible && inconclusiveReconciliationStaysLocked && positiveReconciliationConfirms, "Canvas keeps an ambiguous event create non-retryable when no provider marker is visible, then marks it confirmed when the broker finds the attempt"),
+    check(updateReconciliationAvailable, "Canvas offers provider reconciliation for an ambiguous supported event update"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div:not(.mail-calendar-all-day-label)").length <= 24, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),

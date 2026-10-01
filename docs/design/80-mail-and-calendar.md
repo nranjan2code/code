@@ -162,16 +162,17 @@ provider-side attempt marker bound to the durable single-use dispatch attempt.
 After an ambiguous response or process restart, an owner can ask the broker to
 look for that exact marker. A unique match confirms the stored receipt; no
 match or multiple matches leaves it unknown and permanently non-retryable.
+The supported Google conditional update also stores the attempt marker on the
+event; reconciliation reads that exact event and confirms only the matching
+marker. A missing event or marker remains inconclusive.
 The marker contains only the opaque attempt UUID, not account identity,
 Agent identity, event content, or message content. Reconciliation is a
 read-only CalendarWrite-account operation authorized by the same Agent broker
-and permission engine. Email, update, and cancellation outcomes still need
-provider-specific reconciliation. This uses [Google private extended
+and permission engine. Email sends, cancellations, and Microsoft event
+updates still need provider-specific reconciliation. This uses [Google private extended
 properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
 and [Microsoft Graph single-value extended properties](https://learn.microsoft.com/en-us/graph/api/singlevaluelegacyextendedproperty-post-singlevalueextendedproperties?view=graph-rest-1.0).
-Google also supports a constrained
-conditional update of one standalone timed event without attendees. These
-effects require an unchanged saved
+These effects require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain
 non-retryable and appear in the local candidate list. Google event update
 re-reads the source event and sends a conditional ETag update; stale versions

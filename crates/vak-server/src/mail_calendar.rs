@@ -1188,6 +1188,7 @@ pub(super) async fn send_mail_candidate(
                     &vault,
                     &agent_id,
                     &candidate.audience_id,
+                    &receipt.attempt_id,
                     event_id,
                     source_version,
                     draft,
@@ -1300,10 +1301,10 @@ pub(super) struct ReconcileEventRequest {
     candidate_digest: String,
 }
 
-/// Reconcile a timed event create after its dispatch outcome was ambiguous.
-/// Provider-private attempt markers can prove that creation occurred; absence
-/// is inconclusive and never enables a retry.
-pub(super) async fn reconcile_created_event_candidate(
+/// Reconcile an event create or supported update after an ambiguous dispatch.
+/// Provider-private attempt markers can prove the exact attempt; absence is
+/// inconclusive and never enables a retry.
+pub(super) async fn reconcile_event_candidate(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
     Path((agent_id, candidate_id)): Path<(String, String)>,
@@ -1363,13 +1364,17 @@ pub(super) async fn reconcile_created_event_candidate(
         )
             .into_response();
     }
-    if !matches!(candidate.action, ProposedAction::CreateEvent { .. }) {
-        return (
-            StatusCode::BAD_REQUEST,
-            "Only an ambiguous calendar event create can be reconciled here.",
-        )
-            .into_response();
-    }
+    let reconcile_update_event = match &candidate.action {
+        ProposedAction::CreateEvent { .. } => None,
+        ProposedAction::UpdateEvent { event_id, .. } => Some(event_id.as_str()),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                "Only an ambiguous calendar event create or update can be reconciled here.",
+            )
+                .into_response();
+        }
+    };
     let Some(mut receipt) = vault.list_action_receipts().ok().and_then(|rows| {
         rows.into_iter()
             .find(|row| row.candidate_id == candidate.id)
@@ -1402,7 +1407,10 @@ pub(super) async fn reconcile_created_event_candidate(
         Some(account) => account,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
-    if !matches!(account.provider, Provider::Google | Provider::Microsoft) {
+    if !matches!(
+        (account.provider, reconcile_update_event),
+        (Provider::Google | Provider::Microsoft, None) | (Provider::Google, Some(_))
+    ) {
         return StatusCode::BAD_REQUEST.into_response();
     }
     if account
@@ -1444,11 +1452,40 @@ pub(super) async fn reconcile_created_event_candidate(
         Ok(client) => client,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    match client.reconcile_created_event(&account, &vault, &agent_id, &candidate.audience_id, &receipt.attempt_id).await {
+    let provider_result = if let Some(event_id) = reconcile_update_event {
+        client
+            .reconcile_updated_event(
+                &account,
+                &vault,
+                &agent_id,
+                &candidate.audience_id,
+                &receipt.attempt_id,
+                event_id,
+            )
+            .await
+    } else {
+        client
+            .reconcile_created_event(
+                &account,
+                &vault,
+                &agent_id,
+                &candidate.audience_id,
+                &receipt.attempt_id,
+            )
+            .await
+    };
+    match provider_result {
         Ok(Some(provider_item_id)) => {
             receipt.state = ActionState::Confirmed;
             receipt.provider_item_id = Some(provider_item_id);
-            receipt.detail_code = Some("provider_event_confirmed_by_reconciliation".into());
+            receipt.detail_code = Some(
+                if reconcile_update_event.is_some() {
+                    "provider_event_update_confirmed_by_reconciliation"
+                } else {
+                    "provider_event_confirmed_by_reconciliation"
+                }
+                .into(),
+            );
             receipt.observed_at = Utc::now();
             if vault.settle_action(receipt.clone()).is_err() { return StatusCode::SERVICE_UNAVAILABLE.into_response(); }
             (StatusCode::OK, Json(serde_json::json!({"matched": true, "receipt": receipt}))).into_response()
