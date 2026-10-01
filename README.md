@@ -11,10 +11,10 @@ An open-source AI agent for code, documents, research and everyday work.<br>
 It runs on your machine, uses the model you choose, and works inside the boundaries you set.
 
 [![Version](https://img.shields.io/badge/version-5.3.2-F5A400?style=flat-square)](CHANGELOG.md)
-[![License](https://img.shields.io/badge/license-MIT-101D3D?style=flat-square)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-2024-2B2B2B?style=flat-square&logo=rust)](Cargo.toml)
-[![Platforms](https://img.shields.io/badge/macOS%20%C2%B7%20Linux-supported-536B58?style=flat-square)](#get-started)
-[![Website](https://img.shields.io/badge/vakyartha.com-visit-101D3D?style=flat-square)](https://vakyartha.com)
+[![License](docs/assets/readme/badges/license.svg)](LICENSE)
+[![Rust](docs/assets/readme/badges/rust.svg)](Cargo.toml)
+[![Platforms](docs/assets/readme/badges/platforms.svg)](#get-started)
+[![Website](docs/assets/readme/badges/website.svg)](https://vakyartha.com)
 
 [**Get started**](#get-started) · [What it does](#put-it-to-work) · [Why Vakyartha](#why-vakyartha) · [What's new](#whats-new-in-5x) · [Docs](docs/README.md) · [Website](https://vakyartha.com)
 
