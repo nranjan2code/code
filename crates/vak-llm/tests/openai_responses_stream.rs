@@ -203,6 +203,101 @@ async fn http_error_maps_to_typed_value() {
     assert!(matches!(err, LlmError::Auth(_)), "got {err:?}");
 }
 
+#[tokio::test]
+async fn streamed_failures_preserve_the_provider_reason_and_retry_class() {
+    for (kind, code, retryable) in [
+        ("response.failed", "context_length_exceeded", false),
+        ("response.failed", "server_error", true),
+        ("error", "rate_limit_exceeded", true),
+        ("error", "insufficient_quota", false),
+    ] {
+        let error = serde_json::json!({"code": code, "message": "specific provider rejection"});
+        let event = if kind == "response.failed" {
+            serde_json::json!({"type": kind, "response": {"error": error}})
+        } else {
+            serde_json::json!({"type": kind, "code": code, "message": "specific provider rejection"})
+        };
+        let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+            api_key: "k".into(),
+            base_url: mock_url(&format!("data: {event}\n\n")).await,
+            ..Default::default()
+        })
+        .unwrap();
+        let mut es = provider
+            .stream(ChatRequest::new("m"), CancellationToken::new())
+            .await
+            .unwrap();
+        while futures::StreamExt::next(&mut es).await.is_some() {}
+        let error = es.result().await.unwrap_err();
+        assert!(error.to_string().contains(code), "{error}");
+        assert!(error.to_string().contains("specific provider rejection"));
+        assert_eq!(error.is_retryable(), retryable, "{code}: {error}");
+        if code == "context_length_exceeded" {
+            assert!(matches!(error, LlmError::Context(_)));
+        }
+    }
+}
+
+#[tokio::test]
+async fn terminal_response_settles_without_waiting_for_http_eof() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        drain_headers(&mut sock).await;
+        use tokio::io::AsyncWriteExt;
+        sock.write_all(format!("HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n{FIXTURE_FULL_CACHE_HIT}").as_bytes()).await.unwrap();
+        sock.flush().await.unwrap();
+        std::future::pending::<()>().await;
+    });
+    let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+        api_key: "k".into(),
+        base_url: format!("http://{addr}"),
+        ..Default::default()
+    })
+    .unwrap();
+    let mut es = provider
+        .stream(ChatRequest::new("m"), CancellationToken::new())
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while futures::StreamExt::next(&mut es).await.is_some() {}
+        es.result().await
+    })
+    .await;
+    server.abort();
+    assert_eq!(
+        result.unwrap().unwrap().response_id.as_deref(),
+        Some("resp_456")
+    );
+}
+
+#[tokio::test]
+async fn content_without_a_terminal_event_still_fails_closed() {
+    let provider = OpenAiResponsesProvider::new(OpenAiResponsesConfig {
+        api_key: "k".into(),
+        base_url: mock_url(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial answer\"}\n\n",
+        )
+        .await,
+        ..Default::default()
+    })
+    .unwrap();
+    let mut es = provider
+        .stream(ChatRequest::new("m"), CancellationToken::new())
+        .await
+        .unwrap();
+    while futures::StreamExt::next(&mut es).await.is_some() {}
+    let error = es.result().await.unwrap_err();
+    assert!(matches!(error, LlmError::Parse(_)));
+    assert!(
+        error
+            .to_string()
+            .contains("last event: response.output_text.delta")
+    );
+    assert!(!error.to_string().contains("partial answer"));
+}
+
 async fn spawn_server(body: Vec<u8>) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

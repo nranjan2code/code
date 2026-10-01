@@ -34,7 +34,7 @@ members = [
 ]
 
 [workspace.package]
-version = "5.2.9"
+version = "5.3.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/nranjan2code/code"
@@ -87,8 +87,6 @@ bytes = "1"
 # Gemini Live API (bidi voice synthesis) speaks raw WebSocket frames.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23.45", default-features = false, features = ["ring"] }
-aws-config = { version = "1.12.0", default-features = false, features = ["default-https-client", "rt-tokio", "credentials-process", "sso"] }
-aws-sdk-bedrock = { version = "1.155.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
@@ -98,6 +96,9 @@ uuid = { version = "1", features = ["v7"] }
 zeroize = "1"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
+# The host's IANA zone name for the per-turn time context (already in the
+# graph through chrono's clock feature).
+iana-time-zone = "=0.1.65"
 regex = "1"
 # Standards-compliant CommonMark AST for lossless, surface-neutral output projection.
 pulldown-cmark = "=0.13.4"

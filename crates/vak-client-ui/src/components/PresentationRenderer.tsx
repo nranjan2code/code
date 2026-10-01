@@ -15,7 +15,7 @@ import {
   openWorkbenchArtifact,
   uiPreferences,
   isPreviewableArtifact,
-  openArtifactPathInCanvas,
+  openArtifactFile,
   openArtifactCanvas,
   openCandidateReview,
   openOfficeCitation,
@@ -31,6 +31,7 @@ import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
 import { parseMailCalendarCitation } from "../mailCalendarCitation";
+import { fileSubject, runOrigin } from "../canvasSubject";
 import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPreview";
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
@@ -248,13 +249,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
 
   const openPreview = () => {
     const title = props.filename || (props.language ? `${props.language.toUpperCase()} Preview` : "Artifact Preview");
-    openArtifactCanvas({
-      id: `code-${Date.now()}`,
-      title,
-      artifactPath: props.filename || "",
-      html: props.content,
-      timestamp: Date.now(),
-    });
+    openArtifactCanvas({ kind: "inline", title, html: props.content });
   };
 
   return (
@@ -675,12 +670,13 @@ function openFile(item: OutputItem, sessionId?: string) {
   const context = {
     sessionId: sessionId ?? item.provenance?.session_id ?? undefined,
     resultId: item.outcome?.result_id ?? undefined,
-    executionId: item.provenance?.tool_call_id ?? undefined,
+    // A file already in the folder is read from the folder: the call that wrote it left nothing in scratch.
+    executionId: status?.state === "in_folder" ? undefined : item.provenance?.tool_call_id ?? undefined,
   };
   if (saved && context.sessionId) {
-    openArtifactCanvas({ id: `${saved.version_id}:${saved.path}`, title: artifact.name, artifactPath: saved.path, ...context, candidateId: saved.version_id });
+    openArtifactCanvas(fileSubject(saved.path, { ...runOrigin(context), sessionId: context.sessionId, candidateId: saved.version_id }, artifact.name));
   } else if (artifact.path && isPreviewableArtifact(artifact.path)) {
-    openArtifactPathInCanvas(artifact.path, undefined, context);
+    openArtifactFile(artifact.path, runOrigin(context));
   } else if (artifact.path) {
     openWorkbenchArtifact(artifact.path);
   }
@@ -772,7 +768,7 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
       .then((file) => {
         const content = file.content;
         if (content == null) throw new Error("not text");
-        return artifactPreviewHtml(value.path, content, "'none'", value.reader).catch(() => sandboxedSrcdoc(content, "'none'"));
+        return artifactPreviewHtml(value.path, content, value.reader).catch(() => sandboxedSrcdoc(content));
       })
       .then((html) => { if (current) setPage(html); })
       .catch(() => { if (current) setFailed(true); });
@@ -814,7 +810,8 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
   };
   const facts = () => file.facts() ? officeFactsLine(file.facts()!) : fileKind(artifact.name, artifact.media_type);
   const kind = () => fileKind(artifact.name, artifact.media_type);
-  const fileIcon = () => kind() === "Spreadsheet" ? "sheet" as const : kind() === "Presentation" ? "slides" as const : kind() === "PDF" ? "pdf" as const : "file" as const;
+  const fileIcon = () => kind() === "Word document" ? "word" as const : kind() === "Spreadsheet" ? "sheet" as const : kind() === "Presentation" ? "slides" as const : kind() === "PDF" ? "pdf" as const : kind() === "Diagram" ? "diagram" as const : "file" as const;
+  const hasPreview = () => kind() === "Image" || kind() === "Web page";
   const askForChanges = () => {
     const resultId = props.resultId;
     if (!resultId) return;
@@ -822,11 +819,13 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
   return (
-    <article class="result-card" aria-label={artifact.name}>
-      <div class="result-card-preview-wrap">
-        <ResultPreview item={props.item} sessionId={props.sessionId} />
-        <span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={20} /></span>
-      </div>
+    <article class="result-card" classList={{ "has-preview": hasPreview() }} aria-label={artifact.name}>
+      <Show when={hasPreview()} fallback={<span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={19} /></span>}>
+        <div class="result-card-preview-wrap">
+          <ResultPreview item={props.item} sessionId={props.sessionId} />
+          <span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={18} /></span>
+        </div>
+      </Show>
       <div class="result-card-text">
         <Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>
         <h3 class="result-card-name">{artifact.name}</h3>
@@ -1093,6 +1092,45 @@ export function StructuredView(props: { output: import("../types").StructuredOut
 
 type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
 
+function WeatherCard(props: { data: any }) {
+  const data = props.data && typeof props.data === "object" ? props.data : {};
+  const valueFor = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = data[key] ?? data[key.toLowerCase()];
+      if (typeof value === "string" || typeof value === "number") return String(value);
+    }
+    return undefined;
+  };
+  const title = valueFor("location", "city", "place") ?? valueFor("title") ?? "Current weather";
+  const condition = valueFor("condition", "conditions", "weather", "summary", "description");
+  const temperature = valueFor("temperature", "temp", "temperature_c", "temperature_f");
+  const feelsLike = valueFor("feels_like", "feels like", "apparent_temperature");
+  const humidity = valueFor("humidity");
+  const wind = valueFor("wind_speed", "wind speed", "wind");
+  const windDirection = valueFor("wind_direction", "wind direction");
+  const observed = valueFor("observed_at", "updated_at", "time", "date");
+  const used = new Set(["location", "city", "place", "title", "condition", "conditions", "weather", "summary", "description", "temperature", "temp", "temperature_c", "temperature_f", "feels_like", "feels like", "apparent_temperature", "humidity", "wind_speed", "wind speed", "wind", "wind_direction", "wind direction", "observed_at", "updated_at", "time", "date"]);
+  const extras = Object.entries(data).filter(([key, value]) => !used.has(key.toLowerCase()) && (typeof value === "string" || typeof value === "number"));
+  return (
+    <section class="canvas-card weather-card" aria-label={`Weather for ${title}`}>
+      <header class="weather-card-head">
+        <div class="weather-card-title"><small>Current weather</small><strong>{title}</strong></div>
+        <Show when={observed}><span class="weather-card-time">{observed}</span></Show>
+      </header>
+      <div class="weather-card-main">
+        <Show when={temperature}><strong class="weather-card-temperature">{temperature}</strong></Show>
+        <Show when={condition}><span class="weather-card-condition">{condition}</span></Show>
+      </div>
+      <div class="weather-card-facts">
+        <Show when={feelsLike}><span><small>Feels like</small><strong>{feelsLike}</strong></span></Show>
+        <Show when={humidity}><span><small>Humidity</small><strong>{humidity}</strong></span></Show>
+        <Show when={wind || windDirection}><span><small>Wind</small><strong>{[wind, windDirection].filter(Boolean).join(" ")}</strong></span></Show>
+        <For each={extras}>{([key, value]) => <span><small>{key.replace(/_/g, " ")}</small><strong>{String(value)}</strong></span>}</For>
+      </div>
+    </section>
+  );
+}
+
 // Every named semantic type resolves through this single registry. Tests derive
 // their coverage from this registry so newly registered types cannot bypass the
 // completed-turn rendering contract.
@@ -1230,7 +1268,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "media.audio": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "audio")} />,
 
   // 11. Metrics & Weather
-  "weather": (props) => STRUCTURED_RENDERERS.metric(props),
+  "weather": ({ data }) => <WeatherCard data={data} />,
   "telemetry.metric": (props) => STRUCTURED_RENDERERS.metric(props),
   // Validated alongside "timeline" as the generic declarative renderer's
   // second proving case (see presentation/GenericSpecRenderer.tsx). The

@@ -86,6 +86,26 @@ The standard failure matrix and where each case is handled.
   `[DONE]`/`finish_reason`. The openai-completions adapter treats a clean
   close *with content* as de facto completion (`EndTurn`); a close with no
   content still fails closed as `Parse`.
+- **Responses stream settlement**: `response.completed` and
+  `response.incomplete` settle the step immediately; the adapter does not wait
+  for the HTTP body to close after a terminal response. Streamed
+  `response.failed` and `error` events preserve the provider's error code and
+  message as a typed error, so context rejections can replan, overload and
+  rate limits can retry, and exhausted quota is terminal. A body that closes
+  without a terminal event still fails closed, with the last event type in
+  the diagnostic (no response content).
+- **Artifact completion**: a successful tool that delivers a reviewable file
+  satisfies the empty-answer check, just as a displayed card does. When the
+  model ends the next step without prose, the loop accepts that completion
+  through the remaining outcome and safety gates instead of requesting more
+  work solely to repeat the delivered file in text. Conversely, an authoring
+  outcome cannot be marked complete by a prose claim alone: a successful
+  result from a tool that declares artifact production must be receipted in
+  the same run. Tool declarations are the extension point; the runtime does
+  not maintain a domain or file-type list. The ordinary bounded stop guard
+  asks the model to recover when that receipt is missing; if the recovery
+  budget expires, the run returns a failure instead of accepting the prose
+  claim as completion.
 
 ## Crash & recovery
 

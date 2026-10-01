@@ -230,7 +230,7 @@ pub(crate) async fn session_status(
     request: axum::extract::Request,
 ) -> Response {
     let headers = request.headers();
-    let held = session_cookie(&headers).is_some_and(|token| state.browser_sessions.valid(token));
+    let held = session_cookie(headers).is_some_and(|token| state.browser_sessions.valid(token));
     if held {
         return Json(serde_json::json!({ "authenticated": true })).into_response();
     }
@@ -253,7 +253,7 @@ pub(crate) async fn session_status(
             .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
             .is_some_and(|peer| peer.0.ip().is_loopback())
     {
-        let attributes = cookie_attributes(&state, forwarded_proto(&headers));
+        let attributes = cookie_attributes(&state, forwarded_proto(headers));
         let session = state.browser_sessions.issue(Duration::from_secs(
             cfg.server.session_ttl_hours.saturating_mul(3600),
         ));

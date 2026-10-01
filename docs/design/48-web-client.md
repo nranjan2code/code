@@ -157,9 +157,15 @@ and is not survivable on a phone in daylight.
 
 Three hosts, one client:
 
-1. **Desktop** — Tauri shell, embedded per-project server on an ephemeral
-   loopback port. Unchanged behaviour.
+1. **Desktop** — Tauri shell. When the managed local gateway is running,
+   Desktop attaches to its per-workspace `CorePool`; the gateway is the one
+   live runtime shared with local Web and continues work if either client
+   closes. The embedded per-project server remains a standalone fallback
+   only when no managed gateway is running.
 2. **Browser, local** — `vak serve` on loopback, `http://127.0.0.1:8901/app`.
+   Use this canonical install URL when Desktop should display and continue the
+   same live conversation. A manually started second `vak serve` process has
+   separate live state even when it reads the same data home.
 3. **Browser, remote** — `vak serve --host` behind a proxy, or through a
    tunnel/tailnet. Same bundle, same routes, stricter posture.
 

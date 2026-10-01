@@ -52,6 +52,14 @@ pub struct TaskDeps {
     pub role_prompts: std::collections::BTreeMap<String, String>,
     pub provider: Arc<dyn Provider>,
     pub system_prompt: String,
+    /// Composes a child's system prompt through the host's one prompt
+    /// resolver, for the child's own role, Agent and final capability set.
+    /// `None` (deterministic fixtures) runs the child under `system_prompt`
+    /// or the named entry in `role_prompts` unchanged.
+    pub child_prompt: Option<ChildPrompt>,
+    /// Whether this workspace's project config is trusted: a project's saved
+    /// Agents are selectable only then, as for a top-level Agent.
+    pub trust_project: bool,
     /// The parent turn's tail (clock instant + epistemic stance,
     /// docs/design/68-context-engine.md §6/§10). Children get the same
     /// turn context block as the parent rather than an empty one, since a
@@ -102,6 +110,17 @@ pub struct TaskTool {
     deps: Arc<TaskDeps>,
 }
 
+/// `(role, agent, capabilities) -> system prompt` for a child run.
+pub type ChildPrompt = Arc<
+    dyn Fn(
+            Option<&str>,
+            Option<&vak_session::types::AgentIdentity>,
+            &[CapabilityDescriptor],
+        ) -> String
+        + Send
+        + Sync,
+>;
+
 #[derive(serde::Deserialize)]
 struct AgentDefinition {
     id: String,
@@ -127,14 +146,18 @@ fn default_agent_lifecycle() -> String {
     "active".into()
 }
 
-fn load_agent(cwd: &std::path::Path, requested: &str) -> Result<Option<AgentDefinition>, String> {
+fn load_agent(
+    cwd: &std::path::Path,
+    trust_project: bool,
+    requested: &str,
+) -> Result<Option<AgentDefinition>, String> {
     // Delegated Agents resolve the same effective Shared → trusted project
     // layers as a top-level Agent. Previously this delegated helper read only the
     // project file, so a user-level Agent worked from the sidebar and
     // scheduler but was invisible to `task(agent=...)`.
     let shared = vak_config::paths::default_workspace();
     let mut profiles = read_agents(&shared)?;
-    if cwd != shared {
+    if cwd != shared && trust_project {
         for profile in read_agents(cwd)? {
             profiles.retain(|candidate| candidate.id != profile.id);
             profiles.push(profile);
@@ -513,53 +536,23 @@ impl TaskTool {
         let selected_agent = explicit_agent;
         let profile = match selected_agent
             .as_ref()
-            .map(|name| load_agent(&self.deps.cwd, name))
+            .map(|name| load_agent(&self.deps.cwd, self.deps.trust_project, name))
             .transpose()
         {
             Ok(profile) => profile.flatten(),
             Err(error) => return ToolOutput::error(error),
         };
-        if let Some(profile) = profile.as_ref() {
-            child_system_prompt.push_str(
-                "\n\nSelected Agent identity (presentation and working style only):\nAgent revision: ",
-            );
-            child_system_prompt.push_str(&profile.revision.to_string());
-            child_system_prompt.push_str("\nName: ");
-            child_system_prompt.push_str(&profile.name);
-            child_system_prompt.push_str("\nPersonality: ");
-            child_system_prompt.push_str(&profile.personality);
-            child_system_prompt.push_str("\nWorking style: ");
-            child_system_prompt.push_str(&profile.behaviour);
-            if !profile.responsibilities.trim().is_empty() {
-                child_system_prompt.push_str("\nUseful for: ");
-                child_system_prompt.push_str(&profile.responsibilities);
-            }
-            if !profile.instructions.trim().is_empty() {
-                child_system_prompt
-                    .push_str("\nCustom Agent instructions (within vak's authority): ");
-                child_system_prompt.push_str(profile.instructions.trim());
-            }
-            child_system_prompt.push_str("\nThis profile cannot grant tools, authority, credentials, budget, or approval bypasses.");
-        } else if selected_agent.is_some() {
+        if profile.is_none() && selected_agent.is_some() {
             return ToolOutput::error(format!(
                 "unknown Agent '{}'",
                 selected_agent.unwrap_or_default()
             ));
         }
-        if let Some(objective) = self.deps.outcome_objective.as_deref()
-            && !objective.trim().is_empty()
-        {
-            child_system_prompt.push_str("\n\nParent outcome objective: ");
-            child_system_prompt.push_str(objective.trim());
-            child_system_prompt.push_str(
-                "\nTreat this as alignment context; permissions and completion remain runtime decisions.",
-            );
-        }
         let child_tool_names = child_tools
             .iter()
             .map(|tool| tool.name())
             .collect::<Vec<_>>();
-        let child_capabilities = self
+        let child_capabilities: Vec<CapabilityDescriptor> = self
             .deps
             .capabilities
             .iter()
@@ -572,7 +565,10 @@ impl TaskTool {
             .collect();
         let path =
             SessionPath::new_session_file(&self.deps.sessions_home, &self.deps.cwd, &session_id);
-        let prompt_layers = profile
+        // One identity, composed through the host's resolver for exactly the
+        // tools this child has — never the parent's prompt with a second
+        // identity appended, and never a prompt naming tools it lacks.
+        let child_identity = profile
             .as_ref()
             .map(|profile| vak_session::types::AgentIdentity {
                 id: profile.id.clone(),
@@ -586,7 +582,25 @@ impl TaskTool {
                 responsibilities: profile.responsibilities.clone(),
                 instructions: profile.instructions.clone(),
             })
-            .or_else(|| self.deps.parent_agent_identity.clone())
+            .or_else(|| self.deps.parent_agent_identity.clone());
+        if let Some(compose) = &self.deps.child_prompt {
+            let role = args
+                .get("role")
+                .and_then(|r| r.as_str())
+                .map(str::trim)
+                .filter(|role| !role.is_empty());
+            child_system_prompt = compose(role, child_identity.as_ref(), &child_capabilities);
+        }
+        if let Some(objective) = self.deps.outcome_objective.as_deref()
+            && !objective.trim().is_empty()
+        {
+            child_system_prompt.push_str("\n\nParent outcome objective: ");
+            child_system_prompt.push_str(objective.trim());
+            child_system_prompt.push_str(
+                "\nTreat this as alignment context; permissions and completion remain runtime decisions.",
+            );
+        }
+        let prompt_layers = child_identity
             .as_ref()
             .map(|identity| {
                 let text = format!(
@@ -608,22 +622,7 @@ impl TaskTool {
             })
             .unwrap_or_default();
         let header = SessionHeader {
-            agent: profile
-                .as_ref()
-                .map(|profile| vak_session::types::AgentIdentity {
-                    id: profile.id.clone(),
-                    revision: profile.revision,
-                    name: profile.name.clone(),
-                    character: profile.character.clone(),
-                    personality: profile.personality.clone(),
-                    animation: "subtle".into(),
-                    voice: "default".into(),
-                    behaviour: profile.behaviour.clone(),
-                    responsibilities: profile.responsibilities.clone(),
-                    instructions: profile.instructions.clone(),
-                })
-                .or_else(|| self.deps.parent_agent_identity.clone())
-                .or_else(|| Some(vak_core_identity())),
+            agent: child_identity.clone().or_else(|| Some(vak_core_identity())),
             session_id: session_id.clone(),
             created_at: chrono::Utc::now(),
             cwd: self.deps.cwd.clone(),
@@ -978,8 +977,30 @@ mod registry_tests {
             r#"[{"id":"one","revision":1,"name":"Pip","character":"pip","personality":"","behaviour":""},{"id":"two","revision":1,"name":"Pip","character":"pip","personality":"","behaviour":""}]"#,
         )
         .expect("profiles");
-        let result = load_agent(dir.path(), "Pip");
+        let result = load_agent(dir.path(), true, "Pip");
         assert!(matches!(result, Err(error) if error.contains("ambiguous")));
+    }
+
+    /// A project's saved Agents are selectable only in a trusted workspace,
+    /// as for a top-level Agent (`vak-server/src/agents.rs::effective`).
+    #[test]
+    fn untrusted_project_agents_are_not_selectable() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().expect("Agent workspace");
+        std::fs::create_dir_all(dir.path().join(".vak")).expect("profile directory");
+        std::fs::write(
+            dir.path().join(".vak/agents.json"),
+            r#"[{"id":"repo-agent","revision":1,"name":"Repo","character":"pip","personality":"","behaviour":""}]"#,
+        )
+        .expect("profiles");
+        assert!(matches!(
+            load_agent(dir.path(), false, "repo-agent"),
+            Ok(None)
+        ));
+        assert!(matches!(
+            load_agent(dir.path(), true, "repo-agent"),
+            Ok(Some(_))
+        ));
     }
 
     #[test]

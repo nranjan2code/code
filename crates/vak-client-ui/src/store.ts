@@ -1,5 +1,8 @@
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
+import { fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
+import { activateEntry, activeEntry, closeEntry, entriesOf, openEntry, updateEntry, type CanvasMode, type CanvasStacks } from "./canvasStack";
+import { freshEntry } from "./canvasViewers";
 import { displayFileName } from "./attachFiles";
 import { createStore, reconcile, unwrap } from "solid-js/store";
 import * as api from "./api";
@@ -291,42 +294,12 @@ export function hydrateWorkbenchExecutions(sessionId: string, events: Array<Reco
 
 /**
  * A Workbench is scoped to the currently selected task, never global app
- * history. A Canvas opened in `sessionId` stays open: showing the same
- * conversation again (the load-time route re-activates it) is not leaving it.
+ * history. The Canvas is scoped the same way, by holding one per conversation.
  */
-export function resetWorkbenchExecutions(sessionId: string) {
+export function resetWorkbenchExecutions() {
   setWorkbenchLoadError(null);
   setActiveExecutionId(null);
   setRequestedArtifact(null);
-  setActiveComponentPreview(null);
-  if (canvasConversation !== sessionId) closeArtifactCanvas();
-}
-
-export interface ActiveComponentPreview {
-  id: string;
-  title: string;
-  artifactPath: string;
-  html?: string;
-  previewId?: string;
-  timestamp?: number;
-  sandbox?: string;
-  connectSrc?: string;
-  serverName?: string;
-  serverUrl?: string;
-  /** Durable conversation/result identity that produced this artifact. */
-  sessionId?: string;
-  /** A cited place in an Office file or PDF to open the view at (`path#anchor`). */
-  anchor?: string;
-  resultId?: string;
-  executionId?: string;
-  /** Saved draft version; Canvas reads this candidate instead of mutable scratch. */
-  candidateId?: string;
-}
-export const [activeComponentPreview, setActiveComponentPreview] = createSignal<ActiveComponentPreview | null>(null);
-
-export function openComponentPreview(preview: ActiveComponentPreview) {
-  setActiveComponentPreview(preview);
-  setDockTab("preview");
 }
 
 // ---------------------------------------------------------------------------
@@ -334,62 +307,64 @@ export function openComponentPreview(preview: ActiveComponentPreview) {
 // user-activated only, never auto-opens from tool/sandbox events).
 // ---------------------------------------------------------------------------
 
-export type CanvasMode = "split" | "focused";
+export type { CanvasMode };
 export type CanvasDevice = "desktop" | "tablet" | "mobile";
 
-export interface ArtifactCanvasState {
-  /** The artifact being previewed; null when canvas is closed. */
-  artifact: ActiveComponentPreview | null;
-  /** Layout mode: split (chat + canvas) or focused (full-width canvas). */
-  mode: CanvasMode;
-  /** Viewport device simulation mode. */
-  device: CanvasDevice;
-}
-
-const [canvasArtifact, setCanvasArtifact] = createSignal<ActiveComponentPreview | null>(null);
-const [canvasMode, setCanvasMode] = createSignal<CanvasMode>("split");
+const [canvasStacks, setCanvasStacks] = createSignal<CanvasStacks>({});
 const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
-/** The conversation the open Canvas belongs to. */
-let canvasConversation: string | null = null;
+export { canvasDevice, setCanvasDevice };
 
-export { canvasArtifact, canvasMode, canvasDevice, setCanvasDevice };
+/** Each conversation has its own Canvas; the one in front is the active conversation's. */
+const canvasConversation = () => activeId() ?? "";
 
-/** Backward-compatible compound state getter. */
-export const canvasState = (): ArtifactCanvasState => ({
-  artifact: canvasArtifact(),
-  mode: canvasMode(),
-  device: canvasDevice(),
-});
+/** What is open in the active conversation's Canvas, and which is in front. */
+export const canvasEntries = () => entriesOf(canvasStacks(), canvasConversation());
+export const canvasEntry = () => activeEntry(canvasStacks(), canvasConversation());
+export const canvasSubject = (): CanvasSubject | null => canvasEntry()?.subject ?? null;
+export const canvasMode = (): CanvasMode => canvasEntry()?.mode ?? "split";
 
-/** Whether the artifact canvas overlay is currently open. */
-export const canvasOpen = () => canvasArtifact() !== null;
+/** Whether the active conversation has a Canvas showing. */
+export const canvasOpen = () => canvasEntry() !== null;
 
-/** Open the artifact canvas with a smooth slide-in. User-initiated only. */
-export function openArtifactCanvas(preview: ActiveComponentPreview) {
+/**
+ * Open a subject in the active conversation's Canvas, in front of what is
+ * already there. User-initiated only. The subject keeps its own identity for
+ * reading, so it can belong to another conversation than the one showing it.
+ */
+export function openArtifactCanvas(subject: CanvasSubject) {
   if (sidebarOpen()) {
     setSidebarOpen(false);
   }
   if (dockTab()) {
     setDockTab(null);
   }
-  canvasConversation = preview.sessionId ?? activeId();
-  // Documents need the whole application viewport for reading and review.
-  // Interactive previews can still open beside the conversation on wide screens.
-  const path = preview.artifactPath?.toLowerCase() ?? "";
-  const document = /\.(docx|xlsx|pptx|pdf)(?:$|[?#])/.test(path);
-  setCanvasMode(document || window.matchMedia("(max-width: 1100px)").matches ? "focused" : "split");
-  setCanvasArtifact(preview);
+  const narrow = window.matchMedia("(max-width: 1100px)").matches;
+  setCanvasStacks((stacks) => openEntry(stacks, canvasConversation(), subject, (opened) => freshEntry(opened, narrow)));
 }
 
-/** Close the artifact canvas. */
+/** Close the one in front; the last one closed closes the Canvas. */
 export function closeArtifactCanvas() {
-  canvasConversation = null;
-  setCanvasArtifact(null);
+  const entry = canvasEntry();
+  if (entry) closeCanvasEntry(entry.key);
+}
+
+export function closeCanvasEntry(key: string) {
+  setCanvasStacks((stacks) => closeEntry(stacks, canvasConversation(), key));
+}
+
+export function activateCanvasEntry(key: string) {
+  setCanvasStacks((stacks) => activateEntry(stacks, canvasConversation(), key));
+}
+
+/** Changes what the reader has done in the one in front (view, selection, note). */
+export function updateCanvasEntry(patch: Parameters<typeof updateEntry>[3], key = canvasEntry()?.key) {
+  if (key) setCanvasStacks((stacks) => updateEntry(stacks, canvasConversation(), key, patch));
 }
 
 /** Toggle between split and focused canvas modes. */
 export function toggleCanvasMode() {
-  setCanvasMode((m) => (m === "split" ? "focused" : "split"));
+  const entry = canvasEntry();
+  if (entry) updateCanvasEntry({ mode: entry.mode === "split" ? "focused" : "split" });
 }
 
 /** Check whether a path represents a directory or folder. */
@@ -454,115 +429,37 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
 }
 
 /**
- * Locate in-turn code block content matching a path (e.g. HTML/SVG or named block)
- * so that referenced deliverables can be previewed even before or if they are on disk.
+ * Open a file in the Canvas. A file named by its origin (a result, a run, a
+ * saved version) is read from exactly that origin. A bare reference, such as
+ * a path in the assistant's text, is matched to a run only when exactly one
+ * run in this conversation left that exact path; if several did, there is no
+ * telling which the reader means, so it says so instead of choosing.
  */
-export function extractCodeBlockForPath(text: string, path: string): string | undefined {
-  if (!text || !path) return undefined;
-  const filename = path.split("/").pop() || path;
-  const ext = filename.split(".").pop()?.toLowerCase() || "";
-
-  // 1. Look for a fenced code block with an explicit filename matching this path
-  const escapedName = filename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const namedRegex = new RegExp("```(?:\\w+[:\\s]+)?" + escapedName + "[ \\t]*\\n([\\s\\S]*?)```", "i");
-  const namedMatch = text.match(namedRegex);
-  if (namedMatch && namedMatch[1]?.trim()) {
-    return namedMatch[1].trim();
+export function openArtifactFile(path: string, origin?: ArtifactOrigin) {
+  const clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
+  const title = displayFileName(clean) || "Artifact Preview";
+  if (origin) {
+    openArtifactCanvas(fileSubject(clean, origin, title));
+    return;
   }
-
-  // 2. Look for code blocks matching the file extension (e.g. html, svg, csv, tsv)
-  if (ext === "html" || ext === "htm") {
-    const htmlBlock = text.match(/```(?:html?|xml|xhtml)[ \t]*\n([\s\S]*?)```/i);
-    if (htmlBlock && htmlBlock[1]?.trim()) {
-      return htmlBlock[1].trim();
-    }
-    const anyBlock = text.match(/```\w*[ \t]*\n([\s\S]*?)```/g);
-    if (anyBlock) {
-      for (const b of anyBlock) {
-        const inner = b.replace(/^```\w*[ \t]*\n/, "").replace(/```$/, "").trim();
-        if (/<!doctype\s+html/i.test(inner) || /<html[\s>]/i.test(inner)) {
-          return inner;
-        }
-      }
-    }
-  } else if (ext === "svg") {
-    const svgBlock = text.match(/```(?:svg|xml)[ \t]*\n([\s\S]*?)```/i);
-    if (svgBlock && svgBlock[1]?.trim()) {
-      return svgBlock[1].trim();
-    }
-    const anyBlock = text.match(/```\w*[ \t]*\n([\s\S]*?)```/g);
-    if (anyBlock) {
-      for (const b of anyBlock) {
-        const inner = b.replace(/^```\w*[ \t]*\n/, "").replace(/```$/, "").trim();
-        if (/<svg[\s>]/i.test(inner)) {
-          return inner;
-        }
-      }
-    }
-  } else if (ext === "csv" || ext === "tsv") {
-    const dataBlock = text.match(new RegExp("```(?:" + ext + "|text)[ \\t]*\\n([\\s\\S]*?)```", "i"));
-    if (dataBlock && dataBlock[1]?.trim()) {
-      return dataBlock[1].trim();
-    }
+  const sessionId = activeId() ?? undefined;
+  const runs = workbenchExecutions();
+  const match = matchExecutionArtifact(clean, runs);
+  if (match.kind === "many") {
+    setNotice({ kind: "info", text: `${title} was made by more than one run. Open it from the run you mean.` });
+    openWorkbenchFolder(clean);
+    return;
   }
-  return undefined;
-}
-
-/** Open any artifact path directly in the Artifact Canvas. */
-export function openArtifactPathInCanvas(
-  path: string,
-  html?: string,
-  context?: Pick<ActiveComponentPreview, "sessionId" | "resultId" | "executionId" | "anchor">,
-) {
-  let clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
-  // A result-bound artifact already carries its exact path and execution.
-  // Fuzzy filename matching can silently open a different turn's file.
-  const executions = context ? [] : workbenchExecutions();
-  // Check if there is an execution artifact matching this filename or ending with this path
-  for (const exec of executions) {
-    const match = exec.artifacts.find(
-      (a) =>
-        a.path === clean ||
-        a.path.endsWith("/" + clean) ||
-        clean.endsWith("/" + a.path) ||
-        a.path.split("/").pop() === clean.split("/").pop()
-    );
-    if (match) {
-      clean = match.path;
-      break;
-    }
-  }
-
-  let resolvedHtml = html;
-  if (!resolvedHtml && !context) {
-    const sid = activeId();
-    const items = itemsOf(sid);
-    for (let i = items.length - 1; i >= 0; i--) {
-      const item = items[i];
-      if (item.kind === "assistant" && item.text) {
-        const found = extractCodeBlockForPath(item.text, clean);
-        if (found) {
-          resolvedHtml = found;
-          break;
-        }
-      }
-    }
-  }
-
-  const filename = displayFileName(clean) || "Artifact Preview";
-  openArtifactCanvas({
-    id: clean,
-    title: filename,
-    artifactPath: clean,
-    html: resolvedHtml,
-    timestamp: Date.now(),
-    ...context,
-  });
+  const run = match.kind === "one" ? runs.find((candidate) => candidate.id === match.executionId) : undefined;
+  const owner = run?.ownerSessionId ?? sessionId;
+  openArtifactCanvas(
+    fileSubject(clean, run && owner ? { sessionId: owner, executionId: run.id } : { sessionId }, title),
+  );
 }
 
 /** Opens the view of a cited Office file or PDF at the place it names. */
 export function openOfficeCitation(citation: { path: string; anchor: string }) {
-  openArtifactPathInCanvas(citation.path, undefined, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
+  openArtifactFile(citation.path, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
 }
 
 /** Opens an owner-only mail citation in the account conversation preview. */

@@ -53,8 +53,9 @@ and resumes inheritance.
   ignored until the workspace is trusted, via `Core::new_with_trust`, CLI
   `--trust`, or a per-directory marker under `<data-home>/trusted/`. The
   project secret scope is likewise loaded only when trusted. Restrictive keys
-  (`deny`, `ask`) and project guardrails still apply from an untrusted
-  project, because they can only narrow.
+  (`deny`, `ask`) still apply from an untrusted project, because typed rules
+  can only narrow; project guardrail prose waits for trust like every other
+  prompt layer (doc 45, Trust).
 - **`[ui]` keys are cosmetic-tier.** Unknown values warn and fall back
   (`composer` → emacs, `theme` → dark unless defined under `[ui.themes]`);
   a non-string entry in a theme colour table warns rather than failing the
@@ -199,8 +200,8 @@ shadow, add, or disable categories at their own scope.
 - Disabling category inheritance hides Shared entries without deleting them.
 - Admin, Desktop, and CLI exercise identical scope contracts.
 - Each catalog entry has a real command and persists exactly as advertised.
-- An untrusted project's privileged keys are demoted; its `deny`/`ask` and
-  guardrails still apply.
+- An untrusted project's privileged keys and prompt text are demoted; its
+  `deny`/`ask` rules still apply.
 - `[intent]` is **partly** privileged, which is unusual and deliberate. Most
   of the section can only narrow what a turn may do, and a repository
   choosing to give itself fewer tools is harmless, so it survives untrusted.

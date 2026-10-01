@@ -21,6 +21,21 @@ live model created a valid deliverable, that every renderer schema was exercised
 or that Tauri's installed binary has been updated. Production builds do not
 include this test entry point.
 
+# Canvas
+
+`canvas.html` mounts the real `ArtifactCanvas` over a stub server whose file
+routes (workspace, run, saved version) each answer with their own marker and
+log every request. Run `window.runChecks()` as above. It shows that each kind of
+subject is read through exactly its own route, an unreadable file is an error
+and never a stand-in page, a bare path opens a run's file only on an identical
+path from exactly one run, and a preview frame has the client-owned sandbox
+and no-network policy. It also covers pointing at lines (which must not reload the viewer), Comment and Ask Agent on a saved version, its Activity and Changes, a newer version being announced without taking over, preview origins (framed from one when a page has files
+behind it, closed with the Canvas, none for conversation markup), tabs, a Canvas per conversation, a
+document opening on the whole viewport, and a viewer that fails. Run it in a
+browser at 1440 px wide: below 1100 px the layout switch is hidden by design.
+The pure rules are in `canvas-subject.mjs`, `canvas-stack.mjs` and
+`preview-isolation.mjs` (`node tests/<file>`).
+
 # Result card
 
 `result-card.html` renders the real timeline over file results shaped like
@@ -82,5 +97,5 @@ agent-browser --session vak-ai-service eval 'window.runChecks()'
 node tests/model-choices.mjs
 ```
 
-The admin race and Bedrock availability fixture is
+The admin race and provider-neutral model discovery fixture is
 `crates/vak-admin-ui/tests/model-settings.html`.

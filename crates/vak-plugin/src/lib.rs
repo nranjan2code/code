@@ -1760,15 +1760,14 @@ impl PluginStore {
                 "catalog source is disabled".into(),
             ));
         }
-        if let Some(signature) = &source.signature {
-            if !signature.verified
+        if let Some(signature) = &source.signature
+            && (!signature.verified
                 || signature.revoked
-                || registry.revoked_keys.contains(&signature.key_id)
-            {
-                return Err(PluginError::UnsafePackage(
-                    "catalog source signature is unavailable or revoked".into(),
-                ));
-            }
+                || registry.revoked_keys.contains(&signature.key_id))
+        {
+            return Err(PluginError::UnsafePackage(
+                "catalog source signature is unavailable or revoked".into(),
+            ));
         }
         let inspection = inspect_catalog(&source.root)?;
         if inspection.digest != source.catalog_digest {

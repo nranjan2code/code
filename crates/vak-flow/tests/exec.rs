@@ -112,6 +112,7 @@ fn make_executor_with_outcome(
         prompt_layers: Vec::new(),
         provider,
         system_prompt: "sys".into(),
+        node_prompt: None,
         model: "test-model".into(),
         tools: vec![Arc::new(BashTool)],
         read_only_tools: vec![],
@@ -282,7 +283,7 @@ deps = ["shout"]
         routes: Mutex::new(routes),
     });
 
-    let state_path = std::env::temp_dir().join(format!("vak-flow-{}.json", uuid_like()));
+    let state_path = unique_state_path();
     let mut state = FlowState {
         run_id: "r1".into(),
         flow_name: "chain".into(),
@@ -334,7 +335,7 @@ deps = ["boom"]
     let provider = Arc::new(TaggedScripted {
         routes: Mutex::new(HashMap::new()),
     });
-    let state_path = std::env::temp_dir().join(format!("vak-flow-{}.json", uuid_like()));
+    let state_path = unique_state_path();
     let mut state = FlowState {
         run_id: "r2".into(),
         flow_name: "strict".into(),
@@ -381,7 +382,7 @@ deps = ["flaky"]
     let provider = Arc::new(TaggedScripted {
         routes: Mutex::new(HashMap::new()),
     });
-    let state_path = std::env::temp_dir().join(format!("vak-flow-{}.json", uuid_like()));
+    let state_path = unique_state_path();
     let mut state = FlowState {
         run_id: "r3".into(),
         flow_name: "lenient".into(),
@@ -428,7 +429,7 @@ deps = ["first"]
     let provider = Arc::new(TaggedScripted {
         routes: Mutex::new(HashMap::new()),
     });
-    let state_path = std::env::temp_dir().join(format!("vak-flow-{}.json", uuid_like()));
+    let state_path = unique_state_path();
 
     // Pre-seed state as if "first" already completed in an earlier run.
     let mut state = FlowState {
@@ -468,10 +469,8 @@ deps = ["first"]
     let _ = std::fs::remove_file(&state_path);
 }
 
-fn uuid_like() -> String {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    static C: AtomicU32 = AtomicU32::new(0);
-    format!("u{}", C.fetch_add(1, Ordering::Relaxed))
+fn unique_state_path() -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("vak-flow-{}.json", uuid::Uuid::now_v7()))
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

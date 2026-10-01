@@ -75,22 +75,26 @@ impl vak_tools::Tool for TasksTool {
     }
 
     fn description(&self) -> &str {
-        "Manage this workspace's scheduled routines — recurring prompts or \
-         shell checks that fire on their own later, without you being asked \
-         again. Use for any request to be reminded, checked in on, or have \
-         something run on a schedule ('remind me every morning at 8', \
-         'check disk space hourly and tell me if it's low', 'run the nightly \
-         report'). `action: \"add\"` creates one; give `cron` for a specific \
-         schedule (5-field, local time: min hour dom mon dow, e.g. '0 9 * * \
-         1-5' for weekdays at 9am) or `every_secs` for a plain interval — \
-         exactly one of the two. Give exactly one of `prompt` (a task for \
-         you, running as a fresh turn later) or `script` (a one-line shell \
-         check; only its output is reported, so a silent/zero-exit check \
-         costs nothing). Omit `deliver_to` to have results come back to \
-         this same conversation when one is bound; pass it explicitly \
-         ('<surface>:<chat>') to route elsewhere. `list` shows every task \
-         with its id, schedule, and last result; `enable`/`disable`/`remove` \
-         take that id."
+        "Manage this workspace's scheduled routines and reminders — prompts \
+         or shell checks that fire on their own later, without you being \
+         asked again. Use for any request to be reminded, checked in on, or \
+         have something run on a schedule ('remind me on Friday at 9', \
+         'every weekday at 8 send me the headlines', 'check disk space hourly \
+         and tell me if it's low'). `action: \"add\"` creates one. For a \
+         single future moment give `due_at` (an RFC3339 instant: convert the \
+         person's local time using the timezone in <turn_context>). For a \
+         repeating schedule give `cron` (5-field: min hour dom mon dow, e.g. \
+         '0 9 * * 1-5' for weekdays at 9am) with `timezone` set to the \
+         person's IANA zone, or `every_secs` for a plain interval — exactly \
+         one of the three. When the day or time is ambiguous and it matters, \
+         confirm the interpreted date and time before adding. Give exactly \
+         one of `prompt` (a task for you, running as a fresh turn later) or \
+         `script` (a one-line shell check; only its output is reported, so a \
+         silent/zero-exit check costs nothing). Omit `deliver_to` to have \
+         results come back to this same conversation when one is bound; pass \
+         it explicitly ('<surface>:<chat>') to route elsewhere. `list` shows \
+         every task with its id, schedule, and last result; \
+         `enable`/`disable`/`remove` take that id."
     }
 
     fn schema(&self) -> Value {
@@ -120,7 +124,7 @@ impl vak_tools::Tool for TasksTool {
                 },
                 "cron": {
                     "type": "string",
-                    "description": "5-field cron expression, local time (XOR with 'every_secs')"
+                    "description": "5-field cron expression for a repeating schedule, read in `timezone` (XOR with 'every_secs' and 'due_at')"
                 },
                 "every_secs": {
                     "type": "integer",
@@ -128,11 +132,11 @@ impl vak_tools::Tool for TasksTool {
                 },
                 "timezone": {
                     "type": "string",
-                    "description": "Optional IANA timezone name for cron interpretation, such as America/New_York"
+                    "description": "IANA timezone name the cron is read in, such as Asia/Kolkata or America/New_York; without it the host's zone is used"
                 },
                 "due_at": {
                     "type": "string",
-                    "description": "Optional one-shot UTC timestamp in RFC3339; cannot be combined with cron"
+                    "description": "A single future instant in RFC3339 (with its offset) for a one-time reminder or run; cannot be combined with cron or every_secs"
                 },
                 "deliver_to": {
                     "type": "string",

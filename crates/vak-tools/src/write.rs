@@ -15,8 +15,12 @@ impl Tool for WriteTool {
         &["documents"]
     }
 
+    fn produces_artifact(&self, _args: &Value) -> bool {
+        true
+    }
+
     fn description(&self) -> &str {
-        "Write text content to a file, creating parent directories as needed. Overwrites the file if it exists. Not for Word, Excel or PowerPoint files: use office_apply."
+        "Write text content to a file, creating parent directories as needed. Overwrites the file if it exists. Not for Word, Excel, PowerPoint or PDF files: those are made with office_apply."
     }
 
     fn schema(&self) -> Value {

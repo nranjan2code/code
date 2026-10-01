@@ -99,11 +99,8 @@ pub fn project(document: &Document, from: usize, budget: usize) -> Projection {
     let cell_styles = document
         .cell_styles
         .iter()
-        .filter_map(|(address, style)| {
-            visible_cells
-                .contains(address)
-                .then(|| (address.clone(), style.clone()))
-        })
+        .filter(|(address, _)| visible_cells.contains(*address))
+        .map(|(address, style)| (address.clone(), style.clone()))
         .collect();
     let visible_sheets: std::collections::HashSet<String> = units
         .iter()
@@ -246,8 +243,6 @@ fn format_excel_number(raw: &str, format: &str) -> Option<String> {
             "%Y-%m-%d"
         } else if format.contains("mmm") {
             "%d-%b-%y"
-        } else if format.contains("m/d") || format.contains("mm/dd") {
-            "%-m/%-d/%y"
         } else {
             "%-m/%-d/%y"
         };

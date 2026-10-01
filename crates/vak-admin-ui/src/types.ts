@@ -477,20 +477,9 @@ export interface DiscoveredModelsResponse {
   provider: string;
   models: string[];
   capabilities?: Record<string, string[]>;
-  availability?: BedrockModelAvailability[];
-  availability_error?: string;
   error?: string;
 }
 
-export interface BedrockModelAvailability {
-  model_id: string;
-  agreement_status?: string;
-  agreement_error?: string;
-  authorization_status?: string;
-  entitlement_status?: string;
-  region_status?: string;
-  invokable: boolean;
-}
 
 /// Matches `finops_status`'s actual JSON exactly (`vak-server/src/lib.rs`)
 /// — this used to name fields (`total_spend_usd`, `budget_admission`, …)

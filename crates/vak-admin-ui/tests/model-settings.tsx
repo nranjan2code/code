@@ -3,7 +3,6 @@ import { Settings } from '../src/App';
 import '../src/styles.css';
 let release: (() => void) | undefined;
 let delayAlpha = false;
-let unknownBedrock = false;
 const patches: { path: string; body: any }[] = [];
 let sharedRoute: { same_model: string[][]; fallback_models: string[] } = { same_model: [['alpha/one', 'beta/one-copy']], fallback_models: ['shared-b'] };
 window.fetch = async (input, init) => {
@@ -21,7 +20,7 @@ window.fetch = async (input, init) => {
   else if (path.endsWith('/models')) {
     const provider = path.split('/')[2];
     if (provider === 'alpha' && delayAlpha) await new Promise<void>((resolve) => { release = resolve; });
-    body = provider === 'bedrock' ? { provider, models: ['blocked', 'allowed'], ...(unknownBedrock ? { availability_error: 'AWS check unavailable' } : { availability: [{ model_id: 'blocked', invokable: false }, { model_id: 'allowed', invokable: true }] }) } : { provider, models: [`${provider}-one`, `${provider}-two`] };
+    body = provider === 'bedrock' ? { provider, models: ['bedrock-one', 'bedrock-two'] } : { provider, models: [`${provider}-one`, `${provider}-two`] };
   }
   return new Response(JSON.stringify(body), { headers: { 'Content-Type': 'application/json' } });
 };
@@ -63,9 +62,7 @@ const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement
   check(save().disabled, 'provider switch requires deliberate model choice');
   select('Provider', 'bedrock'); await tick();
   const options = [...document.querySelector<HTMLSelectElement>('select[aria-label="Model"]')!.options];
-  check(options.find((o) => o.value === 'blocked')?.disabled && !options.find((o) => o.value === 'allowed')?.disabled, 'Bedrock authorization updates option states');
-  select('Model', 'allowed'); await tick(); check(!save().disabled, 'confirmed Bedrock model can save');
-  unknownBedrock = true; [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.includes('Refresh list'))!.click(); await tick();
-  check(save().disabled, 'unknown Bedrock access blocks saving even a previous choice');
+  check(options.some((o) => o.value === 'bedrock-one' && !o.disabled), 'Bedrock catalogue entries are selectable under the same rules as other providers');
+  select('Model', 'bedrock-one'); await tick(); check(!save().disabled, 'a discovered Bedrock model can save without vendor-specific preflight');
   return { passed: passed.length, checks: passed };
 };

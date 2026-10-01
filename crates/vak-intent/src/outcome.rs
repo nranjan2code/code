@@ -126,6 +126,13 @@ pub enum Command {
     GoalFix {
         text: String,
     },
+    /// `/until-done …`: work on `text` and keep going past each apparent
+    /// finish until the person says `done` or `stop`. The one way to hold
+    /// completion for the person: a phrase in free text ("keep going until
+    /// the tests pass") names a condition, not a hold.
+    UntilDone {
+        text: String,
+    },
     /// `/approve <gate>` — matched to a raised gate by id, never by prose.
     Approve {
         gate_id: String,
@@ -148,6 +155,8 @@ impl Command {
             Command::Reprioritize { .. } => InterventionKind::Reprioritize,
             // Goal edits ride the same re-plan path.
             Command::GoalReplace { .. } | Command::GoalFix { .. } => InterventionKind::Replan,
+            // Sent into a running turn, the hold's text is steering.
+            Command::UntilDone { .. } => InterventionKind::Steer,
             Command::Approve { .. } => InterventionKind::Approve,
             Command::Reject { .. } => InterventionKind::Reject,
         }
@@ -161,7 +170,8 @@ impl Command {
             | Command::RemoveRequirement { text }
             | Command::Reprioritize { text }
             | Command::GoalReplace { text }
-            | Command::GoalFix { text } => Some(text),
+            | Command::GoalFix { text }
+            | Command::UntilDone { text } => Some(text),
             _ => None,
         }
     }
@@ -201,6 +211,9 @@ pub fn parse_command(text: &str) -> Option<Command> {
                     ("fix", Some(text)) => Some(Command::GoalFix { text }),
                     _ => None,
                 }
+            }
+            "until-done" | "until_done" | "untildone" => {
+                needs_arg(&arg).map(|text| Command::UntilDone { text })
             }
             "approve" => needs_arg(&arg).map(|gate_id| Command::Approve { gate_id }),
             "reject" => needs_arg(&arg).map(|gate_id| Command::Reject { gate_id }),
@@ -1099,6 +1112,42 @@ impl OutcomeSpec {
         self.expects_saved_file() || self.acts.iter().any(|act| act.requires_execution())
     }
 
+    /// Whether the requested primary output is a file-backed Office artifact.
+    /// A bare Author act also covers prose answers such as letters and plans;
+    /// require a file receipt only when the request names a file or an Office
+    /// format. This lets "make an Excel document" require a workbook without
+    /// making every authored sentence produce a file.
+    pub fn expects_artifact(&self) -> bool {
+        if self.expects_saved_file() {
+            return true;
+        }
+        let objective = self.objective.to_ascii_lowercase();
+        let requests_office_file = [
+            "spreadsheet",
+            "workbook",
+            "excel",
+            "xlsx",
+            "word document",
+            "word file",
+            "docx",
+            "document",
+            "powerpoint",
+            "power point",
+            "presentation",
+            "slide deck",
+            "slides",
+            "pptx",
+            "pdf",
+        ]
+        .iter()
+        .any(|term| objective.contains(term));
+        requests_office_file
+            && self
+                .acts
+                .iter()
+                .any(|act| matches!(act, Act::Author | Act::Modify | Act::Operate))
+    }
+
     /// Whether this outcome requires inspection, search, or enumeration.
     pub fn requires_inspection(&self) -> bool {
         self.acts.iter().any(|act| act.requires_inspection())
@@ -1198,8 +1247,22 @@ mod tests {
         assert!(file.expects_saved_file());
         let plan = OutcomeSpec::from_reading("Create a two-day lunch plan", &authoring, 1);
         assert!(!plan.expects_saved_file());
+        assert!(!plan.expects_artifact());
+        let note = OutcomeSpec::from_reading("Write a short note to my neighbour", &authoring, 1);
+        assert!(!note.expects_artifact());
+        for request in [
+            "Make an Excel document",
+            "Create a spreadsheet dashboard",
+            "Write a Word document",
+            "Build a PowerPoint presentation",
+            "Generate a PDF report",
+        ] {
+            let output = OutcomeSpec::from_reading(request, &authoring, 1);
+            assert!(output.expects_artifact(), "{request}");
+        }
         let inspection = OutcomeSpec::from_reading("Explain README.md", &Reading::general(), 1);
         assert!(!inspection.expects_saved_file());
+        assert!(!inspection.expects_artifact());
         // Naming a file inside a question is not asking for one.
         let explanation =
             OutcomeSpec::from_reading("explain how to write a README.md", &Reading::general(), 1);
@@ -1473,6 +1536,13 @@ mod tests {
                 text: "ship the index only".into()
             })
         );
+        assert_eq!(
+            parse_command("/until-done tighten the essay"),
+            Some(Command::UntilDone {
+                text: "tighten the essay".into()
+            })
+        );
+        assert_eq!(parse_command("/until-done"), None);
         assert_eq!(
             parse_command("/approve gate-7"),
             Some(Command::Approve {

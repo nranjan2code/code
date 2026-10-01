@@ -44,12 +44,11 @@ fn record_voice_dispatch(
     session_id: &str,
     receipt: &vak_llm::WorkReceipt,
 ) {
-    if let Some(handle) = state.get(session_id) {
-        if let Ok(mut session) = handle.session.lock()
-            && let Some(session) = session.as_mut()
-        {
-            let _ = session.append_receipt(receipt.clone());
-        }
+    if let Some(handle) = state.get(session_id)
+        && let Ok(mut session) = handle.session.lock()
+        && let Some(session) = session.as_mut()
+    {
+        let _ = session.append_receipt(receipt.clone());
     }
     vak_core::routing::EvidenceLedger::new(&core.sessions_home())
         .record_receipts(std::slice::from_ref(receipt));
@@ -377,6 +376,7 @@ pub(crate) async fn voice_speak(
     response
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn synthesize(
     core: &vak_core::Core,
     provider: VoiceProvider,
@@ -491,6 +491,7 @@ struct Speaker {
 /// Resolve from the Agent Core attached to the live session, then apply
 /// endpoint and audition overrides. The UI's currently selected Agent is
 /// never used to route an already admitted conversation.
+#[allow(clippy::result_large_err)]
 fn resolve_speaker(state: &AppState, body: &SpeakBody) -> Result<Speaker, Response> {
     let chat = body
         .session_id

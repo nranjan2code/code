@@ -1,6 +1,6 @@
 # Vakyartha public site
 
-Twelve static pages, built here and embedded by `crates/vak-server/src/site.rs`.
+Fifteen static pages, built here and embedded by `crates/vak-server/src/site.rs`.
 The navigation uses plain labels. `/doctor` is reserved for the authenticated
 runtime API; the public introduction lives at `/meet-doctor`. Only the standalone
 Vercel export redirects the old website URL to that introduction.
@@ -9,6 +9,8 @@ Vercel export redirects the old website URL to that introduction.
 | --- | --- |
 | `/` | Character scenes and expandable everyday, work and learning examples |
 | `/outcomes` | All eight companions with example requests and possible results |
+| `/email-calendar` | Selected mail, calendar planning, reviewed actions and useful routines |
+| `/headless-cloud` | Own-server hosting, cloud deployment, and remote access |
 | `/tour` | Interactive request/result illustrations and a short walkthrough |
 | `/security` | Illustrated guide to access, approvals, data, connected chats, interruption and evidence |
 | `/install` | Public source build instructions and access to an existing installation |
@@ -48,7 +50,7 @@ static framework, copies the brand assets, provides `/version`, and changes
 the links that only work on a running Vak server. The embedded site is not
 changed by this export.
 
-The builder copies WebP and JPEG files recursively from `src/assets/` to `/site/`. CSS and the shared script
+The builder copies WebP, JPEG and PNG files recursively from `src/assets/` to `/site/`. CSS and the shared script
 are inlined. The optional, pinned Motion library is emitted under its content
 hash. Only the walkthrough's example transition uses Motion; content does not
 wait for it, and reduced motion disables the transition.
@@ -87,7 +89,10 @@ The owner requested a complete visual rethink on 2026-09-27: minimal text,
 modern and peppy across generations, all eight characters actively doing
 things, no paper treatment, no repeated marketing-card grid, no em dashes.
 The public site therefore uses crisp white and charcoal, system sans type,
-large transparent character scenes and varied compositions. This is an
+large transparent character scenes and varied compositions.
+Navigation actions use regular-weight text, a small arrow and a fine underline,
+with a 44px minimum touch target. Example review buttons share the same
+quiet treatment. No action uses a solid indigo fill. This is an
 explicit site-specific departure from the old Auditor's Desk and cream-paper
 marketing treatment. It does not change the client's design tokens.
 

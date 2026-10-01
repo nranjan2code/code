@@ -289,6 +289,7 @@ pub(super) fn validate_image(image: &super::SlideImage) -> Result<(Vec<u8>, u32,
     Ok((decoded, width, height))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn picture_frame(
     id: usize,
     name: &str,
@@ -406,6 +407,7 @@ fn create_chart<R2: Read + Seek>(
     Ok((part, rows))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn chart_frame(
     id: usize,
     name: &str,
@@ -429,6 +431,7 @@ fn chart_frame(
     )
 }
 
+#[allow(clippy::type_complexity)]
 fn placeholder_bounds(tree: &Tree, shape: usize) -> (Option<(i64, i64)>, Option<(i64, i64)>) {
     let offset = tree.descendants(shape, "off").next().and_then(|node| {
         let element = &tree.nodes[node].element;
@@ -473,6 +476,7 @@ fn paragraphs(
         .collect()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn table_frame(
     id: usize,
     name: &str,
@@ -719,6 +723,7 @@ pub(super) fn set_notes<R2: Read + Seek>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn add_slide_from_layout<R2: Read + Seek>(
     work: &mut Work<'_, R2>,
     layout: &str,

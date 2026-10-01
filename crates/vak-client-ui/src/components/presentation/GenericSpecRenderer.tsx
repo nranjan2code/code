@@ -1,8 +1,8 @@
 import { For, Show, createContext, createEffect, createMemo, createSignal, onCleanup, useContext } from "solid-js";
 import type { AdaptiveRenderNode } from "../../types";
 import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
-import { safeUrl, sandboxedSrcdoc } from "../../safeUrl";
-import { openInEditor, openComponentPreview, openArtifactCanvas, technicalDetails, uiPreferences } from "../../store";
+import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
+import { openInEditor, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
@@ -1279,8 +1279,8 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
       const html = inline ?? (p ? (await api.readFile(p)).content : undefined);
       if (html === undefined) throw new Error("Preview file is unavailable. Reload to try again.");
       const prepared = p
-        ? await artifactPreviewHtml(p, html, str(node.props, "connect_src"))
-        : sandboxedSrcdoc(html, str(node.props, "connect_src") ?? "'none'");
+        ? await artifactPreviewHtml(p, html)
+        : sandboxedSrcdoc(html);
       if (generation !== request) return;
       setHtmlContent(html);
       setPreviewHtml(prepared);
@@ -1300,19 +1300,11 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     void loadContent();
   };
 
-  const previewPayload = () => ({
-    id: str(node.props, "preview_id") ?? path(),
-    title: str(node.props, "title") ?? "Component Preview",
-    artifactPath: path(),
-    html: inlineHtml() || (htmlContent().trim().length > 0 ? htmlContent() : undefined),
-    previewId: str(node.props, "preview_id"),
-    sandbox: str(node.props, "sandbox"),
-    connectSrc: str(node.props, "connect_src"),
-    timestamp: Date.now(),
-  });
-
-  const openInCanvas = () => openArtifactCanvas(previewPayload());
-  const openInDock = () => openComponentPreview(previewPayload());
+  const openInCanvas = () => {
+    const html = inlineHtml();
+    if (html) openArtifactCanvas({ kind: "inline", title: str(node.props, "title") ?? "Component Preview", html, basePath: path() || undefined });
+    else if (path()) openArtifactFile(path());
+  };
 
   const handleCopySource = async () => {
     setCopyFailed(false);
@@ -1348,9 +1340,6 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
           <button class="pill-action-btn" onClick={reloadPreview} title="Reload live preview">
             Reload
           </button>
-          <button class="pill-action-btn" onClick={openInDock} title="Open in dock panel">
-            Dock
-          </button>
           <button class="open-canvas-btn" onClick={openInCanvas} title="Open immersive canvas preview">
             <Icon name="preview" size={14} /> Open Canvas
           </button>
@@ -1378,7 +1367,7 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
             <iframe
               srcdoc={previewHtml()}
               title={title()}
-              sandbox={str(node.props, "sandbox") ?? "allow-scripts"}
+              sandbox={previewSandbox("static")}
               style="width: 100%; height: 100%; border: 0; display: block;"
             />
           </div>
@@ -2082,7 +2071,7 @@ export function buildMediaSpec(data: unknown, kind: "link" | "image" | "video" |
 export function buildUiPreviewSpec(data: unknown): AdaptiveRenderNode {
   const d = data && typeof data === "object" && !Array.isArray(data) ? (data as any) : null;
   const props: Record<string, unknown> = {};
-  for (const key of ["status", "preview_id", "title", "artifact_path", "sandbox", "connect_src", "html"]) {
+  for (const key of ["status", "preview_id", "title", "artifact_path", "html"]) {
     if (d && typeof d[key] === "string") props[key] = d[key];
   }
   return { primitive: "ui_preview", props, children: [] };

@@ -436,6 +436,12 @@ pub(super) fn set_cells<R2: Read + Seek>(
         .iter()
         .map(|(reference, value)| {
             let (column, row) = address(reference).unwrap_or((1, 1));
+            if shown(value).is_empty() {
+                return Expect::EmptyCell {
+                    sheet: name.clone(),
+                    cell: format!("{}{row}", column_name(column)),
+                };
+            }
             Expect::AnyUnitContains {
                 prefix: format!("{quoted}!"),
                 needle: format!("{}{row}: {}", column_name(column), shown(value)),
@@ -1639,7 +1645,7 @@ pub(super) fn add_chart<R2: Read + Seek>(
     let snapshot = work.snapshot()?;
     let document = crate::read::read(Cursor::new(snapshot), *work.limits())?;
     let section = document
-        .section(&format!("{sheet_name}!"))
+        .section(&format!("{}!", quote_sheet(&sheet_name)))
         .ok_or_else(|| EditError {
             op: None,
             message: format!("sheet {sheet_name:?} is missing from the workbook projection"),
@@ -1703,7 +1709,7 @@ pub(super) fn add_chart<R2: Read + Seek>(
         .trim_end_matches(".xml")
         .parse::<u32>()
         .unwrap_or(1);
-    let chart_rel;
+
     let drawing_part = match work.related(&sheet_part, "drawing")? {
         Some(part) => part,
         None => free_part_name(work, "xl/drawings/drawing", ".xml"),
@@ -1721,7 +1727,7 @@ pub(super) fn add_chart<R2: Read + Seek>(
     );
     work.put(&chart_part, chart_xml.into_bytes());
     work.set_override(&chart_part, CHART_TYPE)?;
-    chart_rel = work.add_relationship(&drawing_part, R_CHART, &chart_part)?;
+    let chart_rel = work.add_relationship(&drawing_part, R_CHART, &chart_part)?;
 
     let anchor = chart_anchor(
         &chart_rel,
@@ -2158,6 +2164,7 @@ pub(super) fn add_excel_image<R2: Read + Seek>(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn excel_picture_anchor(
     id: usize,
     column: u32,
@@ -2184,6 +2191,7 @@ fn excel_picture_anchor(
     )
 }
 
+#[allow(clippy::type_complexity)]
 fn chart_range(range: &str) -> Result<((u32, u32), (u32, u32)), EditError> {
     let mut parts = range.split(':');
     let first = parts.next().unwrap_or_default();
@@ -2212,6 +2220,7 @@ fn cached_cell(value: &str) -> (&str, bool) {
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn native_chart_xml(
     kind: &str,
     title: &str,
@@ -2223,17 +2232,18 @@ fn native_chart_xml(
     values: &[f64],
     chart_id: u32,
 ) -> String {
+    let sheet_reference = escape_text(&quote_sheet(sheet));
     let category_col = column_name(first.0);
     let value_col = column_name(last.0);
     let category_formula = format!(
         "{}!${category_col}${}:${category_col}${}",
-        quote_sheet(sheet),
+        sheet_reference,
         first.1 + 1,
         last.1
     );
     let value_formula = format!(
         "{}!${value_col}${}:${value_col}${}",
-        quote_sheet(sheet),
+        sheet_reference,
         first.1 + 1,
         last.1
     );
@@ -2256,7 +2266,7 @@ fn native_chart_xml(
     let title = escape_text(title);
     let series = format!(
         r#"<c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>{}!${}${}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>{series_name}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{category_formula}</c:f><c:strCache><c:ptCount val="{}"/>{category_cache}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{value_formula}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{value_cache}</c:numCache></c:numRef></c:val></c:ser>"#,
-        quote_sheet(sheet),
+        sheet_reference,
         value_col,
         first.1,
         categories.len(),
@@ -2275,7 +2285,7 @@ fn native_chart_xml(
         let style = if kind == "line" {
             format!(
                 r#"<c:{plot}><c:grouping val="standard"/><c:ser><c:idx val="0"/><c:order val="0"/><c:tx><c:strRef><c:f>{}!${}${}</c:f><c:strCache><c:ptCount val="1"/><c:pt idx="0"><c:v>{series_name}</c:v></c:pt></c:strCache></c:strRef></c:tx><c:cat><c:strRef><c:f>{category_formula}</c:f><c:strCache><c:ptCount val="{}"/>{category_cache}</c:strCache></c:strRef></c:cat><c:val><c:numRef><c:f>{value_formula}</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="{}"/>{value_cache}</c:numCache></c:numRef></c:val><c:marker><c:symbol val="circle"/><c:size val="5"/></c:marker></c:ser><c:marker val="1"/><c:smooth val="0"/><c:axId val="{}"/><c:axId val="{}"/></c:{plot}>"#,
-                quote_sheet(sheet),
+                sheet_reference,
                 value_col,
                 first.1,
                 categories.len(),
@@ -2310,6 +2320,39 @@ fn chart_anchor(relationship: &str, column: usize, row: usize) -> String {
 }
 
 // ---- postconditions read from the written package -------------------------
+
+/// Empty cells are intentionally absent from the text projection. Verify
+/// their actual stored value rather than looking for an empty text unit.
+pub(super) fn check_empty_cell(
+    package: &mut crate::Package<std::io::Cursor<Vec<u8>>>,
+    sheet: &str,
+    cell: &str,
+) -> Result<(), String> {
+    let part = written_sheet(package, sheet)?;
+    let bytes = package
+        .read_part(&part)
+        .map_err(|error| error.to_string())?;
+    let tree = Tree::parse(&bytes, &part, package.limits()).map_err(|error| error.to_string())?;
+    let node = tree
+        .descendants(0, "c")
+        .find(|node| {
+            tree.nodes[*node]
+                .element
+                .attr("r")
+                .is_some_and(|r| r.eq_ignore_ascii_case(cell))
+        })
+        .ok_or_else(|| format!("{sheet}!{cell} is missing"))?;
+    if tree.nodes[node].element.attr("t") != Some("inlineStr")
+        || tree.descendants(node, "f").next().is_some()
+        || tree.descendants(node, "v").next().is_some()
+        || !tree
+            .descendants(node, "t")
+            .all(|text| tree.nodes[text].inner.is_empty())
+    {
+        return Err(format!("{sheet}!{cell} is not an empty inline string"));
+    }
+    Ok(())
+}
 
 /// The part of the sheet named `sheet` in a written workbook.
 fn written_sheet(

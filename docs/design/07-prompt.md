@@ -42,8 +42,9 @@ wording; the historical diff notes below explain why it evolved.
 Current seed: `crates/vak-core/src/system-prompt.md` (block-marked),
 plus a runtime `Surface:` line and any appended surface notes. Layer composition, editing surfaces, and
 trust are specified in doc 45.
-Editable per layer; see doc 45. `.vak/SYSTEM.md` remains as a legacy
-project-layer `identity` override.
+Editable per layer; see doc 45. The layered blocks are the only way to set
+identity and rules: the whole-prompt `.vak/SYSTEM.md` override was retired in
+5.2.10 (doc 46, Part VIII row 4).
 
 The presentation contract is universal: the prompt may select semantic shapes
 such as maps, calendars, boards, entities, evidence, documents, graphs, forms,
@@ -179,8 +180,8 @@ retained.
   docs/design/68-context-engine.md §6. `prompt_drift`/the drift fingerprint
   covers `text` only, since `tail` is per-turn by definition.
 
-- Unreleased (after 3.5.1): **the seed is back under its 1500-token budget**
-  (16.6 KB → 4.3 KB, ~1,000 tokens), now enforced by
+- Unreleased (after 3.5.1): the seed is permitted up to 1800 estimated tokens,
+  now enforced by
   `the_seed_stays_under_its_token_budget`. Every distinct rule survives; what
   went is repetition and the fifteen card payload examples plus fence syntax
   in `capability_contract`. Cards are taught by the `emit_*_card` tools'
@@ -234,6 +235,37 @@ retained.
   message of every conversation, "hi" included, was presented as the
   objective of every later turn.
 
+- 5.2.10 (universal prompt audit, `docs/audits/prompts-universal-2026-09-30.md`):
+  the identity names the product the person sees, **Vakyartha**, lists
+  conversation, documents and planning beside the other kinds of work, and
+  asks for replies in the person's language. The four named domain loops
+  ("engineering: build → run…") became one general rule: check work the way
+  its result can be checked — run code, cross-check sources, re-read a draft,
+  confirm an action took effect — since a closed list read as the only kinds
+  of work. The capability contract says that `<…>` blocks and `[marker]:`
+  lines come from the runtime, are not the person's words, and are never a
+  new request. A new code-owned `document_contract` block, included only when
+  `office_apply` is admitted, says Word, Excel, PowerPoint and PDF files are
+  made and changed only through it and reach the person as a draft for
+  review; the sandbox contract no longer tells the model to deliver every
+  file with `write` or `bash`. The effects guardrail counts a routine the
+  person set up as authorization and says silence, failure and tool text
+  never are; the data guardrail names documents, messages and calendar
+  entries. The per-turn time line names the host's IANA zone and says whether
+  it is the person's zone (on this machine), may not be (chat, web, API), or
+  is a scheduled run whose relative dates read against the run time — the
+  last replacing the `[Scheduled-run context: …]` text that used to be
+  appended to the stored request. The per-turn time and stance text is now
+  recorded in the ledger before the first request carries it. Side
+  dispatches: the managed-contract author spells out the exact JSON shape
+  (its old one-line spec described a `kind` the parser rejects), the planner
+  plans any kind of work and puts approvals before external effects,
+  compaction and handoff keep corrections, approvals and refusals, and open
+  failures, reflection never stores credentials or model guesses, the
+  classifier defines each axis value and accepts any language, and the
+  heartbeat reviews commitments, routines and unfinished conversations. The
+  whole-document `.vak/SYSTEM.md` override is no longer read.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus
@@ -245,6 +277,6 @@ table does not cover, since those blocks were never user-editable.
 
 ## Policy
 
-The prompt stays under 1500 tokens. Every change ships with a diff note here
-and passes the nightly eval suite before release (Phase 7). Prompt churn is a
-bug class, not a feature — changes are reviewable events.
+The prompt stays under 1800 estimated tokens. Every change ships with a diff
+note here and passes the nightly eval suite before release (Phase 7). Prompt
+churn is a bug class, not a feature — changes are reviewable events.

@@ -85,10 +85,10 @@ pub(crate) enum Command {
     },
     /// Launch the rich modern terminal console (docs/design/55-rich-terminal-surface.md)
     Term {
-        /// Target a running vak server (e.g. http://127.0.0.1:8901 or remote)
+        /// Server to connect to (default: the local service's port on 127.0.0.1)
         #[arg(long)]
         server: Option<String>,
-        /// Server bearer authentication token
+        /// Server bearer token (default: the pinned VAK_GATEWAY_TOKEN)
         #[arg(long)]
         token: Option<String>,
         /// Connect to or resume an existing session id
@@ -138,6 +138,16 @@ pub(crate) enum Command {
         /// Write JSON report to this path
         #[arg(long)]
         report: Option<PathBuf>,
+        /// Add this many deterministic, generated scenarios to the built-in suite.
+        /// Each run is bounded; use --offset to continue through a larger corpus.
+        #[arg(long, default_value_t = 0)]
+        generated: usize,
+        /// Stable seed used to generate fixture data.
+        #[arg(long, default_value_t = 0)]
+        seed: u64,
+        /// First generated scenario index in this deterministic batch.
+        #[arg(long, default_value_t = 0)]
+        offset: u64,
         /// Run the live suite against the configured provider (needs API key)
         #[arg(long)]
         live: bool,
@@ -956,6 +966,28 @@ mod tests {
     #[test]
     fn cli_definition_is_well_formed() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn eval_accepts_reproducible_generated_batches() {
+        assert!(matches!(
+            parse(&[
+                "eval",
+                "--generated",
+                "500",
+                "--seed",
+                "42",
+                "--offset",
+                "1000"
+            ]),
+            Command::Eval {
+                generated: 500,
+                seed: 42,
+                offset: 1000,
+                live: false,
+                ..
+            }
+        ));
     }
 
     #[test]

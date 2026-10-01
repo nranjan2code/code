@@ -22,7 +22,7 @@ impl Tool for EditTool {
     }
 
     fn description(&self) -> &str {
-        "Apply exact string replacements to a text file. All edits are atomic: every old_text must match exactly once or the whole operation fails without changes. Word, Excel and PowerPoint files are not text: change them with office_apply."
+        "Apply exact string replacements to a text file. All edits are atomic: every old_text must match exactly once or the whole operation fails without changes. Word, Excel, PowerPoint and PDF files are not text: change them with office_apply."
     }
 
     fn schema(&self) -> Value {

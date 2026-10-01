@@ -277,6 +277,25 @@ Each anchor carries a revision counter held in the draft's op log. An op states 
 - **`office_apply`** (brokered, built) takes `path` (the workspace file the draft is for), an optional `source` (the file or template to start from; defaults to `path`), `base_digest` (the sha256 `doc_read` printed for the source) and ordered ops. It returns the new digest and per-op results, each confirmed by a re-read. **Creation is the same tool:** a template as `source` and a new `path` (a template becomes a document by changing only its main part's content type), or a new `path` with no `source` and no `base_digest`, which starts from Vak's built-in blank for the path's format. It is a path-scoped write in the `PermissionEngine`, like `write` and `edit`. It writes a draft under `.vak/scratch/<agent>/<execution>/`, never the workspace file; that changes only when a person accepts the draft in Review, whole or in part.
 - **`data_query`** (P1) gains worksheet ranges and tables as sources, and moves to the worker in the same change.
 
+**Tool guidance audit — 2026-09-30.** The shared `office_apply` description
+stays below 2,000 bytes; format details live beside each operation. Its schema
+includes executable creation examples for Word, Excel, PowerPoint and PDF.
+It states the digest and draft chaining rules, atomic failure behaviour,
+formula calculation limits, chart source shape and placement, table names
+versus worksheet names, layout placeholders, base64 image inputs and PDF
+writing limits. The chart schema requires a complete Excel or PDF variant
+and rejects mixed fields. Tests execute every advertised example and read
+its draft back (`every_advertised_creation_example_produces_a_readable_draft`).
+Direct worker checks also found and corrected Excel chart lookup for quoted
+sheet names, XML escaping of worksheet names in chart formulas, empty-string
+cell postconditions, and chart cache labels split
+by XML entities. Regression evidence:
+`charts_accept_quoted_sheet_names_and_decimal_values` and
+`empty_strings_can_be_written_and_clear_existing_excel_values`. These checks
+verify file structure and extracted content; they do not claim every model
+will plan correctly or that a particular Office application's rendering was
+verified.
+
 **P2 op set, v1.** Deliberately small, so small local models use it reliably:
 
 | Vocabulary | Ops |

@@ -1,3 +1,60 @@
+## 5.3.2 — 2026-10-01
+
+- Turn the compact commitment arc upward from the right through the active
+  center to completed work on the left, while keeping the in-chat working
+  status visible during a response.
+- Avoid issuing duplicate progress requests when the arc is first revealed.
+
+## 5.3.1 — 2026-10-01
+
+- Keep unrelated older turns out of the model's working context, bound history
+  retrieval, and let the Agent reopen specific prior evidence when needed.
+- Avoid empty history-recall calls and carry a prior action forward only when
+  the person explicitly refers to a follow-up.
+- Center the Agent glyph and switcher in the conversation header, with a
+  compact hover/focus commitment arc while work is active.
+- Keep desktop and browser clients attached to the same local gateway and
+  conversation state.
+
+## 5.3.0 — 2026-09-30
+
+- Make the Canvas a workspace rather than a file viewer. What it shows is named by identity (a workspace file, a run's file, one saved version, markup from the conversation, a dev server or a scheduled routine), so opening something can never quietly show a different file, and an unreadable file is an error, not a stand-in page. Each conversation keeps its own Canvas with tabs that remember the reader's view, selection and unsent note.
+- Serve previews from origins of their own. A page with files behind it (a saved draft's site, a run's output, a workspace page) loads its own stylesheets, scripts, modules and links from a loopback origin that shares no origin, cookie or storage with the app; dev servers are framed under the other loopback name. A preview's sandbox is chosen by the client and never by the data describing it, its network is closed, and the dock's old preview pane, its URL bar and the unused `/fs/preview` and `/canvas/preview` endpoints are gone. The dock keeps a Live preview list. Previews need the app on this computer; a remote browser gets a single-page view.
+- Let readers point at a place in a draft (source lines or a document place), comment on it or ask the Agent about it, see what changed and what happened to a draft, and be told when a newer version arrives without it replacing the one being read. A scheduled routine opens in the Canvas from the task list, with run now, pause and resume.
+- Fix a result saved in the folder failing to open in the Canvas, and picking a line reloading the whole viewer.
+- Require an artifact receipt before an authoring outcome counts as delivered, and add deterministic generic scenario batches to the eval suite with more reliable large runs.
+
+## 5.2.14 — 2026-09-30
+
+- Coordinate rate-limit cooldowns across OpenAI Chat Completions and Responses routes that share the same endpoint and credential. Preserve retry timing from streamed Responses failures and wait cancelably before dispatch.
+
+## 5.2.13 — 2026-09-30
+
+- Remove the AWS Bedrock SDK and its model availability preflight. Bedrock now follows the same provider-neutral model catalogue and invocation path as every other provider.
+
+## 5.2.12 — 2026-09-30
+
+- Stop the continuation guard from mistaking ordinary sentences such as “They’re going to the park tomorrow” for an unfinished plan, and recognize plan markers after list bullets while accepting sentence punctuation followed by closing quotes or brackets.
+
+## 5.2.11 — 2026-09-30
+
+- Hold a turn open for the person only with the explicit `/until-done …` command; "keep working until the tests pass" now names a condition instead of keeping a turn running until someone types done.
+- Shorten the Office and PDF tool's instructions by moving each format's styles, layouts and default sheet into the fields that use them.
+- Keep an MCP server's latest failure out of the cached system prompt and report it, with the fix, when the server is used.
+- End a turn honestly when a runtime correction cannot be recorded, instead of retrying without it.
+- Give workflow agent steps a prompt written for their own tools and reader, and record an Agent's added instructions under their own name.
+
+## 5.2.10 — 2026-09-30
+
+- Make every prompt universal and true to the runtime, from a full audit of every model-facing text (`docs/audits/prompts-universal-2026-09-30.md`): the assistant introduces itself as Vakyartha, replies in the person's language, checks work the way each result can be checked, and knows which blocks come from the runtime rather than the person.
+- Stop sending ordinary writing back for a shell command: what a turn needs before it can end now comes from its reading, not English phrase lists, and a failed step passes only when the answer names the failure.
+- Make Word, Excel, PowerPoint and PDF files only through the reviewed draft path, and say up front when a PDF cannot hold non-Latin text.
+- Record the time and stance the model was given in the session log, name the time zone, and give scheduled runs their own time context.
+- Make the managed-work contract prompt describe the JSON it is parsed as, stop reflection failing on long non-English conversations, and keep corrections, approvals and open failures through compaction and handoff.
+- Apply an untrusted project's prompt text, guardrails included, only once the workspace is trusted, and retire the `.vak/SYSTEM.md` override.
+- Offer a general-purpose first task instead of a codebase walkthrough.
+- Restore a clean clippy and test gate.
+
 ## 5.2.9 — 2026-09-29
 
 - Enhance Office document viewing and editing: render merged cells with accurate keyboard navigation, support text alignment and wrapping in workbook grids, bind image previews to source anchors, and render common chart variants including scaled scatter charts.

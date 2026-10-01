@@ -146,7 +146,7 @@ pub fn mcp_failure(capability: &super::snapshot::Capability) -> Option<&str> {
 
 /// What an operator can change when a server fails.
 pub fn mcp_remedy(server: &str) -> String {
-    format!("check the `{server}` entry under [mcp.servers] — command, args, and any required env")
+    vak_mcp::tool::remedy(server)
 }
 
 /// The model-facing standing section: what is configured but not usable on
@@ -173,12 +173,7 @@ pub fn standing_section(set: &CapabilitySet, delta: Option<&CapabilityDelta>) ->
         })
         .collect();
     if !unusable.is_empty() {
-        out.push_str(
-            "\nConfigured but NOT usable on this turn. These are not in your tool schemas \
-             and calling them will fail. If the request needs one, say so plainly, name the \
-             capability, and give the operator the fix — do not substitute a different tool \
-             and do not answer as though you had the data:\n",
-        );
+        out.push_str(crate::reach::UNUSABLE_PREAMBLE);
         for capability in unusable {
             out.push_str(&format!(
                 "- {}: {}",

@@ -266,6 +266,13 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Whether a successful call produces the requested user-facing
+    /// artifact. The runtime counts this only from the matching successful
+    /// result, so a proposal or failed write is never completion evidence.
+    fn produces_artifact(&self, args: &Value) -> bool {
+        self.delivered_file(args).is_some()
+    }
+
     /// A reason this call cannot succeed, decided from its arguments alone
     /// before permission is evaluated, so a person is never asked to approve
     /// a call that would only be refused (a text edit of a Word file). It

@@ -72,6 +72,7 @@ impl OwnerAuth {
         }
         let lock = OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(self.root.join("owner.lock"))?;

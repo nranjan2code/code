@@ -1962,13 +1962,13 @@ mod tests {
         let app = authed_app(&state);
         let mut req = Request::builder()
             .uri(format!("/sessions/does-not-exist/events?token={token}"))
-            .header(axum::http::header::HOST, "127.0.0.1:41783")
+            .header(axum::http::header::HOST, "127.0.0.1")
             .body(Body::empty())
             .unwrap();
         req.extensions_mut()
             .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
                 [127, 0, 0, 1],
-                41783,
+                50_000,
             ))));
         let resp = app.oneshot(req).await.unwrap();
         // The session id is bogus, so any status is acceptable EXCEPT

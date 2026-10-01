@@ -393,13 +393,11 @@ in progress, and the rest of V4 follows it.
    `Core::discover_models` memoises it for 5 minutes. When discovery fails,
    surface the reason; never substitute a static list. Endpoint *hosts* are
    configuration and may have defaults; model *ids* may not.
-   AWS Bedrock additionally reports native control-plane status for each
-   discovered model: agreement, authorization, entitlement, and regional
-   availability. Only a fully available model is invokable in the admin
-   selector. Mantle inference uses the scoped `AWS_BEARER_TOKEN_BEDROCK`,
-   while native checks use the standard AWS SDK credential chain so headless
-   AWS deployments can use IAM roles, SSO, web identity, or environment
-   credentials. Failed checks remain explicitly unknown/unavailable.
+   All provider catalogues use the provider's published HTTP API through
+   VAK-owned adapters. No provider SDK or provider-specific control-plane
+   client is part of the runtime. A discovered model is a selectable route;
+   invocation errors are reported by that provider through the shared error
+   contract. Never add a vendor-only preflight gate or SDK credential chain.
 10. **Restricted filesystem access is workspace-rooted.** In read-only and
     workspace-write modes, automatic read/glob/grep access must resolve inside
     the canonical session workspace; traversal and symlink escapes fail
@@ -659,8 +657,9 @@ in progress, and the rest of V4 follows it.
     replacing it. File presence is the inheritance switch: there is
     deliberately no way to spell `guardrails.inherit = false`. A project layer
     is untrusted config until the workspace is trusted — its identity, rules,
-    and surface notes are demoted exactly like `hooks`/`allow`/`mcp.servers`,
-    while its **guardrails still apply**, because a guardrail can only narrow.
+    surface notes **and guardrails** are demoted exactly like
+    `hooks`/`allow`/`mcp.servers`: free text can say anything, so restriction
+    that must hold without trust is a structured `deny`/`ask` rule.
     Guardrail text instructs and never enforces; `PermissionEngine`, the
     broker, and the sandbox are the boundary, and no surface may word it
     otherwise. Every winning contribution is recorded in
@@ -792,9 +791,17 @@ in progress, and the rest of V4 follows it.
     detection events, and status directly to the Workbench panel for full
     operator observability. Egress and permissions follow the broker security
     model, failing closed when unapproved; read-only mode still denies every
-    write. Frontend client preview frames must be sandboxed
-    (`sandbox="allow-scripts"`) within safe error boundaries to protect the
-    client host from untrusted script execution.
+    write. Frontend client preview frames are sandboxed and sit
+    inside error boundaries. Markup from the conversation, and a page the
+    server cannot serve from an origin of its own, runs in an opaque origin
+    (`sandbox="allow-scripts allow-forms"`, no network). A page with files
+    behind it, and a dev server, runs on an origin of its own, on a loopback
+    port and framed under the other loopback name than the app's, so it shares
+    no origin, cookie or storage with the app; the preview origin answers only
+    the files its scope names under an unguessable path prefix and refuses any
+    request that did not arrive by a loopback name
+    (`crates/vak-server/src/preview.rs`, docs/design/66 §3.2). The client, not
+    the data describing a preview, chooses the sandbox.
 36. **Context is measured, never assumed, and nothing model-visible is cut
     blind** (docs/design/68-context-engine.md). Every number that shapes a
     request — window, usable instruction horizon, tokens per char, prefill
@@ -1052,7 +1059,7 @@ in progress, and the rest of V4 follows it.
   (`office_apply`'s draft): the presentation check stands down for the run,
   an identical call gets the first call's result instead of a second draft,
   and a card whose `artifact_path` previews that file is not shown.
-- The shipped prompt seed stays under 1500 tokens and carries its
+- The shipped prompt seed stays under 1800 tokens and carries its
   `<!-- block: -->` markers; changes require a diff note in
   `docs/design/07-prompt.md`. Layer composition, trust, and the editing
   surfaces are `docs/design/45-prompt-layers.md`.

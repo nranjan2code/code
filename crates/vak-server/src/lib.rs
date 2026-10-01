@@ -68,6 +68,7 @@ mod inbox;
 mod mail_calendar;
 mod office_workspace;
 mod operations;
+mod preview;
 mod projection;
 mod rate_limit;
 mod service_control;
@@ -259,6 +260,8 @@ pub struct AppState {
     /// cannot persist rotated credentials after a concurrent disconnect.
     mail_calendar_account_locks:
         Arc<Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
+    /// Open preview origins (docs/design/66, §3.2).
+    pub(crate) previews: preview::PreviewHub,
 }
 
 #[derive(Clone)]
@@ -318,6 +321,7 @@ impl AppState {
             voice_requests: Arc::new(voice::RequestWindow::new()),
             mail_calendar_oauth: Arc::new(vak_mail_calendar::oauth::AuthorizationStore::default()),
             mail_calendar_account_locks: Arc::new(Mutex::new(HashMap::new())),
+            previews: preview::PreviewHub::default(),
         }
     }
 
@@ -1028,7 +1032,6 @@ fn router_with_state(state: AppState) -> Router {
                 inbox::UPLOAD_MAX_BYTES,
             )),
         )
-        .route("/fs/preview/{*path}", get(preview_file))
         .route("/sandbox/records", get(list_sandbox_records))
         .route("/fs/tree", get(fs_tree))
         .route("/config", get(get_config).patch(patch_config))
@@ -1120,10 +1123,6 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/providers", get(list_providers))
         .route("/providers/{name}/models", get(discover_models))
-        .route(
-            "/providers/{name}/models/availability",
-            get(model_availability),
-        )
         .route("/providers/{name}/status", get(provider_status))
         .route("/search", get(search_sessions))
         .route("/ops/status", get(ops_status))
@@ -1160,7 +1159,8 @@ fn router_with_state(state: AppState) -> Router {
         )
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
-        .route("/canvas/preview", post(canvas_preview))
+        .route("/previews", post(create_preview))
+        .route("/previews/{id}", delete(close_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
         .route("/commitments", get(list_commitments))
@@ -1980,26 +1980,23 @@ async fn patch_finops(
         )
             .into_response();
     }
-    if body.max_run_usd.is_none() && body.max_day_usd.is_none() {
-        if body.price_override.is_none() {
-            return StatusCode::OK.into_response();
-        }
+    if body.max_run_usd.is_none() && body.max_day_usd.is_none() && body.price_override.is_none() {
+        return StatusCode::OK.into_response();
     }
-    if let Some(price) = &body.price_override {
-        if price.model.trim().is_empty()
+    if let Some(price) = &body.price_override
+        && (price.model.trim().is_empty()
             || price.model.len() > 256
             || price.model.chars().any(char::is_control)
             || !price.input.is_finite()
             || price.input < 0.0
             || !price.output.is_finite()
-            || price.output < 0.0
-        {
-            return (
+            || price.output < 0.0)
+    {
+        return (
                 StatusCode::BAD_REQUEST,
                 Json(serde_json::json!({ "error": "model id must be non-empty and rates must be non-negative finite values" })),
             )
                 .into_response();
-        }
     }
     if body.price_override.is_some() && (body.max_run_usd.is_some() || body.max_day_usd.is_some()) {
         return (
@@ -4245,10 +4242,8 @@ pub(crate) fn import_session_sync(
     if let Ok(read) = std::fs::read_dir(&dir) {
         for project in read.flatten() {
             let candidate = project.path().join(format!("{session_id}.jsonl"));
-            if candidate.is_file()
-                && let Ok(stats) = store.import_session(home, &candidate)
-            {
-                return stats.entries_indexed > 0 || stats.skipped > 0;
+            if candidate.is_file() && store.import_session(home, &candidate).is_ok() {
+                return true;
             }
         }
     }
@@ -4266,10 +4261,9 @@ pub(crate) fn import_session_sync(
             if let Ok(projects) = std::fs::read_dir(&agent_sessions) {
                 for project in projects.flatten() {
                     let candidate = project.path().join(format!("{session_id}.jsonl"));
-                    if candidate.is_file()
-                        && let Ok(stats) = store.import_session(&agent_home, &candidate)
+                    if candidate.is_file() && store.import_session(&agent_home, &candidate).is_ok()
                     {
-                        return stats.entries_indexed > 0 || stats.skipped > 0;
+                        return true;
                     }
                 }
             }
@@ -4541,6 +4535,7 @@ async fn list_sessions(
 }
 
 /// Bounded scan: header line for created_at + first user message as title.
+#[allow(clippy::type_complexity)]
 fn summarize_jsonl(
     path: &std::path::Path,
 ) -> (
@@ -4607,6 +4602,7 @@ fn summarize_jsonl(
                         vak_session::EntryPayload::Presentation(_) => {}
                         vak_session::EntryPayload::TurnCard(_) => {}
                         vak_session::EntryPayload::EvidenceBody(_) => {}
+                        vak_session::EntryPayload::ContextSelection(_) => {}
                     }
                 }
                 if title.is_some() && entries > 400 {
@@ -8700,12 +8696,6 @@ async fn onboarding_trust(
     }
 }
 
-/// The starter task. Read-only by construction, and deliberately not
-/// something the caller supplies: a prompt this endpoint accepted would be
-/// a way to run arbitrary work under the onboarding path.
-const FIRST_TASK_PROMPT: &str = "Map this codebase and explain its architecture, key flows, \
-     and highest-risk areas. Do not modify files or run any destructive command.";
-
 /// `POST /onboarding/first-task` — create the guided starter session.
 ///
 /// Capped to read-only **regardless of the workspace's configured mode**
@@ -8758,7 +8748,7 @@ async fn onboarding_first_task(State(state): State<AppState>) -> axum::response:
 
     Json(serde_json::json!({
         "session_id": id,
-        "prompt": FIRST_TASK_PROMPT,
+        "prompt": vak_core::onboarding::FIRST_TASK_PROMPT,
         "permission_mode": format!("{:?}", capped.effective_permission_mode()),
     }))
     .into_response()
@@ -11058,35 +11048,6 @@ async fn read_file_raw(
     (headers, Body::from(bytes)).into_response()
 }
 
-/// Serve a workspace-confined artifact through a stable path so compound HTML
-/// previews can resolve relative stylesheets, scripts, images, and imports.
-/// The response is still sandboxed by CSP; it is never a general static-file
-/// server.
-async fn preview_file(
-    State(state): State<AppState>,
-    axum::extract::Path(path): axum::extract::Path<String>,
-) -> axum::response::Response {
-    use axum::body::Body;
-    use axum::response::IntoResponse;
-    let Some(path) = resolve_confined_file(&state, &path) else {
-        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
-    };
-    let bytes = match tokio::fs::read(&path).await {
-        Ok(bytes) => bytes,
-        Err(_) => return (StatusCode::NOT_FOUND, "file not found").into_response(),
-    };
-    let headers = [
-        (axum::http::header::CONTENT_TYPE, raw_mime_for(&path)),
-        (axum::http::header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
-        (axum::http::header::CACHE_CONTROL, "no-store"),
-        (
-            axum::http::header::CONTENT_SECURITY_POLICY,
-            "sandbox allow-scripts; default-src 'self'; object-src 'none'; connect-src 'none'; base-uri 'self'",
-        ),
-    ];
-    (headers, Body::from(bytes)).into_response()
-}
-
 fn raw_mime_for(path: &std::path::Path) -> &'static str {
     match path
         .extension()
@@ -11106,6 +11067,17 @@ fn raw_mime_for(path: &std::path::Path) -> &'static str {
         "gif" => "image/gif",
         "webp" => "image/webp",
         "pdf" => "application/pdf",
+        "ico" => "image/x-icon",
+        "avif" => "image/avif",
+        "txt" => "text/plain; charset=utf-8",
+        "csv" => "text/csv; charset=utf-8",
+        "xml" => "application/xml",
+        "map" => "application/json",
+        "wasm" => "application/wasm",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
         "mp3" => "audio/mpeg",
         "wav" => "audio/wav",
         "ogg" => "audio/ogg",
@@ -14061,15 +14033,8 @@ async fn discover_models(
     };
     match core.discover_models(&name).await {
         Ok(models) => {
-            if name == "bedrock" {
-                match core.bedrock_model_availability(&models).await {
-                    Ok(availability) => Json(serde_json::json!({ "provider": name, "models": models, "availability": availability })).into_response(),
-                    Err(e) => Json(serde_json::json!({ "provider": name, "models": models, "availability_error": e.to_string() })).into_response(),
-                }
-            } else {
-                let capabilities = voice::voice_model_capabilities(&name, &models);
-                Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
-            }
+            let capabilities = voice::voice_model_capabilities(&name, &models);
+            Json(serde_json::json!({ "provider": name, "models": models, "capabilities": capabilities })).into_response()
         }
         Err(e) => {
             let mut body = provider_error_body(&e);
@@ -14161,43 +14126,6 @@ async fn route_same_model_suggestions(
         only.as_ref(),
     );
     Json(serde_json::json!({ "groups": groups, "errors": errors })).into_response()
-}
-
-async fn model_availability(
-    State(state): State<AppState>,
-    axum::extract::Path(name): axum::extract::Path<String>,
-    Query(query): Query<AgentScopeQuery>,
-) -> axum::response::Response {
-    if name != "bedrock" {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({"error":"availability is only supported for bedrock"})),
-        )
-            .into_response();
-    }
-    let core = if query.agent.is_some() {
-        scoped_core!(&state, None, query.agent.as_deref())
-    } else {
-        state.core.clone()
-    };
-    let models = match core.discover_models("bedrock").await {
-        Ok(models) => models,
-        Err(e) => {
-            let mut body = provider_error_body(&e);
-            body["provider"] = serde_json::Value::String(name);
-            return (StatusCode::BAD_GATEWAY, Json(body)).into_response();
-        }
-    };
-    match core.bedrock_model_availability(&models).await {
-        Ok(availability) => {
-            Json(serde_json::json!({"provider":name,"models":availability})).into_response()
-        }
-        Err(e) => (
-            StatusCode::BAD_GATEWAY,
-            Json(serde_json::json!({"provider":name,"error":e.to_string()})),
-        )
-            .into_response(),
-    }
 }
 
 /// Read provider-published account metadata without returning credentials.
@@ -16174,17 +16102,128 @@ async fn instantiate_agent_template(
     }
 }
 
+/// What a preview is opened on. The scope decides which route reads its
+/// files; nothing here names a path on disk.
 #[derive(serde::Deserialize)]
-struct CanvasPreviewRequest {
-    #[serde(default)]
-    title: Option<String>,
-    content: String,
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum PreviewRequest {
+    Candidate {
+        session_id: String,
+        candidate_id: String,
+        path: String,
+    },
+    Execution {
+        session_id: String,
+        execution_id: String,
+        path: String,
+    },
+    Workspace {
+        path: String,
+    },
 }
 
-async fn canvas_preview(Json(body): Json<CanvasPreviewRequest>) -> axum::response::Response {
-    let title = body.title.as_deref().unwrap_or("Outcome Canvas");
-    let html = vak_presentation::transcode_to_html(title, &body.content);
-    html_response(html)
+/// Opens a preview origin for a file and everything it loads (docs/design/66,
+/// §3.2). The reply carries the URL to frame; the preview lives until it is
+/// closed. Only a loopback request can be answered: the preview listens on a
+/// loopback port, which a browser on another machine cannot reach.
+async fn create_preview(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<PreviewRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let host = headers
+        .get(axum::http::header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !host_is_loopback(host) {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({
+                "error": "Previews of several files need Vakyartha running on this computer.",
+                "reason": "not_local",
+            })),
+        )
+            .into_response();
+    }
+    let (scope, path) = match body {
+        PreviewRequest::Candidate {
+            session_id,
+            candidate_id,
+            path,
+        } => (
+            preview::Scope::Candidate {
+                session_id,
+                candidate_id,
+            },
+            path,
+        ),
+        PreviewRequest::Execution {
+            session_id,
+            execution_id,
+            path,
+        } => (
+            preview::Scope::Execution {
+                session_id,
+                execution_id,
+            },
+            path,
+        ),
+        PreviewRequest::Workspace { path } => {
+            let clean = path.trim().trim_start_matches("./").to_string();
+            let directory = clean
+                .rsplit_once('/')
+                .map(|(directory, _)| directory.to_string())
+                .unwrap_or_default();
+            (preview::Scope::Workspace { directory }, clean)
+        }
+    };
+    let opened = match state.previews.open(state.clone(), scope, &path).await {
+        Ok(opened) => opened,
+        Err(preview::OpenError::NotFound) => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({ "error": "That file is not available to preview." })),
+            )
+                .into_response();
+        }
+        Err(preview::OpenError::Unavailable(error)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": error })),
+            )
+                .into_response();
+        }
+    };
+    // The page is framed from a different loopback name than the app's, so it
+    // shares no cookies or storage with it.
+    let name = if strip_port(host.unwrap_or("")) == "localhost" {
+        "127.0.0.1"
+    } else {
+        "localhost"
+    };
+    let origin = format!("http://{name}:{}", opened.port);
+    let encoded: Vec<String> = path
+        .trim_start_matches("./")
+        .split('/')
+        .map(|part| percent_encoding::utf8_percent_encode(part, PREVIEW_PATH_SEGMENT).to_string())
+        .collect();
+    Json(serde_json::json!({
+        "id": opened.id,
+        "origin": origin,
+        "url": format!("{origin}/{}/{}", opened.token, encoded.join("/")),
+    }))
+    .into_response()
+}
+
+const PREVIEW_PATH_SEGMENT: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
+async fn close_preview(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
+    state.previews.close(&id);
+    StatusCode::NO_CONTENT
 }
 
 async fn put_agents(
@@ -18868,13 +18907,10 @@ async fn fire_task_with_force(
             branch: String::new(),
         }
     };
-    let fired_at_utc = chrono::Utc::now();
-    let scheduled_prompt = format!(
-        "{}\n\n[Scheduled-run context: fired at UTC {}; local system time {}. Re-evaluate relative dates against this run time unless the request explicitly established a specific date.]",
-        snapshot.prompt,
-        fired_at_utc.to_rfc3339(),
-        fired_at_utc.with_timezone(&chrono::Local).to_rfc3339(),
-    );
+    // Time context is supplied by the Background surface's typed temporal
+    // context. Keep mail/calendar-specific boundaries in the saved prompt so
+    // the run never depends on prose-injected timestamps.
+    let scheduled_prompt = snapshot.prompt.clone();
     let scheduled_prompt = if snapshot
         .mail_calendar_scope
         .as_ref()

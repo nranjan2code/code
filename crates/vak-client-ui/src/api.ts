@@ -1,4 +1,5 @@
 import { host } from "./host";
+import type { PreviewSource } from "./canvasSubject";
 import { restartStream, setStreamOpener } from "./streamHub";
 import type {
   ClientEvent,
@@ -747,15 +748,42 @@ export async function transcriptHtml(id: string): Promise<string> {
   return res.text();
 }
 
-/** Render content to interactive living canvas HTML preview. */
-export async function previewCanvas(content: string, title?: string): Promise<string> {
-  const res = await authFetch("/canvas/preview", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content, title }),
-  });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  return res.text();
+export interface PreviewOrigin {
+  id: string;
+  url: string;
+  origin: string;
+}
+
+/**
+ * Opens a preview origin for a page and the files it loads. `null` when the
+ * server cannot offer one because it is not on this computer (409); the page
+ * is then shown as a single document.
+ */
+export async function openPreview(source: PreviewSource): Promise<PreviewOrigin | null> {
+  try {
+    return await req<PreviewOrigin>("/previews", { method: "POST", body: JSON.stringify(source) });
+  } catch (cause) {
+    if (cause instanceof ApiError && cause.status === 409) return null;
+    throw cause;
+  }
+}
+
+/** Ends a preview origin. Closing one that is already gone is not a failure. */
+export async function closePreview(id: string): Promise<void> {
+  try {
+    await authFetch(`/previews/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch {
+    /* The server stops it by age. */
+  }
+}
+
+/** The name this client reaches the server by. */
+export function backendHostname(): string {
+  try {
+    return new URL(backendUrl() || window.location.href).hostname;
+  } catch {
+    return window.location.hostname;
+  }
 }
 
 export interface RunAdmission {
@@ -999,8 +1027,6 @@ export interface DiscoveredModels {
   provider: string;
   models: string[];
   capabilities?: Record<string, string[]>;
-  availability?: { model_id: string; invokable: boolean }[];
-  availability_error?: string;
 }
 
 export function discoverModels(provider: string, agent?: string): Promise<DiscoveredModels> {

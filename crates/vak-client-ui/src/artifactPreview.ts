@@ -1,14 +1,37 @@
 import * as api from "./api";
 import { sandboxedSrcdoc } from "./safeUrl";
+import type { CanvasSubject } from "./canvasSubject";
 
 export interface ArtifactPreviewReader {
   readFile(path: string): Promise<api.FileResponse>;
   readFileRaw(path: string): Promise<string>;
 }
 
+/** The route that reads a subject's files, and so its relative assets: the one its identity names. */
+export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | null {
+  switch (subject.kind) {
+    case "draft_file":
+      return {
+        readFile: (path) => api.readSandboxCandidateFile(subject.sessionId, subject.candidateId, path),
+        readFileRaw: (path) => api.readSandboxCandidateFileRaw(subject.sessionId, subject.candidateId, path),
+      };
+    case "execution_artifact":
+      return {
+        readFile: (path) => api.readExecutionArtifact(subject.sessionId, subject.executionId, path),
+        readFileRaw: (path) => api.readExecutionArtifactRaw(subject.sessionId, subject.executionId, path),
+      };
+    case "file":
+    case "inline":
+      return api;
+    case "live_server":
+    case "automation":
+      return null;
+  }
+}
+
 /** Resolve assets against the file, never the client app's origin. Reads still
  * cross the authenticated, workspace-confined filesystem endpoint. */
-export async function artifactPreviewHtml(path: string, html: string, connectSrc?: string, reader: ArtifactPreviewReader = api): Promise<string> {
+export async function artifactPreviewHtml(path: string, html: string, reader: ArtifactPreviewReader = api): Promise<string> {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("base").forEach((element) => element.remove());
   const resolve = (value: string, parent = path) => {
@@ -61,5 +84,5 @@ export async function artifactPreviewHtml(path: string, html: string, connectSrc
       element.removeAttribute("srcset");
     }
   }
-  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`, connectSrc);
+  return sandboxedSrcdoc(`<!doctype html>${document.documentElement.outerHTML}`);
 }

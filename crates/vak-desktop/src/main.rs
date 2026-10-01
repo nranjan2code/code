@@ -444,7 +444,10 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 #[derive(Clone)]
 struct Backend {
-    shutdown: tokio::sync::watch::Sender<bool>,
+    // Present only for the per-window fallback server. When the managed
+    // local gateway is running, Desktop joins it so Web and Desktop share
+    // one live session owner and event stream.
+    shutdown: Option<tokio::sync::watch::Sender<bool>>,
 }
 
 struct BackendState {
@@ -621,11 +624,14 @@ async fn boot_backend(cwd: PathBuf, trusted: bool) -> Result<Running, String> {
     let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(false);
 
     let join = tauri::async_runtime::spawn(async move {
-        let _ = axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.changed().await;
-            })
-            .await;
+        let _ = axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.changed().await;
+        })
+        .await;
     });
     // Keep the handle alive without blocking state access.
     tauri::async_runtime::spawn(async move {
@@ -645,8 +651,75 @@ async fn boot_backend(cwd: PathBuf, trusted: bool) -> Result<Running, String> {
     Ok(Running {
         info,
         backend: Backend {
-            shutdown: shutdown_tx,
+            shutdown: Some(shutdown_tx),
         },
+    })
+}
+
+/// Attach Desktop to the managed local server so Desktop and Web share one
+/// live session owner, admission queue and event stream. The server outlives
+/// either client window, which also keeps admitted work running if its
+/// initiating surface closes.
+async fn connect_gateway_backend(
+    cwd: &std::path::Path,
+    trusted: bool,
+    base_url: &str,
+    token: &str,
+) -> Result<BackendInfo, String> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|error| format!("could not prepare local server connection: {error}"))?;
+    let response = client
+        .post(format!("{base_url}/workspaces/open"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({
+            "path": cwd.to_string_lossy(),
+            "trust": trusted,
+        }))
+        .send()
+        .await
+        .map_err(|error| format!("could not connect to the running local server: {error}"))?;
+    let status = response.status();
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|error| format!("local server returned an invalid workspace response: {error}"))?;
+    if !status.is_success() {
+        return Err(body["error"]
+            .as_str()
+            .map(str::to_owned)
+            .unwrap_or_else(|| format!("local server refused workspace open ({status})")));
+    }
+    let version = body["version"]
+        .as_str()
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+        .to_owned();
+    if version != env!("CARGO_PKG_VERSION") {
+        return Err(format!(
+            "local server version {version} does not match Desktop version {}; update the local install and restart its server",
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    let recent_workspaces = body["recent_workspaces"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(BackendInfo {
+        version,
+        window_chrome: WindowChrome::default(),
+        ready: true,
+        base_url: Some(base_url.trim_end_matches('/').to_owned()),
+        token: Some(token.to_owned()),
+        cwd: Some(cwd.to_string_lossy().into_owned()),
+        boot_error: None,
+        recent_workspaces,
     })
 }
 
@@ -667,8 +740,10 @@ fn install_backend(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .replace(running);
-    if let Some(previous) = previous {
-        let _ = previous.backend.shutdown.send(true);
+    if let Some(previous) = previous
+        && let Some(shutdown) = previous.backend.shutdown
+    {
+        let _ = shutdown.send(true);
     }
     let _ = app.emit("backend-ready", &info);
     info
@@ -721,6 +796,42 @@ async fn start_project_backend(
         eprintln!("warning: could not record the trust decision: {e}");
     }
     let trusted = trust.unwrap_or_else(|| vak_core::trust::is_trusted(&path));
+
+    // A running managed gateway is the canonical runtime for local Web and
+    // Desktop. Attach to its CorePool instead of opening a second SessionLog
+    // owner over the same files. If it is running but cannot admit this
+    // workspace, surface that reason rather than silently creating a split
+    // conversation in an embedded server.
+    let service = vak_ops::OpsConfig::detect();
+    if vak_ops::status(vak_ops::Service::Gateway, &service) == vak_ops::State::Running {
+        let Some(token) = pinned_gateway_token() else {
+            let message = "The local server is running but has no shared VAK_GATEWAY_TOKEN. Run `vak self services-sync`, then reopen Desktop so both surfaces can use the same runtime.".to_owned();
+            set_boot_error(state, Some(message.clone()));
+            return Err(message);
+        };
+        match connect_gateway_backend(&path, trusted, &service.base_url(), &token).await {
+            Ok(info) => {
+                let info = install_backend(
+                    &app,
+                    state,
+                    Running {
+                        info,
+                        backend: Backend { shutdown: None },
+                    },
+                    persist,
+                );
+                set_boot_error(state, None);
+                return Ok(info);
+            }
+            Err(error) => {
+                let message = format!(
+                    "The local server is running but Desktop could not attach to its shared workspace: {error}"
+                );
+                set_boot_error(state, Some(message.clone()));
+                return Err(message);
+            }
+        }
+    }
     load_workspace_env(&path, trusted);
     match boot_backend(path, trusted).await {
         Ok(running) => {
@@ -768,7 +879,7 @@ fn set_boot_error(state: &BackendState, error: Option<String>) {
                     ..BackendInfo::default()
                 },
                 backend: Backend {
-                    shutdown: tokio::sync::watch::channel(true).0,
+                    shutdown: Some(tokio::sync::watch::channel(true).0),
                 },
             });
         }
@@ -1257,9 +1368,95 @@ fn main() {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::{
-        TRAY_FLAG, TitleBarAction, is_tray_launch, requested_project, startup_workspace,
-        validate_oauth_url,
+        TRAY_FLAG, TitleBarAction, connect_gateway_backend, is_tray_launch, requested_project,
+        startup_workspace, validate_oauth_url,
     };
+
+    #[tokio::test]
+    async fn desktop_can_attach_to_the_shared_gateway_backend() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let router = axum::Router::new().route(
+            "/workspaces/open",
+            axum::routing::post(
+                |headers: axum::http::HeaderMap,
+                 axum::Json(body): axum::Json<serde_json::Value>| async move {
+                    assert_eq!(
+                        headers.get(axum::http::header::AUTHORIZATION).unwrap(),
+                        "Bearer shared-secret"
+                    );
+                    assert_eq!(body["path"], "/tmp/shared-workspace");
+                    assert_eq!(body["trust"], true);
+                    axum::Json(serde_json::json!({
+                        "version": env!("CARGO_PKG_VERSION"),
+                        "cwd": "/tmp/shared-workspace",
+                        "recent_workspaces": ["/tmp/shared-workspace"]
+                    }))
+                },
+            ),
+        );
+        let server = tokio::spawn(async move {
+            axum::serve(listener, router).await.unwrap();
+        });
+        let workspace = std::path::Path::new("/tmp/shared-workspace");
+        let info = connect_gateway_backend(
+            workspace,
+            true,
+            &format!("http://{address}"),
+            "shared-secret",
+        )
+        .await
+        .unwrap();
+        assert!(info.ready);
+        assert_eq!(
+            info.base_url.as_deref(),
+            Some(format!("http://{address}").as_str())
+        );
+        assert_eq!(info.token.as_deref(), Some("shared-secret"));
+        assert_eq!(info.cwd.as_deref(), Some("/tmp/shared-workspace"));
+        server.abort();
+    }
+
+    /// Exercise the actual desktop listener, not a server fixture that
+    /// already supplies ConnectInfo. EventSource has only query auth.
+    #[tokio::test]
+    async fn embedded_listener_accepts_loopback_event_stream_auth() {
+        vak_config::paths::isolate_home_for_tests();
+        let workspace = tempfile::tempdir().unwrap();
+        let running = super::boot_backend(workspace.path().to_path_buf(), false)
+            .await
+            .unwrap();
+        let base = running.info.base_url.as_ref().unwrap();
+        let token = running.info.token.as_ref().unwrap();
+        let client = reqwest::Client::new();
+        let stream = client
+            .get(format!("{base}/stream?host=1&token={token}"))
+            .header("Origin", "tauri://localhost")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(stream.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            stream.headers().get("content-type").unwrap(),
+            "text/event-stream"
+        );
+        let health: serde_json::Value = client
+            .get(format!("{base}/health"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            health.get("provider").is_some(),
+            "desktop must retain local health detail"
+        );
+        drop(stream);
+        if let Some(shutdown) = running.backend.shutdown {
+            let _ = shutdown.send(true);
+        }
+    }
 
     #[test]
     fn only_fixed_provider_authorization_urls_can_open_externally() {

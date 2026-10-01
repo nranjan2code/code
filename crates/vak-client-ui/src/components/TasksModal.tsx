@@ -3,6 +3,7 @@ import {
   activeId,
   diffTarget,
   isRunning,
+  openArtifactCanvas,
   setDiffTarget,
   setDockTab,
   setTasksOpen,
@@ -14,32 +15,9 @@ import {
 import * as api from "../api";
 import type { TaskDef } from "../types";
 import { relAgo } from "../time";
+import { cadenceBadge, canRetryDelivery, deliveryStatusLabel, runStatusLabel } from "../taskWords";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
-
-function fmtInterval(s: number): string {
-  if (s % 3600 === 0) return `${s / 3600}h`;
-  if (s % 60 === 0) return `${s / 60}m`;
-  return `${s}s`;
-}
-
-function runStatusLabel(status: string): string {
-  return ({
-    working: "Working now",
-    complete: "Finished",
-    failed: "Couldn’t finish",
-    interrupted: "Paused by restart",
-  } as Record<string, string>)[status] ?? status;
-}
-
-function deliveryStatusLabel(status: string): string {
-  return ({
-    pending: "Delivery waiting",
-    delivered: "Sent",
-    queued: "Queued for delivery",
-    inbox: "Saved in Inbox",
-  } as Record<string, string>)[status] ?? status;
-}
 
 const INTERVALS: [number, string][] = [
   [5, "5m"],
@@ -185,8 +163,11 @@ export default function TasksModal() {
     setDockTab("diff");
   };
 
-  const cadence = (t: TaskDef): string =>
-    t.schedule ? `cron ${t.schedule}` : fmtInterval(t.interval_secs);
+  const openInCanvas = (t: TaskDef) => {
+    setTasksOpen(false);
+    setTaskFocusId(null);
+    openArtifactCanvas({ kind: "automation", title: t.name, taskId: t.id });
+  };
 
   return (
     <Show when={tasksOpen()}>
@@ -208,7 +189,7 @@ export default function TasksModal() {
                 <div class="task-main">
                   <div class="task-name">
                     {t.name}
-                    <span class="badge">{cadence(t)}</span>
+                    <span class="badge">{cadenceBadge(t)}</span>
                     <Show when={t.script}>
                       <span class="badge" title="Watchdog script task — runs shell, not the model">script</span>
                     </Show>
@@ -269,8 +250,9 @@ export default function TasksModal() {
                   </Show>
                 </div>
                 <div class="task-actions">
+                  <button type="button" class="chip sm" onClick={() => openInCanvas(t)} title="See this routine in the Canvas">open</button>
                   <button type="button" class="chip sm" onClick={() => void runNow(t)}>run now</button>
-                  <Show when={t.last_delivery_state === "pending" || t.last_delivery_state === "queued"}>
+                  <Show when={canRetryDelivery(t)}>
                     <button type="button" class="chip sm" onClick={() => void retryDelivery(t)}>retry delivery</button>
                   </Show>
                   <Show when={t.last_session_id}>

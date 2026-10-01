@@ -10,6 +10,7 @@ async-trait = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+iana-time-zone = { workspace = true }
 futures = { workspace = true }
 globset = { workspace = true }
 tokio = { workspace = true }
@@ -34,6 +35,7 @@ vak-mcp = { workspace = true }
 vak-permission = { workspace = true }
 vak-plugin = { workspace = true }
 vak-session = { workspace = true }
+vak-store = { workspace = true }
 vak-context = { workspace = true }
 vak-tools = { workspace = true }
 vak-sandbox = { workspace = true }

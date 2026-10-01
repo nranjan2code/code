@@ -542,6 +542,13 @@ impl Provider for OpenAiCompletionsProvider {
         crate::gate::route_identity(self.name(), &self.config.base_url, &self.config.api_key)
     }
 
+    fn rate_limit_key(&self) -> String {
+        format!(
+            "openai-account:{}",
+            crate::gate::credential_id(&self.config.base_url, &self.config.api_key)
+        )
+    }
+
     async fn stream(
         &self,
         request: ChatRequest,
@@ -696,6 +703,26 @@ mod build_body_tests {
         let body = build_body(&config, &req_with_cache()).unwrap();
         assert_eq!(body["prompt_cache_key"], "sess-1");
         assert!(body.get("session_id").is_none());
+    }
+
+    #[test]
+    fn chat_and_responses_routes_share_one_account_capacity_key() {
+        let config = OpenAiConfig {
+            api_key: "same-test-key".into(),
+            base_url: OPENAI_DEFAULT_BASE_URL.into(),
+            ..Default::default()
+        };
+        let chat = OpenAiCompletionsProvider::new(config.clone()).unwrap();
+        let responses = crate::openai_responses::OpenAiResponsesProvider::new(
+            crate::openai_responses::OpenAiResponsesConfig {
+                api_key: config.api_key,
+                base_url: config.base_url,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(chat.rate_limit_key(), responses.rate_limit_key());
+        assert_ne!(chat.circuit_key(), responses.circuit_key());
     }
 
     #[test]

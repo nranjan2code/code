@@ -334,6 +334,10 @@ impl Tool for BrokeredTool {
         self.inner.delivered_file(args)
     }
 
+    fn produces_artifact(&self, args: &Value) -> bool {
+        self.inner.produces_artifact(args)
+    }
+
     async fn execute(&self, args: &Value, ctx: &ToolContext) -> ToolOutput {
         execute(
             self.name(),
@@ -1143,10 +1147,8 @@ fn office_project_in_worker(path: &Path, view: OfficeView) -> Result<String, Str
     let mut body = match view {
         OfficeView::Content { .. } | OfficeView::At { .. } | OfficeView::Facts => {
             let previews = if matches!(&view, OfficeView::Content { .. } | OfficeView::At { .. }) {
-                match vak_ooxml::read::image_previews(std::io::Cursor::new(bytes.clone()), limits) {
-                    Ok(previews) => previews,
-                    Err(_) => Vec::new(),
-                }
+                vak_ooxml::read::image_previews(std::io::Cursor::new(bytes.clone()), limits)
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             };

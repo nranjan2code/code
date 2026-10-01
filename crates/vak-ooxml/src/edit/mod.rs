@@ -351,6 +351,11 @@ pub(crate) enum Expect {
         prefix: String,
         needle: String,
     },
+    /// The stored cell is empty, even though the text projection omits it.
+    EmptyCell {
+        sheet: String,
+        cell: String,
+    },
     /// No unit has this anchor.
     Absent {
         anchor: String,
@@ -992,6 +997,9 @@ fn check(document: &Document, written: &mut Written<'_>, expect: &Expect) -> Res
                 Err(format!("no {prefix}… unit contains {needle:?}"))
             }
         }
+        Expect::EmptyCell { sheet, cell } => {
+            sheet::check_empty_cell(written.package()?, sheet, cell)
+        }
         Expect::Absent { anchor } => match unit(anchor) {
             None => Ok(()),
             Some(_) => Err(format!("{anchor} is still present")),
@@ -1454,6 +1462,7 @@ pub(crate) fn free_part_name<R: std::io::Read + std::io::Seek>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 

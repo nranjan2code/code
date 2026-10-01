@@ -8,12 +8,14 @@
 
 pub mod cases;
 pub mod context_engine_gate;
+pub mod generated;
 pub mod no_first_class_integrations;
 pub mod runner;
 pub mod scorecard;
 
 pub use cases::{builtin_suite, general_suite, held_out_suite, live_suite};
 pub use context_engine_gate::run_context_engine_scorecard;
+pub use generated::generated_scenario;
 pub use no_first_class_integrations::{Offense, scan_banned_tokens};
 pub use runner::{
     EvalCase, EvalComparisonReport, EvalComparisonSuiteReport, EvalReport, EvalSuiteReport,

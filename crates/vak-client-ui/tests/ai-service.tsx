@@ -28,7 +28,7 @@ window.fetch = async (input, init) => {
   else if (path.endsWith("/models")) {
     if (delayed) await new Promise<void>((resolve) => { resolveDiscovery = resolve; });
     if (failDiscovery) { result = { error: "Service is unavailable. Try again." }; status = 502; }
-    else if (path.includes("bedrock")) result = { provider: "bedrock", models: ["blocked", "allowed"], availability: [{ model_id: "blocked", invokable: false }, { model_id: "allowed", invokable: true }] };
+    else if (path.includes("bedrock")) result = { provider: "bedrock", models: ["first-bedrock-model", "saved-model"] };
     else result = { provider: path.split('/')[2], models: ["first-model", "saved-model", "shared-model"] };
   } else if (method === "PATCH" && failSave) { result = { error: "Could not save settings" }; status = 500; }
   else if (path === "/health") result = { status: "ok" };
@@ -70,7 +70,7 @@ const inputKey = () => { const input = document.querySelector<HTMLInputElement>(
   inputKey(); primary().click(); await tick(); primary().click(); await tick();
   check(requests.some((r) => r.path === '/config/global' && r.method === 'PATCH' && r.body.model === 'shared-model' && !r.body.agent), 'shared write uses shared endpoint');
   openConnect(); await tick(); select(service(), 'bedrock'); primary().click(); await tick();
-  check(![...model().options].some((o) => o.value === 'blocked') && model().value === 'allowed', 'unavailable Bedrock model cannot be chosen');
+  check([...model().options].some((o) => o.value === 'first-bedrock-model') && model().value === 'saved-model', 'Bedrock uses the same live catalogue and deliberate selection rules as every provider');
   check(!document.body.textContent?.includes('Private and free'), 'no unverified local privacy promise');
   check(document.documentElement.scrollWidth <= innerWidth, 'no horizontal overflow');
   setConnectOpen(false); openConnect(); await tick();

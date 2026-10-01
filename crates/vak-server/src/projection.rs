@@ -384,7 +384,7 @@ pub(crate) fn append_sandbox_artifacts(
             fallback_text: format!("Generated artifact: {path}"),
         });
     }
-    deduplicate_file_artifacts(&mut timeline.items);
+    deduplicate_file_artifacts_with_scratch(&mut timeline.items, &reviewable_roots);
 }
 
 /// The saved versions of each execution's draft in one conversation, in the
@@ -504,14 +504,29 @@ fn draft_relative_path<'a>(path: &'a str, scratch: &str) -> Option<&'a std::path
 /// same deliverable. Keep the newest observed artifact and its actions, while
 /// leaving identically named files in other turns or directories distinct.
 fn deduplicate_file_artifacts(items: &mut Vec<OutputItem>) {
+    deduplicate_file_artifacts_with_scratch(items, &HashMap::new());
+}
+
+fn deduplicate_file_artifacts_with_scratch(
+    items: &mut Vec<OutputItem>,
+    scratch_roots: &HashMap<String, String>,
+) {
     let mut seen = HashSet::new();
     let mut latest_first = Vec::with_capacity(items.len());
     for item in items.drain(..).rev() {
         let duplicate = if let OutputContent::Artifact { artifact } = &item.content {
-            artifact
-                .path
-                .as_ref()
-                .is_some_and(|path| !seen.insert((item.turn_id.clone(), path.clone())))
+            artifact.path.as_ref().is_some_and(|path| {
+                let execution_id = item
+                    .provenance
+                    .as_ref()
+                    .and_then(|provenance| provenance.tool_call_id.as_ref());
+                let identity = execution_id
+                    .and_then(|id| scratch_roots.get(id).map(|root| (id, root)))
+                    .and_then(|(_, root)| draft_relative_path(path, root))
+                    .map(|relative| format!("scratch:{}", relative.display()))
+                    .unwrap_or_else(|| path.clone());
+                !seen.insert((item.turn_id.clone(), identity))
+            })
         } else {
             false
         };
@@ -3079,6 +3094,65 @@ mod tests {
     }
 
     #[test]
+    fn scratch_artifacts_dedupe_by_relative_path_per_turn() {
+        let artifact = |id: &str, path: &str, execution: &str| OutputItem {
+            id: id.into(),
+            timestamp: "2026-09-23T00:00:00Z".into(),
+            turn_id: "turn-1".into(),
+            role: OutputRole::Tool,
+            kind: OutputKind::Artifact,
+            status: OutputStatus::Succeeded,
+            outcome: None,
+            content: OutputContent::Artifact {
+                artifact: vak_delivery::ArtifactRef {
+                    name: "report.xlsx".into(),
+                    path: Some(path.into()),
+                    media_type: Some(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                    ),
+                    description: None,
+                    size_bytes: None,
+                    status: None,
+                },
+            },
+            provenance: Some(OutputProvenance {
+                session_id: Some("session-1".into()),
+                entry_id: None,
+                tool_call_id: Some(execution.into()),
+                source: Some("sandbox_artifact".into()),
+                presentation_id: None,
+            }),
+            actions: Vec::new(),
+            fallback_text: path.into(),
+        };
+        let mut items = vec![
+            artifact("old", "/workspace/.vak/scratch/run-a/report.xlsx", "run-a"),
+            artifact(
+                "other-dir",
+                "/workspace/.vak/scratch/run-b/archive/report.xlsx",
+                "run-b",
+            ),
+            artifact(
+                "latest",
+                "/workspace/.vak/scratch/run-b/report.xlsx",
+                "run-b",
+            ),
+        ];
+        let roots = HashMap::from([
+            ("run-a".into(), "/workspace/.vak/scratch/run-a".into()),
+            ("run-b".into(), "/workspace/.vak/scratch/run-b".into()),
+        ]);
+        super::deduplicate_file_artifacts_with_scratch(&mut items, &roots);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["other-dir", "latest"]
+        );
+    }
+
+    #[test]
     fn presentation_envelope_is_not_an_answer() {
         assert!(super::is_presentation_envelope(
             "Outcome: produced\nSurface: desktop app."
@@ -3872,7 +3946,7 @@ mod tests {
         // The repair nudge: same logical answer, not a new user request.
         log.append_message(MessageRecord {
             message: Message::user_text(
-                "[fence-check]: The vak-fence in your last answer has invalid JSON and failed to parse. Resend it.",
+                "[fence-check]: The ```vak card block in your last answer has invalid JSON and failed to parse. Resend it.",
             ),
             meta: Some(vak_session::MessageMeta {
                 control: Some(vak_intent::control::ControlKind::FenceCheck),

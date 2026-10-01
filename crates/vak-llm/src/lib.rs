@@ -17,6 +17,7 @@ pub mod openai;
 pub mod openai_realtime;
 pub mod openai_responses;
 pub mod provider_status;
+pub mod rate_limit;
 pub mod registry;
 pub mod route;
 pub mod sse;
@@ -28,6 +29,7 @@ pub mod work;
 pub use error::LlmError;
 pub use gate::credential_id;
 pub use model_identity::ModelRef;
+pub use rate_limit::RateLimitGate;
 pub use registry::{ProviderAuth, ProviderRegistry};
 pub use route::{
     BELIEF_FLOOR, BeliefMap, Demand, DemandBand, DemandInput, EndpointDialect, EvidenceSnapshot,
@@ -55,6 +57,13 @@ pub trait Provider: Send + Sync {
     /// cannot open the circuit for another key.
     fn circuit_key(&self) -> String {
         self.name().to_string()
+    }
+
+    /// Identity of the provider capacity bucket shared by this route.
+    /// Adapters using the same account over different wire protocols return
+    /// the same opaque credential identity; the identity never contains a key.
+    fn rate_limit_key(&self) -> String {
+        self.circuit_key()
     }
 
     async fn stream(

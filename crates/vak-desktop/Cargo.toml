@@ -30,9 +30,13 @@ vak-config = { workspace = true }
 vak-ops = { workspace = true }
 vak-server = { workspace = true }
 vak-tools = { workspace = true }
+reqwest = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2-foundation = { workspace = true }
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = { workspace = true }

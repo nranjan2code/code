@@ -18,6 +18,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::Core;
 
+/// The starter task every first-run surface offers (doc 46, Step 9). One
+/// constant because the web wizard and `vak setup` must offer the same
+/// thing, and general-purpose because the default workspace is a person's
+/// home for their work, not a codebase: the first result should show what
+/// Vakyartha can do here, whatever "here" holds. Fixed rather than
+/// caller-supplied: a prompt the onboarding endpoint accepted would be a way
+/// to run arbitrary work under its read-only starter path.
+pub const FIRST_TASK_PROMPT: &str = "Look around this workspace and tell me, briefly and in \
+     plain words, what is here and what you could help me with — and what you would need \
+     from me to do more. Do not change anything.";
+
 /// Why a step is not satisfied, in the four fields every setup failure
 /// owes the reader (doc 46, "Error design"): what failed, what is still
 /// safe, the one repair, and the underlying detail for whoever wants it.

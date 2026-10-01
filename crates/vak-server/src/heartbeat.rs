@@ -187,13 +187,15 @@ async fn run_heartbeat_turn(
 
     let ledger = take_persistent_session(&core).await?;
     let prompt = format!(
-        "Heartbeat review pass. You are an unattended watchdog: use your \
-         tools (session_search, read, glob, grep) to review recent activity \
-         in this workspace — recent sessions, tasks, failing checks, stale \
-         work. Reply either exactly \"nothing\" (when nothing needs \
-         attention) or up to {max} short actionable findings, one per line. \
-         Prefix any finding that cannot wait until the next check-in with \
-         \"URGENT:\".",
+        "Heartbeat review pass. You are an unattended check-in: use the \
+         tools you have (commitments, tasks, session_search, read) to review \
+         what the person is waiting on — open commitments, scheduled \
+         routines that failed or did not run, recent conversations left \
+         unfinished, and work that has gone stale. Reply either exactly \
+         \"nothing\" (when nothing needs attention; this is the usual, \
+         correct answer) or up to {max} short actionable findings, one per \
+         line, in the language the person uses. Prefix any finding that \
+         cannot wait until the next check-in with \"URGENT:\".",
         max = cfg.max_findings
     );
 

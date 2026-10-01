@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
+pub mod history;
 pub mod index;
 pub mod presentation;
 pub mod query;
@@ -21,6 +22,20 @@ pub const DB_NAME: &str = "store.db";
 
 /// Version tag stored in the `meta` table; bump when the schema changes.
 const SCHEMA_VERSION: u32 = 1;
+
+/// A derived locator, not an authorization decision. A caller must verify
+/// the canonical session's scope/lifecycle before loading this byte range.
+#[derive(Debug, Clone)]
+pub struct EntryLocator {
+    pub entry_id: String,
+    pub session_id: String,
+    pub path: PathBuf,
+    pub sequence: u64,
+    pub offset: u64,
+    pub length: u64,
+    pub parent_id: Option<String>,
+    pub digest: String,
+}
 
 // ---------------------------------------------------------------------------
 // Entry metadata (written to the `entries` table alongside FTS rows)
@@ -36,6 +51,7 @@ pub enum EntryKind {
     Activity,
     Work,
     Intent,
+    TurnCard,
 }
 
 impl EntryKind {
@@ -49,6 +65,7 @@ impl EntryKind {
             Self::Activity => "activity",
             Self::Work => "work",
             Self::Intent => "intent",
+            Self::TurnCard => "turn_card",
         }
     }
 
@@ -61,6 +78,7 @@ impl EntryKind {
             "goal" => Some(Self::Goal),
             "activity" => Some(Self::Activity),
             "intent" => Some(Self::Intent),
+            "turn_card" => Some(Self::TurnCard),
             "work" => Some(Self::Work),
             _ => None,
         }
@@ -116,6 +134,7 @@ impl Store {
         std::fs::create_dir_all(sessions_home)?;
         let db_path = sessions_home.join(DB_NAME);
         let conn = Connection::open(&db_path)?;
+        conn.busy_timeout(std::time::Duration::from_millis(100))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")?;
         Self::ensure_schema(&conn)?;
         Ok(Store {
@@ -136,7 +155,9 @@ impl Store {
     /// index is fully derivable from JSONL.
     pub fn rebuild(&self, sessions_home: &Path) -> Result<RebuildStats, StoreError> {
         let conn = self.inner.conn.lock().unwrap_or_else(|p| p.into_inner());
-        conn.execute_batch("DELETE FROM entries; DELETE FROM entries_fts;")?;
+        conn.execute_batch(
+            "DELETE FROM entries; DELETE FROM entries_fts; DELETE FROM ledger_cursors; DELETE FROM entry_locators; DELETE FROM entry_lineage; DELETE FROM entry_jumps; DELETE FROM turn_descriptors;",
+        )?;
         let stats = self.import_all(&conn, sessions_home)?;
         conn.execute(
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('version', ?1)",
@@ -154,6 +175,80 @@ impl Store {
     ) -> Result<ImportStats, StoreError> {
         let conn = self.inner.conn.lock().unwrap_or_else(|p| p.into_inner());
         self.import_file(&conn, sessions_home, jsonl_path)
+    }
+
+    /// Request-path refresh: never cold-rebuild or decode an unbounded append.
+    pub fn import_session_bounded(
+        &self,
+        sessions_home: &Path,
+        path: &Path,
+        max_bytes: u64,
+    ) -> Result<ImportStats, StoreError> {
+        let conn = self.conn();
+        self.import_file_bounded(&conn, sessions_home, path, Some(max_bytes))
+    }
+
+    /// One background replay transaction. A single complete record may exceed
+    /// the target chunk size; individual records still have the global read cap.
+    pub fn import_session_chunk(
+        &self,
+        sessions_home: &Path,
+        path: &Path,
+        target_bytes: u64,
+    ) -> Result<ImportStats, StoreError> {
+        let conn = self.conn();
+        self.import_file_chunk(&conn, sessions_home, path, None, Some(target_bytes.max(1)))
+    }
+
+    /// Locate an exact entry within its requested session. No content is
+    /// loaded here and an ID from another session cannot resolve.
+    pub fn locate_entry(
+        &self,
+        session_id: &str,
+        entry_id: &str,
+    ) -> Result<Option<EntryLocator>, StoreError> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn();
+        Ok(conn
+            .query_row(
+                "SELECT entry_id, session_id, path, sequence, offset, length, parent_id, digest
+             FROM entry_locators WHERE session_id = ?1 AND entry_id = ?2",
+                rusqlite::params![session_id, entry_id],
+                |row| {
+                    Ok(EntryLocator {
+                        entry_id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        path: PathBuf::from(row.get::<_, String>(2)?),
+                        sequence: row.get(3)?,
+                        offset: row.get(4)?,
+                        length: row.get(5)?,
+                        parent_id: row.get(6)?,
+                        digest: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    pub fn locate_sequence(
+        &self,
+        session_id: &str,
+        sequence: u64,
+    ) -> Result<Option<EntryLocator>, StoreError> {
+        use rusqlite::OptionalExtension;
+        let conn = self.conn();
+        let id: Option<String> = conn
+            .query_row(
+                "SELECT entry_id FROM entry_locators WHERE session_id = ?1 AND sequence = ?2",
+                rusqlite::params![session_id, sequence],
+                |row| row.get(0),
+            )
+            .optional()?;
+        drop(conn);
+        match id {
+            Some(id) => self.locate_entry(session_id, &id),
+            None => Ok(None),
+        }
     }
 
     /// Append a single entry (real-time update path). Called from
@@ -187,6 +282,14 @@ pub struct ImportStats {
     pub entries_indexed: usize,
     pub fts_rows: usize,
     pub skipped: usize,
+    /// Canonical ledger bytes read, including bounded cursor validation.
+    pub bytes_read: u64,
+    /// Completed canonical extent committed in the same transaction as rows.
+    pub committed_offset: u64,
+    pub observed_length: u64,
+    /// False for an unchanged prefix or an incomplete final record. Background
+    /// replay must not spin waiting for an unfinished append.
+    pub made_progress: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -195,10 +298,64 @@ pub struct ImportStats {
 
 impl Store {
     fn ensure_schema(conn: &Connection) -> Result<(), StoreError> {
+        // A warm reader must not contend for a write transaction on every open.
+        if conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'locator_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .is_ok_and(|version| version == "2")
+        {
+            return Ok(());
+        }
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta (
                 key   TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS entry_locators (
+                entry_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                sequence INTEGER NOT NULL,
+                offset INTEGER NOT NULL,
+                length INTEGER NOT NULL,
+                parent_id TEXT,
+                digest TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_locators_session_sequence
+                ON entry_locators(session_id, sequence);
+            CREATE INDEX IF NOT EXISTS idx_locators_path_sequence
+                ON entry_locators(path, sequence);
+
+            CREATE TABLE IF NOT EXISTS entry_lineage (
+                entry_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                depth INTEGER NOT NULL,
+                reset_id TEXT
+            );
+            CREATE TABLE IF NOT EXISTS entry_jumps (
+                entry_id TEXT NOT NULL,
+                level INTEGER NOT NULL,
+                ancestor_id TEXT NOT NULL,
+                PRIMARY KEY(entry_id, level)
+            );
+            CREATE TABLE IF NOT EXISTS turn_descriptors (
+                entry_id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                turn_id TEXT NOT NULL,
+                record TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_turn_descriptors_scope
+                ON turn_descriptors(session_id, turn_id);
+
+            CREATE TABLE IF NOT EXISTS ledger_cursors (
+                path TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                offset INTEGER NOT NULL,
+                anchor TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS entries (
@@ -238,6 +395,23 @@ impl Store {
                 tokenize='porter unicode61'
             );",
         )?;
+        // Existing cache generations predate locators. Invalidate only their
+        // ingest watermark so a background replay can populate every locator.
+        conn.execute_batch(
+            "BEGIN IMMEDIATE;
+            DELETE FROM ledger_cursors WHERE NOT EXISTS
+                (SELECT 1 FROM meta WHERE key = 'locator_version' AND value = '2');
+            DELETE FROM entry_jumps WHERE NOT EXISTS
+                (SELECT 1 FROM meta WHERE key = 'locator_version' AND value = '2');
+            DELETE FROM entry_lineage WHERE NOT EXISTS
+                (SELECT 1 FROM meta WHERE key = 'locator_version' AND value = '2');
+            DELETE FROM turn_descriptors WHERE NOT EXISTS
+                (SELECT 1 FROM meta WHERE key = 'locator_version' AND value = '2');
+            DELETE FROM entry_locators WHERE NOT EXISTS
+                (SELECT 1 FROM meta WHERE key = 'locator_version' AND value = '2');
+            INSERT OR REPLACE INTO meta(key, value) VALUES ('locator_version', '2');
+            COMMIT;",
+        )?;
         Ok(())
     }
 }
@@ -261,19 +435,19 @@ impl Store {
             EntryPayload::Activity(_) => EntryKind::Activity,
             EntryPayload::Work(_) => EntryKind::Work,
             EntryPayload::Intent(_) => EntryKind::Intent,
+            EntryPayload::TurnCard(_) => EntryKind::TurnCard,
             // A Presentation entry is display-channel/model-history
             // data (docs/design/68-context-engine.md §10), not free text to
-            // full-text index today; its own TurnIndex/recall search
-            // (design §3) is separate future work. A TurnCard is derived,
-            // never-model-visible audit data with its own in-memory BM25
-            // index (`TurnIndex::search`) — not this store's concern either.
+            // full-text index today. TurnCards project compact subjects
+            // and outcomes into this shared index; their canonical records
+            // remain in the ledger.
             // An evidence body repeats a tool result the Message entry
             // already indexes the window of; `recall` reaches the rest.
-            EntryPayload::TurnCapabilitiesBound(_)
+            EntryPayload::ContextSelection(_)
+            | EntryPayload::TurnCapabilitiesBound(_)
             | EntryPayload::TurnCapabilitiesRef(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
-            | EntryPayload::TurnCard(_)
             | EntryPayload::EvidenceBody(_) => return None,
         };
 
@@ -412,6 +586,33 @@ impl Store {
             // irreversible thing this agent did in March" is a search rather
             // than a ledger crawl. That query is the whole point of recording
             // the axes next to the decision.
+            EntryPayload::TurnCard(record) => Some(IndexedEntry {
+                entry_id: entry.id.clone(),
+                session_id: session_id.to_string(),
+                project_hash: String::new(),
+                parent_id: entry.parent_id.clone(),
+                ts: entry.ts.to_rfc3339(),
+                kind,
+                role: Some("turn".into()),
+                provider: None,
+                model: None,
+                tool_name: None,
+                // Search the subject/outcome, not megabytes of call arguments.
+                content_text: format!(
+                    "{} {} {}",
+                    record.card.asked,
+                    record.card.answered.narration,
+                    record
+                        .card
+                        .answered
+                        .presentations
+                        .iter()
+                        .map(|p| p.title.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+                is_error: false,
+            }),
             EntryPayload::Intent(record) => Some(IndexedEntry {
                 entry_id: entry.id.clone(),
                 session_id: session_id.to_string(),
@@ -435,17 +636,17 @@ impl Store {
                 ),
                 is_error: false,
             }),
-            EntryPayload::TurnCapabilitiesBound(_)
+            EntryPayload::ContextSelection(_)
+            | EntryPayload::TurnCapabilitiesBound(_)
             | EntryPayload::TurnCapabilitiesRef(_)
             | EntryPayload::ChildRun { .. }
             | EntryPayload::Presentation(_)
-            | EntryPayload::TurnCard(_)
             | EntryPayload::EvidenceBody(_) => None,
         }
     }
 
     fn insert_meta(conn: &Connection, meta: &IndexedEntry) -> Result<(), StoreError> {
-        conn.execute(
+        let inserted = conn.execute(
             "INSERT OR IGNORE INTO entries
              (entry_id, session_id, project_hash, parent_id, ts, kind, role,
               provider, model, tool_name, content_text, is_error)
@@ -465,6 +666,10 @@ impl Store {
                 meta.is_error as i32,
             ],
         )?;
+        // Entry and FTS identities are the same idempotent boundary.
+        if inserted == 0 {
+            return Ok(());
+        }
         // FTS row — only if there is searchable content.
         if !meta.content_text.trim().is_empty() {
             conn.execute(
@@ -672,7 +877,365 @@ mod tests {
         let s2 = store
             .import_session(home, &SessionPath::new_session_file(home, cwd, "sess-aaa"))
             .unwrap();
-        assert_eq!(s2.skipped, 2, "second import skips all");
+        assert_eq!(s2.entries_indexed, 0);
+        assert_eq!(s2.skipped, 0, "committed prefix is not parsed again");
+    }
+
+    #[test]
+    fn cursor_survives_restart_and_reads_only_appended_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "incremental");
+        write_session(
+            dir.path(),
+            dir.path(),
+            "incremental",
+            &[user_msg(&"old evidence ".repeat(100_000))],
+        );
+        let store = Store::open(dir.path()).unwrap();
+        store.import_session(dir.path(), &path).unwrap();
+        drop(store);
+        let store = Store::open(dir.path()).unwrap();
+        let warm = store.import_session(dir.path(), &path).unwrap();
+        assert_eq!(warm.entries_indexed, 0);
+        assert!(warm.bytes_read <= 16384, "{:?}", warm);
+        let entry = Entry::new(None, EntryPayload::Message(user_msg("new bounded subject")));
+        let serialized = serde_json::to_vec(&entry).unwrap();
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        file.write_all(&serialized[..serialized.len() / 2]).unwrap();
+        let partial = store.import_session(dir.path(), &path).unwrap();
+        assert_eq!(partial.entries_indexed, 0);
+        file.write_all(&serialized[serialized.len() / 2..]).unwrap();
+        file.write_all(b"\n").unwrap();
+        let appended = store.import_session(dir.path(), &path).unwrap();
+        assert_eq!(appended.entries_indexed, 1);
+        assert!(appended.bytes_read < 20000, "{:?}", appended);
+        assert_eq!(
+            store
+                .search("bounded", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn locators_include_non_searchable_evidence_and_survive_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "opaque");
+        write_session(
+            dir.path(),
+            dir.path(),
+            "opaque",
+            &[user_msg("searchable subject")],
+        );
+        let evidence = Entry::new(
+            None,
+            EntryPayload::EvidenceBody(vak_session::types::EvidenceBodyRecord {
+                tool_use_id: "evidence-call".into(),
+                content: "opaque evidence body".into(),
+            }),
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", serde_json::to_string(&evidence).unwrap()).unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        store.import_session(dir.path(), &path).unwrap();
+        let location = store.locate_entry("opaque", &evidence.id).unwrap().unwrap();
+        assert_eq!(location.sequence, 2);
+        assert!(
+            store
+                .search("opaque", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        let loaded = vak_session::SessionLog::read_record_at(
+            &path,
+            location.offset,
+            location.length,
+            &location.entry_id,
+            &location.digest,
+        )
+        .unwrap();
+        assert!(
+            matches!(loaded.payload, EntryPayload::EvidenceBody(record) if record.content == "opaque evidence body")
+        );
+        drop(store);
+        let reopened = Store::open(dir.path()).unwrap();
+        assert_eq!(
+            reopened
+                .locate_sequence("opaque", 2)
+                .unwrap()
+                .unwrap()
+                .entry_id,
+            evidence.id
+        );
+    }
+
+    #[test]
+    fn repeated_incremental_append_does_not_duplicate_fts_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let entry = Entry::new(None, EntryPayload::Message(user_msg("idempotent zanzibar")));
+        for _ in 0..3 {
+            store.append_entry("same-session", &entry).unwrap();
+        }
+        assert_eq!(
+            store
+                .search("zanzibar", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn older_cache_watermark_replays_locators_without_duplicate_search_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "old-cache");
+        write_session(
+            dir.path(),
+            dir.path(),
+            "old-cache",
+            &[user_msg("zanzibar legacy cache")],
+        );
+        let store = Store::open(dir.path()).unwrap();
+        store.import_session(dir.path(), &path).unwrap();
+        store
+            .conn()
+            .execute_batch(
+                "DELETE FROM entry_locators; DELETE FROM meta WHERE key = 'locator_version';",
+            )
+            .unwrap();
+        drop(store);
+        let store = Store::open(dir.path()).unwrap();
+        assert!(store.locate_sequence("old-cache", 0).unwrap().is_none());
+        let replay = store.import_session(dir.path(), &path).unwrap();
+        assert_eq!(replay.skipped, 2);
+        assert!(store.locate_sequence("old-cache", 0).unwrap().is_some());
+        assert!(store.locate_sequence("old-cache", 1).unwrap().is_some());
+        assert_eq!(
+            store
+                .search("zanzibar", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn background_chunks_commit_restart_and_release_the_writer() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "chunks");
+        write_session(dir.path(), dir.path(), "chunks", &[user_msg("initial")]);
+        let log = vak_session::SessionLog::open(path.clone()).unwrap();
+        let mut parent = log.tail_id().cloned();
+        drop(log);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        let mut last_id = String::new();
+        for number in 0..1000 {
+            let entry = Entry::new(
+                parent,
+                EntryPayload::Message(user_msg(&format!("indexed subject number {number}"))),
+            );
+            writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+            parent = Some(entry.id.clone());
+            last_id = entry.id;
+        }
+        let mut previous_offset = 0;
+        let mut transactions = 0;
+        loop {
+            // Reopen every chunk to exercise crash/restart at each watermark.
+            let store = Store::open(dir.path()).unwrap();
+            let stats = store.import_session_chunk(dir.path(), &path, 4096).unwrap();
+            assert!(stats.made_progress);
+            assert!(stats.committed_offset > previous_offset);
+            assert!(stats.bytes_read <= 4096 + 16384 + 1024, "{stats:?}");
+            previous_offset = stats.committed_offset;
+            transactions += 1;
+            // Another handle sees committed progress between writer chunks.
+            let observer = Store::open(dir.path()).unwrap();
+            assert!(observer.locate_sequence("chunks", 0).unwrap().is_some());
+            if stats.committed_offset == stats.observed_length {
+                assert!(observer.locate_entry("chunks", &last_id).unwrap().is_some());
+                break;
+            }
+            assert!(transactions < 200);
+        }
+        assert!(transactions > 10);
+        let store = Store::open(dir.path()).unwrap();
+        let stable = store.import_session_chunk(dir.path(), &path, 4096).unwrap();
+        assert!(!stable.made_progress);
+        file.write_all(b"{\"incomplete\":").unwrap();
+        let partial = store.import_session_chunk(dir.path(), &path, 4096).unwrap();
+        assert!(!partial.made_progress);
+        assert_eq!(partial.committed_offset, previous_offset);
+        assert!(partial.committed_offset < partial.observed_length);
+    }
+
+    #[test]
+    fn failed_background_chunk_preserves_previously_committed_progress() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "chunk-error");
+        write_session(
+            dir.path(),
+            dir.path(),
+            "chunk-error",
+            &[user_msg("committed subject")],
+        );
+        let store = Store::open(dir.path()).unwrap();
+        let first = store.import_session_chunk(dir.path(), &path, 1).unwrap();
+        assert_eq!(first.entries_indexed, 1); // header-only transaction
+        let second = store.import_session_chunk(dir.path(), &path, 4096).unwrap();
+        assert_eq!(second.entries_indexed, 1);
+        let addition = Entry::new(
+            None,
+            EntryPayload::Message(user_msg("uncommitted zanzibar")),
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", serde_json::to_string(&addition).unwrap()).unwrap();
+        writeln!(file, "corrupt complete record").unwrap();
+        assert!(store.import_session_chunk(dir.path(), &path, 4096).is_err());
+        assert!(store.locate_sequence("chunk-error", 0).unwrap().is_some());
+        assert!(store.locate_sequence("chunk-error", 1).unwrap().is_some());
+        assert!(
+            store
+                .locate_entry("chunk-error", &addition.id)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            store
+                .search("zanzibar", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        drop(store);
+        let reopened = Store::open(dir.path()).unwrap();
+        assert!(
+            reopened
+                .import_session_chunk(dir.path(), &path, 4096)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn request_path_import_never_cold_rebuilds_or_accepts_large_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "bounded");
+        write_session(dir.path(), dir.path(), "bounded", &[user_msg("initial")]);
+        let store = Store::open(dir.path()).unwrap();
+        assert!(
+            store
+                .import_session_bounded(dir.path(), &path, 1024)
+                .is_err()
+        );
+        assert!(store.locate_sequence("bounded", 0).unwrap().is_none());
+        store.import_session(dir.path(), &path).unwrap();
+        let entry = Entry::new(
+            None,
+            EntryPayload::Message(user_msg(&"large new body ".repeat(10000))),
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+        assert!(
+            store
+                .import_session_bounded(dir.path(), &path, 1024)
+                .is_err()
+        );
+        assert!(store.locate_entry("bounded", &entry.id).unwrap().is_none());
+        store.import_session(dir.path(), &path).unwrap();
+        assert!(store.locate_entry("bounded", &entry.id).unwrap().is_some());
+    }
+
+    #[test]
+    fn failed_import_rolls_back_rows_and_watermark() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "rollback");
+        write_session(
+            dir.path(),
+            dir.path(),
+            "rollback",
+            &[user_msg("committed original")],
+        );
+        let store = Store::open(dir.path()).unwrap();
+        store.import_session(dir.path(), &path).unwrap();
+        let entry = Entry::new(
+            None,
+            EntryPayload::Message(user_msg("uncommitted addition")),
+        );
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        writeln!(file, "{}", serde_json::to_string(&entry).unwrap()).unwrap();
+        writeln!(file, "corrupt completed record").unwrap();
+        assert!(store.import_session(dir.path(), &path).is_err());
+        assert!(
+            store
+                .search("uncommitted", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        assert!(
+            store.import_session(dir.path(), &path).is_err(),
+            "failed progress must not be committed"
+        );
+    }
+
+    #[test]
+    fn replaced_ledger_invalidates_prior_search_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = SessionPath::new_session_file(dir.path(), dir.path(), "replace");
+        write_session(
+            dir.path(),
+            dir.path(),
+            "replace",
+            &[user_msg("zanzibar discarded")],
+        );
+        let store = Store::open(dir.path()).unwrap();
+        store.import_session(dir.path(), &path).unwrap();
+        write_session(
+            dir.path(),
+            dir.path(),
+            "replace",
+            &[user_msg("replacement subject")],
+        );
+        store.import_session(dir.path(), &path).unwrap();
+        assert!(
+            store
+                .search("zanzibar", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .is_empty()
+        );
+        assert_eq!(
+            store
+                .search("replacement", 10, &crate::query::SearchFilter::default())
+                .unwrap()
+                .entries
+                .len(),
+            1
+        );
     }
 
     #[test]

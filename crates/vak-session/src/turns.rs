@@ -16,7 +16,68 @@ use serde_json::Value;
 use vak_llm::{ContentBlock, Message, Role};
 
 use crate::log::SessionLog;
-use crate::types::{EntryPayload, PresentationRecord, PresentationSource};
+use crate::types::{Entry, EntryPayload, PresentationRecord, PresentationSource};
+
+/// Subject words shared by disk and in-memory history retrieval. Function
+/// words and temporal qualifiers do not establish topical relevance.
+pub fn history_query_terms(query: &str) -> Vec<String> {
+    let mut terms = std::collections::BTreeSet::new();
+    // Keep full Unicode words, including combining marks. The intent kernel's
+    // ASCII keyword helper is useful for English stop words, but cannot supply
+    // multilingual retrieval terms.
+    static WORDS: std::sync::OnceLock<Result<regex::Regex, regex::Error>> =
+        std::sync::OnceLock::new();
+    if let Ok(words) = WORDS.get_or_init(|| regex::Regex::new(r"[\p{L}\p{M}\p{N}]+")) {
+        for word in words.find_iter(query).map(|word| word.as_str()) {
+            if !word.is_ascii() {
+                terms.insert(word.to_lowercase());
+            } else {
+                terms.extend(vak_intent::strand::keywords(word));
+            }
+        }
+    }
+    terms
+        .into_iter()
+        .filter(|word| {
+            !matches!(
+                word.as_str(),
+                "what"
+                    | "which"
+                    | "who"
+                    | "when"
+                    | "where"
+                    | "how"
+                    | "current"
+                    | "latest"
+                    | "today"
+                    | "yesterday"
+                    | "tomorrow"
+                    | "number"
+                    | "numbers"
+                    | "times"
+                    | "reply"
+                    | "define"
+                    | "explain"
+                    | "calculate"
+                    | "compute"
+                    | "describe"
+                    | "summarize"
+                    | "tell"
+                    | "show"
+                    | "give"
+                    | "make"
+                    | "create"
+                    | "good"
+                    | "detailed"
+                    | "sentence"
+                    | "sentences"
+                    | "one"
+                    | "word"
+                    | "words"
+            )
+        })
+        .collect()
+}
 
 /// One assistant step within a turn: the assistant message (text and/or
 /// `ToolUse` blocks) and the tool results that answered it, in arrival order.
@@ -47,6 +108,8 @@ pub struct Turn {
     pub presentations: Vec<String>,
     /// The turn's closing card, once written (`EntryPayload::TurnCard`).
     pub card: Option<TurnCard>,
+    /// Canonical closing-card entry address for selected projection.
+    pub closing_entry_id: Option<String>,
     /// `false` only for the last turn when the chain's raw tail does not
     /// end in an assistant message without `tool_use` — a text-only draft
     /// is not enough once a control nudge or tool result follows it; only
@@ -95,7 +158,7 @@ pub struct Packet {
 /// `SessionLog::derive_with_plan` can consume a `WorkingSetPlan` without
 /// vak-session depending on vak-context; `vak_context::planner` re-exports both
 /// types for callers.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Fidelity {
     /// Two-message record (directive + trace/presentations/narration).
     Full,
@@ -110,13 +173,18 @@ pub enum Fidelity {
 /// promoted by relevance, and the budget accounting that produced it.
 /// Computed by `vak_context::planner::plan`; consumed by
 /// `SessionLog::derive_with_plan`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct WorkingSetPlan {
     /// Chronological order (oldest first), one entry per closed turn that
     /// is `Full` or `Card`. A turn absent from this list and not covered by
     /// `packet_range` simply has no card yet — `derive_with_plan` treats
     /// that as already covered by an existing `Compaction` entry.
     pub per_turn: Vec<(String, Fidelity)>,
+    /// Exact closing-record addresses when history is selectively retrieved.
+    /// Some(empty) deliberately excludes all closed history. None is used by
+    /// explicit historical/manual compaction projections.
+    #[serde(default)]
+    pub selected_records: Option<Vec<(String, String)>>,
     /// The contiguous, oldest-to-newest range of turns represented only by
     /// a packet, inclusive — `(first_turn_id, last_turn_id)`.
     pub packet_range: Option<(String, String)>,
@@ -139,9 +207,16 @@ impl TurnIndex {
     /// intent notes — `MessageRecord::control_kind().is_some()`) are not
     /// turns and not steps: they never start a turn and never become a step.
     pub fn from_log(log: &SessionLog) -> TurnIndex {
-        let chain = log.chain_to_root();
+        Self::from_entries(log.chain_to_root())
+    }
+
+    /// Reconstruct only an already-authorized, chronologically ordered range.
+    /// The caller owns scope, branch membership and byte/count limits.
+    pub fn from_entries<'a>(entries: impl IntoIterator<Item = &'a Entry>) -> TurnIndex {
+        let chain: Vec<&Entry> = entries.into_iter().collect();
         let mut turns: Vec<Turn> = Vec::new();
         let mut packets: Vec<Packet> = Vec::new();
+        let mut pending_reading: Option<ReadingKey> = None;
 
         for entry in &chain {
             match &entry.payload {
@@ -177,11 +252,12 @@ impl TurnIndex {
                                     evidence: Vec::new(),
                                     presentations: Vec::new(),
                                     card: None,
+                                    closing_entry_id: None,
                                     closed: true,
                                     behind_reset: false,
                                     presentation_records: Vec::new(),
                                     evidence_bodies: HashMap::new(),
-                                    reading: None,
+                                    reading: pending_reading.take(),
                                     raw_tail: Vec::new(),
                                 });
                             } else if has_tool_result && let Some(turn) = turns.last_mut() {
@@ -225,8 +301,22 @@ impl TurnIndex {
                     }
                 }
                 EntryPayload::Intent(record) => {
-                    if let Some(turn) = turns.last_mut() {
-                        turn.reading = Some(ReadingKey::from_record(record));
+                    let reading = ReadingKey::from_record(record);
+                    // Core resolves admission before appending the new directive.
+                    // An intent following a final answer belongs to the NEXT turn,
+                    // never to the already settled preceding turn.
+                    if let Some(turn) = turns.last_mut()
+                        && !turn.raw_tail.last().is_some_and(|message| {
+                            message.role == Role::Assistant
+                                && !message
+                                    .content
+                                    .iter()
+                                    .any(|block| matches!(block, ContentBlock::ToolUse { .. }))
+                        })
+                    {
+                        turn.reading = Some(reading);
+                    } else {
+                        pending_reading = Some(reading);
                     }
                 }
                 EntryPayload::EvidenceBody(body) => {
@@ -278,15 +368,21 @@ impl TurnIndex {
             .enumerate()
             .map(|(i, t)| (t.id.clone(), i))
             .collect();
-        for (id, record) in log.presentations() {
-            if let Some(&idx) = by_id.get(&record.turn_id) {
-                turns[idx].presentations.push(id);
-                turns[idx].presentation_records.push(record.clone());
-            }
-        }
-        for (turn_id, card) in log.turn_cards() {
-            if let Some(&idx) = by_id.get(&turn_id) {
-                turns[idx].card = Some(card);
+        for entry in &chain {
+            match &entry.payload {
+                EntryPayload::Presentation(record) => {
+                    if let Some(&idx) = by_id.get(&record.turn_id) {
+                        turns[idx].presentations.push(entry.id.clone());
+                        turns[idx].presentation_records.push(record.clone());
+                    }
+                }
+                EntryPayload::TurnCard(record) => {
+                    if let Some(&idx) = by_id.get(&record.turn_id) {
+                        turns[idx].card = Some(record.card.clone());
+                        turns[idx].closing_entry_id = Some(entry.id.clone());
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -327,7 +423,10 @@ impl TurnIndex {
     }
 
     pub fn search(&self, query: &str) -> Vec<(String, f64)> {
-        let terms = crate::search::tokenize_impl(query);
+        // Function words and temporal qualifiers do not identify a topic.
+        // Otherwise "what is the current weather" matches every earlier
+        // "what is the current stock market" and admits its full evidence.
+        let terms = history_query_terms(query);
         let phrase = crate::search::normalize_impl(query);
         if terms.is_empty() || phrase.is_empty() {
             return Vec::new();
@@ -339,9 +438,18 @@ impl TurnIndex {
                 let card = turn.card.as_ref()?;
                 let text = card.index_text();
                 let normalized = crate::search::normalize_impl(&text);
+                let words: HashSet<String> = history_query_terms(&text).into_iter().collect();
+                let matched: Vec<String> = terms
+                    .iter()
+                    .filter(|term| words.contains(*term))
+                    .cloned()
+                    .collect();
+                if matched.is_empty() {
+                    return None;
+                }
                 let entities = crate::search::extract_entities(&text);
                 let score =
-                    crate::search::score_normalized(&normalized, &terms, &phrase, &entities);
+                    crate::search::score_normalized(&normalized, &matched, &phrase, &entities);
                 (score > 0.0).then(|| (turn.id.clone(), score as f64))
             })
             .collect();
@@ -552,12 +660,21 @@ impl Turn {
             presentations,
             narration,
         };
+        // Account for call arguments and provider blocks as well as prose.
+        // text_content() intentionally omits those and is not a wire cost.
         let full_text: String = self
             .full_record()
             .iter()
-            .map(Message::text_content)
-            .collect::<Vec<_>>()
-            .join("\n");
+            .flat_map(|message| {
+                message.content.iter().map(|block| match block {
+                    ContentBlock::Text { text } => text.clone(),
+                    ContentBlock::ToolUse { input, .. } => input.to_string(),
+                    ContentBlock::ToolResult { content, .. } => content.clone(),
+                    ContentBlock::Provider { raw, .. } => raw.to_string(),
+                    _ => String::new(),
+                })
+            })
+            .collect();
         let tokens_full = estimate_tokens(&full_text);
         let mut card = TurnCard {
             turn_id: self.id.clone(),
@@ -569,8 +686,9 @@ impl Turn {
             tokens_full,
             tokens_card: 0,
         };
-        let index_text = card.index_text();
-        card.tokens_card = estimate_tokens(&index_text);
+        // Rendered card cost is unrelated to the richer search projection.
+        // Planning remeasures with the actual ordinal and current profile.
+        card.tokens_card = estimate_tokens(&card.line(1));
         card
     }
 }
@@ -999,6 +1117,17 @@ impl TurnCard {
 
     /// The one-line `<turns>` rendering: `#<n> asked: … → did: search×2 →
     /// research.synthesis "Sensex 15 Sep" [pres:a1; ev:9f2,9f3]`.
+    /// Addressed history uses a stable id, not an ordinal that changes with
+    /// the candidate set. This is also the exact string the planner costs.
+    pub fn addressed_message(&self) -> String {
+        let line = self.line(0);
+        let description = line.strip_prefix("#0 ").unwrap_or(&line);
+        format!(
+            "<turns>\n[turn_id:{}] {description}\n</turns>",
+            self.turn_id
+        )
+    }
+
     pub fn line(&self, n: usize) -> String {
         let did_summary = summarize_trace(&self.did);
         let outcome_part = match self.answered.presentations.first() {
@@ -1196,6 +1325,42 @@ mod tests {
     }
 
     #[test]
+    fn history_query_terms_keep_subjects_and_unicode_combining_marks() {
+        assert_eq!(
+            history_query_terms("what is the current weather in Noida"),
+            vec!["noida", "weather"]
+        );
+        assert_eq!(
+            history_query_terms("दिल्ली का मौसम"),
+            vec!["का", "दिल्ली", "मौसम"]
+        );
+        assert_eq!(history_query_terms("北京 天气"), vec!["北京", "天气"]);
+        assert_eq!(history_query_terms("CAFÉ latest"), vec!["café"]);
+        assert!(history_query_terms("what is the current").is_empty());
+        assert!(history_query_terms("What is 17 times 23? Reply with just the number.").is_empty());
+        assert_eq!(
+            history_query_terms("Define photosynthesis in one sentence."),
+            vec!["photosynthesis"]
+        );
+    }
+
+    #[test]
+    fn in_memory_history_matches_unicode_subject_words() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, _, _, _) = two_closed_one_open(dir.path());
+        log.append_message(user_text("दिल्ली मौसम 北京 天气 café"))
+            .unwrap();
+        log.append_message(assistant_text("historical observation"))
+            .unwrap();
+        let mut index = TurnIndex::from_log(&log);
+        index.ensure_cards(&|_| 1);
+        let wanted = index.turns.last().unwrap().id.clone();
+        for query in ["दिल्ली मौसम", "北京 天气", "CAFÉ"] {
+            assert_eq!(index.search(query)[0].0, wanted, "{query}");
+        }
+    }
+
+    #[test]
     fn index_builds_turns_from_a_fixture_ledger_with_two_closed_and_one_open() {
         let dir = tempfile::tempdir().unwrap();
         let (log, t1, t2, t3) = two_closed_one_open(dir.path());
@@ -1210,6 +1375,60 @@ mod tests {
             !index.turns[2].closed,
             "the last turn has no final answer yet"
         );
+    }
+
+    #[test]
+    fn current_turn_index_matches_the_full_projection_without_older_turns() {
+        let dir = tempfile::tempdir().unwrap();
+        let (mut log, _, _, t3) = two_closed_one_open(dir.path());
+        let check = |log: &SessionLog| {
+            let full = TurnIndex::from_log(log);
+            let current = log.current_turn_index();
+            assert_eq!(current.turns.len(), 1);
+            let selected = &current.turns[0];
+            let expected = full.turns.last().unwrap();
+            assert_eq!(selected.id, expected.id);
+            assert_eq!(selected.closed, expected.closed);
+            assert_eq!(selected.reading, expected.reading);
+            assert_eq!(selected.behind_reset, expected.behind_reset);
+            assert_eq!(
+                log.latest_message().map(Message::text_content),
+                log.message_chain()
+                    .last()
+                    .map(|(_, message)| message.text_content())
+            );
+            let expected_open = if expected.closed || expected.behind_reset {
+                vec![]
+            } else {
+                expected.current_verbatim()
+            };
+            assert_eq!(log.open_turn_verbatim(), expected_open);
+            assert_eq!(selected.current_verbatim(), expected.current_verbatim());
+            assert_eq!(selected.full_record(), expected.full_record());
+            assert_eq!(
+                selected.card.as_ref().map(|card| card.line(1)),
+                expected.card.as_ref().map(|card| card.line(1))
+            );
+        };
+        check(&log);
+        log.append_message(tool_result("call-2", "changelog evidence"))
+            .unwrap();
+        log.append_message(assistant_text("The changelog confirms the release."))
+            .unwrap();
+        check(&log);
+        let current = log.current_turn_index();
+        let card = current.turns[0].build_card("completed", "release confirmed".into(), &|_| 1);
+        log.append_turn_card(crate::types::TurnCardRecord {
+            turn_id: t3.clone(),
+            card,
+        })
+        .unwrap();
+        check(&log);
+        log.branch_at(&t3).unwrap();
+        check(&log);
+        log.append_handoff_reset("selected handoff".into(), 1)
+            .unwrap();
+        check(&log);
     }
 
     #[test]
@@ -1493,6 +1712,30 @@ mod tests {
             s.len() as u64 / 4
         });
         assert_eq!(card.reading.act, "answer");
+    }
+
+    #[test]
+    fn admission_before_directive_does_not_retag_the_previous_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut log = open_log(dir.path());
+        log.append_message(user_text("old spreadsheet")).unwrap();
+        log.append_message(assistant_text("created")).unwrap();
+        log.append_intent(IntentRecord {
+            reading: vak_intent::Reading::general(),
+            engagement: vak_intent::Engagement::general(),
+            provenance: vak_intent::Provenance::new(vak_intent::Tier::General, 1, Vec::new()),
+            outcome: None,
+            model_visible: None,
+            commitment_id: None,
+            strands: Vec::new(),
+            strand_commitments: Default::default(),
+        })
+        .unwrap();
+        log.append_message(user_text("new weather")).unwrap();
+        log.append_message(assistant_text("sunny")).unwrap();
+        let index = TurnIndex::from_log(&log);
+        assert!(index.turns[0].reading.is_none());
+        assert_eq!(index.turns[1].reading.as_ref().unwrap().act, "answer");
     }
 
     #[test]

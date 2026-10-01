@@ -361,8 +361,13 @@ whether it came up — with the log path when it did not.
 
 Offer one read-only starter task:
 
-> Map this codebase and explain its architecture, key flows, and
-> highest-risk areas. Do not modify files or run any destructive command.
+> Look around this workspace and tell me, briefly and in plain words, what
+> is here and what you could help me with — and what you would need from me
+> to do more. Do not change anything.
+
+(`vak_core::onboarding::FIRST_TASK_PROMPT`, the one copy both the web wizard
+and `vak setup` use. The default workspace is a home for any kind of work, so
+the starter task is general-purpose rather than a code walkthrough.)
 
 The run is capped to read-only **regardless of the posture chosen in
 Step 4**. On completion, a summary shows files and tools observed,

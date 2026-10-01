@@ -112,22 +112,61 @@ def capability(package: str, target: str, test: str = "") -> str:
 
 
 def discover(timeout: int) -> list[Scenario]:
+    # Compile every test target once. The old implementation ran `cargo test`
+    # once per test case; Cargo serializes access to its target directory, so
+    # parallel workers mostly waited on the same build lock and rebuilt large
+    # crates repeatedly. Running the already-built harness binaries directly
+    # keeps per-case isolation/timeouts without invoking Cargo for every case.
+    print("BUILDING workspace test binaries once…", flush=True)
+    metadata_code, metadata_output, metadata_timeout = captured(
+        ["cargo", "metadata", "--no-deps", "--format-version", "1"], timeout
+    )
+    if metadata_timeout or metadata_code:
+        raise RuntimeError(f"cargo metadata failed:\n{metadata_output[-2000:]}")
+    package_names = {
+        package["id"]: package["name"]
+        for package in json.loads(metadata_output).get("packages", [])
+    }
+
+    build_code, build_output, build_timeout = captured(
+        ["cargo", "test", "--workspace", "--no-run", "--message-format=json"], timeout
+    )
+    if build_timeout or build_code:
+        raise RuntimeError(f"workspace test build failed:\n{build_output[-4000:]}")
+
+    artifacts: dict[str, tuple[str, str, str]] = {}
+    for line in build_output.splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if message.get("reason") != "compiler-artifact":
+            continue
+        target = message.get("target", {})
+        executable = message.get("executable")
+        if not target.get("test") or not executable or not message.get("profile", {}).get("test"):
+            continue
+        package_id = message.get("package_id", "")
+        package = package_names.get(package_id)
+        if not package:
+            continue
+        kind = target.get("kind", ["test"])[0]
+        artifacts[executable] = (package, target.get("name", "unknown"), kind)
+
     scenarios: list[Scenario] = []
-    for package, target, target_kind in rust_targets():
-        target_args = ["--lib"] if target_kind == "lib" else ["--bin", target] if target_kind == "bin" else ["--test", target]
-        command = ["cargo", "test", "-q", "-p", package, *target_args, "--", "--list"]
-        returncode, output, timed_out = captured(command, timeout)
+    for executable, (package, target, target_kind) in sorted(artifacts.items()):
+        returncode, output, timed_out = captured([executable, "--list"], timeout)
         if timed_out:
-            raise RuntimeError(f"test discovery timed out for {package}/{target}")
+            raise RuntimeError(f"test listing timed out for {package}/{target}")
         if returncode:
-            raise RuntimeError(f"test discovery failed for {package}/{target}:\n{output[-2000:]}")
+            raise RuntimeError(f"test listing failed for {package}/{target}:\n{output[-2000:]}")
         for line in output.splitlines():
             match = TEST_LINE.match(line.strip())
             if not match:
                 continue
             test = match.group(1)
             scenario_id = f"{package}/{target_kind}:{target}/{test}"
-            run_command = ["cargo", "test", "-q", "-p", package, *target_args, test, "--", "--exact", "--test-threads=1"]
+            run_command = [executable, test, "--exact", "--test-threads=1"]
             scenarios.append(Scenario(
                 scenario_id=scenario_id,
                 package=package,
@@ -180,9 +219,23 @@ def select_scenarios(scenarios: list[Scenario], limit: int) -> list[Scenario]:
 def execute(scenario: Scenario, timeout: int) -> Outcome:
     started = time.monotonic()
     code, output, timed_out = captured(scenario.command, timeout)
-    status = "timeout" if timed_out else "passed" if code == 0 else "failed"
+    status = execution_status(code, output, timed_out)
     return Outcome(scenario.scenario_id, scenario.package, scenario.target, scenario.test,
                    scenario.capability, status, code, time.monotonic() - started, output[-3000:], scenario.profile)
+
+
+def execution_status(returncode: int, output: str, timed_out: bool) -> str:
+    if timed_out:
+        return "timeout"
+    if returncode:
+        return "failed"
+    result_line = re.search(r"test result: .*?(\d+) passed; (\d+) failed; (\d+) ignored", output)
+    if not result_line:
+        return "failed"
+    passed, failed, ignored = (int(value) for value in result_line.groups())
+    if passed + failed + ignored != 1 or failed:
+        return "failed"
+    return "ignored" if ignored else "passed"
 
 
 def markdown(report: dict) -> str:
@@ -196,13 +249,13 @@ def markdown(report: dict) -> str:
         "",
         "## Capability coverage",
         "",
-        "| Capability | Scenarios | Passed | Failed | Timeout |",
-        "|---|---:|---:|---:|---:|",
+        "| Capability | Scenarios | Passed | Failed | Timeout | Ignored |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
     for group, count in sorted(report["summary"]["by_capability"].items()):
         rows = [item for item in report["outcomes"] if item["capability"] == group]
         by_status = Counter(item["status"] for item in rows)
-        lines.append(f"| {group} | {count} | {by_status['passed']} | {by_status['failed']} | {by_status['timeout']} |")
+        lines.append(f"| {group} | {count} | {by_status['passed']} | {by_status['failed']} | {by_status['timeout']} | {by_status['ignored']} |")
     profiles = Counter(item.get("profile", "unique") for item in report["outcomes"])
     lines.extend(["", "## Execution profiles", "", "| Profile | Executions |", "|---|---:|"])
     for profile, count in sorted(profiles.items()):
@@ -210,29 +263,38 @@ def markdown(report: dict) -> str:
     lines.extend(["", "## Slowest scenarios", "", "| Scenario | Capability | Seconds |", "|---|---|---:|"])
     for item in sorted(report["outcomes"], key=lambda value: value["elapsed_seconds"], reverse=True)[:10]:
         lines.append(f"| `{item['scenario_id']}` | {item['capability']} | {item['elapsed_seconds']:.3f} |")
-    failures = [item for item in report["outcomes"] if item["status"] != "passed"]
+    failures = [item for item in report["outcomes"] if item["status"] in ("failed", "timeout")]
     lines.extend(["", "## Failures and timeouts", ""])
     if not failures:
         lines.append("None.")
     else:
         for item in failures:
             lines.extend([f"### `{item['scenario_id']}`", "", f"```text\n{item['output_tail']}\n```", ""])
+    ignored = [item for item in report["outcomes"] if item["status"] == "ignored"]
+    lines.extend(["", "## Ignored tests", ""])
+    lines.extend(f"- `{item['scenario_id']}`" for item in ignored) if ignored else lines.append("None.")
     return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--limit", type=int, default=500, help="maximum unique scenarios to select")
+    parser.add_argument("--limit", type=int, default=500,
+                        help="maximum unique scenarios to select (0 selects the full discovered inventory)")
     parser.add_argument("--repeat", type=int, default=1, help="honest repetitions of the selected unique set")
     parser.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
-    parser.add_argument("--discovery-timeout", type=int, default=120)
+    parser.add_argument("--discovery-timeout", type=int, default=1800,
+                        help="timeout for metadata, one workspace test build, and each test listing")
     parser.add_argument("--case-timeout", type=int, default=120)
     parser.add_argument("--json", type=pathlib.Path, default=ROOT / "target" / "harness-500.json")
     parser.add_argument("--markdown", type=pathlib.Path, default=ROOT / "target" / "harness-500.md")
     parser.add_argument("--discover-only", action="store_true")
     args = parser.parse_args()
+    if args.limit < 0:
+        parser.error("--limit cannot be negative")
     scenarios = discover(args.discovery_timeout)
     unique_count = len(scenarios)
+    if args.limit == 0:
+        args.limit = unique_count
     if args.limit > unique_count:
         raise SystemExit(f"requested {args.limit} unique scenarios but only {unique_count} were discovered")
     selected = select_scenarios(scenarios, args.limit)
@@ -243,8 +305,13 @@ def main() -> int:
             print(f"{scenario.capability}\t{scenario.scenario_id}")
         return 0
     started = time.monotonic()
+    outcomes: list[Outcome] = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        outcomes = list(pool.map(lambda scenario: execute(scenario, args.case_timeout), executions))
+        futures = [pool.submit(execute, scenario, args.case_timeout) for scenario in executions]
+        for completed, future in enumerate(concurrent.futures.as_completed(futures), start=1):
+            outcomes.append(future.result())
+            if completed % 100 == 0 or completed == len(futures):
+                print(f"completed {completed}/{len(futures)} scenario executions", flush=True)
     outcomes.sort(key=lambda item: item.scenario_id)
     report = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),

@@ -147,6 +147,8 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
         role_prompts: Default::default(),
         provider: scripted.clone(),
         system_prompt: "child-sys".into(),
+        child_prompt: None,
+        trust_project: false,
         // The field under test: `Core` threads `cfg.tail.clone()` through
         // here (crates/vak-core/src/lib.rs, TaskDeps construction) rather
         // than leaving the child with an empty `TailInput::default()`.

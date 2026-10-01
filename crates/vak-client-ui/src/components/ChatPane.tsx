@@ -1,7 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Index, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { JSX } from "solid-js";
 import { createStore, reconcile } from "solid-js/store";
-import { activeId, activeAgentId, backend, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactPathInCanvas, type Item } from "../store";
+import { activeId, activeAgentId, backend, setAgentCreateOpen, openConnect, setTechnicalDetails, technicalDetails, itemExpanded, itemsOf, hydratingId, isRunning, lastSubmittedPrompt, presentationOf, openWorkbenchExecution, workbenchExecutions, setNotice, toggleItemExpanded, sessions, agentForSession, narrowViewport, setGreetingsShown, isPreviewableArtifact, openArtifactFile, type Item } from "../store";
 import { activate, approve, isApprovalPending, openFileSmart } from "../App";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
@@ -164,17 +164,6 @@ function activeWorkingState(id: string | null): { executionId?: string } | null 
   return { executionId: execution?.kind === "tool" ? execution.id : undefined };
 }
 
-function WorkingIndicator(props: { sessionId: string | null; executionId?: string }) {
-  return (
-    <div class="working-state" aria-live="polite" aria-label={`${agentForSession(props.sessionId).name} is working`}>
-      <AgentMark character={agentForSession(props.sessionId).character} motion={agentForSession(props.sessionId).animation} size={24} state="working" class="working-state-mark" />
-      <span class="working-state-copy"><strong>{agentForSession(props.sessionId).name}</strong><span>Working on it</span></span>
-      <Show when={props.executionId}>
-        <button type="button" onClick={() => openWorkbenchExecution(props.executionId)}>View activity</button>
-      </Show>
-    </div>
-  );
-}
 
 function TranscriptSkeleton() {
   return (
@@ -331,7 +320,7 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
               <button
                 type="button"
                 class="tool-open"
-                onClick={() => openArtifactPathInCanvas(path())}
+                onClick={() => openArtifactFile(path())}
                 title={`Open ${path()} in Artifact Canvas`}
               >
                 <Icon name="preview" size={12} /> Open Canvas
@@ -1073,13 +1062,20 @@ export default function ChatPane(props: { sessionId?: string | null }) {
                 across live and settled states so streaming cards, settled cards, approvals,
                 and message actions maintain an unbroken, flicker-free rendering lifecycle. */}
             <Show when={visibleItems(itemsOf(sid())).length || working()} fallback={<EmptyChat hasSession={itemsOf(sid()).some((item) => item.kind === "user")} />}>
-              <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} data-turn-index={entry().index}>
+                <Index each={displayedTurns()}>{(entry) => { const arrived = untrack(() => settledSid() === sid()); return <div class={arrived ? "chat-turn arrived" : "chat-turn"} data-turn-index={entry().index}>
                 <Index each={visibleItems(entry().turn).filter((item) => item.kind === "user")}>{(it) => <ItemView item={it()} sessionId={sid()} />}</Index>
+                <Show when={entry().index === turns().length - 1 && working()}>
+                  <div class="assistant-working-state" role="status" aria-live="polite">
+                    <AgentMark character={agentForSession(sid()).character} motion={agentForSession(sid()).animation} size={28} state="working" class="assistant-working-mark" />
+                    <span class="assistant-working-name">{agentForSession(sid()).name}</span>
+                    <span class="assistant-working-label">Working on it</span>
+                    <span class="dot run assistant-working-dot" aria-label="Working" />
+                  </div>
+                </Show>
                 <Show when={projectedTurn(entry().index)} fallback={<Index each={visibleItems(entry().turn, entry().index === turns().length - 1 && isRunning(sid())).filter((item) => item.kind !== "user")}>{(it) => <Show when={it().kind === "assistant"} fallback={<ItemView item={it()} sessionId={sid()} />}><AssistantItem item={it() as Extract<Item, { kind: "assistant" }>} sessionId={sid()} /></Show>}</Index>}>
                   {(timeline) => <div class="turn-result"><PresentationTimelineView timeline={timeline()} sessionId={sid()!} allowContinuation={entry().index === turns().length - 1} hideUser /></div>}
                 </Show>
               </div>; }}</Index>
-              <Show when={working()}>{(state) => <WorkingIndicator sessionId={sid()} executionId={state().executionId} />}</Show>
             </Show>
           </Show>
         </Show>

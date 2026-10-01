@@ -155,14 +155,13 @@ impl RateLimiter {
 
 fn client_ip(headers: &HeaderMap, peer: Option<IpAddr>, trusted_proxy_ips: &[IpAddr]) -> IpAddr {
     let peer = peer.unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
-    if trusted_proxy_ips.contains(&peer) {
-        if let Some(ip) = headers
+    if trusted_proxy_ips.contains(&peer)
+        && let Some(ip) = headers
             .get("x-real-ip")
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse::<IpAddr>().ok())
-        {
-            return ip;
-        }
+    {
+        return ip;
     }
     peer
 }
