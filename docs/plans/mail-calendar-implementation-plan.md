@@ -1802,3 +1802,10 @@ remains open.
   1,000-event Google/Graph fixtures, and 1,910-event trigger fixture. No real
   account data or credentials were used; the connected-account and long-run
   acceptance gates remain open.
+- 2026-10-01: Re-ran the four owner-authenticated mail/calendar HTTP tests,
+  the Agent-vault restart/requeue regression, and all five parser/attachment
+  worker integration tests on the committed source-selection change; all pass.
+  The HTTP harness emitted its existing local Ollama discovery retry and a
+  short Unix-socket path warning, but the four selected tests passed. The
+  isolated preview service remains on loopback port 8923 with no linked
+  account; no credential or provider data was accessed.
