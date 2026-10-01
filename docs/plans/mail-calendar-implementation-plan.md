@@ -2077,3 +2077,12 @@ remains open.
   fixture mocks all routes and contacts no provider. These component captures
   do not replace full-app theme, assistive-technology, or live-provider
   acceptance.
+- 2026-10-01: Extended the Google history-watch regression with a provider
+  outage and recovery. A 503 leaves the encrypted routine cursor at its old
+  value after vault reopen; retrying that exact cursor returns the missed ID,
+  which is then queued atomically with the next history cursor. The focused
+  provider test and the complete synthetic mock pack pass, including 124
+  provider/vault tests, 16 Core tests, 17 Server unit tests, four owner HTTP
+  tests, scheduler restart/requeue, and five worker tests. This verifies cursor
+  safety through one transient provider outage, not scheduler uptime, a real
+  network outage, or the Stage 4 24-hour acceptance.

@@ -5590,6 +5590,7 @@ mod tests {
     async fn google_watch_uses_bounded_history_pages_and_recovers_expired_cursor() {
         use axum::http::Request;
         use axum::response::IntoResponse;
+        use std::sync::atomic::{AtomicUsize, Ordering};
 
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-gmail-history-{}", Uuid::now_v7());
@@ -5611,6 +5612,8 @@ mod tests {
             )
             .unwrap();
 
+        let outage_attempts = std::sync::Arc::new(AtomicUsize::new(0));
+        let outage_attempts_for_history = outage_attempts.clone();
         let app = axum::Router::new()
             .route(
                 "/gmail/v1/users/me/profile",
@@ -5648,6 +5651,18 @@ mod tests {
                         .any(|part| part == "startHistoryId=1")
                     {
                         return axum::http::StatusCode::NOT_FOUND.into_response();
+                    }
+                    if query
+                        .split('&')
+                        .any(|part| part == "startHistoryId=90")
+                    {
+                        if outage_attempts_for_history.fetch_add(1, Ordering::SeqCst) == 0 {
+                            return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+                        }
+                        return axum::Json(json!({
+                            "historyId":"95",
+                            "history":[{"messagesAdded":[{"message":{"id":"after-outage","labelIds":["INBOX"]}}]}]
+                        })).into_response();
                     }
                     if query.contains("pageToken=page-2") {
                         assert!(query.contains("startHistoryId=100"));
@@ -5740,6 +5755,81 @@ mod tests {
                 .await,
             Err(ProviderReadError::WatchCursorReset)
         ));
+
+        // A transient provider outage must leave the encrypted continuation
+        // position untouched. The next poll retries that same position and
+        // commits the recovered IDs and following cursor atomically.
+        let routine_id = Uuid::now_v7().to_string();
+        let old_cursor = encode_google_watch_cursor(&GoogleWatchCursor {
+            start_history_id: "90".into(),
+            page_token: None,
+        })
+        .unwrap();
+        vault
+            .queue_mail_ids_with_cursor(&routine_id, &account_id, &[], Some(&old_cursor))
+            .unwrap();
+        assert!(matches!(
+            client
+                .mail_watch_page(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    Some(&old_cursor),
+                    100,
+                )
+                .await,
+            Err(ProviderReadError::Unavailable)
+        ));
+        let reopened = AccountVault::for_agent(&agent_id).unwrap();
+        assert_eq!(
+            reopened
+                .routine_provider_cursor(&routine_id, &account_id)
+                .unwrap()
+                .as_deref(),
+            Some(old_cursor.as_str()),
+            "a failed poll cannot advance the durable cursor"
+        );
+        let (recovered_ids, recovered_cursor) = client
+            .mail_watch_page(
+                &account,
+                &reopened,
+                &agent_id,
+                &audience,
+                Some(&old_cursor),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(recovered_ids, ["after-outage"]);
+        assert!(
+            reopened
+                .queue_mail_ids_with_cursor(
+                    &routine_id,
+                    &account_id,
+                    &recovered_ids,
+                    recovered_cursor.as_deref(),
+                )
+                .unwrap()
+        );
+        assert_eq!(
+            reopened
+                .pending_mail_ids(&routine_id, &account_id, 10)
+                .unwrap(),
+            ["after-outage"]
+        );
+        assert_eq!(
+            decode_google_watch_cursor(
+                reopened
+                    .routine_provider_cursor(&routine_id, &account_id)
+                    .unwrap()
+                    .as_deref()
+                    .unwrap()
+            )
+            .unwrap()
+            .start_history_id,
+            "95"
+        );
         vault.remove(&account_id).unwrap();
         task.abort();
     }
