@@ -977,7 +977,9 @@ range through the isolated CalDAV worker and slices a bounded result set. The
 owner can load later event pages without losing the current agenda. Cursor
 scope is bound to the Agent account, selected calendar, date range and page
 size. Calendar continuation and focused conversation reading are implemented.
-The editable in-thread composer remains open. Routine setup in Today Canvas now lets the owner choose a
+Reply handoff opens a focused composer in the conversation Canvas, hides
+unrelated drafts and new-draft controls, and returns focus to the conversation
+when closed. Routine setup in Today Canvas now lets the owner choose a
 5-, 10-, or 20-result per-run cap and shows the enforced cap on each routine;
 completed routine history reports how many provider items its reads returned.
 The broker counter is shared across model turns, so the same total cap cannot
@@ -992,8 +994,7 @@ per-Agent routine authoring and operations, and the Canvas-owned Drafts and
 Review area. Reply and event
 actions save an Agent-scoped candidate, then open it in Canvas; revision,
 digest, permission, and final-confirmation checks still gate provider effects.
-The editable in-thread composer remains open. The connected Settings
-fixture confirms that it no longer renders
+The connected Settings fixture confirms that it no longer renders
 a duplicate daily preview or draft workspace; separate Canvas fixtures cover
 the working views with synthetic provider fixtures.
 

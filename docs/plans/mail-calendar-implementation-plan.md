@@ -2345,3 +2345,10 @@ remains open.
   TypeScript check pass. Browser behavior is not yet observed in this
   environment. The broader conversation acceptance and service recovery remain
   open.
+- 2026-10-01: Aligned the UI `TaskDef` type with the mail/calendar routine scope
+  returned and accepted by the API, including selected folder/calendar IDs and
+  commitment-read preference. Compiled the synthetic Canvas fixture directly
+  in addition to the regular typecheck, then rebuilt the production web bundle.
+  Corrected the design status to describe the focused reply composer as
+  implemented. Browser behavior, live-provider acceptance, and service recovery
+  remain open.
