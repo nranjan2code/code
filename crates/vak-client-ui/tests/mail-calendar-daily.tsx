@@ -229,6 +229,11 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     setter?.call(routineNameField, "Prepare the morning brief");
     routineNameField.dispatchEvent(new Event("input", { bubbles: true }));
   }
+  const routineBudget = document.querySelector<HTMLSelectElement>("select[aria-label='Routine result budget']");
+  if (routineBudget) {
+    routineBudget.value = "5";
+    routineBudget.dispatchEvent(new Event("change", { bubbles: true }));
+  }
   document.querySelector<HTMLButtonElement>(".mail-calendar-routine-create button")?.click();
   const routineCreationStaysAgentScoped = await waitFor(() => routines.some((task) => task.id === "fixture-created-routine"));
   const createdRoutine = routines.find((task) => task.id === "fixture-created-routine");
@@ -397,7 +402,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
     check(routinePagingStartsCorrectly && routineNextPageWorks, "Canvas routine list paginates mail/calendar routines and excludes other Agents and non-mail tasks"),
     check(routineCanvasHandoffWorks, "Opening a listed routine hands off to its existing Canvas routine workspace"),
-    check(routineFormLoaded && routineCreationStaysAgentScoped && createdRoutine?.agent_id === "fixture-owner" && createdRoutine?.enabled === false && createdRoutine?.mail_calendar_scope?.calendar_source_id === "g-account-0-primary", "Routine creation now lives in Canvas and saves a paused Agent-scoped routine pinned to the verified calendar source"),
+    check(routineFormLoaded && routineCreationStaysAgentScoped && createdRoutine?.agent_id === "fixture-owner" && createdRoutine?.enabled === false && createdRoutine?.mail_calendar_scope?.calendar_source_id === "g-account-0-primary" && createdRoutine?.mail_calendar_scope?.max_items === 5, "Canvas saves the selected per-run result budget with the paused Agent-scoped routine"),
+    check((firstRoutine()?.textContent ?? "").includes("Up to 10 results per run"), "Saved routine cards show the broker-enforced per-run result budget"),
     check(pauseAllStopsActiveRun, "Canvas pause-all disables enabled routines and asks a currently running Agent session to stop"),
     check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),

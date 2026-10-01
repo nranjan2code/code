@@ -929,7 +929,9 @@ range through the isolated CalDAV worker and slices a bounded result set. The
 owner can load later event pages without losing the current agenda. Cursor
 scope is bound to the Agent account, selected calendar, date range and page
 size. Calendar continuation is implemented; the full conversation workspace
-and operator-visible routine budget controls remain open.
+remains open. Routine setup in Today Canvas now lets the owner choose a
+5-, 10-, or 20-result per-run cap and shows the enforced cap on each routine;
+reporting actual results consumed per run remains open.
 
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared

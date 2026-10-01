@@ -2224,3 +2224,9 @@ remains open.
   Validation: 126 mail/calendar tests, 444 Core tests, UI typecheck, web
   production build, and all 34 checks in the large synthetic browser fixture
   pass. No real provider credentials or account data were used.
+- 2026-10-01: Made the routine's broker-enforced result budget visible and
+  configurable in Today Canvas. Owners can select 5, 10, or 20 results shared
+  across all mail and calendar reads in one run; saved routine cards display
+  the cap. The large synthetic fixture verifies persistence and display, now
+  passing 35 checks. Actual per-run consumption reporting and the complete
+  conversation workspace remain open.
