@@ -198,8 +198,12 @@ to provider, account, audience, thread, and message IDs. Click-through citation
 navigation now accepts the exact inline `mailcite:` token from that citation
 and opens the connected account's owner-only conversation preview; the server
 re-fetches the thread from the provider, and the UI scrolls to the cited
-message when it is in the loaded page. Full thread workspace and cross-folder
-Agent access remain open. Agent tool results now put connected-provider
+message when it is in the loaded page. Full thread workspace remains open.
+The interactive mail tool now lists a bounded set of provider folders/labels
+on an owner's request, then accepts a selected ID for recent-mail reads only
+after verifying it against the same account. Scheduled routines cannot list
+folders and remain pinned to their owner-selected source. Agent tool results
+now put connected-provider
 content under a structured `untrusted_provider_data` field beside fixed
 provenance metadata declaring that the content has no authority. This marker
 guides the model, while every permission and provider effect remains enforced
@@ -842,9 +846,10 @@ Apple iCloud currently exposes only Inbox. Google labels are labels and may
 contain the same message in more than one label; the UI names this choice
 "Folder or label" instead of implying identical provider semantics. Child
 folder traversal, paging beyond the bounded folder list, and the full thread
-workspace remain open. The Agent can read a selected folder/label after the
-provider confirms it belongs to the account. Scheduled routines are pinned to
-one owner-selected folder/label and recheck membership; continuous new-mail
+workspace remain open. The Agent can list the bounded folder set during an
+interactive owner request and read a selected folder/label after the provider
+confirms it belongs to the account. Scheduled routines are pinned to one
+owner-selected folder/label and recheck membership; continuous new-mail
 watches remain Inbox-only because provider watch cursors are Inbox-scoped.
 
 Preview is derived from the immutable normalized payload actually submitted
