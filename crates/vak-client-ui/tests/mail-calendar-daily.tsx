@@ -90,7 +90,7 @@ window.fetch = async (input, init) => {
       return json({ folders: [{ provider_id: `${accountId}-inbox`, name: "Inbox" }, { provider_id: `${accountId}-projects`, name: "Projects" }] });
     }
     if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "g-account-0-primary", name: "Personal", primary: true }] });
-    if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "GET") return json({ candidates: savedCandidates });
+    if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && (!init?.method || init.method === "GET")) return json({ candidates: savedCandidates });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
       localDraftWrites.push({ path: url.pathname, body });
@@ -264,6 +264,13 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
   const conversationOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 1);
+  const conversationHasFocusedWorkspace = await waitFor(() => document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open") === true
+    && !document.querySelector(".daily-mail-calendar-calendar-tools")
+    && !document.querySelector(".mail-calendar-routine-workspace")
+    && !!document.querySelector(".mail-calendar-canvas-workspace")
+    && document.querySelector<HTMLElement>(".mail-calendar-canvas-workspace")?.offsetParent === null
+    && document.activeElement?.classList.contains("daily-mail-calendar-conversation-heading") === true);
+  const focusedWorkspaceDiagnostics = JSON.stringify({ open: document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open"), calendarTools: !!document.querySelector(".daily-mail-calendar-calendar-tools"), routines: !!document.querySelector(".mail-calendar-routine-workspace"), drafts: document.querySelector(".mail-calendar-canvas-workspace") ? getComputedStyle(document.querySelector(".mail-calendar-canvas-workspace")!).display : "missing", focus: (document.activeElement as HTMLElement | null)?.className });
   const conversation = document.querySelector(".daily-mail-calendar-conversation");
   [...(conversation?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.includes("Preview attachment"))?.click();
   const attachmentPreviewWorks = await waitFor(() => conversation?.textContent?.includes("Synthetic safe attachment text") === true
@@ -278,6 +285,9 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   replyButton?.click();
   const conversationHandoffWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "send_mail"
     && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"));
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
+  const conversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
+    && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
   const renderedMailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
   const mailPager = document.querySelector<HTMLElement>("nav[aria-label='Recent email pages']");
   const mailPagingStartsCorrectly = mailPager?.textContent?.includes("Page 1 of 6") === true && renderedMailRows === 12;
@@ -297,6 +307,9 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
   const appleMessageBodyPreviewWorks = appleSelectedMessageOpened && await waitFor(() => document.querySelector(".daily-mail-calendar-conversation")?.textContent?.includes("Synthetic Apple message body") === true)
     && requests.some((path) => path.endsWith("/message-preview"));
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
+  const appleConversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
+    && document.querySelectorAll(".daily-mail-calendar-message").length === 8);
   const allCalendarEventsRendered = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 300);
   const initialPhoneTimeline = document.querySelector<HTMLElement>(".mail-calendar-time-grid.is-day");
   const phoneTimelineScrollWorks = window.innerWidth > 640
@@ -431,11 +444,14 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(pauseAllStopsActiveRun, "Canvas pause-all disables enabled routines and asks a currently running Agent session to stop"),
     check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
+    check(conversationHasFocusedWorkspace, `Opening a conversation gives it a focused Canvas workspace and moves keyboard focus to its heading (${focusedWorkspaceDiagnostics})`),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
     check(conversationHandoffWorks, "A reply opens as a saved Agent-scoped draft in Canvas without sending it"),
+    check(conversationReturnsToInbox, "Returning from a conversation restores the inbox while keeping Today open"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(appleMessageBodyPreviewWorks, "An Apple selected-message preview loads its body in Canvas without a conversation id"),
+    check(appleConversationReturnsToInbox, "The focused Apple message preview also returns cleanly to the inbox"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(phoneTimelineScrollWorks, "The phone keeps dense event lanes readable inside the calendar without widening the page"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),

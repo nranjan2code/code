@@ -415,7 +415,7 @@ reviewed candidate, and re-fetch the source immediately before dispatch. A
 changed source ID, thread/conversation ID, or subject fails closed. Gmail sends
 validated `In-Reply-To`/`References` headers and `threadId`; Graph uses its
 message-scoped `/reply` endpoint. IDs are appended as fixed-host path segments.
-The complete conversation workspace and live-provider conformance remain open.
+The editable in-thread conversation workspace and live-provider conformance remain open.
 
 **Implemented increment (2026-09-30):** the brokered Agent read tool can read
 one selected Google or Microsoft conversation page using the `thread_id` from
@@ -2256,3 +2256,12 @@ remains open.
   surfaces; `npm run typecheck`, the web production build, and `git diff
   --check` pass. The daily Canvas fixture remains at 38 passing synthetic
   checks. Real-provider and full-service acceptance remain open.
+- 2026-10-01: Opening a message now switches Today Canvas to a focused
+  conversation workspace, moves keyboard focus to its subject, and hides the
+  calendar, inbox controls, routines, and draft list until “Back to inbox” is
+  used. The Drafts component remains mounted but visually hidden so reply
+  handoffs still open a saved Agent-scoped draft. The synthetic fixture now
+  tests both conversation return paths and passes all 41 checks with generated
+  data. UI typecheck, production web build, and `git diff --check` pass. The
+  editable in-thread composer and real-provider/24-7 service acceptance remain
+  open.

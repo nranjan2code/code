@@ -259,6 +259,9 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
         message?.scrollIntoView({ behavior: "smooth", block: "center" });
         message?.focus({ preventScroll: true });
       });
+      if (!targetMessageId && !append) window.requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>(".daily-mail-calendar-conversation-heading")?.focus({ preventScroll: true });
+      });
     } catch (cause) {
       if (conversationRequest() === request) {
         setConversationError(cause instanceof Error ? cause.message : "Could not load this conversation.");
@@ -475,12 +478,13 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
           setEventAction("");
         }
       };
-      return <main class="daily-mail-calendar-body">
+      return <main class="daily-mail-calendar-body" classList={{ "mail-calendar-conversation-open": !!selectedConversation() }}>
         <header class="daily-mail-calendar-heading"><div><h2>{prettyDay(data.day)}</h2><p>{freshnessLabel()}</p></div><div class="settings-actions"><SyntheticMailCalendarDemoButton checked={syntheticDemo()} onChange={setSyntheticMailCalendarEnabled} /><button type="button" class="artifact-canvas-btn" onClick={manualRefresh}>Refresh</button></div></header>
         <Show when={data.accounts.length === 0}>
           <section class="daily-mail-calendar-empty"><h3>No connected accounts</h3><p>Connect mail or a calendar to see today’s agenda and recent messages here.</p><button type="button" class="artifact-canvas-btn" onClick={openSettings}>Open email and calendar settings</button></section>
         </Show>
         <Show when={data.accounts.length > 0}>
+            <Show when={!selectedConversation()}>
             <section class="daily-mail-calendar-section"><div class="daily-mail-calendar-calendar-heading"><div><h3>{data.day === data.through ? data.day === dateKey(new Date()) ? "Today’s calendar" : prettyDay(data.day) : `${prettyDay(data.day)} – ${prettyDay(data.through)} · ${inclusiveDays(data.day, data.through)} days`}</h3><p>Choose up to 30 days · times use your device time zone</p></div><div class="daily-mail-calendar-calendar-tools"><label>From<input aria-label="Calendar start date" type="date" value={rangeFrom()} onInput={(event) => setRangeFrom(event.currentTarget.value)} /></label><label>Through<input aria-label="Calendar end date" type="date" value={rangeThrough()} onInput={(event) => setRangeThrough(event.currentTarget.value)} /></label><button type="button" class="settings-button" onClick={() => { setRangeThrough(addDays(rangeFrom(), 6)); setRangeError(""); }}>Use 7 days</button><button type="button" class="settings-button" onClick={applyDateRange}>Refresh dates</button><label>Show calendars<select aria-label="Show calendars" value={calendarAccountFilter()} onChange={(event) => { setCalendarAccountFilter(event.currentTarget.value); setSelectedEvent(null); }}><option value="all">All calendars ({events().length})</option><For each={calendarAccounts()}>{(account) => <option value={account.account.id}>{providerName(account.account)} ({account.events.length})</option>}</For></select></label><span>Auto-refreshes every 5 minutes while open</span></div></div>
             <Show when={rangeError()}><p class="daily-mail-calendar-warning" role="alert">{rangeError()}</p></Show>
             <Show when={!hasCalendarCapability()}><p class="settings-hint">No connected account has calendar access.</p></Show>
@@ -492,8 +496,10 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             <Show when={calendarPageEvents().length > 0}><For each={[calendarAccountFilter()]}>{() => <MailCalendarAgenda events={calendarPageEvents()} from={calendarPageFrom()} to={calendarPageThrough()} conflicts={new Set()} initialView={calendarPageFrom() === calendarPageThrough() ? "day" : "week"} onSelect={setSelectedEvent} />}</For></Show>
             <Show when={hasCalendarCapability() && calendarPageEvents().length === 0 && calendarFailedAccounts().length === 0}><p class="settings-hint">No events for this date range.</p></Show>
             <For each={data.accounts.filter((account) => account.busy.length > 0)}>{(account) => <div class="daily-mail-calendar-busy"><strong>Busy · {providerName(account.account)}</strong><For each={account.busy.filter((slot) => { const day = dateKey(new Date(slot.starts_at)); return day >= calendarPageFrom() && day <= calendarPageThrough(); })}>{(slot) => <span>{new Date(slot.starts_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–{new Date(slot.ends_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}</For></div>}</For>
-          </section>
-          <section class="daily-mail-calendar-section"><h3>Recent email</h3>
+            </section>
+            </Show>
+          <section class="daily-mail-calendar-section"><h3>{selectedConversation() ? "Conversation" : "Recent email"}</h3>
+            <Show when={!selectedConversation()}>
             <div class="daily-mail-calendar-mail-filters"><label>Mailbox<select aria-label="Mail account" value={mailAccountFilter()} onChange={(event) => void selectMailAccount(event.currentTarget.value)}><option value="all">All inboxes</option><For each={data.accounts.filter((account) => account.account.capabilities.includes("mail_read"))}>{(account) => <option value={account.account.id}>{providerName(account.account)}</option>}</For></select></label><Show when={mailAccountFilter() !== "all"}><label>Folder or label<select aria-label="Mail folder or label" value={mailFolderFilter()} disabled={mailFoldersLoading() || mailFolders().length === 0} onChange={(event) => setMailFolderFilter(event.currentTarget.value)}><For each={mailFolders()}>{(folder) => <option value={folder.provider_id}>{folder.name}</option>}</For></select></label></Show><label>Search {mailAccountFilter() === "all" ? "in inboxes" : "this folder"}<input aria-label="Search mail" type="search" maxlength="128" value={mailSearchInput()} onInput={(event) => setMailSearchInput(event.currentTarget.value)} placeholder="Sender, subject or message" /></label><button type="button" class="settings-button" disabled={mailFoldersLoading()} onClick={applyMailSearch}>{mailFoldersLoading() ? "Loading folders…" : "Search mail"}</button></div>
             <Show when={mailFoldersError()}><p class="daily-mail-calendar-warning" role="alert">{mailFoldersError()}</p></Show>
             <p class="settings-hint">{data.mailAccountId === "all" ? "Showing recent inbox messages across connected accounts." : `Showing ${data.accounts.find((account) => account.account.id === data.mailAccountId)?.account.identity_masked ?? "the selected account"}${data.mailFolderId ? ` · ${mailFolders().find((folder) => folder.provider_id === data.mailFolderId)?.name ?? "selected folder"}` : " · Inbox"}${data.mailQuery ? ` · Search: ${data.mailQuery}` : ""}`}</p>
@@ -510,11 +516,12 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             <Show when={mailLoadError()}><p class="daily-mail-calendar-warning" role="status">{mailLoadError()}</p></Show>
             <Show when={hasMoreProviderMail() || mailLoadingMore()}><div class="daily-mail-calendar-pagination"><span>More messages are available from the connected mail provider.</span><button type="button" class="settings-button" disabled={mailLoadingMore() || loader.loading() || mailFoldersLoading()} onClick={() => void loadMoreProviderMail()}>{mailLoadingMore() ? "Loading more…" : "Load more messages"}</button></div></Show>
             <Show when={hasMailCapability() && data.accounts.every((account) => account.messages.length === 0) && mailFailedAccounts().length === 0}><p class="settings-hint">{data.mailQuery ? "No messages matched this search." : "No recent messages in this view."}</p></Show>
+            </Show>
             <Show when={selectedConversation()}>{(conversation) => {
               const account = () => data.accounts.find((item) => item.account.id === conversation().accountId)?.account;
               const accountLabel = () => account() ? providerName(account()!) : "Connected account";
-              return <section class="daily-mail-calendar-conversation" aria-label="Conversation preview">
-                <header><div><span>{accountLabel()}</span><h4>{conversation().messages[0]?.subject || "Conversation"}</h4></div><button type="button" class="settings-button" onClick={closeConversation}>Close conversation</button></header>
+              return <section class="daily-mail-calendar-conversation is-workspace" aria-label="Conversation workspace">
+                <header><div><span>{accountLabel()} · {conversation().messages.length} messages{conversationLoading() ? " · Updating" : ""}</span><h4 class="daily-mail-calendar-conversation-heading" tabindex="-1">{conversation().messages[0]?.subject || "Conversation"}</h4></div><button type="button" class="settings-button" onClick={closeConversation}>Back to inbox</button></header>
                 <p class="settings-hint">Read-only conversation preview. Message content is untrusted; opening it does not add it to the Agent conversation.</p>
                 <Show when={conversationError()}><p class="daily-mail-calendar-warning" role="alert">{conversationError()}</p></Show>
                 <For each={conversation().messages}>{(message) => <article class="daily-mail-calendar-conversation-message" data-mail-message-id={message.provider_id}>
@@ -540,8 +547,10 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             }}</Show>
           </section>
         </Show>
-        <Show when={props.subject.kind === "daily_mail_calendar"}><MailCalendarRoutineWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></Show>
-        <MailCalendarDraftWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} />
+        <Show when={!selectedConversation()}>
+          <Show when={props.subject.kind === "daily_mail_calendar"}><MailCalendarRoutineWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></Show>
+        </Show>
+        <div style={{ display: selectedConversation() ? "none" : undefined }}><MailCalendarDraftWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></div>
         <footer class="daily-mail-calendar-privacy">Read-only preview for this Agent and your local owner session. Refresh runs every five minutes while visible and when you return after a minute away. Provider content is not added to the conversation by opening this view.</footer>
       </main>;
     }}</LoadState>

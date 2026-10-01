@@ -214,8 +214,11 @@ navigation now accepts the exact inline `mailcite:` token from that citation
 and opens the connected account's owner-only conversation preview; the server
 re-fetches the thread from the provider, and the UI scrolls to the cited
 message by following bounded provider pages up to 420 messages; any remaining
-pages can be loaded manually. The conversation is opened in the Today Canvas.
-A full conversation workspace remains open.
+pages can be loaded manually. The conversation is opened in a focused Today
+Canvas workspace: calendar controls, inbox filters, routines, and drafts are
+hidden while the message is open; keyboard focus moves to the subject. “Back to
+inbox” restores the same mail view. Replies are saved as Agent-scoped drafts in
+the Canvas Drafts area; the message itself remains a read-only preview.
 The interactive mail tool now lists a bounded set of provider folders/labels
 on an owner's request, then accepts a selected ID for recent-mail reads only
 after verifying it against the same account. Scheduled routines cannot list
@@ -940,8 +943,8 @@ Microsoft use provider continuation cursors; iCloud refetches the requested
 range through the isolated CalDAV worker and slices a bounded result set. The
 owner can load later event pages without losing the current agenda. Cursor
 scope is bound to the Agent account, selected calendar, date range and page
-size. Calendar continuation is implemented; the full conversation workspace
-remains open. Routine setup in Today Canvas now lets the owner choose a
+size. Calendar continuation and focused conversation reading are implemented.
+The editable in-thread composer remains open. Routine setup in Today Canvas now lets the owner choose a
 5-, 10-, or 20-result per-run cap and shows the enforced cap on each routine;
 completed routine history reports how many provider items its reads returned.
 The broker counter is shared across model turns, so the same total cap cannot
@@ -956,8 +959,7 @@ per-Agent routine authoring and operations, and the Canvas-owned Drafts and
 Review area. Reply and event
 actions save an Agent-scoped candidate, then open it in Canvas; revision,
 digest, permission, and final-confirmation checks still gate provider effects.
-The complete conversation workspace and operator-visible routine budget
-controls remain open. The connected Settings
+The editable in-thread composer remains open. The connected Settings
 fixture confirms that it no longer renders
 a duplicate daily preview or draft workspace; separate Canvas fixtures cover
 the working views with synthetic provider fixtures.

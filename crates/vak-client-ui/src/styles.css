@@ -5577,11 +5577,14 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .daily-mail-calendar-message p { margin: 2px 0 0; color: var(--text-soft); font-size: var(--fs-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
 .daily-mail-calendar-message button { flex: 0 0 auto; }
 .daily-mail-calendar-conversation { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
+.daily-mail-calendar-conversation.is-workspace { min-width: 0; align-content: start; }
 .daily-mail-calendar-conversation > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .daily-mail-calendar-conversation > header span, .daily-mail-calendar-conversation-message > small { color: var(--muted); font-size: var(--fs-meta); }
 .daily-mail-calendar-conversation h4 { margin: 3px 0 0; font-size: var(--fs-ui); overflow-wrap: anywhere; }
 .daily-mail-calendar-conversation-message { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .daily-mail-calendar-conversation-message > p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-soft); font-size: var(--fs-control); }
+.mail-calendar-conversation-open .daily-mail-calendar-section { min-width: 0; }
+.daily-mail-calendar-conversation-heading:focus { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 2px; }
 .daily-mail-calendar-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding-top: var(--space-3); }
 .daily-mail-calendar-pagination > span { color: var(--muted); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
 .daily-mail-calendar-routine { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
