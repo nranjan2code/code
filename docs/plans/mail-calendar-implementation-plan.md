@@ -1734,5 +1734,6 @@ remains open.
   their existing profiles. Graph event update stays disabled because the
   published v1.0 update contract has not established conditional-write
   semantics. The adapter matrix test and owner-authenticated HTTP test pass;
-  the latter attempts a synthetic Microsoft update and verifies rejection
-  before candidate or receipt persistence.
+  the latter attempts a synthetic Microsoft update at candidate creation and
+  with a simulated legacy candidate at dispatch, verifying both rejections
+  leave no candidate or action receipt behind.

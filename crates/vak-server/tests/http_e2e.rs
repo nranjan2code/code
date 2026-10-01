@@ -1372,6 +1372,62 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     assert!(vault.list_candidates().unwrap().is_empty());
     assert!(vault.list_action_receipts().unwrap().is_empty());
 
+    // Simulate an older or imported candidate that bypassed the new save
+    // guard. Dispatch must still reject it before writing the single-use
+    // effect claim.
+    let starts_at = chrono::DateTime::parse_from_rfc3339("2026-10-01T09:00:00Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let legacy_candidate = vak_mail_calendar::ActionCandidate::new(
+        microsoft_account_id,
+        agent_id.clone(),
+        format!("agent:{agent_id}"),
+        vec![],
+        vak_mail_calendar::ProposedAction::UpdateEvent {
+            event_id: "synthetic-event".into(),
+            source_version: "etag-1".into(),
+            draft: vak_mail_calendar::CalendarDraft {
+                title: "Synthetic update".into(),
+                description: "No provider call".into(),
+                location: None,
+                starts_at,
+                ends_at: starts_at + chrono::Duration::hours(1),
+                time_zone: "Asia/Kolkata".into(),
+                all_day: false,
+                attendee_addresses: vec![],
+                recurrence: None,
+                occurrence_id: None,
+            },
+        },
+    )
+    .unwrap();
+    let legacy_candidate_digest = legacy_candidate.digest().unwrap();
+    vault
+        .save_candidate(legacy_candidate.clone(), None)
+        .unwrap();
+    let unsupported_dispatch = client
+        .post(format!(
+            "{candidates_url}/{}/update-event",
+            legacy_candidate.id
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": legacy_candidate.revision,
+            "candidate_digest": legacy_candidate_digest,
+            "confirm": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unsupported_dispatch.status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert!(vault.list_action_receipts().unwrap().is_empty());
+    vault
+        .delete_candidate(&legacy_candidate.id, legacy_candidate.revision)
+        .unwrap();
+
     let local_mail_response = client
         .post(&candidates_url)
         .bearer_auth(&token)
