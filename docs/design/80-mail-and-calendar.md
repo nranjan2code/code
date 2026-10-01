@@ -633,6 +633,16 @@ second content copy. The broker-owned Agent read tool returns bounded content
 to the model; invariant 1 records its result in append-only session history.
 Current storage has no independent retention control or selective erasure for
 those transcript copies.
+For owner conversations, its read-only `list_accounts` operation returns only
+opaque account IDs, provider names, the requested read purpose, and masked
+identity hints. The model may use an ID only when the owner named a matching
+identity; scheduled routines cannot discover accounts and stay fixed to their
+configured account. If two masked hints are identical, the owner can identify
+the provider or provide the exact address as `identity_hint`; the broker
+compares that address inside the Agent vault and returns only the matching
+opaque ID and masked hint. Provider content must never supply this
+disambiguation value. Credential material and complete account identities
+never enter the tool result.
 Local email and event drafts are now stored as bounded, revisioned candidate
 records in the owning Agent's encrypted credential vault, with compare-and-swap
 updates. Disconnect removes that account's unsent local candidates alongside

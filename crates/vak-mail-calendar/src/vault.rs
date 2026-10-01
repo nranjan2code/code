@@ -186,6 +186,20 @@ impl AccountSecretMaterial {
         Some(format!("{first}***@{domain}"))
     }
 
+    /// Match an owner-provided account address without returning or logging
+    /// the complete vaulted identity. Callers must not pass provider content.
+    pub fn display_identity_matches(&self, candidate: &str) -> bool {
+        if candidate.chars().any(char::is_control) {
+            return false;
+        }
+        let candidate = candidate.trim();
+        !candidate.is_empty()
+            && self
+                .display_identity
+                .as_deref()
+                .is_some_and(|identity| identity.trim().eq_ignore_ascii_case(candidate))
+    }
+
     /// Compare vaulted provider subject identifiers without exposing them to
     /// callers or serializing them into the account ledger.
     pub fn has_same_principal(&self, other: &Self) -> bool {
@@ -2591,6 +2605,9 @@ mod tests {
         let masked = material.masked_display_identity().unwrap();
         assert_eq!(masked, "o***@example.com");
         assert!(!masked.contains("owner"));
+        assert!(material.display_identity_matches("OWNER@example.com"));
+        assert!(!material.display_identity_matches("owner2@example.com"));
+        assert!(!material.display_identity_matches("owner@example.com\n"));
     }
 
     #[test]

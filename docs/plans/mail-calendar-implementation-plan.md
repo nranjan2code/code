@@ -2292,3 +2292,16 @@ remains open.
   generated-data Canvas browser fixture passes 41 checks, including Reply-To
   display and reply recipient selection. UI typecheck passes. Live provider
   conformance remains open.
+- 2026-10-01: Closed an account-disambiguation gap in the cross-model read
+  prompt. The brokered `list_accounts` operation is local-owner-only, filters
+  by the requested mail/calendar/free-busy capability, and returns opaque IDs
+  with masked identity hints. If masked hints collide, the owner may provide
+  the exact account address as `identity_hint`; the broker compares it inside
+  the Agent vault and still returns only a masked hint. Scheduled routines
+  cannot discover accounts. The system prompt and tool guide now describe this
+  flow and prohibit using provider content as an identity hint. Focused vault,
+  broker, scheduled-scope, and prompt-contract tests pass. The complete
+  synthetic-only mock pack passes: web production build, 126 provider/vault
+  tests, 19 Core mail/calendar tests, 17 Server mail/calendar tests, four
+  owner-authenticated HTTP tests, restart/requeue, and five isolated-worker
+  tests. Live-provider and 24-hour service-recovery acceptance remain open.
