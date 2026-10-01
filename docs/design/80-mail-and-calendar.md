@@ -5,7 +5,7 @@ Microsoft, and Apple account linking and bounded owner previews are implemented
 using the current 4.x storage model. Google and Microsoft support OAuth and an
 optional, warned local App Password path; Apple supports verified, separate
 Mail, Calendar, or free/busy access. Owners can search all three providers,
-select Gmail labels or Microsoft top-level folders, and browse paginated Google
+select Gmail labels or Microsoft folders, and browse paginated Google
 or Microsoft conversations. Brokered Agent reads cover selected Google and
 Microsoft folders and threads with per-message citations; channel access fails
 closed without an explicit share grant.
@@ -871,12 +871,15 @@ does not cover occurrences or series. A previewed free slot is not an atomic
 booking.
 
 Owner mail previews can select among Gmail labels and up to 100 Microsoft
-top-level mail folders, then search only inside the selected label or folder.
+folders across a bounded eight-level hierarchy, then search only inside the
+selected label or folder. Microsoft child folders are enumerated through the
+selected parent's fixed Graph childFolders endpoint; incomplete or over-bound
+trees fail visibly instead of returning a partial list.
 Apple iCloud currently exposes only Inbox. Google labels are labels and may
 contain the same message in more than one label; the UI names this choice
 "Folder or label" instead of implying identical provider semantics. Child
-folder traversal, paging beyond the bounded folder list, and the full thread
-workspace remain open. The Agent can list the bounded folder set during an
+folder traversal is bounded to 100 total entries and depth eight. Paging
+beyond that bounded list and the full thread workspace remain open. The Agent can list the bounded folder set during an
 interactive owner request and read a selected folder/label after the provider
 confirms it belongs to the account. Scheduled routines are pinned to one
 owner-selected folder/label and recheck membership; continuous new-mail

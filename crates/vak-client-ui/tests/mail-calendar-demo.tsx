@@ -1,8 +1,8 @@
 import * as api from "../src/api";
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
-import { setSyntheticMailCalendarEnabled } from "../src/mailCalendarDemo";
-import { SyntheticMailCalendarDemoControl } from "../src/components/SyntheticMailCalendarDemoControl";
+import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../src/mailCalendarDemo";
+import { SyntheticMailCalendarDemoButton, SyntheticMailCalendarDemoControl } from "../src/components/SyntheticMailCalendarDemoControl";
 import { MailCalendarThreadWorkspace } from "../src/components/MailCalendarThreadWorkspace";
 
 const routes: string[] = [];
@@ -18,15 +18,24 @@ const expectRefused = async (action: () => Promise<unknown>) => {
 setSyntheticMailCalendarEnabled(false);
 const [demoEnabled, setDemoEnabled] = createSignal(false);
 render(() => <div class="settings"><SyntheticMailCalendarDemoControl checked={demoEnabled()} onChange={(enabled) => { setSyntheticMailCalendarEnabled(enabled); setDemoEnabled(enabled); }} /></div>, document.getElementById("root")!);
+const [demoButtonEnabled, setDemoButtonEnabled] = createSignal(false);
+const buttonRoot = document.createElement("div");
+document.body.append(buttonRoot);
+render(() => <SyntheticMailCalendarDemoButton checked={demoButtonEnabled()} onChange={(enabled) => { setSyntheticMailCalendarEnabled(enabled); setDemoButtonEnabled(enabled); }} />, buttonRoot);
 (window as any).runChecks = async () => {
   window.localStorage.removeItem("vak.mail-calendar.synthetic-drafts.v1.fixture-agent");
   const toggle = document.querySelector<HTMLInputElement>("[data-testid='synthetic-mail-calendar-toggle']");
   toggle?.click();
   await Promise.resolve();
   const activatedFromSettings = demoEnabled() && !!toggle?.checked;
+  const demoButton = document.querySelector<HTMLButtonElement>("[data-testid='synthetic-mail-calendar-button']");
+  demoButton?.click();
+  const activatedFromToday = demoButtonEnabled() && syntheticMailCalendarEnabled();
   const safeModeExplanationVisible = document.body.textContent?.includes("Nothing is read from or written to a provider");
   if (!activatedFromSettings) throw new Error("Settings demo switch did not enable synthetic mode");
   const inventory = await api.listMailCalendarAccounts("fixture-agent");
+  const folders = await api.listMailCalendarFolders("fixture-agent", "demo-microsoft-1");
+  const nestedFolderMail = await api.previewMailCalendarMail("fixture-agent", "demo-microsoft-1", 8, undefined, "archive-projects");
   const mail = await api.previewMailCalendarMail("fixture-agent", "demo-google-1", 8);
   const thread = await api.previewMailCalendarThread("fixture-agent", "demo-google-1", "demo-thread-fixture");
   const [threadAttachmentPreview, setThreadAttachmentPreview] = createSignal<{
@@ -69,8 +78,10 @@ render(() => <div class="settings"><SyntheticMailCalendarDemoControl checked={de
   const switchTurnsOff = !demoEnabled() && !toggle?.checked;
   const passed = [
     check(activatedFromSettings && safeModeExplanationVisible, "The Settings checkbox activates the clearly labelled safe demo mode"),
+    check(activatedFromToday, "The Today view button activates synthetic mode without opening Settings"),
     check(inventory.accounts.length === 9 && new Set(inventory.accounts.map((item) => item.provider)).size === 3, "Nine labelled demo accounts cover Google, Microsoft and Apple"),
     check(inventory.accounts.every((item) => item.identity_masked?.endsWith("@example.test") && item.capabilities.every((capability) => capability !== "mail_send" && capability !== "calendar_write")), "Accounts use example.test identities and read-only capabilities"),
+    check(folders.folders.some((folder) => folder.provider_id === "archive-projects" && folder.name === "Archive / Projects") && nestedFolderMail.messages.length === 8, "Synthetic mode lets the owner preview a nested Microsoft folder"),
     check(mail.messages.length === 8 && mail.messages.every((item) => item.body_text?.toLowerCase().includes("synthetic")), "Mail previews are generated synthetic samples"),
     check(thread.messages.length === 1 && thread.messages[0].has_attachments && thread.messages[0].attachments?.[0]?.filename === "sample-notes.txt", "Conversation preview exposes its generated attachment card"),
     check(attachmentPreviewWorks && attachmentActionStatus.startsWith("loaded "), "The real conversation workspace previews the generated attachment locally"),

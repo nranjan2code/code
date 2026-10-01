@@ -22,10 +22,10 @@ current provider inventory before event reads. Non-default source previews are
 read-only for provider effects; edits, cancellations, and new event drafts
 remain tied to the account's default calendar. Owner folder/label selection
 now covers Gmail labels and up to 100
-Microsoft top-level folders; Apple remains Inbox-only. Child-folder traversal,
-the full connected-account workspace and complete thread workspace remain
-open; Google and Microsoft now have an owner thread preview paged in batches
-of at most 20 messages.
+Microsoft folders across a bounded hierarchy; Apple remains Inbox-only. The
+full connected-account workspace and complete thread workspace remain open;
+Google and Microsoft now have an owner thread preview paged in batches of at
+most 20 messages.
 Apple UID, Gmail history, and Microsoft Graph per-folder delta pagination are
 now implemented for the scheduled mail watch, with each bounded page's IDs and
 continuation cursor stored atomically in the encrypted Agent vault. A local
@@ -1922,3 +1922,10 @@ remains open.
   exercises the actual thread component and generated attachment preview (12
   checks pass); the complete mock pack passes, including provider membership
   and worker isolation tests. Live-provider behavior remains unverified.
+- 2026-10-01: Microsoft mail-source discovery now traverses child folders to a
+  strict 100-folder, eight-level bound, uses the owning parent ID for each
+  fixed-host childFolders request, and fails closed if provider counts disagree
+  or the hierarchy exceeds the bound. A provider regression verifies selecting
+  a nested folder uses its own encoded Graph path. The full mock pack passes;
+  the synthetic browser fixture now lists and previews a generated nested
+  Microsoft folder, with all 13 checks passing.

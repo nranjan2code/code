@@ -68,9 +68,10 @@ export function syntheticMailCalendarRequest(path: string, init?: RequestInit): 
   if (parts[1] === "accounts" && parts[3] === "routines") return { runs: [] };
   if (parts[1] !== "accounts" || !account) return fail("This synthetic demo request is read-only.");
   const endpoint = parts[4];
-  if (endpoint === "mail-folders") return { folders: [{ provider_id: "inbox", name: "Inbox" }, { provider_id: "important", name: "Important" }, { provider_id: "archive", name: "Archive" }] };
+  if (endpoint === "mail-folders") return { folders: [{ provider_id: "inbox", name: "Inbox" }, { provider_id: "important", name: "Important" }, { provider_id: "archive", name: "Archive" }, { provider_id: "archive-projects", name: "Archive / Projects" }] };
   if (endpoint === "calendar-sources") return { sources: [{ provider_id: `primary-${account.id}`, name: "Personal", primary: true }, { provider_id: `shared-${account.id}`, name: "Shared", primary: false }] };
   if (endpoint === "mail-preview") {
+    if (body.folder_id && !["inbox", "important", "archive", "archive-projects"].includes(String(body.folder_id))) return fail("This synthetic folder is not available.");
     const count = Math.max(1, Math.min(Number(body.limit ?? 10), 30));
     const messages = Array.from({ length: count }, (_, i) => ({ provider_id: `demo-message-${account.id}-${i}`, thread_id: `demo-thread-${account.id}-${i}`, from: [`Maya Chen <maya@example.test>`, `Sam Patel <sam@example.test>`, `Updates <updates@example.test>`][i % 3], to: account.identity_masked, cc: null, subject: [`Project check-in · ${i + 1}`, "Your weekly summary", "Schedule update"][i % 3], received_at: dateFor(-i, 8 + i % 8), preview: "Synthetic sample message for preview and regression testing. No real account is connected.", body_text: "Hello! This is synthetic demonstration content. It contains no real personal or provider data.", body_status: "available", has_attachments: i % 5 === 0, attachments: [] }));
     return { messages: body.query ? messages.filter((message) => `${message.subject} ${message.from}`.toLowerCase().includes(String(body.query).toLowerCase())) : messages };

@@ -23,6 +23,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 const MAX_MAIL_ITEMS: usize = 20;
 const MAX_THREAD_PAGE_BYTES: usize = 512 * 1024;
 const MAX_MAIL_FOLDERS: usize = 100;
+const MAX_MAIL_FOLDER_DEPTH: usize = 8;
 const MAX_CALENDAR_SOURCES: usize = 50;
 pub const MAX_MAIL_ATTACHMENTS: usize = 20;
 pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
@@ -412,27 +413,113 @@ impl ProviderReadClient {
                     .bearer_auth(token.as_str())
                     .query(&[
                         ("$top", MAX_MAIL_FOLDERS.to_string()),
-                        ("$select", "id,displayName".to_owned()),
+                        ("$select", "id,displayName,childFolderCount".to_owned()),
                     ])
                     .send()
                     .await
                     .map_err(|_| ProviderReadError::Unavailable)?;
                 let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
-                let folders = value
+                let rows = value
                     .get("value")
                     .and_then(Value::as_array)
-                    .ok_or(ProviderReadError::InvalidResponse)?
-                    .iter()
-                    .take(MAX_MAIL_FOLDERS)
-                    .filter_map(|folder| {
-                        let id = folder.get("id").and_then(Value::as_str)?;
-                        let name = folder.get("displayName").and_then(Value::as_str)?;
-                        valid_graph_folder_id(id).then(|| MailFolder {
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                let mut folders = Vec::new();
+                let mut pending = std::collections::VecDeque::new();
+                let mut seen = std::collections::HashSet::new();
+                for folder in rows.iter().take(MAX_MAIL_FOLDERS) {
+                    let (Some(id), Some(name)) = (
+                        folder.get("id").and_then(Value::as_str),
+                        folder.get("displayName").and_then(Value::as_str),
+                    ) else {
+                        return Err(ProviderReadError::InvalidResponse);
+                    };
+                    if !valid_graph_folder_id(id)
+                        || name.trim().is_empty()
+                        || !seen.insert(id.to_owned())
+                    {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    let name = bounded_label_name(name);
+                    folders.push(MailFolder {
+                        provider_id: id.to_owned(),
+                        name: name.clone(),
+                    });
+                    let child_count = folder
+                        .get("childFolderCount")
+                        .and_then(Value::as_u64)
+                        .map(usize::try_from)
+                        .transpose()
+                        .map_err(|_| ProviderReadError::InvalidResponse)?
+                        .unwrap_or(0);
+                    if child_count > 0 {
+                        pending.push_back((id.to_owned(), name, 1usize, child_count));
+                    }
+                }
+                while let Some((parent_id, parent_name, depth, expected_children)) =
+                    pending.pop_front()
+                {
+                    if depth > MAX_MAIL_FOLDER_DEPTH || folders.len() >= MAX_MAIL_FOLDERS {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    let url = graph_url_segments(
+                        &self.microsoft_graph_base,
+                        &["me", "mailFolders", &parent_id, "childFolders"],
+                    )?;
+                    let response = self
+                        .http
+                        .get(url)
+                        .bearer_auth(token.as_str())
+                        .query(&[
+                            ("$top", MAX_MAIL_FOLDERS.to_string()),
+                            ("$select", "id,displayName,childFolderCount".to_owned()),
+                        ])
+                        .send()
+                        .await
+                        .map_err(|_| ProviderReadError::Unavailable)?;
+                    let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+                    let children = value
+                        .get("value")
+                        .and_then(Value::as_array)
+                        .ok_or(ProviderReadError::InvalidResponse)?;
+                    if children.len() != expected_children {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    for child in children.iter().take(expected_children) {
+                        let (Some(id), Some(name)) = (
+                            child.get("id").and_then(Value::as_str),
+                            child.get("displayName").and_then(Value::as_str),
+                        ) else {
+                            return Err(ProviderReadError::InvalidResponse);
+                        };
+                        if !valid_graph_folder_id(id)
+                            || name.trim().is_empty()
+                            || !seen.insert(id.to_owned())
+                        {
+                            return Err(ProviderReadError::InvalidResponse);
+                        }
+                        if folders.len() >= MAX_MAIL_FOLDERS {
+                            return Err(ProviderReadError::InvalidResponse);
+                        }
+                        let full_name = bounded_label_name(&format!(
+                            "{parent_name} / {}",
+                            bounded_label_name(name)
+                        ));
+                        folders.push(MailFolder {
                             provider_id: id.to_owned(),
-                            name: bounded_label_name(name),
-                        })
-                    })
-                    .collect::<Vec<_>>();
+                            name: full_name.clone(),
+                        });
+                        let child_count = child
+                            .get("childFolderCount")
+                            .and_then(Value::as_u64)
+                            .map(usize::try_from)
+                            .transpose()
+                            .map_err(|_| ProviderReadError::InvalidResponse)?
+                            .unwrap_or(0);
+                        if child_count > 0 {
+                            pending.push_back((id.to_owned(), full_name, depth + 1, child_count));
+                        }
+                    }
+                }
                 if folders.is_empty() {
                     return Err(ProviderReadError::InvalidResponse);
                 }
@@ -3983,11 +4070,22 @@ mod tests {
                             .and_then(|value| value.to_str().ok()),
                         Some("Bearer access-token")
                     );
-                    axum::Json(json!({"value":[{"id":"folder-123","displayName":"Archive"}] }))
+                    assert!(request.uri().query().unwrap_or_default().contains("childFolderCount"));
+                    axum::Json(json!({"value":[{"id":"folder-123","displayName":"Archive","childFolderCount":1}] }))
                 }),
             )
             .route(
-                "/graph/v1.0/me/mailFolders/folder-123/messages",
+                "/graph/v1.0/me/mailFolders/folder-123/childFolders",
+                axum::routing::get(|request: Request<axum::body::Body>| async move {
+                    assert_eq!(
+                        request.headers().get(reqwest::header::AUTHORIZATION).and_then(|value| value.to_str().ok()),
+                        Some("Bearer access-token")
+                    );
+                    axum::Json(json!({"value":[{"id":"child-456","displayName":"Work","childFolderCount":0}]}))
+                }),
+            )
+            .route(
+                "/graph/v1.0/me/mailFolders/child-456/messages",
                 axum::routing::get(|request: Request<axum::body::Body>| async move {
                     assert_eq!(
                         request
@@ -4017,18 +4115,59 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(folders[0].name, "Archive");
+        assert_eq!(folders[1].provider_id, "child-456");
+        assert_eq!(folders[1].name, "Archive / Work");
         let messages = client
             .recent_mail_in_folder(
                 &account,
                 &vault,
                 &agent_id,
                 &audience,
-                Some(&folders[0].provider_id),
+                Some(&folders[1].provider_id),
                 5,
             )
             .await
             .unwrap();
         assert!(messages.is_empty());
+        vault.remove(&account.id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn microsoft_folder_tree_refuses_incomplete_child_listing() {
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Microsoft);
+        let app = axum::Router::new()
+            .route(
+                "/graph/v1.0/me/mailFolders",
+                axum::routing::get(|| async {
+                    axum::Json(json!({"value":[{"id":"folder-parent","displayName":"Archive","childFolderCount":2}]}))
+                }),
+            )
+            .route(
+                "/graph/v1.0/me/mailFolders/folder-parent/childFolders",
+                axum::routing::get(|| async {
+                    axum::Json(json!({"value":[{"id":"folder-child","displayName":"Work","childFolderCount":0}]}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        assert!(matches!(
+            client
+                .list_mail_folders(&account, &vault, &agent_id, &audience)
+                .await,
+            Err(ProviderReadError::InvalidResponse)
+        ));
         vault.remove(&account.id).unwrap();
         task.abort();
     }
