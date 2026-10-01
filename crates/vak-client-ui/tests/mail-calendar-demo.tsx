@@ -3,6 +3,7 @@ import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { setSyntheticMailCalendarEnabled } from "../src/mailCalendarDemo";
 import { SyntheticMailCalendarDemoControl } from "../src/components/SyntheticMailCalendarDemoControl";
+import { MailCalendarThreadWorkspace } from "../src/components/MailCalendarThreadWorkspace";
 
 const routes: string[] = [];
 window.fetch = async (input) => {
@@ -27,9 +28,41 @@ render(() => <div class="settings"><SyntheticMailCalendarDemoControl checked={de
   if (!activatedFromSettings) throw new Error("Settings demo switch did not enable synthetic mode");
   const inventory = await api.listMailCalendarAccounts("fixture-agent");
   const mail = await api.previewMailCalendarMail("fixture-agent", "demo-google-1", 8);
+  const thread = await api.previewMailCalendarThread("fixture-agent", "demo-google-1", "demo-thread-fixture");
+  const [threadAttachmentPreview, setThreadAttachmentPreview] = createSignal<{
+    accountId: string; messageId: string; attachmentId: string; filename: string; mime_type: string | null; size_bytes: number; text: string;
+  } | null>(null);
+  let attachmentActionStatus = "not requested";
+  render(() => <MailCalendarThreadWorkspace
+    accountId="demo-google-1"
+    messages={thread.messages}
+    loading={false}
+    busy={false}
+    attachmentPreview={threadAttachmentPreview()}
+    canPreviewAttachments={true}
+    onClose={() => undefined}
+    onLoadMore={() => undefined}
+    onPreviewAttachment={(message, attachment) => void api.previewMailCalendarAttachment("fixture-agent", "demo-google-1", message.provider_id, attachment.provider_id).then((result) => {
+      attachmentActionStatus = `loaded ${result.text}`;
+      setThreadAttachmentPreview({ accountId: "demo-google-1", messageId: message.provider_id, attachmentId: attachment.provider_id, ...result });
+    }).catch((error: unknown) => { attachmentActionStatus = `failed ${error instanceof Error ? error.message : String(error)}`; })}
+    onReply={() => undefined}
+    onNewEmail={() => undefined}
+  />, document.getElementById("thread-root")!);
   const calendar = await api.previewMailCalendarEvents("fixture-agent", "demo-google-1", new Date().toISOString(), new Date(Date.now() + 86_400_000).toISOString());
   const saved = await api.saveMailCalendarCandidate("fixture-agent", { account_id: "local-draft", action: { kind: "create_event", draft: { title: "Practice", description: "", location: null, starts_at: new Date().toISOString(), ends_at: new Date(Date.now() + 3_600_000).toISOString(), time_zone: "UTC", all_day: false, attendee_addresses: [], recurrence: null, occurrence_id: null } } });
   const listed = await api.listMailCalendarCandidates("fixture-agent");
+  [...document.querySelectorAll<HTMLButtonElement>("#thread-root button")]
+    .find((button) => button.textContent?.includes("Preview attachment"))?.click();
+  const attachmentPreviewWorks = await new Promise<boolean>((resolve) => {
+    const deadline = Date.now() + 5000;
+    const poll = () => {
+      if (document.querySelector("#thread-root .mail-calendar-attachment-preview")?.textContent?.includes("Synthetic attachment preview")) resolve(true);
+      else if (Date.now() >= deadline) resolve(false);
+      else setTimeout(poll, 25);
+    };
+    poll();
+  });
   const deniedConnect = await expectRefused(() => api.beginMailCalendarOAuth("fixture-agent", "google", ["mail_read"]));
   const deniedEffect = await expectRefused(() => api.createMailCalendarEventCandidate("fixture-agent", saved.candidate.id, saved.candidate.revision, "demo-digest"));
   toggle?.click();
@@ -39,6 +72,8 @@ render(() => <div class="settings"><SyntheticMailCalendarDemoControl checked={de
     check(inventory.accounts.length === 9 && new Set(inventory.accounts.map((item) => item.provider)).size === 3, "Nine labelled demo accounts cover Google, Microsoft and Apple"),
     check(inventory.accounts.every((item) => item.identity_masked?.endsWith("@example.test") && item.capabilities.every((capability) => capability !== "mail_send" && capability !== "calendar_write")), "Accounts use example.test identities and read-only capabilities"),
     check(mail.messages.length === 8 && mail.messages.every((item) => item.body_text?.toLowerCase().includes("synthetic")), "Mail previews are generated synthetic samples"),
+    check(thread.messages.length === 1 && thread.messages[0].has_attachments && thread.messages[0].attachments?.[0]?.filename === "sample-notes.txt", "Conversation preview exposes its generated attachment card"),
+    check(attachmentPreviewWorks && attachmentActionStatus.startsWith("loaded "), "The real conversation workspace previews the generated attachment locally"),
     check(calendar.events.length > 0 && calendar.events.every((item) => item.description?.includes("Synthetic")), "Calendar preview is generated synthetic sample data"),
     check(listed.candidates.some((item) => item.id === saved.candidate.id && item.action.kind === "create_event"), "Drafts save and reopen in browser-local demo storage"),
     check(deniedConnect, "OAuth connection attempts are refused in synthetic mode"),

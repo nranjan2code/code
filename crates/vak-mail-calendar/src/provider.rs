@@ -1155,10 +1155,15 @@ impl ProviderReadClient {
                     .ok_or(ProviderReadError::InvalidResponse)?;
                 let mut messages = Vec::new();
                 for row in rows.iter().take(limit) {
-                    let item =
+                    let mut item =
                         parse_graph_message(row).ok_or(ProviderReadError::InvalidResponse)?;
                     if item.thread_id.as_deref() != Some(thread_id) || item.provider_id.is_empty() {
                         return Err(ProviderReadError::InvalidResponse);
+                    }
+                    if item.has_attachments {
+                        item.attachments = self
+                            .microsoft_attachment_refs(&token, &item.provider_id)
+                            .await?;
                     }
                     messages.push(item);
                 }
@@ -4180,10 +4185,15 @@ mod tests {
                 } else {
                     assert_eq!(values.get("$top").map(|value| value.as_ref()), Some("20"));
                     axum::Json(json!({"value":[
-                        {"id":"msg-1","conversationId":"conv'42","subject":"First","toRecipients":[{"emailAddress":{"name":"Recipient","address":"to@example.test"}}],"ccRecipients":[{"emailAddress":{"address":"cc@example.test"}}],"body":{"contentType":"text","content":"hello"}}
+                        {"id":"msg-1","conversationId":"conv'42","subject":"First","hasAttachments":true,"toRecipients":[{"emailAddress":{"name":"Recipient","address":"to@example.test"}}],"ccRecipients":[{"emailAddress":{"address":"cc@example.test"}}],"body":{"contentType":"text","content":"hello"}}
                     ], "@odata.nextLink":continuation})).into_response()
                 }
                 }
+            }),
+        ).route(
+            "/graph/v1.0/me/messages/msg-1/attachments",
+            axum::routing::get(|| async {
+                axum::Json(json!({"value":[{"id":"attachment-1","name":"notes.txt","contentType":"text/plain","size":32,"isInline":false}]}))
             }),
         );
         let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -4207,6 +4217,8 @@ mod tests {
             Some("Recipient <to@example.test>")
         );
         assert_eq!(thread.messages[0].cc.as_deref(), Some("cc@example.test"));
+        assert_eq!(thread.messages[0].attachments.len(), 1);
+        assert!(thread.messages[0].attachments[0].previewable);
         assert!(thread.next_cursor.is_some());
         assert!(matches!(
             client

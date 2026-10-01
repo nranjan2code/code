@@ -1916,3 +1916,9 @@ remains open.
   pack now passes: 122 provider/vault tests, 16 Core boundary tests, 16 server
   unit tests, 4 owner-authenticated HTTP tests, the restart/requeue test, and 5
   isolated worker tests. No live accounts or home credentials were used.
+- 2026-10-01: Conversation pages now include bounded Microsoft attachment
+  metadata, and the thread workspace renders attachment cards with previews
+  through the existing isolated document worker. The synthetic browser fixture
+  exercises the actual thread component and generated attachment preview (12
+  checks pass); the complete mock pack passes, including provider membership
+  and worker isolation tests. Live-provider behavior remains unverified.

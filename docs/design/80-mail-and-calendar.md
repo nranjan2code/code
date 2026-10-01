@@ -190,7 +190,9 @@ owners can open a paginated thread preview with up to 20 messages per page; Gmai
 loads a bounded metadata-only thread snapshot and fetches full content only for
 the selected page, while Microsoft follows a validated provider continuation.
 Apple supports a selected-message preview without conversation grouping. These
-results are transient and search phrases are not logged or retained. The owner
+results are transient and search phrases are not logged or retained. Google and
+Microsoft conversation messages include bounded attachment cards; selected
+previewable files use the existing network-denied document worker. The owner
 can start a local email draft from any message in an opened Google or Microsoft
 conversation; the candidate retains that selected provider message as its
 source reference. The owner can create a provider-threaded reply. The send

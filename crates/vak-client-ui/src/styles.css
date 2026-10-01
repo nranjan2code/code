@@ -2463,6 +2463,8 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-thread-message strong { color: var(--text-primary); font-size: var(--fs-control); overflow-wrap: anywhere; }
 .mail-calendar-thread-message span, .mail-calendar-thread-message small { color: var(--muted); font-size: var(--fs-meta); overflow-wrap: anywhere; }
 .mail-calendar-thread-message p { margin: 0; color: var(--text-secondary); font-size: var(--fs-control); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.mail-calendar-thread-attachments { display: grid; gap: 8px; min-width: 0; padding-top: 6px; }
+.mail-calendar-thread-attachments > strong { color: var(--text-primary); font-size: var(--fs-control); }
 .settings-preview .settings-hint { padding: 10px 0; }
 .mail-calendar-work-actions { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-2); padding: 12px 17px; }
 .mail-calendar-work-actions label,
