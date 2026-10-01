@@ -1,6 +1,6 @@
 import { render } from "solid-js/web";
 import Settings from "../src/components/Settings";
-import { setActiveAgent, setConnection, setPendingSettingsPage, setSettingsOpen } from "../src/store";
+import { setActiveAgent, setConnection, setHealth, setPendingSettingsPage, setSettingsOpen } from "../src/store";
 import "../src/styles.css";
 
 const requests: Array<{ path: string; method: string; body: any }> = [];
@@ -81,6 +81,14 @@ window.fetch = async (input, init) => {
 };
 
 setConnection("live");
+setHealth({
+  status: "ok", provider: "", model: "", permission_mode: "ReadOnly", sandbox: "",
+  context_window: 0, cwd: "/tmp/vak-mail-review-fixture", warnings: [],
+  automation_scheduler: {
+    status: "stale", last_tick_at: "2026-10-01T00:00:00Z", age_seconds: 61,
+    tick_interval_seconds: 20, stale_after_seconds: 60,
+  },
+});
 setActiveAgent({ id: "fixture-review-owner", name: "Review fixture", character: "vak", animation: "off" });
 setPendingSettingsPage("mail-calendar");
 setSettingsOpen(true);
@@ -113,6 +121,7 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
 
 (window as any).runChecks = async () => {
   await waitFor(() => !!document.querySelector("button") && document.body.textContent?.includes("owner@example.test") === true, "the fake connected account");
+  await waitFor(() => document.body.textContent?.includes("background scheduler has not checked in recently") === true, "stale scheduler health disclosure");
   await click("Preview inbox");
   await waitFor(() => document.body.textContent?.includes("Planning the launch review") === true, "the bounded source preview");
   await click("Open conversation");
@@ -152,6 +161,7 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
   await waitFor(() => task?.enabled === true, "the resumed event-trigger routine");
   const passed = [
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
+    check(document.body.textContent?.includes("service API answers, but its background scheduler has not checked in recently") === true, "The owner UI distinguishes API reachability from a stale background scheduler heartbeat"),
     check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),

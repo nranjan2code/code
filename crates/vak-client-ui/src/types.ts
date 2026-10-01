@@ -357,6 +357,13 @@ export interface Health {
   context_window: number;
   cwd: string;
   warnings: unknown[];
+  automation_scheduler?: {
+    status: "starting" | "active" | "stale";
+    last_tick_at: string | null;
+    age_seconds: number | null;
+    tick_interval_seconds: number;
+    stale_after_seconds: number;
+  };
 }
 
 export interface BackendInfo {

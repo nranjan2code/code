@@ -2999,7 +2999,11 @@ export default function Settings() {
               <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
                 <p class="settings-hint" role="status">
                   <Show when={connection() === "offline"} fallback={connection() === "live" && health()
-                    ? "Scheduled and continuous routines run on this Vakyartha service. The computer or server running it must stay awake and connected; each routine's last successful provider check shows source freshness."
+                    ? health()?.automation_scheduler?.status === "stale"
+                      ? "The service API answers, but its background scheduler has not checked in recently. The service may be starting, paused, stalled, or the computer may have slept; scheduled work has not been confirmed during this period."
+                      : health()?.automation_scheduler?.status === "starting"
+                        ? "The service API answers; its background scheduler is starting. Routine status and provider-check times will update when the scheduler begins reporting."
+                        : "Scheduled and continuous routines run on this Vakyartha service. The computer or server running it must stay awake and connected; each routine's last successful provider check shows source freshness."
                     : "Connecting to the Vakyartha service. Routine status and source freshness will appear when it is reachable."}>
                     The Vakyartha service is offline, so its scheduled and continuous routines cannot run. Missed work follows the task schedule and configured catch-up behavior.
                   </Show>

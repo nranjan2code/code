@@ -582,8 +582,7 @@ separate `mail_calendar_last_check_at` only after the provider cursor poll
 succeeds. The routine list uses this value for “last successful check” instead
 of treating a model-run start or failed attempt as source freshness. Legacy
 `tasks.json` files load with the field unset and continue to round-trip. This
-does not prove that the service process is awake or healthy between checks;
-host-health reporting and sustained recovery acceptance remain open.
+does not prove provider freshness or sustained service recovery.
 
 **Implemented increment (2026-10-01):** mail/calendar routines are now saved
 paused. The owner can run a one-off, read-only preview and inspect the Agent
@@ -603,10 +602,12 @@ states.
 
 **Implemented increment (2026-10-01):** the routine Settings header now shows
 whether the Vakyartha service API is reachable or offline, separately from each
-routine's provider-check freshness. It tells owners that unattended work
-requires the service host to stay awake. This is request-level reachability
-only; it does not detect sleep between requests, diagnose provider outages, or
-satisfy the sustained service acceptance test.
+routine's provider-check freshness. `/health` also reports a volatile,
+content-free TaskDef scheduler heartbeat: starting, active, or stale after three
+missed 20-second ticks. A stale heartbeat explains that the API may still
+answer while the scheduler is stalled, paused, or returning from host sleep.
+This is scheduler liveness, not provider freshness or an uptime guarantee; the
+sustained service acceptance test remains open.
 
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
@@ -672,6 +673,14 @@ remains open.
 
 ## Progress log
 
+- 2026-10-01: Added a volatile TaskDef scheduler heartbeat to the authenticated
+  and local `/health` projection. Email and calendar Settings now distinguish
+  API reachability from a scheduler that is starting or has missed three
+  consecutive 20-second ticks. This is liveness evidence only; it does not
+  assert provider freshness, diagnose why ticks stopped, or claim uptime.
+  Verification: fixed-time server coverage checks starting, active, and stale
+  states; the authenticated HTTP response includes the heartbeat; the rendered
+  connected-review browser fixture passes 13 checks; client typecheck passes.
 - 2026-10-01: The conversation workspace now collapses repeated provider message
   IDs when a person loads another page, matching the bounded citation-navigation
   path. The connected-account browser fixture returns a duplicate from the next
@@ -679,7 +688,7 @@ remains open.
   message. Verification: 12 browser checks pass in the rendered same-origin
   fixture; client typecheck, web build, and thread-navigation unit tests pass.
   This remains fake-account UI evidence, not live provider conformance.
-- 2026-10-01: Added a browser acceptance fixture that mounts the actual
+  - 2026-10-01: Added a browser acceptance fixture that mounts the actual
   connected-account Settings workspace with a same-origin fake Google account.
   It exercises Agent-scoped account inventory, bounded inbox preview,
   conversation opening, reply source lineage, edits, saved draft preview, and

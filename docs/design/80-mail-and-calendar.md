@@ -60,7 +60,10 @@ workspace, Apple provider effects, broader Microsoft/event update and
 cancellation profiles, RSVP, complete event-trigger browser acceptance,
 broader provider reconciliation, live-provider conformance, full connected
 source-to-Review browser acceptance, and 24-hour service-recovery acceptance
-remain open. Apple Calendar has not been verified with a live credential.
+remain open. `/health` exposes a volatile scheduler heartbeat for starting,
+active, or stale background scheduling, but this is not the sustained
+24-hour service-recovery acceptance. Apple Calendar has not been verified
+with a live credential.
 Scheduled routines also offer an explicit **Include this Agent's open
 commitments** option. When selected, the routine receives the existing
 read-only `commitments` tool in addition to its bounded mail/calendar broker.

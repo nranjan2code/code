@@ -220,6 +220,9 @@ pub struct AppState {
     /// In-memory cron markers: task id → next scheduled local fire. Interval
     /// tasks keep using `last_run_at`; only `schedule:` tasks appear here.
     next_fire: Arc<Mutex<HashMap<String, chrono::DateTime<chrono::Local>>>>,
+    /// Volatile heartbeat for the local TaskDef scheduler. This is health
+    /// telemetry only; it is never treated as proof of provider freshness.
+    scheduler_last_tick_at: Arc<Mutex<Option<chrono::DateTime<Utc>>>>,
     /// Script tasks currently executing (no child session to inspect, so
     /// this stands in for the busy-check that prompt tasks get).
     script_inflight: Arc<Mutex<std::collections::HashSet<String>>>,
@@ -307,6 +310,7 @@ impl AppState {
             best_runs: Arc::new(Mutex::new(HashMap::new())),
             tasks: Arc::new(Mutex::new(HashMap::new())),
             next_fire: Arc::new(Mutex::new(HashMap::new())),
+            scheduler_last_tick_at: Arc::new(Mutex::new(None)),
             script_inflight: Arc::new(Mutex::new(std::collections::HashSet::new())),
             procs: Arc::new(Mutex::new(HashMap::new())),
             gateway,
@@ -3923,6 +3927,10 @@ fn health_projection(state: &AppState) -> serde_json::Value {
     } else {
         "degraded"
     };
+    let scheduler_last_tick_at = *state
+        .scheduler_last_tick_at
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     serde_json::json!({
         // `status = ok` is retained for existing health clients; posture is
         // the truthful operational signal and is what the Operations Center
@@ -3936,6 +3944,10 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         "model_source": route.model_source,
         "route_revision": route.revision,
         "permission_mode": format!("{:?}", state.core.effective_permission_mode()),
+        "automation_scheduler": automation_scheduler_health(
+            scheduler_last_tick_at,
+            chrono::Utc::now(),
+        ),
         "approval_mode": state.core.effective_approval_mode().as_str(),
         "sandbox": state.core.effective_sandbox_name(),
         "context_window": state.core.config().context_window,
@@ -3971,6 +3983,28 @@ fn health_projection(state: &AppState) -> serde_json::Value {
         "checks": checks,
         "facts": report.facts,
         "failures": report.failures,
+    })
+}
+
+const SCHEDULER_TICK_SECS: i64 = 20;
+const SCHEDULER_STALE_AFTER_SECS: i64 = 60;
+
+fn automation_scheduler_health(
+    last_tick_at: Option<chrono::DateTime<Utc>>,
+    now: chrono::DateTime<Utc>,
+) -> serde_json::Value {
+    let age_seconds = last_tick_at.map(|last| now.signed_duration_since(last).num_seconds().max(0));
+    let status = match age_seconds {
+        None => "starting",
+        Some(age) if age <= SCHEDULER_STALE_AFTER_SECS => "active",
+        Some(_) => "stale",
+    };
+    serde_json::json!({
+        "status": status,
+        "last_tick_at": last_tick_at,
+        "age_seconds": age_seconds,
+        "tick_interval_seconds": SCHEDULER_TICK_SECS,
+        "stale_after_seconds": SCHEDULER_STALE_AFTER_SECS,
     })
 }
 
@@ -19344,6 +19378,10 @@ fn park_marker() -> chrono::DateTime<chrono::Local> {
 /// marker, initializing it to the first future slot when absent (so newly
 /// loaded/created tasks do not stampede on startup).
 async fn scheduler_tick(state: &AppState) {
+    *state
+        .scheduler_last_tick_at
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(chrono::Utc::now());
     let now_local = chrono::Local::now();
     feeds::scheduled_ingestion(state).await;
     // Reload from disk every tick: tasks.json is shared with the CLI and
@@ -20541,8 +20579,8 @@ async fn launch_logs(
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod scheduler_pure_tests {
     use super::{
-        TaskDef, cron_slot_missed, recover_interrupted_tasks, stdout_section,
-        task_enabled_on_create,
+        TaskDef, automation_scheduler_health, cron_slot_missed, recover_interrupted_tasks,
+        stdout_section, task_enabled_on_create,
     };
     use chrono::TimeZone;
     use chrono::Utc;
@@ -20565,6 +20603,24 @@ mod scheduler_pure_tests {
     fn mail_calendar_routines_are_saved_paused_for_preview() {
         assert!(!task_enabled_on_create(true));
         assert!(task_enabled_on_create(false));
+    }
+
+    #[test]
+    fn automation_scheduler_health_distinguishes_starting_active_and_stale() {
+        let now = Utc::now();
+        assert_eq!(
+            automation_scheduler_health(None, now)["status"],
+            "starting"
+        );
+        assert_eq!(
+            automation_scheduler_health(Some(now - chrono::Duration::seconds(40)), now)
+                ["status"],
+            "active"
+        );
+        let stale = automation_scheduler_health(Some(now - chrono::Duration::seconds(61)), now);
+        assert_eq!(stale["status"], "stale");
+        assert_eq!(stale["age_seconds"], 61);
+        assert_eq!(stale["stale_after_seconds"], 60);
     }
 
     #[test]
