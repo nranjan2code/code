@@ -2433,3 +2433,19 @@ remains open.
   update recovery visibility and passes all 45 checks at desktop and 390px with
   no phone-width overflow. Email sends, cancellations, Microsoft updates, and
   live-provider conformance remain open.
+- 2026-10-02: Added ambiguous email-send reconciliation for Gmail and Microsoft
+  Graph. Sends attach the durable UUIDv7 attempt marker in the provider's
+  message identifier/header; the owning Agent can search Sent mail using its
+  MailRead grant and dedicated broker permission. Only one exact marker match
+  confirms the durable receipt; missing, duplicate, or incomplete results stay
+  unknown and non-retryable. A local provider-double regression verifies both
+  adapters, and the Daily Canvas fixture now covers the mail recovery action.
+  The synthetic-only mock regression pack passed, including 131 provider/vault
+  tests plus registry, 19 Core tests, 17 Server tests, four owner-authenticated
+  HTTP tests, restart/requeue, and five isolated-worker tests. Focused follow-up
+  checks also passed for reconciliation approval boundaries, route
+  authentication, both provider doubles, and regular/fixture UI typechecks.
+  Direct browser rendering remains unverified because the browser security
+  policy blocked the local fixture URL; no alternate browser path was used.
+  Cancellation and Microsoft event update recovery plus live-provider
+  conformance are still open.

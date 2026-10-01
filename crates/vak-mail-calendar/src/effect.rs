@@ -16,6 +16,7 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 const GOOGLE_ACTION_PROPERTY: &str = "vak_action_id";
 const GRAPH_ACTION_PROPERTY_ID: &str =
     "String {66f5a359-4659-4830-9070-00040ec6ac6e} Name vakActionId";
+const MAIL_ACTION_HEADER: &str = "X-Vak-Action-ID";
 
 /// Provider/action support is checked before candidates are persisted or a
 /// single-use effect claim is written. Keep this matrix aligned with the
@@ -100,6 +101,7 @@ impl ProviderEffectClient {
         vault: &AccountVault,
         agent_id: &str,
         audience: &str,
+        attempt_id: &str,
         draft: &MailDraft,
     ) -> Result<ProviderAcceptance, ProviderEffectError> {
         let is_reply = draft.reply_to_message_id.is_some();
@@ -113,6 +115,9 @@ impl ProviderEffectClient {
             return Err(ProviderEffectError::Unsupported);
         }
         validate_mail_draft(draft)?;
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
@@ -151,10 +156,10 @@ impl ProviderEffectClient {
                         thread_id,
                         &draft.subject,
                     )?;
-                    let raw = google_raw_reply(draft, &headers);
+                    let raw = google_raw_reply(draft, &headers, attempt_id);
                     json!({"threadId": thread_id, "raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())})
                 } else {
-                    let raw = google_raw_message(draft);
+                    let raw = google_raw_message(draft, attempt_id);
                     json!({"raw": base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(raw.as_bytes())})
                 };
                 let response = self
@@ -189,7 +194,7 @@ impl ProviderEffectClient {
                         .map_err(|_| ProviderEffectError::Unknown)?;
                     let source = checked_json(source_response).await?;
                     validate_graph_reply_source(&source, source_id, thread_id, &draft.subject)?;
-                    let payload = graph_reply_payload(draft);
+                    let payload = graph_reply_payload(draft, attempt_id);
                     self.http
                         .post(path_url(
                             &self.microsoft_graph_base,
@@ -204,12 +209,137 @@ impl ProviderEffectClient {
                     self.http
                         .post(format!("{}/me/sendMail", self.microsoft_graph_base))
                         .bearer_auth(token.as_str())
-                        .json(&graph_send_payload(draft))
+                        .json(&graph_send_payload(draft, attempt_id))
                         .send()
                         .await
                         .map_err(|_| ProviderEffectError::Unknown)?
                 };
                 classify_graph_response(response).await
+            }
+            Provider::AppleIcloud => Err(ProviderEffectError::Unsupported),
+        }
+    }
+
+    /// Search the owner's sent mail for the exact opaque attempt marker. A
+    /// missing marker is inconclusive: eventual consistency and bounded scans
+    /// must never turn into permission to retry an ambiguous send.
+    pub async fn reconcile_sent_mail(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        attempt_id: &str,
+    ) -> Result<Option<String>, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::MailRead)
+            || !valid_attempt_id(attempt_id)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        match account.provider {
+            Provider::Google => {
+                let message_id = format!("<{attempt_id}@vak.invalid>");
+                let response = self
+                    .http
+                    .get(format!("{}/users/me/messages", self.google_gmail_base))
+                    .bearer_auth(token.as_str())
+                    .query(&[
+                        ("q", format!("in:sent rfc822msgid:{message_id}")),
+                        ("maxResults", "2".into()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderEffectError::Unknown)?;
+                let value = checked_json(response).await?;
+                let Some(messages) = value.get("messages").and_then(Value::as_array) else {
+                    return Ok(None);
+                };
+                if messages.len() != 1 || value.get("nextPageToken").is_some() {
+                    return Ok(None);
+                }
+                let Some(id) = messages[0].get("id").and_then(Value::as_str) else {
+                    return Ok(None);
+                };
+                let message_url =
+                    path_url(&self.google_gmail_base, &["users", "me", "messages", id])?;
+                let response = self
+                    .http
+                    .get(message_url)
+                    .bearer_auth(token.as_str())
+                    .query(&[("format", "metadata"), ("metadataHeaders", "Message-ID")])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderEffectError::Unknown)?;
+                let message = checked_json(response).await?;
+                let matches = message
+                    .pointer("/payload/headers")
+                    .and_then(Value::as_array)
+                    .is_some_and(|headers| {
+                        headers.iter().any(|header| {
+                            header
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .is_some_and(|name| name.eq_ignore_ascii_case("Message-ID"))
+                                && header.get("value").and_then(Value::as_str)
+                                    == Some(message_id.as_str())
+                        })
+                    });
+                Ok(matches.then(|| id.to_owned()))
+            }
+            Provider::Microsoft => {
+                let Some(attempt_time) = attempt_timestamp(attempt_id) else {
+                    return Err(ProviderEffectError::Rejected);
+                };
+                let filter = format!("sentDateTime ge {}", attempt_time.to_rfc3339());
+                let url = format!(
+                    "{}/me/mailFolders/sentitems/messages",
+                    self.microsoft_graph_base
+                );
+                let response = self
+                    .http
+                    .get(url)
+                    .bearer_auth(token.as_str())
+                    .query(&[
+                        ("$filter", filter),
+                        ("$select", "id,internetMessageHeaders".into()),
+                        ("$top", "10".into()),
+                        ("$orderby", "sentDateTime desc".into()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderEffectError::Unknown)?;
+                let value = checked_json(response).await?;
+                let Some(messages) = value.get("value").and_then(Value::as_array) else {
+                    return Ok(None);
+                };
+                let matching: Vec<&Value> =
+                    messages
+                        .iter()
+                        .filter(|message| {
+                            message
+                                .get("internetMessageHeaders")
+                                .and_then(Value::as_array)
+                                .is_some_and(|headers| {
+                                    headers.iter().any(|header| {
+                                        header.get("name").and_then(Value::as_str).is_some_and(
+                                            |name| name.eq_ignore_ascii_case(MAIL_ACTION_HEADER),
+                                        ) && header.get("value").and_then(Value::as_str)
+                                            == Some(attempt_id)
+                                    })
+                                })
+                        })
+                        .collect();
+                if matching.len() != 1 || value.get("@odata.nextLink").is_some() {
+                    return Ok(None);
+                }
+                Ok(matching[0]
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned))
             }
             Provider::AppleIcloud => Err(ProviderEffectError::Unsupported),
         }
@@ -734,6 +864,18 @@ fn valid_attempt_id(value: &str) -> bool {
     uuid::Uuid::parse_str(value).is_ok_and(|id| id.get_version_num() == 7)
 }
 
+fn attempt_timestamp(value: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let uuid = uuid::Uuid::parse_str(value).ok()?;
+    if uuid.get_version_num() != 7 {
+        return None;
+    }
+    let bytes = uuid.as_bytes();
+    let millis = u64::from_be_bytes([
+        0, 0, bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+    ]);
+    chrono::DateTime::from_timestamp_millis(i64::try_from(millis).ok()?)
+}
+
 /// Validate the currently supported plain-text send profile before a durable
 /// single-use dispatch claim is created.
 pub fn validate_mail_draft(draft: &MailDraft) -> Result<(), ProviderEffectError> {
@@ -771,25 +913,27 @@ fn graph_recipients(addresses: &[MailAddress]) -> Vec<Value> {
         .collect()
 }
 
-fn graph_send_payload(draft: &MailDraft) -> Value {
+fn graph_send_payload(draft: &MailDraft, attempt_id: &str) -> Value {
     json!({
         "message": {
             "subject": draft.subject,
             "body": {"contentType": "Text", "content": draft.body_text},
             "toRecipients": graph_recipients(&draft.to),
             "ccRecipients": graph_recipients(&draft.cc),
-            "bccRecipients": graph_recipients(&draft.bcc)
+            "bccRecipients": graph_recipients(&draft.bcc),
+            "internetMessageHeaders": [{"name": MAIL_ACTION_HEADER, "value": attempt_id}]
         },
         "saveToSentItems": true
     })
 }
 
-fn graph_reply_payload(draft: &MailDraft) -> Value {
+fn graph_reply_payload(draft: &MailDraft, attempt_id: &str) -> Value {
     json!({"message": {
         "body": {"contentType": "Text", "content": draft.body_text},
         "toRecipients": graph_recipients(&draft.to),
         "ccRecipients": graph_recipients(&draft.cc),
-        "bccRecipients": graph_recipients(&draft.bcc)
+        "bccRecipients": graph_recipients(&draft.bcc),
+        "internetMessageHeaders": [{"name": MAIL_ACTION_HEADER, "value": attempt_id}]
     }})
 }
 
@@ -967,8 +1111,8 @@ fn reply_subjects_match(source: &str, reply: &str) -> bool {
     base(source).eq_ignore_ascii_case(base(reply))
 }
 
-fn google_raw_reply(draft: &MailDraft, headers: &GoogleReplyHeaders) -> String {
-    let mut raw = google_raw_message(draft);
+fn google_raw_reply(draft: &MailDraft, headers: &GoogleReplyHeaders, attempt_id: &str) -> String {
+    let mut raw = google_raw_message(draft, attempt_id);
     // Insert before MIME headers; values are restricted to validated RFC message-id tokens.
     let mime = "MIME-Version: 1.0\r\n";
     raw = raw.replacen(
@@ -982,7 +1126,7 @@ fn google_raw_reply(draft: &MailDraft, headers: &GoogleReplyHeaders) -> String {
     raw
 }
 
-fn google_raw_message(draft: &MailDraft) -> String {
+fn google_raw_message(draft: &MailDraft, attempt_id: &str) -> String {
     let mut raw = String::new();
     raw.push_str(&format!("To: {}\r\n", google_addresses(&draft.to)));
     if !draft.cc.is_empty() {
@@ -992,6 +1136,7 @@ fn google_raw_message(draft: &MailDraft) -> String {
         raw.push_str(&format!("Bcc: {}\r\n", google_addresses(&draft.bcc)));
     }
     raw.push_str(&format!("Subject: {}\r\n", encoded_header(&draft.subject)));
+    raw.push_str(&format!("Message-ID: <{attempt_id}@vak.invalid>\r\n"));
     raw.push_str("MIME-Version: 1.0\r\n");
     raw.push_str("Content-Type: text/plain; charset=UTF-8\r\n");
     raw.push_str("Content-Transfer-Encoding: 8bit\r\n\r\n");
@@ -1474,6 +1619,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn sent_mail_reconciliation_confirms_only_unique_exact_markers() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-mail-reconcile-{}", uuid::Uuid::now_v7());
+        let google_id = uuid::Uuid::now_v7().to_string();
+        let graph_id = uuid::Uuid::now_v7().to_string();
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        for account_id in [&google_id, &graph_id] {
+            vault
+                .store(
+                    account_id,
+                    crate::vault::AccountSecretMaterial::new(
+                        format!("provider:{account_id}"),
+                        Some("owner@example.test".into()),
+                        None,
+                        Some("mock-access-token".into()),
+                        None,
+                        None,
+                        None,
+                    )
+                    .unwrap(),
+                )
+                .unwrap();
+        }
+        let visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let google_flag = Arc::clone(&visible);
+        let graph_flag = Arc::clone(&visible);
+        let attempt_for_google = attempt_id.clone();
+        let attempt_for_google_get = attempt_id.clone();
+        let attempt_for_graph = attempt_id.clone();
+        let app = Router::new()
+            .route("/gmail/v1/users/me/messages", get(move |Query(query): Query<std::collections::HashMap<String, String>>| {
+                let visible = google_flag.load(std::sync::atomic::Ordering::SeqCst);
+                let attempt = attempt_for_google.clone();
+                async move {
+                    assert_eq!(query.get("q"), Some(&format!("in:sent rfc822msgid:<{attempt}@vak.invalid>")));
+                    assert_eq!(query.get("maxResults").map(String::as_str), Some("2"));
+                    Json(if visible { json!({"messages":[{"id":"gmail-item"}]}) } else { json!({"messages":[]}) })
+                }
+            }))
+            .route("/gmail/v1/users/me/messages/gmail-item", get(move || {
+                let attempt = attempt_for_google_get.clone();
+                async move { Json(json!({"id":"gmail-item", "payload":{"headers":[{"name":"Message-ID", "value":format!("<{attempt}@vak.invalid>")}]}})) }
+            }))
+            .route("/graph/v1.0/me/mailFolders/sentitems/messages", get(move |Query(query): Query<std::collections::HashMap<String, String>>| {
+                let visible = graph_flag.load(std::sync::atomic::Ordering::SeqCst);
+                let attempt = attempt_for_graph.clone();
+                async move {
+                    assert!(query.get("$filter").is_some_and(|filter| filter.starts_with("sentDateTime ge ")));
+                    assert_eq!(query.get("$top").map(String::as_str), Some("10"));
+                    Json(if visible { json!({"value":[{"id":"graph-item", "internetMessageHeaders":[{"name":MAIL_ACTION_HEADER,"value":attempt}]}]}) } else { json!({"value":[]}) })
+                }
+            }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.google_gmail_base = format!("http://{address}/gmail/v1");
+        client.microsoft_graph_base = format!("http://{address}/graph/v1.0");
+        let mut google = calendar_account(&agent_id, &google_id, Provider::Google);
+        let mut graph = calendar_account(&agent_id, &graph_id, Provider::Microsoft);
+        for account in [&mut google, &mut graph] {
+            account.capabilities.insert(Capability::MailRead);
+            account.provider_scopes.insert("mail.read".into());
+        }
+        for (account, expected) in [(&google, None), (&graph, None)] {
+            assert_eq!(
+                client
+                    .reconcile_sent_mail(
+                        account,
+                        &vault,
+                        &agent_id,
+                        &format!("agent:{agent_id}"),
+                        &attempt_id
+                    )
+                    .await
+                    .unwrap(),
+                expected
+            );
+        }
+        visible.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            client
+                .reconcile_sent_mail(
+                    &google,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id
+                )
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("gmail-item")
+        );
+        assert_eq!(
+            client
+                .reconcile_sent_mail(
+                    &graph,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id
+                )
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("graph-item")
+        );
+        vault.remove(&google_id).unwrap();
+        vault.remove(&graph_id).unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn graph_reply_rechecks_source_then_posts_only_the_reviewed_reply() {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-reply-{}", uuid::Uuid::now_v7());
@@ -1560,6 +1820,7 @@ mod tests {
 
         let mut no_read = account.clone();
         no_read.capabilities.remove(&Capability::MailRead);
+        let attempt_id = uuid::Uuid::now_v7().to_string();
         assert_eq!(
             client
                 .send_mail(
@@ -1567,6 +1828,7 @@ mod tests {
                     &vault,
                     &agent_id,
                     &format!("agent:{agent_id}"),
+                    &attempt_id,
                     &draft
                 )
                 .await,
@@ -1580,6 +1842,7 @@ mod tests {
                 &vault,
                 &agent_id,
                 &format!("agent:{agent_id}"),
+                &attempt_id,
                 &draft,
             )
             .await
@@ -1594,6 +1857,10 @@ mod tests {
         assert_eq!(
             payload.pointer("/message/toRecipients/0/emailAddress/address"),
             Some(&json!("recipient@example.com"))
+        );
+        assert_eq!(
+            payload.pointer("/message/internetMessageHeaders/0/value"),
+            Some(&json!(attempt_id))
         );
         assert!(payload.pointer("/message/subject").is_none());
         vault.remove(&account_id).unwrap();
@@ -1944,7 +2211,7 @@ mod tests {
             reply_to_message_id: None,
             reply_to_thread_id: None,
         };
-        let raw = google_raw_message(&draft);
+        let raw = google_raw_message(&draft, &uuid::Uuid::now_v7().to_string());
         assert!(raw.contains("To: to@example.com\r\n"));
         assert!(raw.contains("Cc: cc@example.com\r\n"));
         assert!(raw.contains("Bcc: bcc@example.com\r\n"));
@@ -1991,7 +2258,7 @@ mod tests {
             reply_to_message_id: Some("m1".into()),
             reply_to_thread_id: Some("t1".into()),
         };
-        let raw = google_raw_reply(&draft, &headers);
+        let raw = google_raw_reply(&draft, &headers, &uuid::Uuid::now_v7().to_string());
         assert!(raw.contains("In-Reply-To: <source@example.com>\r\n"));
         assert!(raw.contains("References: <prior@example.com> <source@example.com>\r\n"));
         draft.subject = "Other subject".into();

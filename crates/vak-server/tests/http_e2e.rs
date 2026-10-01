@@ -1117,6 +1117,30 @@ async fn mail_calendar_provider_reads_require_owner_authentication() {
         .unwrap();
     assert_eq!(non_owner_reconcile.status(), reqwest::StatusCode::NOT_FOUND);
 
+    let reconcile_mail_url =
+        format!("http://{addr}/mail-calendar/accounts/unknown-agent/no-candidate/reconcile-mail");
+    let unauthenticated_mail_reconcile = reqwest::Client::new()
+        .post(&reconcile_mail_url)
+        .json(&reconcile_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unauthenticated_mail_reconcile.status(),
+        reqwest::StatusCode::UNAUTHORIZED
+    );
+    let non_owner_mail_reconcile = reqwest::Client::new()
+        .post(reconcile_mail_url)
+        .bearer_auth(&token)
+        .json(&reconcile_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        non_owner_mail_reconcile.status(),
+        reqwest::StatusCode::NOT_FOUND
+    );
+
     handle.abort();
 }
 

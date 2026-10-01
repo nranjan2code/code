@@ -1,6 +1,6 @@
 # 80 — Mail and calendar: governed account work
 
-Status: **in progress on `codex/mail-calendar` (2026-10-01).** Google,
+Status: **in progress on `codex/mail-calendar` (2026-10-02).** Google,
 Microsoft, and Apple account linking and bounded owner previews are implemented
 using the current 4.x storage model. Google and Microsoft support OAuth and an
 optional, warned local App Password path; Apple supports separately verified
@@ -66,7 +66,7 @@ select event start or end, an offset, a catch-up limit, and scheduled or
 about-once-a-minute polling in the routine editor. The full conversation
 workspace, Apple provider effects, broader Microsoft/event update and
 cancellation profiles, RSVP, complete event-trigger browser acceptance,
-broader provider reconciliation, live-provider conformance, full connected
+reconciliation for cancellations and Microsoft event updates, live-provider conformance, full connected
 source-to-Review browser acceptance, and 24-hour service-recovery acceptance
 remain open. `/health` exposes a volatile scheduler heartbeat for starting,
 active, or stale background scheduling, but this is not the sustained
@@ -164,13 +164,19 @@ look for that exact marker. A unique match confirms the stored receipt; no
 match or multiple matches leaves it unknown and permanently non-retryable.
 The supported Google conditional update also stores the attempt marker on the
 event; reconciliation reads that exact event and confirms only the matching
-marker. A missing event or marker remains inconclusive.
+marker. Email sends on Gmail and Microsoft Graph carry the durable attempt id
+as an opaque Message-ID/custom Internet header. The owner can check Sent mail;
+Gmail uses the exact RFC Message-ID query, while Graph checks a bounded,
+time-filtered Sent Items page. Only a unique exact marker confirms the receipt;
+missing, duplicate, or incomplete results remain inconclusive and non-retryable.
 The marker contains only the opaque attempt UUID, not account identity,
 Agent identity, event content, or message content. Reconciliation is a
-read-only CalendarWrite-account operation authorized by the same Agent broker
-and permission engine. Email sends, cancellations, and Microsoft event
-updates still need provider-specific reconciliation. This uses [Google private extended
-properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
+read-only operation requiring the owning Agent's MailRead or CalendarWrite
+capability and the matching broker permission. This uses [Gmail message search
+by RFC Message-ID](https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list),
+[Microsoft Graph custom Internet message headers](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0),
+[Graph message listing](https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0),
+[Google private extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
 and [Microsoft Graph single-value extended properties](https://learn.microsoft.com/en-us/graph/api/singlevaluelegacyextendedproperty-post-singlevalueextendedproperties?view=graph-rest-1.0).
 These effects require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain
@@ -178,7 +184,7 @@ non-retryable and appear in the local candidate list. Google event update
 re-reads the source event and sends a conditional ETag update; stale versions
 conflict and require a fresh preview and candidate. Microsoft update,
 cancellation outside the single-event Google profile above, RSVP operations,
-Agent-initiated effects, and provider reconciliation are not implemented.
+Agent-initiated effects, and 24-hour recovery acceptance remain open.
 The server checks provider/action compatibility both when saving a candidate
 and before writing its single-use effect claim. Microsoft event update remains
 disabled because the Graph v1.0 event update documentation does not establish

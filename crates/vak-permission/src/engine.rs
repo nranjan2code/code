@@ -66,13 +66,15 @@ const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
 /// — so the injection silently made `approval_mode = "auto-approve"` a
 /// no-op for exactly these two tools while working for every other one.
 /// A mode default must be sourced as a mode default.
-const NETWORK_TOOLS: [&str; 6] = [
+const NETWORK_TOOLS: [&str; 8] = [
     "webfetch",
     "browse",
     "mail_calendar_send",
     "mail_calendar_event_create",
     "mail_calendar_event_update",
     "mail_calendar_event_cancel",
+    "mail_calendar_event_reconcile",
+    "mail_calendar_mail_reconcile",
 ];
 
 impl PermissionEngine {
@@ -449,6 +451,41 @@ mod tests {
             ),
             Decision::Deny { .. }
         ));
+    }
+
+    #[test]
+    fn mail_calendar_provider_reconciliation_requires_an_explicit_read_approval() {
+        let engine = PermissionEngine::default();
+        for action in [
+            "mail_calendar_mail_reconcile",
+            "mail_calendar_event_reconcile",
+        ] {
+            for mode in [Mode::ReadOnly, Mode::WorkspaceWrite] {
+                assert!(
+                    matches!(
+                        engine.evaluate(
+                            action,
+                            &serde_json::json!({"candidate_id":"candidate-v7"}),
+                            mode,
+                            Path::new("/workspace")
+                        ),
+                        Decision::Ask { .. }
+                    ),
+                    "{action} in {mode:?}"
+                );
+            }
+            let denied =
+                PermissionEngine::from_rule_strings(&[format!("-{action}")]).expect("valid rule");
+            assert!(matches!(
+                denied.evaluate(
+                    action,
+                    &serde_json::json!({"candidate_id":"candidate-v7"}),
+                    Mode::FullAccess,
+                    Path::new("/workspace")
+                ),
+                Decision::Deny { .. }
+            ));
+        }
     }
 
     #[test]

@@ -366,6 +366,11 @@ export function reconcileMailCalendarEventCandidate(agentId: string, candidateId
     method: "POST", body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest }),
   });
 }
+export function reconcileMailCalendarMailCandidate(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<{ matched: boolean; state?: string; receipt?: { state: string; provider_item_id?: string | null; detail_code?: string | null }; message?: string }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/reconcile-mail`, {
+    method: "POST", body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest }),
+  });
+}
 
 export async function disconnectMailCalendarAccount(agentId: string, accountId: string): Promise<{ disconnected: boolean; already_disconnected: boolean; provider_grant_revoked: boolean; provider_revocation: "confirmed" | "unsupported" | "unconfirmed" | "not_retried"; content_erased: boolean }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/disconnect`, { method: "POST", body: "{}" });

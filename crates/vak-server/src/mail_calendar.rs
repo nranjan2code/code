@@ -1162,7 +1162,14 @@ pub(super) async fn send_mail_candidate(
     let result = match &candidate.action {
         ProposedAction::SendMail { draft } => {
             client
-                .send_mail(&account, &vault, &agent_id, &candidate.audience_id, draft)
+                .send_mail(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &candidate.audience_id,
+                    &receipt.attempt_id,
+                    draft,
+                )
                 .await
         }
         ProposedAction::CreateEvent { draft } => {
@@ -1492,6 +1499,169 @@ pub(super) async fn reconcile_event_candidate(
         }
         Ok(None) => (StatusCode::OK, Json(serde_json::json!({"matched": false, "state": receipt.state, "message": "No matching event is visible yet. The outcome remains unknown and the action cannot be retried."}))).into_response(),
         Err(ProviderEffectError::ReauthorizationRequired) => (StatusCode::PRECONDITION_REQUIRED, "Refresh this account's sign-in before checking the event result.").into_response(),
+        Err(ProviderEffectError::NotAdmitted) => StatusCode::FORBIDDEN.into_response(),
+        Err(_) => StatusCode::BAD_GATEWAY.into_response(),
+    }
+}
+
+/// Reconcile a sent-mail attempt by its exact provider-visible opaque marker.
+/// A missing marker leaves the durable action unknown and non-retryable.
+pub(super) async fn reconcile_mail_candidate(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<ReconcileEventRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if request.candidate_digest.len() != 64
+        || !request
+            .candidate_digest
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit())
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let vault = match AccountVault::for_agent(&agent_id) {
+        Ok(vault) => vault,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(initial) = vault
+        .list_candidates()
+        .ok()
+        .and_then(|rows| rows.into_iter().find(|row| row.id == candidate_id))
+    else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if initial.agent_id != agent_id || initial.audience_id != format!("agent:{agent_id}") {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let lock = state.mail_calendar_account_lock(&agent_id, &initial.account_id);
+    let _guard = lock.lock().await;
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let candidate = match vault
+        .list_candidates()
+        .ok()
+        .and_then(|rows| rows.into_iter().find(|row| row.id == candidate_id))
+    {
+        Some(candidate) => candidate,
+        None => return StatusCode::CONFLICT.into_response(),
+    };
+    if candidate.agent_id != agent_id
+        || candidate.account_id != initial.account_id
+        || candidate.revision != request.expected_revision
+        || !candidate
+            .digest()
+            .is_ok_and(|digest| digest == request.candidate_digest)
+    {
+        return (
+            StatusCode::CONFLICT,
+            "The draft changed; reload its latest status before reconciling.",
+        )
+            .into_response();
+    }
+    if !matches!(candidate.action, ProposedAction::SendMail { .. }) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Only an ambiguous sent-mail action can be reconciled here.",
+        )
+            .into_response();
+    }
+    let Some(mut receipt) = vault.list_action_receipts().ok().and_then(|rows| {
+        rows.into_iter()
+            .find(|row| row.candidate_id == candidate.id)
+    }) else {
+        return StatusCode::CONFLICT.into_response();
+    };
+    if !matches!(
+        receipt.state,
+        ActionState::Unknown | ActionState::Dispatching
+    ) || receipt.candidate_digest != request.candidate_digest
+        || receipt.account_id != candidate.account_id
+    {
+        return (
+            StatusCode::CONFLICT,
+            "This mail action does not have a reconcilable ambiguous outcome.",
+        )
+            .into_response();
+    }
+    let ledger = match ConnectionLedger::for_agent(&agent_id) {
+        Ok(ledger) => ledger,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let account = match ledger.read_all().ok().and_then(|accounts| {
+        accounts.into_iter().find(|account| {
+            account.id == candidate.account_id
+                && account.owner_agent_id == agent_id
+                && account.admits(&agent_id, &candidate.audience_id, Capability::MailRead)
+        })
+    }) {
+        Some(account) => account,
+        None => return StatusCode::FORBIDDEN.into_response(),
+    };
+    if !matches!(account.provider, Provider::Google | Provider::Microsoft) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "This provider does not support sent-mail reconciliation.",
+        )
+            .into_response();
+    }
+    if account
+        .access_token_expires_at
+        .is_some_and(|expires| expires <= Utc::now())
+        || !vault.credential_available(&account.id)
+    {
+        return (
+            StatusCode::PRECONDITION_REQUIRED,
+            "Refresh this account's sign-in before checking the send result.",
+        )
+            .into_response();
+    }
+    let core = match agent_chats::resolve_agent_core(&state, &agent_id) {
+        Ok((_, core)) => core,
+        Err(response) => return response,
+    };
+    let engine = match core.build_permission_engine(&[]) {
+        Ok(engine) => engine,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let mode = match core.effective_permission_mode() {
+        vak_config::PermissionMode::ReadOnly => vak_permission::Mode::ReadOnly,
+        vak_config::PermissionMode::WorkspaceWrite => vak_permission::Mode::WorkspaceWrite,
+        vak_config::PermissionMode::FullAccess => vak_permission::Mode::FullAccess,
+    };
+    let args = serde_json::json!({"agent_id": agent_id, "account_id": account.id, "candidate_id": candidate.id, "candidate_digest": request.candidate_digest});
+    if matches!(
+        engine.evaluate("mail_calendar_mail_reconcile", &args, mode, core.cwd()),
+        vak_permission::Decision::Deny { .. }
+    ) {
+        return (
+            StatusCode::FORBIDDEN,
+            "The Agent's permission rules deny this provider read.",
+        )
+            .into_response();
+    }
+    let client = match ProviderEffectClient::new() {
+        Ok(client) => client,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    match client.reconcile_sent_mail(&account, &vault, &agent_id, &candidate.audience_id, &receipt.attempt_id).await {
+        Ok(Some(item_id)) => {
+            receipt.state = ActionState::Confirmed;
+            receipt.provider_item_id = Some(item_id);
+            receipt.detail_code = Some("provider_mail_confirmed_by_reconciliation".into());
+            receipt.observed_at = Utc::now();
+            if vault.settle_action(receipt.clone()).is_err() { return StatusCode::SERVICE_UNAVAILABLE.into_response(); }
+            (StatusCode::OK, Json(serde_json::json!({"matched": true, "receipt": receipt}))).into_response()
+        }
+        Ok(None) => (StatusCode::OK, Json(serde_json::json!({"matched": false, "state": receipt.state, "message": "No matching sent message is visible yet. The outcome remains unknown and the action cannot be retried."}))).into_response(),
+        Err(ProviderEffectError::ReauthorizationRequired) => (StatusCode::PRECONDITION_REQUIRED, "Refresh this account's sign-in before checking the send result.").into_response(),
         Err(ProviderEffectError::NotAdmitted) => StatusCode::FORBIDDEN.into_response(),
         Err(_) => StatusCode::BAD_GATEWAY.into_response(),
     }
