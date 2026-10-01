@@ -1729,7 +1729,7 @@ mod tests {
                     provider_id: "message-1".into(),
                     thread_id: Some("thread-1".into()),
                     from: Some("sender@example.com".into()),
-                    reply_to: None,
+                    reply_to: Some("Reply Desk <reply@example.com>".into()),
                     to: Some("recipient@example.com".into()),
                     cc: None,
                     subject: "Decision".into(),
@@ -1750,7 +1750,10 @@ mod tests {
         assert_eq!(citation["message_id"], "message-1");
         assert_eq!(citation["token"], "mailcite:account-1/thread-1/message-1");
         assert_eq!(value["messages"][0]["trust"], "untrusted_provider_content");
-        assert!(value["messages"][0]["external_content"]["reply_to"].is_null());
+        assert_eq!(
+            value["messages"][0]["external_content"]["reply_to"],
+            "Reply Desk <reply@example.com>"
+        );
         assert_eq!(
             value["messages"][0]["external_content"]["to"],
             "recipient@example.com"
