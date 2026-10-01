@@ -806,7 +806,8 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
   };
   const facts = () => file.facts() ? officeFactsLine(file.facts()!) : fileKind(artifact.name, artifact.media_type);
   const kind = () => fileKind(artifact.name, artifact.media_type);
-  const fileIcon = () => kind() === "Spreadsheet" ? "sheet" as const : kind() === "Presentation" ? "slides" as const : kind() === "PDF" ? "pdf" as const : "file" as const;
+  const fileIcon = () => kind() === "Word document" ? "word" as const : kind() === "Spreadsheet" ? "sheet" as const : kind() === "Presentation" ? "slides" as const : kind() === "PDF" ? "pdf" as const : kind() === "Diagram" ? "diagram" as const : "file" as const;
+  const hasPreview = () => kind() === "Image" || kind() === "Web page";
   const askForChanges = () => {
     const resultId = props.resultId;
     if (!resultId) return;
@@ -814,11 +815,13 @@ export function ResultCard(props: { item: OutputItem; sessionId: string; resultI
     window.dispatchEvent(new CustomEvent("vak:focus-composer"));
   };
   return (
-    <article class="result-card" aria-label={artifact.name}>
-      <div class="result-card-preview-wrap">
-        <ResultPreview item={props.item} sessionId={props.sessionId} />
-        <span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={20} /></span>
-      </div>
+    <article class="result-card" classList={{ "has-preview": hasPreview() }} aria-label={artifact.name}>
+      <Show when={hasPreview()} fallback={<span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={19} /></span>}>
+        <div class="result-card-preview-wrap">
+          <ResultPreview item={props.item} sessionId={props.sessionId} />
+          <span class={`result-card-file-icon ${fileIcon()}`} aria-hidden="true"><Icon name={fileIcon()} size={18} /></span>
+        </div>
+      </Show>
       <div class="result-card-text">
         <Show when={words()}>{(value) => <p class="result-card-status" classList={{ waiting: value().waiting }}><Show when={value().waiting}><span class="result-card-dot" aria-hidden="true" /></Show>{value().headline}</p>}</Show>
         <h3 class="result-card-name">{artifact.name}</h3>
