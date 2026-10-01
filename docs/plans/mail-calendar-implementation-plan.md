@@ -2510,3 +2510,12 @@ remains open.
   language. `cargo test --offline --locked -p vak-core
   mail_calendar_tool_prompt_states_authority_evidence_and_action_boundaries`
   passes.
+- 2026-10-02: Fixed the synthetic regression-pack script to enable Server's
+  `test-support` feature for its loopback-only OAuth endpoint tests. The pack
+  previously stopped at a compile error because those tests reference a
+  feature-gated AppState field. The full pack now passes: web build and fixture
+  typecheck, 132 provider/vault tests, 19 Core tests, 19 focused Server tests
+  plus four owner-authenticated HTTP tests and one scheduled owner-API run,
+  Agent-vault restart/requeue, and five isolated-worker tests. No live provider
+  or developer account data was used. Sustained 24-hour recovery and live
+  provider conformance remain open.
