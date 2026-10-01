@@ -201,26 +201,39 @@ it?" becomes answerable from the ledger alone. That is the same question
 receipts answer for provider dispatch, and it is the reason to spend a digest
 here rather than storing the assembled string and hoping.
 
-### Drift on resume
+### Per-turn resolution
 
-The assembled prompt freezes at session creation (AGENTS.md rule 17), so a
-resumed session keeps the prompt it was born with. With descriptors recorded,
-that stops being silent — but the right response differs by who chose the
-session, and the repo already has both idioms:
+The prompt is resolved per turn, never frozen per session. Each turn reads
+every layer afresh and renders the prefix from the capabilities admitted
+for that turn (`Core::run_turn_inner` → `Core::prompt_layers`), so an edit
+to any layer applies from the next turn of every session — CLI, desktop,
+web, chat and scheduled — with no rotation and no restart. This is the
+prompt half of invariant 31: configuration reaches a long-lived session at
+a turn boundary.
 
-| Resume path | Behaviour | Why |
+The record follows the same split as routing (invariant 7):
+
+| Record | Written | What it is |
 |---|---|---|
-| Gateway chat binding | **rotate** to a fresh session, old ledger intact | The operator never named this session; a chat binding is implicit, exactly like the route change that already rotates it. |
-| `vak exec --session <id>` | **fail closed**, `--accept-drift` to proceed on the frozen prompt | The user named this session by id. Silently running different instructions would be the wrong surprise — the same shape `flow run --resume` uses for a drifted definition. |
+| `FrozenContract.prompt_layers` | once, at admission | audit snapshot of who contributed what when the session opened |
+| `TurnCapabilitiesBound.system_prompt` | every turn | the exact prefix that turn sent: the authority for what the model was told |
+| `WorkReceipt.prefix_digest` | every step | the hash of prefix and tool schemas; a change writes a `prefix-changed` activity |
 
-An empty frozen list means *unknown baseline*, not *everything was added*:
-ledgers written before prompt layers exist in every store, and reporting drift
-on all of them would make the signal worthless on day one.
+`Core::prompt_drift` compares the admission descriptors with today's
+resolution. It is an audit signal, not a gate. An empty admission list
+means *unknown baseline*, not *everything was added*. When the gateway
+rotates a binding for another reason (an explicit channel route override,
+a different workspace, Agent or conversation), it writes a `ConfigChange`
+security event naming any prompt change, so "my bot started answering
+differently" is answerable from the audit trail.
 
-Rotation writes a `ConfigChange` security event naming what changed, because
-a rotation is otherwise indistinguishable from a route change or a deleted
-ledger — and "my bot started answering differently" is exactly the question an
-operator brings to the audit trail.
+Two pieces are not yet per turn: a saved Agent's identity and instructions
+are read from the session header's `AgentIdentity`, recorded at admission
+(that Agent's prompt files are read per turn), and `vak exec --session`
+still refuses a session whose layers changed since admission unless
+`--accept-drift` is passed, with a message saying the frozen prompt runs.
+Both predate this section; the second message is inaccurate, since the
+turn runs the current prompt.
 
 ### Budget
 
@@ -284,10 +297,10 @@ The load-bearing UX decisions:
   exact assembled text. Without it, per-tier overrides are guesswork.
 - **Diff vs shipped default** is always one click away, so "what did I
   actually change?" never requires a git checkout.
-- **Save says when it takes effect.** Prompt edits do not retro-apply to a
-  running turn; the toast says "applies to new sessions" and links to the
-  drift behaviour above. Anything else implies an instant effect that the
-  freeze contract does not provide.
+- **Save says when it takes effect.** An edit applies from the next turn
+  of every session; a turn already running keeps the prompt it started
+  with. (The shipped Admin and Settings copy still says "applies to new
+  sessions", which is inaccurate.)
 - Bot and chat prompt tiers live in the existing gateway editors beside their
   `voice`, `route`, and `permission_mode` controls — the tier chain is already
   taught there, and a second place to edit chat behaviour would split it.
@@ -380,8 +393,10 @@ Shipped:
    schema `enum` of admitted roles, and an unadmitted name is refused rather
    than silently falling back to the default prompt.
 
-7. Drift on resume: `Core::prompt_drift`, gateway rotation with a recorded
-   `ConfigChange` event, and `vak exec --session --accept-drift`.
+7. Per-turn resolution with an admission snapshot: `Core::prompt_drift`
+   as an audit signal, and a `ConfigChange` event when a gateway rotation
+   coincides with a prompt change. `vak exec --session --accept-drift` is a
+   leftover gate (see *Per-turn resolution*).
 8. `VoiceConfig.persona` absorbed into the bot/chat `identity` block, with the
    legacy field kept as a fallback. `PATCH` on a bot and on an allowlist entry
    both accept a `prompt` tier, so the gateway layers are reachable.
@@ -410,9 +425,10 @@ way to set identity and rules (invariant 30).
   narrower file (AGENTS.md rule 21).
 - The assembled prompt for a given surface/bot/chat triple is byte-identical
   between `preview` and the turn actually dispatched.
-- A resumed chat binding whose prompt digests changed rotates, records a
-  drift event, and leaves the old ledger intact.
-- `vak exec --session` refuses a drifted session until `--accept-drift`.
+- A layer edit reaches the next turn of an existing session without a
+  rotation, and that turn's `TurnCapabilitiesBound.system_prompt` holds the
+  new text.
+- A turn already running keeps the prefix it started with on every step.
 - A session whose ledger predates prompt layers never reports drift.
 - One persona: the `identity` block wins, `VoiceConfig.persona` is fallback.
 - A surface note never replaces or reorders the generated `Surface:` line,

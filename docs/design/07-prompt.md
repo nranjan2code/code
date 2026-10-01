@@ -15,7 +15,7 @@ flowchart LR
     A[Block-marked seed] --> D[Prompt layer resolver]
     B[Shared, project, surface, bot, chat, agent layers] --> D
     C[Admitted tools, skills, MCP and surface facts] --> D
-    D --> E[Stable prefix in frozen session contract]
+    D --> E[Stable prefix, resolved every turn]
     D --> F[Temporal and epistemic tail]
     F --> G[Per-turn request assembly]
     E --> G
@@ -27,7 +27,10 @@ The prefix says what this agent can actually call, where the result will be
 read, and the human-editable guidance that survived trust resolution. The
 tail carries temporal and epistemic stance; request assembly places it with
 logged per-turn intent, work and conversation sections before the user's
-last directive. Prompt drift compares the stable prefix. Code-owned tool
+last directive. The prompt is resolved per turn: each turn reads the layers
+and the admitted capabilities afresh, so an edit applies from the next turn
+of every session; the prefix a turn sent is recorded in its
+`TurnCapabilitiesBound`. Code-owned tool
 descriptions and schemas remain the callable source of truth; skills are
 documents reached through `skill`, and deferred tools are loaded through
 `find_tools`.
@@ -120,6 +123,11 @@ retained.
   `Surface:` line. This is the same staleness the frozen skills and MCP
   sections already carry, and it is left consistent with them deliberately
   rather than given a bespoke live-patching path for one line.
+
+  *Superseded:* the prefix is now resolved per turn by the `Core` running
+  the turn, so a session resumed on another surface gets that surface's
+  `Surface:` line, and skills and MCP sections reflect the current admitted
+  set.
 
 - v0.2.2: the seed became a *seed*. The single document is now split on
   `<!-- block: ... -->` markers into `identity`, `capability_contract`,

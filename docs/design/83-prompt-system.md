@@ -137,7 +137,7 @@ This is the most useful lens for reasoning about caching, drift and audit.
 ```mermaid
 flowchart TB
     S["STATIC — compiled into the binary<br/>seed blocks · Surface texts · stance guidelines ·<br/>nudge texts · side-dispatch system prompts · built-in role texts"]
-    C["CONFIGURED — changes when someone edits a layer<br/>Shared/project/surface/agents prompt files ·<br/>bot and chat prompt tiers · Agent definition"]
+    C["CONFIGURED — read every turn, changes when someone edits a layer<br/>Shared/project/surface/agents prompt files ·<br/>bot and chat prompt tiers · Agent definition"]
     P["PER-CAPABILITY — changes when the admitted set changes<br/>which contracts appear · skills list · MCP list ·<br/>More tools catalogue · Not-usable standing · tool schemas"]
     T["PER-TURN — computed once per turn, identical on every step<br/>turn_context time · intent note · stance ·<br/>work contract · workspace delta · conversation thread ·<br/>loaded vs deferred tools · working-set plan"]
     X["PER-STEP — appended as the turn runs<br/>assistant steps · tool results · find_tools promotions ·<br/>control nudges · stop guards"]
@@ -152,7 +152,7 @@ flowchart TB
 | Lifetime | Examples | Where it lands | Recorded in |
 |---|---|---|---|
 | Static | seed, `Surface::prompt_section` texts, `EpistemicStance::guideline_prompt`, `ControlKind` nudge bodies, `COMPACTION_SYSTEM`, `AUDIT_SYSTEM`, `HANDOFF_SYSTEM`, `CONTRACT_AUTHOR_SYSTEM`, `PLANNER_SYSTEM`, reflection's `system_prompt()` | prefix, tail, nudges, side dispatches | the binary's version (`FrozenContract.app_version`) and every entry that carries the rendered text |
-| Configured | `.vak/prompts/*.md`, `Bot.prompt`, `AllowlistEntry.prompt`, `AgentDefinition` | prefix | `FrozenContract.prompt_layers` (digests at admission), `TurnCapabilitiesBound.system_prompt` (each turn) |
+| Configured | `.vak/prompts/*.md`, `Bot.prompt`, `AllowlistEntry.prompt`, Agent prompt files | prefix, read afresh every turn (a saved Agent's identity and instructions are the exception, §23) | `TurnCapabilitiesBound.system_prompt` (each turn, authoritative); `FrozenContract.prompt_layers` (admission snapshot) |
 | Per-capability | contracts present or absent, skills, MCP names, "More tools", standing | prefix, tool array | `TurnCapabilitiesBound` |
 | Per-turn | `<turn_context>`, `<intent>`, `<stance>`, `<work_contract>`, `<workspace_delta>`, `<conversation_thread>` | tail | `turn_context` activity, `Intent` entry, work/goal entries, `workspace_delta` activity |
 | Per-step | tool results, nudges, `find_tools` additions | messages after the directive, tool array | message entries, receipts |
@@ -267,8 +267,8 @@ flowchart TB
 Each winning contribution becomes a `PromptLayerDescriptor { block, layer,
 source, digest, bytes }` (`vak-session`, re-exported from
 `vak_core::prompts`). `Resolution::fingerprint` hashes the ordered
-descriptor list; `prompts::drift` compares a frozen list with a current one
-and reports `added`, `removed`, `changed`. An empty frozen list means an
+descriptor list; `prompts::drift` compares the admission list with a current one
+and reports `added`, `removed`, `changed`, as an audit signal. An empty admission list means an
 unknown baseline, never "everything changed".
 
 ---
@@ -572,8 +572,9 @@ Notes on the sequence:
 - **Per-turn re-rendering.** The prefix is rendered from the current
   admitted capabilities each turn (`rebound_capabilities`), so a capability
   change reaches a live session at the next turn without rotation
-  (invariant 31). Editable layers are read from disk on each render, too
-  (see §23).
+  (invariant 31). Editable layers are read afresh on each render too, so
+  the prompt is resolved per turn, never frozen per session: a layer edit
+  applies from the next turn of every session.
 - **Steering mid-turn.** A message the person sends while a turn runs is
   drained at the next step boundary, normalised, recorded as a goal update,
   and appended as an ordinary user message. Only explicit commands
@@ -672,7 +673,7 @@ pipeline above, so they get the full prefix and tail.
 
 | Path | Surface | Prefix | Tail | Notes |
 |---|---|---|---|---|
-| CLI `vak exec` | `Cli` | full | yes | `--session` resumes and checks prompt drift |
+| CLI `vak exec` | `Cli` | full | yes | `--session` resumes; still gated by a leftover drift check (§23) |
 | `vak term` | `Terminal` | full | yes | a client of a server |
 | Desktop | `Desktop` | full | yes | |
 | Browser app | `Web` | full | yes | |
@@ -694,7 +695,7 @@ the ledger. This is how each piece satisfies it.
 
 | Model-visible piece | Ledger record |
 |---|---|
-| Admission-time prefix and its provenance | `SessionHeader.contract` (`FrozenContract.system_prompt`, `.prompt_layers`, `.capabilities`) |
+| Admission snapshot of the prefix and its provenance (audit only) | `SessionHeader.contract` (`FrozenContract.system_prompt`, `.prompt_layers`, `.capabilities`) |
 | The prefix and tool schemas actually bound this turn | `TurnCapabilitiesBound { system_prompt, tool_schemas, core_tool_names, deferred_tool_names, tool_index, … }` |
 | `<turn_context>` and `<stance>` | `Activity` with `data.section = "turn_context"`, written before the first request |
 | `<intent>` | `Intent` entry, `model_visible` |
@@ -759,11 +760,13 @@ flowchart TB
 - **Tool and document content is data.** The seed says so; every side
   dispatch says so; the capability contract says runtime `<…>` blocks and
   `[marker]:` lines are runtime guidance, not the person's words.
-- **Drift.** `Core::prompt_drift` compares the frozen descriptors with
-  today's resolution. `vak exec --session <id>` refuses a drifted session
-  until `--accept-drift`. The gateway records a `ConfigChange` security
-  event naming the change when it rotates a binding. See §23 for what
-  triggers that rotation in the current code.
+- **Per turn, not per session.** Every turn resolves the layers afresh,
+  so an edit applies from the next turn of every session with no rotation;
+  the prefix each turn sent is in its `TurnCapabilitiesBound`.
+  `Core::prompt_drift` compares the admission snapshot with today's
+  resolution as an audit signal. When the gateway rotates a binding for
+  another reason it records a `ConfigChange` security event naming any
+  prompt change.
 
 ---
 
@@ -915,13 +918,20 @@ files apply: the identity replaces the seed's, and the guardrail is
 appended. It still enforces nothing; the stop policy and receipts decide
 whether tests passed (invariant 33).
 
-### 20.8 Editing a Shared guardrail, then resuming
+### 20.8 Editing a Shared guardrail mid-conversation
 
-The user adds a Shared guardrail, then runs
-`vak exec --session 0192… "continue"`. The frozen descriptors lack the
-new `guardrails / shared` contribution, so `prompts::drift` reports
-`+ guardrails from Shared` and the command exits with code 2 until
-`--accept-drift` is passed.
+The person has a desktop conversation open and adds a Shared guardrail
+"Answer in British English." in Settings → Prompts. Their next message
+starts a new turn; `Core::prompt_layers` reads the Shared layer again, and
+the guardrail is appended after the seed's four. The turn's
+`TurnCapabilitiesBound.system_prompt` holds the new prefix, and the first
+receipt's `prefix_digest` differs from the previous turn's, so a
+`prefix-changed` activity marks the cache break. No rotation happens and
+the conversation continues. A turn that was already running when the edit
+was saved finishes on the prefix it started with.
+
+The exception today is `vak exec --session <id>`, which refuses to resume
+until `--accept-drift` is passed (§23).
 
 ---
 
@@ -979,20 +989,16 @@ new `guardrails / shared` contribution, so `prompts::drift` reports
 Found while writing this reference, against the tree at 5.3.2. They are
 recorded, not fixed here.
 
-1. **Prompt-layer edits reach live sessions at the next turn.** Doc 45
-   says edits "apply to new sessions", and invariant 28 says an implicit
-   binding rotates on drift. In the code, `run_turn_inner` re-renders the
-   prefix every turn through `resolve_prompt_with_stance_parts`, which
-   calls `Core::prompt_layers`, which reads the layer files from disk. So
-   a Shared or project edit changes the prefix of every open desktop, web
-   or chat session at its next turn. `TurnCapabilitiesBound.system_prompt`
-   records the new text, so invariant 1 holds, but the frozen
-   `prompt_layers` describes only admission.
-2. **The gateway does not rotate on prompt drift alone.**
-   `session_matches_route` (`crates/vak-server/src/gateway.rs`) compares
-   workspace, Agent, conversation and, with a channel route override,
-   provider and model. Drift is computed and recorded with
-   `record_prompt_drift` only when one of those already caused a rotation.
+1. **Leftover per-session gate in the CLI.** The prompt is resolved per
+   turn, but `vak exec --session <id>` still refuses a session whose layers
+   changed since admission unless `--accept-drift` is passed, and its
+   message says "resume executes the FROZEN prompt", which is false: the
+   turn runs the current prompt.
+2. **Saved Agent identity is per session.** A saved Agent's identity and
+   instructions come from the session header's `AgentIdentity`, recorded
+   at admission; editing the Agent does not reach an open session's next
+   turn, unlike every other layer. The Agent's own prompt files are read
+   per turn.
 3. **Doc 68 §6's tail order** lists `<thread>` before `<work_contract>`;
    `compose_tail` emits `<turn_context>`, `<intent>`, `<stance>`,
    `<work_contract>`, `<workspace_delta>`, `<conversation_thread>`. Doc
@@ -1004,9 +1010,10 @@ recorded, not fixed here.
    is shadowed by a bot or chat identity, while descriptors are sorted by
    enum order.
 
-Items 1 and 2 are a decision for the maintainer: either the docs and
-invariant 28 describe per-turn adoption of layer edits, or the per-turn
-render reads the frozen layers and drift gates every resume path.
+5. **UI copy.** Admin `#/prompts` and the client's Settings → Prompts say
+   changes "apply to new sessions"; they apply from the next turn.
+
+Items 1, 2 and 5 are code that does not yet follow the per-turn model.
 
 ---
 

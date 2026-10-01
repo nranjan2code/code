@@ -459,14 +459,16 @@ in progress, and the rest of V4 follows it.
     applied. `/health`, `/config`, `/providers`, admin snapshots, and session
     transcripts must report effective values and their source where relevant.
     CLI flags, task pins, heartbeat pins, and worker pins are scoped
-    overrides and must remain visibly non-global. Session provider/model
-    contracts freeze at session creation; changing workspace defaults never
-    rewrites an existing session or silently changes its dispatch. Provider
-    and model are one atomic route at every read/write boundary. New-session
-    admission refreshes persisted defaults across processes unless an explicit
-    scoped pin is present. Gateway bindings expose route provenance and stale
-    reasons; a changed effective route rotates to a new frozen session while
-    preserving the old append-only ledger. Persisted max-turns, theme, MCP,
+    overrides and must remain visibly non-global. Provider and model resolve
+    per turn from the live `effective_route()` (invariant 7); the session
+    header's route is the admission snapshot for audit, each turn's dispatch
+    is recorded in its `WorkReceipt`, and changing workspace defaults never
+    rewrites an existing ledger. Provider and model are one atomic route at
+    every read/write boundary. Admission refreshes persisted defaults across
+    processes unless an explicit scoped pin is present. Gateway bindings
+    expose route provenance and stale reasons; a changed explicit channel
+    route override rotates the binding to a new session while preserving the
+    old append-only ledger. Persisted max-turns, theme, MCP,
     hooks, and permission mode use the same cross-process refresh; permission
     changes revoke active capabilities before apply — true today for
     `state.sessions` (`apply_permission_mode`, vak-server/src/lib.rs; a
@@ -643,11 +645,13 @@ in progress, and the rest of V4 follows it.
     that must hold without trust is a structured `deny`/`ask` rule.
     Guardrail text instructs and never enforces; `PermissionEngine`, the
     broker, and the sandbox are the boundary, and no surface may word it
-    otherwise. Every winning contribution is recorded in
-    `FrozenContract.prompt_layers` with a digest, ordered by layer breadth,
-    never alphabetically. On resume an implicit binding (a gateway chat)
-    rotates and records the drift; a session the user named by id fails closed
-    until `--accept-drift`. An empty frozen list means *unknown baseline*, not
+    otherwise. The prompt is resolved per turn, never frozen per session:
+    every turn reads the layers afresh, so an edit applies from the next turn
+    of every session without a rotation, and the prefix that turn sent is
+    recorded in its `TurnCapabilitiesBound`. Every winning contribution at
+    admission is recorded in `FrozenContract.prompt_layers` with a digest,
+    ordered by layer breadth, never alphabetically; that list is an audit
+    snapshot, not authority. An empty list means *unknown baseline*, not
     *everything changed*. An inbound message may never write a prompt layer.
 29. **2.0.0 is the supported baseline.** No code may accept, migrate, or
     special-case state written by an earlier version. A data home, install
