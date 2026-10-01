@@ -21,6 +21,7 @@ const accounts = providerTypes.flatMap((provider) => Array.from({ length: 3 }, (
   revoked_at: null,
 })));
 const requests: string[] = [];
+const fixtureErrors: string[] = [];
 const activeAccounts = new Map<string, number>();
 let maxConcurrentAccounts = 0;
 const now = new Date();
@@ -29,6 +30,7 @@ const localDayStart = new Date(`${day(now)}T00:00:00`);
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 
 window.fetch = async (input) => {
+  try {
   const url = new URL(String(input), location.origin);
   requests.push(`${url.pathname}${url.search}`);
   if (url.pathname === "/mail-calendar/accounts") return json({ accounts });
@@ -36,7 +38,7 @@ window.fetch = async (input) => {
   const account = accounts.find((candidate) => candidate.id === accountId)!;
   activeAccounts.set(accountId, (activeAccounts.get(accountId) ?? 0) + 1);
   maxConcurrentAccounts = Math.max(maxConcurrentAccounts, activeAccounts.size);
-  await new Promise((resolve) => setTimeout(resolve, 5));
+  await Promise.resolve();
   try {
     if (url.pathname.endsWith("/mail-preview")) {
       return json({ messages: Array.from({ length: 8 }, (_, index) => ({
@@ -71,6 +73,10 @@ window.fetch = async (input) => {
     if (active === 0) activeAccounts.delete(accountId);
     else activeAccounts.set(accountId, active);
   }
+  } catch (cause) {
+    fixtureErrors.push(cause instanceof Error ? cause.message : String(cause));
+    throw cause;
+  }
 };
 
 render(() => <DailyMailCalendarViewer
@@ -89,7 +95,13 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   return predicate();
 };
 (window as any).runChecks = async () => {
-  await waitFor(() => document.querySelectorAll(".daily-mail-calendar-message").length === 72);
+  const mailRowsLoaded = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-message").length === 72);
+  if (!mailRowsLoaded) {
+    const mailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
+    const mailRequests = requests.filter((path) => path.endsWith("/mail-preview"));
+    const warnings = [...document.querySelectorAll(".daily-mail-calendar-warning")].map((node) => node.textContent?.trim()).filter(Boolean);
+    throw new Error(`Expected 72 mail rows after the initial read; found ${mailRows} from ${mailRequests.length} requests (${mailRequests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
+  }
   const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;

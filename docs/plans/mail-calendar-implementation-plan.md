@@ -1873,3 +1873,8 @@ remains open.
   visibility and explicit refresh. Production UI build/typecheck and the
   mail/calendar mock regression pack pass. Provider push notifications and
   full connected-account browser acceptance remain open.
+- Follow-up: the updated browser fixture currently remains in “Preparing
+  preview…” after capturing its nine mail-read requests, so its row, event
+  selection, and refresh assertions are not verified in a rendered browser.
+  The fixture now reports captured routes and local handler errors; next
+  diagnose why the viewer's bounded preview load does not settle in that run.
