@@ -253,6 +253,7 @@ export interface MailCalendarRoutineRun {
   status: "running" | "complete" | "failed" | "no_changes" | "interrupted";
   started_at: string;
   finished_at: string | null;
+  items_returned: number;
 }
 
 export function listMailCalendarRoutineRuns(agentId: string, routineId: string): Promise<{ runs: MailCalendarRoutineRun[] }> {

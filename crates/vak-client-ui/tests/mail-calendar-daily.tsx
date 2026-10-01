@@ -78,7 +78,7 @@ window.fetch = async (input, init) => {
     }
     if (url.pathname.endsWith("/run-now") && init?.method === "POST") return json({ started: true });
     if (url.pathname === "/sessions/fixture-active-session/cancel" && init?.method === "POST") return json({ cancelled: true });
-    if (url.pathname.startsWith("/mail-calendar/accounts/fixture-owner/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-routine-run", routine_id: "fixture-routine-0", account_id: "g-account-0", session_id: "fixture-routine-session", trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString() }] });
+    if (url.pathname.startsWith("/mail-calendar/accounts/fixture-owner/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-routine-run", routine_id: "fixture-routine-0", account_id: "g-account-0", session_id: "fixture-routine-session", trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), items_returned: 4 }] });
     if (url.pathname.startsWith("/tasks/") && init?.method === "DELETE") {
       const id = url.pathname.split("/").at(-1)!;
       const index = routines.findIndex((task) => task.id === id);
@@ -242,7 +242,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const firstRoutine = () => document.querySelector<HTMLElement>(".daily-mail-calendar-routine");
   firstRoutine()?.querySelector<HTMLDetailsElement>(".mail-calendar-routine-history")?.querySelector("summary")?.click();
   const routineHistoryLoadsInCanvas = await waitFor(() => requests.includes("/mail-calendar/accounts/fixture-owner/routines/fixture-routine-0/history")
-    && firstRoutine()?.querySelector(".mail-calendar-routine-history li") !== null);
+    && firstRoutine()?.querySelector(".mail-calendar-routine-history li") !== null
+    && firstRoutine()?.querySelector(".mail-calendar-routine-history li")?.textContent?.includes("4 results used") === true);
   const action = (label: string) => [...(firstRoutine()?.querySelectorAll<HTMLButtonElement>(".settings-actions button") ?? [])].find((button) => button.textContent?.trim() === label);
   action("Preview run")?.click();
   const routinePreviewRunWorks = await waitFor(() => requests.includes("/tasks/fixture-routine-0/run-now"));

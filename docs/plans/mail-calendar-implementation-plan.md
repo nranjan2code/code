@@ -2228,5 +2228,12 @@ remains open.
   configurable in Today Canvas. Owners can select 5, 10, or 20 results shared
   across all mail and calendar reads in one run; saved routine cards display
   the cap. The large synthetic fixture verifies persistence and display, now
-  passing 35 checks. Actual per-run consumption reporting and the complete
-  conversation workspace remain open.
+  passing 35 checks. The complete conversation workspace remains open.
+- 2026-10-01: Routine history now records and displays the number of provider
+  items returned by each completed read run. The count contains no content,
+  stays in the owning Agent vault, and remains linked to the run's Agent
+  session. Fixed the broker budget counter to persist across Core tool rebuilds
+  between model turns, preventing a routine from spending its total allowance
+  again on a later turn. Vault lifecycle and Core counter regressions pass;
+  UI typecheck and the 35-check synthetic Canvas fixture pass. Full connected
+  conversation navigation remains open.

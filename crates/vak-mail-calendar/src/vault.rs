@@ -83,6 +83,10 @@ pub struct RoutineRunRecord {
     pub status: RoutineRunStatus,
     pub started_at: chrono::DateTime<chrono::Utc>,
     pub finished_at: Option<chrono::DateTime<chrono::Utc>>,
+    /// Count of provider items actually returned by brokered reads, excluding
+    /// content. Older encrypted records default to zero.
+    #[serde(default)]
+    pub items_returned: u8,
 }
 
 /// Secret material accepted from a provider setup flow. Keep this type out of
@@ -1608,6 +1612,7 @@ impl AccountVault {
             status: RoutineRunStatus::Running,
             started_at,
             finished_at: None,
+            items_returned: 0,
         };
         validate_routine_run_record(&record)?;
         self.with_routine_history(|mut runs| {
@@ -1696,6 +1701,33 @@ impl AccountVault {
             }
             run.status = status;
             run.finished_at = Some(finished_at);
+            self.write_routine_history(&runs)
+        })
+    }
+
+    /// Record content-free result usage for a live run before it is settled.
+    pub fn record_routine_run_items(
+        &self,
+        routine_id: &str,
+        account_id: &str,
+        run_id: &str,
+        items_returned: u8,
+    ) -> Result<(), VaultError> {
+        validate_routine_mail_ids(routine_id, account_id, &[])?;
+        validate_account_id(run_id)?;
+        if items_returned > 20 {
+            return Err(VaultError::InvalidReference);
+        }
+        self.with_routine_history(|mut runs| {
+            let Some(run) = runs.iter_mut().find(|run| {
+                run.run_id == run_id && run.routine_id == routine_id && run.account_id == account_id
+            }) else {
+                return Err(VaultError::InvalidReference);
+            };
+            if run.status != RoutineRunStatus::Running {
+                return Err(VaultError::Conflict);
+            }
+            run.items_returned = items_returned;
             self.write_routine_history(&runs)
         })
     }
@@ -1819,6 +1851,7 @@ fn validate_routine_run_record(record: &RoutineRunRecord) -> Result<(), VaultErr
         .as_ref()
         .is_some_and(|session_id| validate_account_id(session_id).is_err())
         || (record.status == RoutineRunStatus::Running) != record.finished_at.is_none()
+        || record.items_returned > 20
         || record
             .finished_at
             .is_some_and(|finished_at| finished_at < record.started_at)
@@ -1872,8 +1905,8 @@ fn validate_calendar_occurrence_keys(
 #[cfg(test)]
 mod tests {
     use super::{
-        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, RoutineRunStatus,
-        RoutineRunTrigger, Uuid, VaultError,
+        AccountSecretMaterial, AccountVault, MAX_ROUTINE_PENDING_IDS, RoutineRunRecord,
+        RoutineRunStatus, RoutineRunTrigger, Uuid, VaultError,
     };
     use crate::{ActionCandidate, ActionState, MailAddress, MailDraft, ProposedAction, SourceRef};
 
@@ -1971,6 +2004,17 @@ mod tests {
         let run = vault
             .start_routine_run(&routine_id, &account_id, RoutineRunTrigger::Manual, started)
             .unwrap();
+        let mut legacy_record = serde_json::to_value(&run).unwrap();
+        legacy_record
+            .as_object_mut()
+            .unwrap()
+            .remove("items_returned");
+        assert_eq!(
+            serde_json::from_value::<RoutineRunRecord>(legacy_record)
+                .unwrap()
+                .items_returned,
+            0
+        );
         vault
             .attach_routine_run_session(&routine_id, &account_id, &run.run_id, &session_id)
             .unwrap();
@@ -1989,6 +2033,9 @@ mod tests {
             Some(session_id.clone())
         );
         reopened
+            .record_routine_run_items(&routine_id, &account_id, &run.run_id, 4)
+            .unwrap();
+        reopened
             .finish_routine_run(
                 &routine_id,
                 &account_id,
@@ -1997,6 +2044,13 @@ mod tests {
                 started + chrono::Duration::seconds(2),
             )
             .unwrap();
+        assert_eq!(
+            reopened
+                .list_routine_runs(&routine_id, &account_id)
+                .unwrap()[0]
+                .items_returned,
+            4
+        );
         assert!(matches!(
             reopened.finish_routine_run(
                 &routine_id,

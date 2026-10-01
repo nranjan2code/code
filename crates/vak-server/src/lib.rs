@@ -19169,6 +19169,13 @@ async fn fire_task_with_force(
                         routine_history_run.as_ref(),
                         routine_history_scope.as_ref(),
                     ) {
+                        let items_returned = child_handle.core.mail_calendar_routine_items_used();
+                        let _ = vault.record_routine_run_items(
+                            &scope.routine_id,
+                            &scope.account_id,
+                            &run.run_id,
+                            items_returned.min(20) as u8,
+                        );
                         let _ = vault.finish_routine_run(
                             &scope.routine_id,
                             &scope.account_id,
@@ -25196,6 +25203,7 @@ mod scheduler_state_tests {
             runs[0].session_id.as_deref(),
             completed.last_session_id.as_deref()
         );
+        assert_eq!(runs[0].items_returned, 0);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

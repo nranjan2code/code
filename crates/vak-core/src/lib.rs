@@ -569,6 +569,9 @@ struct CoreInner {
     /// Runtime-only read scope for a scheduled mail/calendar task. It is
     /// stamped before session admission and never accepted from tool input.
     mail_calendar_routine_scope: std::sync::Mutex<Option<vak_mail_calendar::RoutineScope>>,
+    /// Shared across turns of one unattended mail/calendar run so its item
+    /// budget cannot reset when the model asks for another turn.
+    mail_calendar_routine_items_used: Arc<std::sync::atomic::AtomicUsize>,
     /// Live overrides for `[tools]` toggles. Same no-pin, always-take-latest
     /// shape as the memory overrides — `refresh_persisted_preferences` writes
     /// them on every re-read so a live `PUT /config` takes effect on the
@@ -1343,6 +1346,7 @@ impl Core {
             capabilities_override: std::sync::Mutex::new(None),
             channel_policy: std::sync::Mutex::new(None),
             mail_calendar_routine_scope: std::sync::Mutex::new(None),
+            mail_calendar_routine_items_used: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             web_fetch_override: std::sync::Mutex::new(None),
             browse_override: std::sync::Mutex::new(None),
             commitment_override: std::sync::Mutex::new(None),
@@ -2182,6 +2186,13 @@ impl Core {
         if let Ok(mut current) = self.inner.mail_calendar_routine_scope.lock() {
             *current = scope;
         }
+    }
+
+    /// Number of provider items returned across all turns in this routine run.
+    pub fn mail_calendar_routine_items_used(&self) -> usize {
+        self.inner
+            .mail_calendar_routine_items_used
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub fn channel_policy(&self) -> Option<vak_config::ChannelPolicy> {
@@ -3695,7 +3706,7 @@ impl Core {
                 .ok()
                 .and_then(|scope| scope.clone()),
             worker_exe: self.tool_worker_exe(),
-            routine_items_used: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            routine_items_used: self.inner.mail_calendar_routine_items_used.clone(),
         }));
         if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {
@@ -11065,5 +11076,26 @@ mod capacity_probe_tests {
         );
 
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod mail_calendar_routine_usage_tests {
+    use super::Core;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn item_usage_counter_survives_turn_tool_rebuilds_for_the_core() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new(dir.path().to_path_buf()).unwrap();
+
+        // The broker constructs a fresh tool wrapper for each model turn;
+        // that wrapper must read the same Core-owned per-run counter.
+        core.inner
+            .mail_calendar_routine_items_used
+            .fetch_add(3, Ordering::AcqRel);
+        let next_turn_core = core.clone();
+        assert_eq!(next_turn_core.mail_calendar_routine_items_used(), 3);
     }
 }

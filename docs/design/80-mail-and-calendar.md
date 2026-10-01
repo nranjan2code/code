@@ -931,7 +931,9 @@ scope is bound to the Agent account, selected calendar, date range and page
 size. Calendar continuation is implemented; the full conversation workspace
 remains open. Routine setup in Today Canvas now lets the owner choose a
 5-, 10-, or 20-result per-run cap and shows the enforced cap on each routine;
-reporting actual results consumed per run remains open.
+completed routine history reports how many provider items its reads returned.
+The broker counter is shared across model turns, so the same total cap cannot
+reset when a routine needs another turn.
 
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
