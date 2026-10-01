@@ -39,6 +39,7 @@ const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const savedCandidates: Array<Record<string, any>> = [];
 let candidateId = 0;
 const calendarReadRanges: Array<{ from: string; to: string }> = [];
+const mailPreviewReads: Array<{ accountId: string; query?: string; folder_id?: string }> = [];
 const fixtureErrors: string[] = [];
 let fixtureResponses = 0;
 let inventoryGate: Promise<void> | null = null;
@@ -55,6 +56,10 @@ window.fetch = async (input, init) => {
     const url = new URL(String(input), location.origin);
     requests.push(`${url.pathname}${url.search}`);
     if (url.pathname === "/tasks") return json({ tasks: routines });
+    if (url.pathname.endsWith("/mail-folders")) {
+      const accountId = url.pathname.split("/")[4];
+      return json({ folders: [{ provider_id: `${accountId}-inbox`, name: "Inbox" }, { provider_id: `${accountId}-projects`, name: "Projects" }] });
+    }
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "GET") return json({ candidates: savedCandidates });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
@@ -83,6 +88,8 @@ window.fetch = async (input, init) => {
   await Promise.resolve();
   try {
     if (url.pathname.endsWith("/mail-preview")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; folder_id?: string };
+      mailPreviewReads.push({ accountId, ...body });
       return json({ messages: Array.from({ length: 8 }, (_, index) => ({
       provider_id: `${accountId}-message-${index}`,
       thread_id: account.provider === "apple_icloud" ? null : `${accountId}-thread-${index}`,
@@ -282,6 +289,27 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const calendarNextWeekWorks = await waitFor(() => calendarPageNav?.textContent?.includes("Week 2 of 3") === true);
   calendarPageNav?.querySelector<HTMLButtonElement>("button:first-child")?.click();
   const calendarPreviousWeekWorks = await waitFor(() => calendarPageNav?.textContent?.includes("Week 1 of 3") === true);
+  const inboxesBeforeFilter = mailPreviewReads.length;
+  const mailAccountSelect = document.querySelector<HTMLSelectElement>("select[aria-label='Mail account']");
+  if (mailAccountSelect) {
+    mailAccountSelect.value = "g-account-0";
+    mailAccountSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const accountFoldersLoaded = await waitFor(() => document.querySelector<HTMLSelectElement>("select[aria-label='Mail folder or label']")?.options.length === 2
+    && mailPreviewReads.length === inboxesBeforeFilter + 1);
+  const mailFolderSelect = document.querySelector<HTMLSelectElement>("select[aria-label='Mail folder or label']");
+  if (mailFolderSelect) {
+    mailFolderSelect.value = "g-account-0-projects";
+    mailFolderSelect.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const searchInput = document.querySelector<HTMLInputElement>("input[aria-label='Search mail']");
+  if (searchInput) { searchInput.value = "quarterly budget"; searchInput.dispatchEvent(new Event("input", { bubbles: true })); }
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-mail-filters button")?.click();
+  const selectedFolderSearchWorks = await waitFor(() => mailPreviewReads.length === inboxesBeforeFilter + 2
+    && mailPreviewReads.at(-1)?.accountId === "g-account-0"
+    && mailPreviewReads.at(-1)?.folder_id === "g-account-0-projects"
+    && mailPreviewReads.at(-1)?.query === "quarterly budget"
+    && document.querySelectorAll(".daily-mail-calendar-message").length === 8);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
@@ -304,6 +332,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
     check(queuedAccountRefreshWorks, "An account change during an in-flight refresh queues one immediate follow-up refresh"),
     check(dateRangeCalendarWorks && dateRangeBoundariesCorrect && calendarWeekPagingStartsCorrectly && calendarNextWeekWorks && calendarPreviousWeekWorks, "Canvas calendar reads inclusive date ranges and paginates longer selections by week without blanking the prior view"),
+    check(accountFoldersLoaded && selectedFolderSearchWorks, "Canvas inbox can browse an Agent-scoped provider folder or label and search only that selected mailbox"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),

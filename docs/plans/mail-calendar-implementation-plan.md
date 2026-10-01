@@ -2157,5 +2157,12 @@ remains open.
   retains the existing calendar until the new read settles. The synthetic
   daily fixture now passes 26 checks, including provider request boundaries,
   week navigation, and stable content during refresh; UI typecheck passes.
-  Folder/search controls and provider calendar continuation beyond the
-  bounded event page remain open.
+  Provider calendar continuation beyond the bounded event page remains open.
+- 2026-10-01: Moved account selection, verified folder/label loading, and
+  bounded search into the Today Canvas inbox. “All inboxes” searches only
+  default inboxes; choosing an account scopes the folder list and search to
+  that Agent/account. The server continues to verify folder membership.
+  The synthetic fixture verifies selected-account-only requests, folder ID and
+  query propagation, and the full Canvas suite passes 27 checks with typecheck.
+  Provider inbox cursor paging and the remaining Settings-only setup/history
+  surfaces remain open.

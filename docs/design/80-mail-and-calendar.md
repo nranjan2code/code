@@ -889,7 +889,12 @@ confirms it belongs to the account. Scheduled routines are pinned to one
 owner-selected folder/label and recheck membership; continuous new-mail
 watches remain Inbox-only because provider watch cursors are Inbox-scoped.
 
-The Today view displays 12 recent messages at a time across linked accounts.
+The Today Canvas displays 12 recent messages at a time across linked accounts.
+The owner may narrow it to one mailbox, choose a verified provider folder or
+label, and search within that selection; All inboxes searches only the linked
+accounts' default inboxes. Folder lists load for the selected Agent/account,
+and the server revalidates membership on every read. These controls apply to
+mail previews in Canvas and do not change routine scope.
 The owner inbox preview displays 10 messages at a time from its bounded
 provider response of up to 20. These controls paginate the loaded preview in
 the UI; they do not yet fetch subsequent inbox pages from a provider. Google
@@ -908,8 +913,8 @@ history, and budgets have not yet moved out of Settings.
 The Canvas calendar lets the owner choose an inclusive date range of up to 30
 days and pages a longer range one week at a time. Refresh keeps the prior
 calendar visible while the new range loads. Provider reads remain bounded to
-50 events per connected calendar for the selected range; provider cursor
-pagination and a surfaced truncation indicator remain open.
+50 events per connected calendar for the selected range; Canvas warns when an
+account reaches that limit. Provider cursor pagination remains open.
 
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared

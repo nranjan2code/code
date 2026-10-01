@@ -5571,6 +5571,9 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .daily-mail-calendar-message > div { display: grid; gap: 3px; min-width: 0; }
 .daily-mail-calendar-message strong { color: var(--text); font-size: var(--fs-control); overflow-wrap: anywhere; }
 .daily-mail-calendar-message small { color: var(--muted); font-size: var(--fs-meta); overflow-wrap: anywhere; }
+.daily-mail-calendar-mail-filters { display: flex; align-items: end; flex-wrap: wrap; gap: var(--space-3); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
+.daily-mail-calendar-mail-filters label { display: grid; gap: 4px; min-width: min(180px, 100%); color: var(--muted); font-size: var(--fs-meta); }
+.daily-mail-calendar-mail-filters input, .daily-mail-calendar-mail-filters select { min-height: 36px; max-width: min(320px, 72vw); padding: 4px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); font-size: var(--fs-control); }
 .daily-mail-calendar-message p { margin: 2px 0 0; color: var(--text-soft); font-size: var(--fs-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
 .daily-mail-calendar-message button { flex: 0 0 auto; }
 .daily-mail-calendar-conversation { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
