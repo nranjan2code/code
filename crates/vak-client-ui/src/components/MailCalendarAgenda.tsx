@@ -2,6 +2,7 @@ import { For, Show, createMemo, createSignal } from "solid-js";
 import type { MailCalendarEventPreview } from "../api";
 
 type View = "agenda" | "day" | "week";
+type EventLayout = { lane: number; laneCount: number };
 
 interface Props {
   events: MailCalendarEventPreview[];
@@ -28,6 +29,7 @@ const addDays = (key: string, amount: number) => {
   return dateKey(date);
 };
 const wallMinutes = (date: Date) => date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
+const eventLayoutKey = (day: string, event: MailCalendarEventPreview) => `${day}::${event.account_id ?? ""}::${event.provider_id}`;
 
 export function MailCalendarAgenda(props: Props) {
   const [view, setView] = createSignal<View>(props.initialView ?? "agenda");
@@ -39,13 +41,6 @@ export function MailCalendarAgenda(props: Props) {
     return result;
   });
   const shownDays = createMemo(() => view() === "day" ? days().slice(0, 1) : view() === "week" ? days().slice(0, 7) : days());
-  const visibleHours = createMemo(() => {
-    const timed = shownDays().flatMap((key) => eventsByDay(key).filter((event) => !event.all_day && event.starts_at && event.ends_at));
-    if (!timed.length) return { start: 8, end: 18 };
-    const first = Math.min(...timed.map((event) => wallMinutes(new Date(event.starts_at!))));
-    const last = Math.max(...timed.map((event) => wallMinutes(new Date(event.ends_at!))));
-    return { start: Math.max(0, Math.floor(first / 60) - 1), end: Math.min(24, Math.floor((last - 1) / 60) + 2) };
-  });
   const eventsByDay = (key: string) => props.events.filter((event) => {
     if (event.all_day) {
       const start = event.starts_on;
@@ -61,6 +56,46 @@ export function MailCalendarAgenda(props: Props) {
   }).sort((a, b) => {
     if (a.all_day !== b.all_day) return a.all_day ? -1 : 1;
     return (a.starts_at ? new Date(a.starts_at).getTime() : startOfDay(a.starts_on ?? key)) - (b.starts_at ? new Date(b.starts_at).getTime() : startOfDay(b.starts_on ?? key));
+  });
+  const visibleHours = createMemo(() => {
+    const timed = shownDays().flatMap((key) => eventsByDay(key).filter((event) => !event.all_day && event.starts_at && event.ends_at));
+    if (!timed.length) return { start: 8, end: 18 };
+    const first = Math.min(...timed.map((event) => wallMinutes(new Date(event.starts_at!))));
+    const last = Math.max(...timed.map((event) => wallMinutes(new Date(event.ends_at!))));
+    return { start: Math.max(0, Math.floor(first / 60) - 1), end: Math.min(24, Math.floor((last - 1) / 60) + 2) };
+  });
+  const eventLayouts = createMemo(() => {
+    const layouts = new Map<string, EventLayout>();
+    for (const key of shownDays()) {
+      let group: MailCalendarEventPreview[] = [];
+      let groupEnd = -Infinity;
+      const placeGroup = () => {
+        if (!group.length) return;
+        const laneEnds: number[] = [];
+        const placements: Array<{ key: string; lane: number }> = [];
+        for (const event of group) {
+          const start = new Date(event.starts_at!).getTime();
+          const end = new Date(event.ends_at!).getTime();
+          let lane = laneEnds.findIndex((laneEnd) => laneEnd <= start);
+          if (lane < 0) lane = laneEnds.length;
+          laneEnds[lane] = end;
+          placements.push({ key: eventLayoutKey(key, event), lane });
+        }
+        for (const placement of placements) layouts.set(placement.key, { lane: placement.lane, laneCount: laneEnds.length });
+        group = [];
+        groupEnd = -Infinity;
+      };
+      const timed = eventsByDay(key).filter((event) => !event.all_day && event.starts_at && event.ends_at);
+      for (const event of timed) {
+        const start = new Date(event.starts_at!).getTime();
+        const end = new Date(event.ends_at!).getTime();
+        if (start >= groupEnd) placeGroup();
+        group.push(event);
+        groupEnd = Math.max(groupEnd, end);
+      }
+      placeGroup();
+    }
+    return layouts;
   });
   const labelTime = (event: MailCalendarEventPreview, key: string) => {
     if (event.all_day) return "All day";
@@ -112,11 +147,9 @@ export function MailCalendarAgenda(props: Props) {
               const top = Math.max(visibleStart, wallMinutes(clippedStart));
               const bottom = Math.min(visibleEnd, clippedEnd.getTime() === dayEnd.getTime() ? 1440 : wallMinutes(clippedEnd));
               const range = visibleEnd - visibleStart;
-              const overlapping = eventsByDay(key).filter((other) => !other.all_day && other.starts_at && other.ends_at && new Date(other.starts_at).getTime() < end && new Date(other.ends_at).getTime() > start).sort((a, b) => new Date(a.starts_at!).getTime() - new Date(b.starts_at!).getTime() || a.provider_id.localeCompare(b.provider_id));
-              const lane = Math.max(0, overlapping.findIndex((other) => other.account_id === event.account_id && other.provider_id === event.provider_id));
-              const lanes = Math.max(1, overlapping.length);
+              const layout = eventLayouts().get(eventLayoutKey(key, event)) ?? { lane: 0, laneCount: 1 };
               const height = Math.max(1, bottom - top);
-              return <article class={`mail-calendar-grid-event${props.conflicts.has(conflictKey(event)) ? " is-conflict" : ""}${props.onSelect ? " is-selectable" : ""}`} role={props.onSelect ? "button" : undefined} tabIndex={props.onSelect ? 0 : undefined} onClick={() => selectEvent(event)} onKeyDown={(e) => { if (props.onSelect && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); selectEvent(event); } }} style={{ top: `${(top - visibleStart) / range * 100}%`, height: `${height / range * 100}%`, left: `calc(${lane / lanes * 100}% + 2px)`, width: `calc(${100 / lanes}% - 4px)` }} title={`${event.title} · ${labelTime(event, key)} · ${event.account_name ?? "Calendar"}`}><strong>{event.title}</strong><span>{labelTime(event, key)}</span><Show when={!props.onSelect && event.account_name}><small>{event.account_name}</small></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={(e) => { e.stopPropagation(); props.onDraftUpdate?.(event); }}>Draft update</button></Show><Show when={eligibleCancel(event)}><button class="settings-button danger" onClick={(e) => { e.stopPropagation(); props.onDraftCancel?.(event); }}>Review cancellation</button></Show></article>;
+              return <article class={`mail-calendar-grid-event${props.conflicts.has(conflictKey(event)) ? " is-conflict" : ""}${props.onSelect ? " is-selectable" : ""}`} role={props.onSelect ? "button" : undefined} aria-label={props.onSelect ? `${event.title}, ${labelTime(event, key)}, ${event.account_name ?? "Calendar"}` : undefined} tabIndex={props.onSelect ? 0 : undefined} onClick={() => selectEvent(event)} onKeyDown={(e) => { if (props.onSelect && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); selectEvent(event); } }} style={{ top: `${(top - visibleStart) / range * 100}%`, height: `${height / range * 100}%`, left: `calc(${layout.lane / layout.laneCount * 100}% + 2px)`, width: `calc(${100 / layout.laneCount}% - 4px)` }} title={`${event.title} · ${labelTime(event, key)} · ${event.account_name ?? "Calendar"}`}><strong>{event.title}</strong><Show when={!props.onSelect && event.account_name}><small>{event.account_name}</small></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={(e) => { e.stopPropagation(); props.onDraftUpdate?.(event); }}>Draft update</button></Show><Show when={eligibleCancel(event)}><button class="settings-button danger" onClick={(e) => { e.stopPropagation(); props.onDraftCancel?.(event); }}>Review cancellation</button></Show></article>;
             }}</For>
           </div>
         </section>}</For>

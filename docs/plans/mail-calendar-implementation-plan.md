@@ -1873,10 +1873,12 @@ remains open.
   visibility and explicit refresh. Production UI build/typecheck and the
   mail/calendar mock regression pack pass. Provider push notifications and
   full connected-account browser acceptance remain open.
-- Follow-up: the updated browser fixture currently remains in “Preparing
-  preview…” after capturing its nine mail-read requests, so its row, event
-  selection, and refresh assertions are not verified in a rendered browser.
-  A direct call to the same bounded read function did settle for all nine
-  accounts, while the mounted viewer stayed loading; the fixture now reports
-  captured routes and local handler errors. Next diagnose why the component
-  loader does not settle or publish its data in that run.
+- 2026-10-01: Fixed the daily Canvas browser fixture failure. Browser tracing
+  found that the day-range memo called `eventsByDay` before its declaration;
+  moved the helper ahead of the eager memo and replaced unstable per-event lane
+  positions with a stable overlap-group layout. In the synthetic browser run,
+  all 14 assertions now pass across nine accounts, 72 messages, 300 events,
+  calendar filtering, event selection and explicit refresh. A clicked event
+  opens its detail panel and the supported Google event offers **Draft an
+  update** before review. This verifies the synthetic local flow, not a live
+  provider effect or full connected-account source-to-Review acceptance.

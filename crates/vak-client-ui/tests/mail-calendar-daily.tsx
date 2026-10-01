@@ -53,8 +53,8 @@ window.fetch = async (input) => {
     }
     if (url.pathname.endsWith("/calendar-preview")) {
       return json({ events: Array.from({ length: 50 }, (_, index) => {
-      const start = new Date(localDayStart.getTime() + (8 * 60 + index * 7) * 60_000);
-      const end = new Date(start.getTime() + 5 * 60_000);
+      const start = new Date(localDayStart.getTime() + (7 * 60 + index * 18) * 60_000);
+      const end = new Date(start.getTime() + 30 * 60_000);
       return {
         provider_id: `${accountId}-event-${index}`, title: `${account.provider} sample event ${index + 1}`,
         starts_at: start.toISOString(), ends_at: end.toISOString(), starts_on: null, ends_on: null,
@@ -101,7 +101,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     const mailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
     const mailRequests = requests.filter((path) => path.endsWith("/mail-preview"));
     const warnings = [...document.querySelectorAll(".daily-mail-calendar-warning")].map((node) => node.textContent?.trim()).filter(Boolean);
-    throw new Error(`Expected 72 mail rows after the initial read; found ${mailRows}. Captured ${requests.length} routes and ${fixtureResponses} responses (${requests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
+    throw new Error(`Expected 72 mail rows after the initial read; found ${mailRows}. Loader ${JSON.stringify((window as any).__mailCalendarLoaderTrace ?? null)}. Captured ${requests.length} routes and ${fixtureResponses} responses (${requests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
   }
   const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
@@ -113,7 +113,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     calendarSelector.dispatchEvent(new Event("change", { bubbles: true }));
   }
   const focusedCalendarWorks = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 50);
-  document.querySelector<HTMLElement>(".mail-calendar-grid-event")?.click();
+  const gridEvents = [...document.querySelectorAll<HTMLElement>(".mail-calendar-grid-event")];
+  const overlapLanesWork = gridEvents.length >= 2 && Math.abs(gridEvents[0].getBoundingClientRect().left - gridEvents[1].getBoundingClientRect().left) > 20;
+  const eventTitleIsVisible = gridEvents[0]?.textContent?.includes("google sample event 1") ?? false;
+  gridEvents[0]?.click();
   const eventSelectionWorks = !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("google sample event 1") && !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("Draft an update");
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button")?.click();
   const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 72);
@@ -124,6 +127,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(document.querySelectorAll(".daily-mail-calendar-message").length === 72, "The daily view renders eight recent rows for each of nine connected accounts"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
+    check(overlapLanesWork && eventTitleIsVisible, "Concurrent events receive stable separate lanes with visible titles"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), "Manual refresh reloads the bounded sources and the view explains its refresh cadence"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
