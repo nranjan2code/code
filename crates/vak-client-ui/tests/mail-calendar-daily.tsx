@@ -1,7 +1,7 @@
 import { render } from "solid-js/web";
 import DailyMailCalendarViewer from "../src/components/canvas/DailyMailCalendarViewer";
 import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../src/mailCalendarDemo";
-import { canvasSubject, pendingSettingsPage, settingsOpen } from "../src/store";
+import { canvasSubject, settingsOpen } from "../src/store";
 import type { TaskDef } from "../src/types";
 import "../src/styles.css";
 
@@ -9,7 +9,7 @@ const restoreSyntheticDemo = syntheticMailCalendarEnabled();
 setSyntheticMailCalendarEnabled(false);
 
 const providerTypes = [
-  { prefix: "g-account", provider: "google", capabilities: ["mail_read", "calendar_read"] },
+  { prefix: "g-account", provider: "google", capabilities: ["mail_read", "mail_send", "calendar_read"] },
   { prefix: "m-account", provider: "microsoft", capabilities: ["mail_read", "calendar_read"] },
   { prefix: "a-account", provider: "apple_icloud", capabilities: ["mail_read", "calendar_free_busy"] },
 ] as const;
@@ -36,6 +36,8 @@ routines.push({ ...routines[0], id: "other-agent-routine", name: "Must not appea
 routines.push({ ...routines[0], id: "non-mail-routine", name: "Must also not appear", mail_calendar_scope: null });
 const requests: string[] = [];
 const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
+const savedCandidates: Array<Record<string, any>> = [];
+let candidateId = 0;
 const fixtureErrors: string[] = [];
 let fixtureResponses = 0;
 let inventoryGate: Promise<void> | null = null;
@@ -52,15 +54,18 @@ window.fetch = async (input, init) => {
     const url = new URL(String(input), location.origin);
     requests.push(`${url.pathname}${url.search}`);
     if (url.pathname === "/tasks") return json({ tasks: routines });
+    if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "GET") return json({ candidates: savedCandidates });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
       localDraftWrites.push({ path: url.pathname, body });
-      return json({ candidate: {
-        id: "fixture-local-event-draft", account_id: body.account_id, agent_id: "fixture-owner",
+      const candidate = {
+        id: `fixture-local-draft-${++candidateId}`, account_id: body.account_id, agent_id: "fixture-owner",
         revision: 1, source_refs: body.source_refs ?? [], action: body.action,
         candidate_digest: "synthetic-fixture-digest", created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(), action_state: null,
-      } });
+      };
+      savedCandidates.unshift(candidate);
+      return json({ candidate });
     }
   if (url.pathname === "/mail-calendar/accounts") {
     if (inventoryGate) {
@@ -179,8 +184,11 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const conversationPagingWorks = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 2);
   const threadRows = [...document.querySelectorAll(".daily-mail-calendar-conversation-message")];
   const conversationDedupesIds = threadRows.length === 2 && threadRows.some((row) => row.textContent?.includes("Second page full message")) && !threadRows.some((row) => row.textContent?.includes("Duplicate must collapse"));
-  const conversationHandoffWorks = !!threadRows[0]?.querySelector<HTMLButtonElement>("button")
-    ?.textContent?.includes("Open in mail workspace to draft a reply");
+  const replyButton = [...(conversation?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((button) => button.textContent?.includes("Draft reply in Canvas"));
+  replyButton?.click();
+  const conversationHandoffWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "send_mail"
+    && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"));
   const renderedMailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
   const mailPager = document.querySelector<HTMLElement>(".daily-mail-calendar-pagination");
   const mailPagingStartsCorrectly = mailPager?.textContent?.includes("Page 1 of 6") === true && renderedMailRows === 12;
@@ -223,21 +231,23 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const eventSelectionWorks = !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("google sample event 1") && !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("Draft an update");
   [...document.querySelectorAll<HTMLButtonElement>(".daily-mail-calendar-event-detail button")]
     .find((button) => button.textContent?.includes("Draft an update"))?.click();
-  const localDraftActionWorks = await waitFor(() => localDraftWrites.length === 1 && settingsOpen());
-  const draft = localDraftWrites[0]?.body;
+  const localDraftActionWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "update_event")
+    && document.querySelector(".mail-calendar-canvas-workspace button")?.textContent?.includes("Hide drafts"));
+  const draft = localDraftWrites.find(({ body }) => body.action?.kind === "update_event")?.body;
   const clickedEventStaysLocal = localDraftActionWorks
     && draft?.account_id === "g-account-0"
     && draft?.source_refs?.[0]?.item_id === "g-account-0-event-0"
     && draft?.action?.kind === "update_event"
-    && pendingSettingsPage() === "mail-calendar"
+    && !settingsOpen()
     && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event)$/.test(path));
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
   const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
   const changeRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 27);
+  const inventoriesBeforeGate = requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length;
   (window as any).__holdNextAccountInventory();
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
-  const firstGatedInventoryStarted = await waitFor(() => requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length === 4);
+  const firstGatedInventoryStarted = await waitFor(() => requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length === inventoriesBeforeGate + 1);
   const backgroundRefreshKeepsContent = document.querySelectorAll(".daily-mail-calendar-message").length === 12
     && !document.querySelector(".artifact-canvas-loading")
     && !!document.querySelector(".artifact-canvas-refreshing");
@@ -254,7 +264,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(routineCanvasHandoffWorks, "Opening a listed routine hands off to its existing Canvas routine workspace"),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
-    check(conversationHandoffWorks, "The conversation can hand off to the Agent mail workspace to prepare a reply"),
+    check(conversationHandoffWorks, "A reply opens as a saved Agent-scoped draft in Canvas without sending it"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(phoneTimelineScrollWorks, "The phone keeps dense event lanes readable inside the calendar without widening the page"),
@@ -262,7 +272,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(overlapLanesWork && eventTitleIsVisible, "Concurrent events receive stable separate lanes with visible titles"),
     check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
-    check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens the mail/calendar workspace without a provider effect"),
+    check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens Canvas drafts without a provider effect"),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (requests=${requests.filter((path) => path.endsWith("/mail-preview")).length}, rows=${document.querySelectorAll(".daily-mail-calendar-message").length})`),
     check(backgroundRefreshKeepsContent, "A background refresh keeps the current page visible without replacing it with a loading screen"),
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),

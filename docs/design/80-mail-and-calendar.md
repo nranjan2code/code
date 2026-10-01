@@ -909,15 +909,17 @@ Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
 Canvas work area described above. The current implementation still mixes
 account configuration with previews, drafts, Reviews, and routines on the
-Settings page. Settings now links directly to the Today Canvas, which contains
-the read-only agenda and recent-mail view plus per-Agent routine links into
-Canvas controls. This is only a partial separation: draft and Review
-handoffs, date-range and folder previews, routine creation and trigger
-configuration, history, and budgets remain in Settings. Do not treat the
-Settings page as the finished working area. Move those workflows into Canvas while preserving
-the existing Agent ownership, permission checks, exact Review payloads, and
-vault-backed local draft behavior; Settings should retain connection, access,
-and account-lifecycle controls.
+Settings page. Settings links directly to the Today Canvas, which contains
+the read-only agenda and recent-mail view, per-Agent routine links, and a
+Canvas-owned Drafts and Review area. Reply and event actions save an
+Agent-scoped candidate, then open it in Canvas; the existing revision, digest,
+permission, and final-confirmation checks still gate provider effects. This is
+only a partial separation: date-range and folder previews, routine creation
+and trigger configuration, history, and budgets remain in Settings. Do not
+treat the Settings page as the finished working area. Move those workflows
+into Canvas while preserving the existing Agent ownership, permission checks,
+exact Review payloads, and vault-backed local draft behavior; Settings should
+retain connection, access, and account-lifecycle controls.
 
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized

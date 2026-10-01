@@ -2144,3 +2144,12 @@ remains open.
   with 19 in-scope routines plus unrelated tasks verifies three-page navigation
   and task handoff. Routine mutations notify Today to refresh. Creation,
   trigger configuration, history, and budget controls remain in Settings.
+- 2026-10-01: Moved the Agent-scoped saved-draft list, editor, exact local
+  preview, revision conflict handling, deletion, and explicit provider Review
+  into Today Canvas. Reply and supported event actions now save a candidate
+  and open it in Canvas; no provider effect occurs until the final reviewed
+  action is confirmed. The daily synthetic fixture passes 25 checks, including
+  reply/event candidate ownership, no effect dispatch, pagination, held refresh
+  stability, and refresh coalescing; `npm run typecheck` passes. Settings still
+  contains date-range/folder previews, routine creation/configuration/history,
+  and budgets, so the shared Canvas working-area requirement remains open.
