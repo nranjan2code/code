@@ -328,7 +328,12 @@ preview routes. It loads only when opened or refreshed, shows source-specific
 read failures, and links supported messages to their provider-reverified
 conversation in Settings. Opening it does not add provider content to session
 history or send/change anything. It reads at most two accounts concurrently
-to bound provider request bursts while retaining the combined view. The
+to bound provider request bursts while retaining the combined view. While
+visible, it refreshes every five minutes, after a minute away when the owner
+returns, and when network connectivity returns. Account changes completed in
+Settings notify an open Today Canvas for immediate refresh. Provider push
+subscriptions can later shorten update delay; a push is only a hint to fetch
+and verify current state, never a source of content or authorization. The
 starter remains an on-demand Agent conversation for a cited, read-only day
 plan. Account and routine administration remain in Settings; connected-account
 source-to-Review browser acceptance is still open.

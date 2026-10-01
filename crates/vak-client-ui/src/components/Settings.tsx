@@ -1146,7 +1146,9 @@ export default function Settings() {
     onCleanup(() => window.clearInterval(timer));
   });
   const refreshMailCalendarOnFocus = () => {
-    if (page() === "mail-calendar") void refreshMailCalendarAccounts();
+    if (page() === "mail-calendar") {
+      void Promise.resolve(refreshMailCalendarAccounts()).then(() => api.notifyMailCalendarChanged());
+    }
   };
   onMount(() => {
     window.addEventListener("focus", refreshMailCalendarOnFocus);
@@ -1386,6 +1388,7 @@ export default function Settings() {
       await api.connectIcloudAccount(activeAgentId(), email, appPassword, selectedCapabilities);
       appPassword = "";
       await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
       setNotice({ kind: "info", text: selectedCapabilities.length === 1 && selectedCapabilities[0] === "mail_read" ? "iCloud Mail sign-in was verified. Inbox previews show bounded message metadata; selected messages can be read as plain text." : selectedCapabilities.length === 1 && selectedCapabilities[0] === "calendar_read" ? "iCloud Calendar sign-in was verified. Calendar previews use bounded reads; event changes are not available." : selectedCapabilities.length === 1 && selectedCapabilities[0] === "calendar_free_busy" ? "iCloud availability access was verified. Only busy time intervals are returned; event details and changes are unavailable." : "The iCloud credential is stored in this Agent's secure vault, but this capability combination remains unverified and unavailable." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect the iCloud account: ${error instanceof Error ? error.message : String(error)}` });
@@ -1404,6 +1407,7 @@ export default function Settings() {
       await api.connectGoogleAppPassword(activeAgentId(), email, password);
       password = "";
       await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
       setNotice({ kind: "info", text: "Gmail sign-in was verified. This account can read bounded inbox metadata only. Revoke the App Password from your Google Account security settings." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect Gmail with an App Password: ${error instanceof Error ? error.message : String(error)}` });
@@ -1422,6 +1426,7 @@ export default function Settings() {
       await api.connectMicrosoftAppPassword(activeAgentId(), email, password);
       password = "";
       await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
       setNotice({ kind: "info", text: "Outlook.com app-password sign-in was verified. This connection can read email only; calendar and provider changes are unavailable." });
     } catch (error) {
       setNotice({ kind: "error", text: `Could not connect the Outlook.com account: ${error instanceof Error ? error.message : String(error)}` });
@@ -1444,6 +1449,7 @@ export default function Settings() {
       const result = await api.disconnectMailCalendarAccount(activeAgentId(), account.id);
       await refreshMailCalendarAccounts();
       await refreshMailCalendarCandidates();
+      api.notifyMailCalendarChanged();
       if (mailCalendarEditorAccount() === account.id) cancelMailCalendarDraftEditor();
       setNotice({ kind: "info", text: result.already_disconnected
         ? "Local credential cleanup was retried. Provider revocation was not attempted again, and provider content was not erased."
@@ -1459,6 +1465,7 @@ export default function Settings() {
     try {
       await api.refreshMailCalendarAccount(activeAgentId(), account.id);
       await refreshMailCalendarAccounts();
+      api.notifyMailCalendarChanged();
       setNotice({ kind: "info", text: "The provider sign-in was refreshed securely." });
     } catch (error) {
       await refreshMailCalendarAccounts();

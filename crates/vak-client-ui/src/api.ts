@@ -150,6 +150,11 @@ export interface MailCalendarAccount {
   revoked_at: string | null;
 }
 
+/** Notify open mail/calendar views after an account-level change completes. */
+export function notifyMailCalendarChanged(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("vak:mail-calendar-changed"));
+}
+
 export async function listMailCalendarAccounts(agentId: string): Promise<{ accounts: MailCalendarAccount[] }> {
   return req(`/mail-calendar/accounts?agent_id=${encodeURIComponent(agentId)}`);
 }

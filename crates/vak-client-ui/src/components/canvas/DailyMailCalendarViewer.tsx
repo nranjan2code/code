@@ -81,6 +81,12 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     setSelectedEvent(null);
     loader.reload();
   };
+  const refreshAfterAccountChange = () => {
+    if (document.visibilityState !== "visible" || loader.loading()) return;
+    lastRefresh = Date.now();
+    setSelectedEvent(null);
+    loader.reload();
+  };
   const manualRefresh = () => { lastRefresh = Date.now(); setSelectedEvent(null); loader.reload(); };
   onMount(() => {
     const timer = window.setInterval(() => {
@@ -88,10 +94,14 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     }, 30_000);
     document.addEventListener("visibilitychange", refreshIfStale);
     window.addEventListener("focus", refreshIfStale);
+    window.addEventListener("online", refreshIfStale);
+    window.addEventListener("vak:mail-calendar-changed", refreshAfterAccountChange);
     onCleanup(() => {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", refreshIfStale);
       window.removeEventListener("focus", refreshIfStale);
+      window.removeEventListener("online", refreshIfStale);
+      window.removeEventListener("vak:mail-calendar-changed", refreshAfterAccountChange);
     });
   });
 

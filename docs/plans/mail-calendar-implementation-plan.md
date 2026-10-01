@@ -1882,3 +1882,11 @@ remains open.
   opens its detail panel and the supported Google event offers **Draft an
   update** before review. This verifies the synthetic local flow, not a live
   provider effect or full connected-account source-to-Review acceptance.
+- 2026-10-01: Made Today refresh immediately after account changes completed
+  in Settings, including OAuth return, connection, disconnect, and sign-in
+  refresh. Added an online recovery refresh; the five-minute visible timer,
+  foreground return after a minute, and manual refresh remain. The synthetic
+  browser fixture now verifies account-change refresh (15 checks pass), and
+  the web build and mail/calendar mock regression pack pass. Provider push
+  subscriptions, their server-side lifecycle and event-to-fetch verification,
+  and full connected-account browser acceptance remain open.

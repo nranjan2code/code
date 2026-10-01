@@ -120,6 +120,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const eventSelectionWorks = !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("google sample event 1") && !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("Draft an update");
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button")?.click();
   const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 72);
+  window.dispatchEvent(new Event("vak:mail-calendar-changed"));
+  const changeRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 27);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
@@ -130,6 +132,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(overlapLanesWork && eventTitleIsVisible, "Concurrent events receive stable separate lanes with visible titles"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), "Manual refresh reloads the bounded sources and the view explains its refresh cadence"),
+    check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("microsoft sample mail 8") && document.body.textContent.includes("apple_icloud-2@example.test"), "Provider rows retain their visible source identity"),
