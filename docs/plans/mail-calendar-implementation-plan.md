@@ -2261,8 +2261,16 @@ remains open.
   calendar, inbox controls, routines, and draft list until “Back to inbox” is
   used. “Back to inbox” restores keyboard focus to the message that opened the
   workspace; Escape closes it and restores the same focus target. The Drafts
-  component remains mounted but visually hidden so reply handoffs still open a
-  saved Agent-scoped draft. The synthetic fixture tests both return paths and
+  component remains mounted but visually hidden until the owner opens a reply
+  draft. The synthetic fixture tests both return paths and
   passes all 41 checks with generated data. UI typecheck, production web build,
   and `git diff --check` pass. The editable in-thread composer and
   real-provider/24-7 service acceptance remain open.
+- 2026-10-01: Fixed the reply handoff from a focused conversation. Choosing
+  “Draft reply in Canvas” now reveals the Agent-scoped Drafts and Review editor
+  below the conversation and loads the saved reply there; the owner can edit it
+  in context, and sending still requires the separate exact-payload Review.
+  The large generated-data Canvas fixture passes all 41 checks, including that
+  the editor becomes visible without a provider write. UI typecheck and
+  `git diff --check` pass. Real-provider and 24/7 service acceptance remain
+  open.

@@ -102,6 +102,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   );
   const [selectedEvent, setSelectedEvent] = createSignal<api.MailCalendarEventPreview | null>(null);
   const [selectedConversation, setSelectedConversation] = createSignal<SelectedConversation | null>(null);
+  const [replyWorkspaceVisible, setReplyWorkspaceVisible] = createSignal(false);
   let lastOpenedMessage: { accountId: string; messageId: string } | null = null;
   const [conversationLoading, setConversationLoading] = createSignal(false);
   const [conversationError, setConversationError] = createSignal<string | null>(null);
@@ -211,6 +212,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const closeConversation = () => {
     setConversationRequest((value) => value + 1);
     setSelectedConversation(null);
+    setReplyWorkspaceVisible(false);
     setConversationError(null);
     setConversationLoading(false);
     attachmentRequest += 1;
@@ -557,6 +559,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                   <Show when={message.thread_id && account()?.capabilities.includes("mail_send")}><button type="button" class="settings-button" onClick={() => {
                     const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
                     if (!agentId) return;
+                    setReplyWorkspaceVisible(true);
                     const action: api.MailCalendarDraftAction = { kind: "send_mail", draft: { from_alias: null, to: (message.from?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ? [{ address: message.from.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)![0], display_name: null }] : []), cc: [], bcc: [], subject: message.subject?.startsWith("Re:") ? message.subject : `Re: ${message.subject || ""}`, body_text: "", attachment_refs: [], reply_to_message_id: message.provider_id, reply_to_thread_id: conversation().threadId } };
                     void api.saveMailCalendarCandidate(agentId, { account_id: conversation().accountId, source_refs: [{ item_id: message.provider_id, version: null, label: message.subject || "Reply" }], action })
                       .then((saved) => openDraftWorkspace(saved.candidate.id))
@@ -572,7 +575,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
         <Show when={!selectedConversation()}>
           <Show when={props.subject.kind === "daily_mail_calendar"}><MailCalendarRoutineWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></Show>
         </Show>
-        <div style={{ display: selectedConversation() ? "none" : undefined }}><MailCalendarDraftWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></div>
+        <div style={{ display: selectedConversation() && !replyWorkspaceVisible() ? "none" : undefined }}><MailCalendarDraftWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></div>
         <footer class="daily-mail-calendar-privacy">Read-only preview for this Agent and your local owner session. Refresh runs every five minutes while visible and when you return after a minute away. Provider content is not added to the conversation by opening this view.</footer>
       </main>;
     }}</LoadState>

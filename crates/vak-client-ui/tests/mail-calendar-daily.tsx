@@ -283,8 +283,13 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const replyButton = [...(conversation?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
     .find((button) => button.textContent?.includes("Draft reply in Canvas"));
   replyButton?.click();
+  const inlineReplyEditorVisible = () => {
+    const editor = document.querySelector<HTMLElement>(".mail-calendar-editor");
+    return !!editor && getComputedStyle(editor).display !== "none" && !!editor.querySelector("textarea");
+  };
   const conversationHandoffWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "send_mail"
-    && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"));
+    && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1")
+    && inlineReplyEditorVisible());
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
   const conversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
     && document.querySelectorAll(".daily-mail-calendar-message").length === 12
@@ -449,7 +454,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(conversationHasFocusedWorkspace, `Opening a conversation gives it a focused Canvas workspace and moves keyboard focus to its heading (${focusedWorkspaceDiagnostics})`),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
-    check(conversationHandoffWorks, "A reply opens as a saved Agent-scoped draft in Canvas without sending it"),
+    check(conversationHandoffWorks, "Draft reply reveals its editable Agent-scoped Canvas draft while leaving the provider untouched"),
     check(conversationReturnsToInbox, "Back to inbox restores the inbox and returns keyboard focus to the opened message"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(appleMessageBodyPreviewWorks, "An Apple selected-message preview loads its body in Canvas without a conversation id"),
