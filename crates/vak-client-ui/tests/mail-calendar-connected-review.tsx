@@ -27,6 +27,8 @@ const sourceEvent = {
 };
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 let saved: any = null;
+let latestConflictCandidate: any = null;
+let forceCandidateConflict = false;
 let task: any = null;
 const agent = { id: "fixture-review-owner", name: "Review fixture", revision: 1, lifecycle: "active", character: "vak", animation: "off" };
 
@@ -39,8 +41,21 @@ window.fetch = async (input, init) => {
   if (url.pathname === "/mail-calendar/accounts" && method === "GET") return json({ accounts: [account] });
   if (url.pathname.endsWith("/candidates") && method === "GET") return json({ candidates: saved ? [saved] : [] });
   if (url.pathname.endsWith("/candidates") && method === "POST") {
+    if (forceCandidateConflict && body.candidate_id === saved?.id) {
+      forceCandidateConflict = false;
+      latestConflictCandidate = {
+        ...saved,
+        revision: saved.revision + 1,
+        action: { ...body.action, draft: { ...body.action.draft, body_text: "A concurrent edit from another browser." } },
+        candidate_digest: "fixture-digest-concurrent",
+      };
+      saved = latestConflictCandidate;
+      return new Response(JSON.stringify({ error: "The candidate changed; reload it before saving.", kind: "mail_calendar_candidate_conflict" }), {
+        status: 409, headers: { "Content-Type": "application/json" },
+      });
+    }
     saved = {
-      id: body.candidate_id ?? `review-${body.action.kind}-candidate`, account_id: body.account_id, agent_id: "fixture-review-owner",
+      id: body.candidate_id ?? (body.action.kind === "send_mail" && saved?.action?.kind === "send_mail" ? "review-send_mail-candidate-copy" : `review-${body.action.kind}-candidate`), account_id: body.account_id, agent_id: "fixture-review-owner",
       audience_id: "owner:fixture-review-owner", source_refs: body.source_refs ?? [], action: body.action,
       revision: body.expected_revision ? body.expected_revision + 1 : 1, candidate_digest: "fixture-digest-1",
       created_at: saved?.created_at ?? new Date().toISOString(), action_state: null,
@@ -178,6 +193,22 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   await click("Open");
   await waitFor(() => document.querySelector<HTMLInputElement>(".mail-calendar-editor input")?.value === "maya@example.test", "the saved reply reopened with its recipient");
   const reopenedReplyBody = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value;
+  setField("Message", "Local edits I want to keep after the conflict.");
+  forceCandidateConflict = true;
+  await click("Save changes");
+  await waitFor(() => document.querySelector(".mail-calendar-draft-conflict")?.textContent?.includes("This draft changed elsewhere") === true, "the explicit stale revision conflict state");
+  await click("Discard my edits and load latest");
+  await waitFor(() => [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value === "A concurrent edit from another browser.", "the latest remote draft after explicit reload");
+  const explicitReloadDiscardedLocalAsChosen = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value === "A concurrent edit from another browser.";
+  setField("Message", "Local edits I want to keep after the conflict.");
+  forceCandidateConflict = true;
+  await click("Save changes");
+  await waitFor(() => document.querySelector(".mail-calendar-draft-conflict")?.textContent?.includes("This draft changed elsewhere") === true, "the second independent revision conflict");
+  const localEditSurvivedConflict = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value;
+  await click("Save my edits as a separate draft");
+  await waitFor(() => saved?.id === "review-send_mail-candidate-copy" && saved?.action?.draft?.body_text === "Local edits I want to keep after the conflict.", "the forked draft with local edits");
+  const conflictResolutionPreservedBothVersions = latestConflictCandidate?.action?.draft?.body_text === "A concurrent edit from another browser."
+    && saved?.source_refs?.[0]?.item_id === "message-41";
   await click("Preview draft");
   const mailReviewOpener = await click("Review and send this exact reply");
   await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("maya@example.test") === true, "the exact-effect Review");
@@ -232,8 +263,10 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),
     check(mailSaved?.source_refs?.[0]?.item_id === "message-41" && mailSaved?.action?.draft?.reply_to_message_id === "message-41" && mailSaved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
-    check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Friday works") && reopenedReplyBody?.includes("Friday works"), "The saved reply reopens with the edited recipient and body intact"),
-    check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),
+    check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Local edits I want") && reopenedReplyBody?.includes("Friday works"), "The saved reply reopens with its edited recipient and body; later edits remain available"),
+    check(explicitReloadDiscardedLocalAsChosen, "The owner can discard conflicting local edits and explicitly load the newer saved version"),
+    check(localEditSurvivedConflict?.includes("Local edits I want") && conflictResolutionPreservedBothVersions && mailSaved?.revision === 1, "A stale revision keeps local edits and forks them without replacing the concurrent saved version"),
+    check(review.includes("Only this saved revision will be sent") && review.includes("Local edits I want to keep"), "Review shows the exact newly forked saved payload and revision semantics"),
     check(mailKeyboard.forwardWraps && mailKeyboard.reverseWraps && mailKeyboard.escapeRestoresFocus, "Email Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
     check(requests.some((request) => request.path.endsWith("/calendar-preview") && request.method === "POST") && document.body.textContent?.includes("Friday launch review"), "Calendar preview reads the selected account's bounded event range"),

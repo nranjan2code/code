@@ -2061,3 +2061,11 @@ remains open.
   fixture captures establish component layout and keyboard-focused Review
   behavior, not full-app theme switching, assistive-technology acceptance,
   provider behavior, or closure of Stage 2.
+- 2026-10-01: Closed a Stage 2 concurrent-edit gap. Candidate updates now return
+  a typed revision-conflict refusal; the work area keeps local edits visible
+  and offers an explicit choice to load the latest saved version or preserve
+  local changes as a separate candidate. The browser fixture simulates a
+  competing writer and passes both resolution paths without contacting an
+  effect endpoint (22 checks total; axe: zero violations). The targeted
+  owner-scoped candidate HTTP regression passes. Phone/light/dark conflict
+  layout evidence and broader full-app acceptance remain open.

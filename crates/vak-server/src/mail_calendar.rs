@@ -659,7 +659,10 @@ pub(super) async fn save_candidate(
                 let _ = vault.delete_candidate(&candidate.id, candidate.revision);
                 return (
                     StatusCode::CONFLICT,
-                    "The account changed while saving; reload its status and try again.",
+                    Json(serde_json::json!({
+                        "error": "The account changed while saving; reload its status and try again.",
+                        "kind": "mail_calendar_account_changed",
+                    })),
                 )
                     .into_response();
             }
@@ -677,7 +680,10 @@ pub(super) async fn save_candidate(
         }
         Err(vak_mail_calendar::vault::VaultError::Conflict) => (
             StatusCode::CONFLICT,
-            "The candidate changed; reload it before saving.",
+            Json(serde_json::json!({
+                "error": "The candidate changed; reload it before saving.",
+                "kind": "mail_calendar_candidate_conflict",
+            })),
         )
             .into_response(),
         Err(vak_mail_calendar::vault::VaultError::TooLarge) => (

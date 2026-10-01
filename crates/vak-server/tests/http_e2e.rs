@@ -1654,9 +1654,12 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         update(1).send().await.unwrap().status(),
         reqwest::StatusCode::OK
     );
+    let revision_conflict = update(1).send().await.unwrap();
+    assert_eq!(revision_conflict.status(), reqwest::StatusCode::CONFLICT);
+    let revision_conflict: serde_json::Value = revision_conflict.json().await.unwrap();
     assert_eq!(
-        update(1).send().await.unwrap().status(),
-        reqwest::StatusCode::CONFLICT
+        revision_conflict["kind"],
+        "mail_calendar_candidate_conflict"
     );
     assert_eq!(vault.list_candidates().unwrap()[0].revision, 2);
 

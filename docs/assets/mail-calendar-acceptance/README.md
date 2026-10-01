@@ -14,9 +14,10 @@ The fixture mounts Settings directly, so the theme attribute was set for these
 captures; they demonstrate component rendering at those dimensions, not theme
 selection through the full application or native-device behavior.
 
-The connected-review fixture passed 20 checks, including source-linked reply,
-draft save/reopen, exact effect Review, keyboard focus handling, event draft
-deletion, and paused routine preview/history/resume. Axe reported zero
-violations (38 passes, 51 inapplicable, no incomplete rules) on the rendered
-fixture. These checks use synthetic same-origin responses and do not establish
-provider conformance or screen-reader testing.
+The connected-review fixture passed 22 checks, including source-linked reply,
+draft save/reopen, both concurrent-edit resolutions (load the latest version
+or save local work as a separate draft), exact effect Review, keyboard focus
+handling, event draft deletion, and paused routine preview/history/resume. Axe
+reported zero violations (38 passes, 51 inapplicable, no incomplete rules) on
+the rendered fixture. These checks use synthetic same-origin responses and do
+not establish provider conformance or screen-reader testing.

@@ -1209,6 +1209,7 @@ export default function Settings() {
   const [mailCalendarEditorKind, setMailCalendarEditorKind] = createSignal<"mail" | "calendar" | null>(null);
   const [mailCalendarEditorAccount, setMailCalendarEditorAccount] = createSignal("");
   const [mailCalendarEditingCandidate, setMailCalendarEditingCandidate] = createSignal<api.MailCalendarCandidate | null>(null);
+  const [mailCalendarRevisionConflict, setMailCalendarRevisionConflict] = createSignal<string | null>(null);
   const [mailCalendarSourceRefs, setMailCalendarSourceRefs] = createSignal<api.MailCalendarCandidate["source_refs"]>([]);
   const [mailCalendarUpdateSource, setMailCalendarUpdateSource] = createSignal<{ event_id: string; source_version: string } | null>(null);
   const [mailCalendarDirty, setMailCalendarDirty] = createSignal(false);
@@ -1772,7 +1773,7 @@ export default function Settings() {
     return null;
   };
   const saveMailCalendarDraft = async () => {
-    if (mailCalendarSavingDraft()) return;
+    if (mailCalendarSavingDraft() || mailCalendarRevisionConflict()) return;
     clearMailCalendarDraftTimer();
     const action = buildMailCalendarDraftAction();
     if (!action) {
@@ -1792,6 +1793,7 @@ export default function Settings() {
       });
       if (agentId !== activeAgentId() || page() !== "mail-calendar") return;
       setMailCalendarEditingCandidate(result.candidate);
+      setMailCalendarRevisionConflict(null);
       await refreshMailCalendarCandidates();
       const latestAction = buildMailCalendarDraftAction();
       setMailCalendarDirty(JSON.stringify(latestAction) !== JSON.stringify(action));
@@ -1804,13 +1806,19 @@ export default function Settings() {
         }, 900);
       }
     } catch (error) {
-      setNotice({ kind: "error", text: `Could not save this draft: ${error instanceof Error ? error.message : String(error)}` });
+      if (previous && error instanceof api.ApiError && error.status === 409 && error.kind === "mail_calendar_candidate_conflict") {
+        setMailCalendarRevisionConflict(previous.id);
+        setMailCalendarDirty(true);
+        setNotice({ kind: "error", text: "Another edit was saved first. Your changes are still here; choose how to resolve the draft conflict." });
+      } else {
+        setNotice({ kind: "error", text: `Could not save this draft: ${error instanceof Error ? error.message : String(error)}` });
+      }
     } finally {
       setMailCalendarSavingDraft(false);
     }
   };
   const markMailCalendarDraftDirty = () => {
-    if (!mailCalendarEditingCandidate()) return;
+    if (!mailCalendarEditingCandidate() || mailCalendarRevisionConflict()) return;
     setMailCalendarDirty(true);
     clearMailCalendarDraftTimer();
     mailCalendarDraftTimer = setTimeout(() => {
@@ -1818,8 +1826,36 @@ export default function Settings() {
       void saveMailCalendarDraft();
     }, 900);
   };
+  const saveMailCalendarConflictAsNewDraft = () => {
+    if (!mailCalendarRevisionConflict() || mailCalendarSavingDraft()) return;
+    setMailCalendarEditingCandidate(null);
+    setMailCalendarRevisionConflict(null);
+    setMailCalendarDirty(true);
+    void saveMailCalendarDraft();
+  };
+  const loadLatestMailCalendarConflict = async () => {
+    const candidateId = mailCalendarRevisionConflict();
+    if (!candidateId || mailCalendarBusy()) return;
+    setMailCalendarBusy(true);
+    try {
+      const { candidates } = await api.listMailCalendarCandidates(activeAgentId());
+      const latest = candidates.find((candidate) => candidate.id === candidateId);
+      if (!latest) {
+        setNotice({ kind: "error", text: "That saved draft was removed. Your edits are still here; save them as a new draft if you want to keep them." });
+        return;
+      }
+      setMailCalendarRevisionConflict(null);
+      openMailCalendarDraft(latest);
+      setNotice({ kind: "info", text: "Loaded the latest saved draft. Your conflicting local edits were discarded." });
+    } catch (error) {
+      setNotice({ kind: "error", text: `Could not load the latest saved draft: ${error instanceof Error ? error.message : String(error)}` });
+    } finally {
+      setMailCalendarBusy(false);
+    }
+  };
   const startMailCalendarDraft = (accountId: string, kind: "mail" | "calendar", sourceRefs: api.MailCalendarCandidate["source_refs"] = []) => {
     clearMailCalendarDraftTimer();
+    setMailCalendarRevisionConflict(null);
     setMailCalendarEditorAccount(accountId);
     setMailCalendarEditorKind(kind);
     setMailCalendarDraftPreviewOpen(false);
@@ -1855,6 +1891,7 @@ export default function Settings() {
       : candidate.account_id);
     setMailCalendarEditorKind(candidate.action.kind === "send_mail" ? "mail" : "calendar");
     setMailCalendarDraftPreviewOpen(false);
+    setMailCalendarRevisionConflict(null);
     setMailCalendarEditingCandidate(candidate);
     setMailCalendarSourceRefs(candidate.source_refs);
     if (candidate.action.kind === "send_mail") {
@@ -2128,6 +2165,7 @@ export default function Settings() {
     clearMailCalendarDraftTimer();
     setMailCalendarEditorKind(null);
     setMailCalendarEditingCandidate(null);
+    setMailCalendarRevisionConflict(null);
     setMailCalendarDirty(false);
   };
   const createMailCalendarRoutine = async () => {
@@ -3208,7 +3246,17 @@ export default function Settings() {
                       <label>Description<textarea rows={5} disabled={mailCalendarBusy()} value={mailCalendarDraftDescription()} onInput={(event) => { setMailCalendarDraftDescription(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
                     </Show>
                     <Show when={mailCalendarSourceRefs().length > 0}><p class="settings-hint">Based on a selected item: {mailCalendarSourceRefs().map((source) => source.label?.trim() || "Selected source").join(", ")}</p></Show>
-                    <div class="settings-actions"><button class="settings-button" aria-expanded={mailCalendarDraftPreviewOpen()} onClick={() => setMailCalendarDraftPreviewOpen((open) => !open)}>{mailCalendarDraftPreviewOpen() ? "Hide preview" : "Preview draft"}</button><button class="btn primary" disabled={mailCalendarSavingDraft() || mailCalendarBusy()} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
+                    <Show when={mailCalendarRevisionConflict()}>
+                      <section class="mail-calendar-draft-conflict" role="alert">
+                        <strong>This draft changed elsewhere.</strong>
+                        <p>Your edits are still here, and they have not replaced the newer saved version.</p>
+                        <div class="settings-actions">
+                          <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadLatestMailCalendarConflict()}>Discard my edits and load latest</button>
+                          <button class="settings-button" disabled={mailCalendarBusy()} onClick={saveMailCalendarConflictAsNewDraft}>Save my edits as a separate draft</button>
+                        </div>
+                      </section>
+                    </Show>
+                    <div class="settings-actions"><button class="settings-button" aria-expanded={mailCalendarDraftPreviewOpen()} onClick={() => setMailCalendarDraftPreviewOpen((open) => !open)}>{mailCalendarDraftPreviewOpen() ? "Hide preview" : "Preview draft"}</button><button class="btn primary" disabled={mailCalendarSavingDraft() || mailCalendarBusy() || Boolean(mailCalendarRevisionConflict())} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarRevisionConflict() ? "Resolve the saved-version conflict to continue." : mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
                     <Show when={mailCalendarDraftPreviewOpen()}>
                       <section class="mail-calendar-draft-preview" aria-label="Exact local draft preview">
                         <p class="settings-hint"><strong>Local preview</strong> · This shows the current draft only. It does not send email, invite attendees, or change a calendar.</p>

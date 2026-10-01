@@ -904,6 +904,9 @@ Every manual or Agent edit creates a new local candidate revision and
 invalidates approval. Autosave saves the local draft only. A shared working
 draft uses the existing collaboration identity and audience checks; concurrent
 edits use a revision precondition and show conflicts instead of losing work.
+When a revision conflict occurs, the owner can explicitly discard local edits
+and load the current saved version, or keep those edits by saving a separate
+candidate. Neither choice silently overwrites the other revision.
 Choosing some actions rebuilds and verifies the resulting candidate before
 approval. Local draft saving, provider draft saving, and sending are visibly
 different operations. Closing a draft does not send, discard, or pause the
