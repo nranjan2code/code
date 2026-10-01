@@ -1139,8 +1139,11 @@ export default function Settings() {
   );
   const [mailCalendarTasks, { refetch: refreshMailCalendarTasks }] = createResource(
     () => page() === "mail-calendar" && !syntheticMailDemo() ? activeAgentId() : null,
-    async () => (await api.listTasks()).tasks.filter((task) => !!task.mail_calendar_scope),
+    async (agentId) => (await api.listTasks()).tasks.filter(
+      (task) => !!task.mail_calendar_scope && task.agent_id === agentId,
+    ),
   );
+  const [mailCalendarPausing, setMailCalendarPausing] = createSignal<string | null>(null);
   const [mailCalendarRunHistory, setMailCalendarRunHistory] = createSignal<Record<string, api.MailCalendarRoutineRun[]>>({});
   const [mailCalendarRunHistoryLoading, setMailCalendarRunHistoryLoading] = createSignal<string | null>(null);
   const [mailCalendarClockNow, setMailCalendarClockNow] = createSignal(Date.now());
@@ -2252,12 +2255,47 @@ export default function Settings() {
       setMailCalendarRunHistoryLoading((current) => current === task.id ? null : current);
     }
   };
+  const pauseMailCalendarTask = async (task: TaskDef) => {
+    await api.patchTask(task.id, { enabled: false });
+    if (task.last_run_status === "working" && task.last_session_id) {
+      await api.cancelRun(task.last_session_id);
+    }
+  };
+  const pauseMailCalendarRoutines = async (accountId?: string) => {
+    const scope = accountId ?? "all";
+    const selected = (mailCalendarTasks() ?? []).filter((task) =>
+      task.enabled && (!accountId || task.mail_calendar_scope?.account_id === accountId),
+    );
+    if (selected.length === 0) return;
+    setMailCalendarPausing(scope);
+    try {
+      const results = await Promise.allSettled(selected.map(pauseMailCalendarTask));
+      let refreshed = true;
+      try {
+        await refreshMailCalendarTasks();
+      } catch {
+        refreshed = false;
+      }
+      const paused = results.filter((result) => result.status === "fulfilled").length;
+      const failed = results.length - paused;
+      setNotice({
+        kind: failed === 0 && refreshed ? "info" : "error",
+        text: failed === 0 && refreshed
+          ? `Paused ${paused} ${paused === 1 ? "routine" : "routines"}${accountId ? " for this account" : ""}. Any active run was asked to stop.`
+          : `Paused ${paused} ${paused === 1 ? "routine" : "routines"}; ${failed ? `${failed} could not be fully paused` : "the updated status could not be reloaded"}. Check their status and retry.`,
+      });
+    } finally {
+      setMailCalendarPausing(null);
+    }
+  };
   const toggleMailCalendarRoutine = async (task: TaskDef) => {
     try {
-      await api.patchTask(task.id, { enabled: !task.enabled });
+      if (task.enabled) await pauseMailCalendarTask(task);
+      else await api.patchTask(task.id, { enabled: true });
       await refreshMailCalendarTasks();
     } catch (error) {
-      setNotice({ kind: "error", text: `Could not update routine: ${error instanceof Error ? error.message : String(error)}` });
+      setNotice({ kind: "error", text: `The routine schedule was updated, but its active run may still be finishing: ${error instanceof Error ? error.message : String(error)}` });
+      await refreshMailCalendarTasks();
     }
   };
   const deleteMailCalendarRoutine = (task: TaskDef) => setConfirmConfig({
@@ -3110,7 +3148,11 @@ export default function Settings() {
                                 ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
                               : "Connected";
                       const canPreview = account.status === "connected" && account.credential_available && !account.revoked_at;
-                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><Show when={syntheticMailDemo()} fallback={<span class="settings-actions"><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span>}><span class="settings-actions"><Show when={account.capabilities.includes("mail_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={account.capabilities.includes("calendar_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={account.capabilities.includes("calendar_free_busy")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show></span></Show></Row>;
+                      const enabledAccountRoutines = () => (mailCalendarTasks() ?? []).filter(
+                        (task) => task.enabled && task.mail_calendar_scope?.account_id === account.id,
+                      );
+                      const pauseAccountKey = `account:${account.id}`;
+                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><Show when={syntheticMailDemo()} fallback={<span class="settings-actions"><Show when={enabledAccountRoutines().length > 0}><button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines(account.id)}>{mailCalendarPausing() === pauseAccountKey ? "Pausing…" : "Pause routines for this account"}</button></Show><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span>}><span class="settings-actions"><Show when={account.capabilities.includes("mail_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={account.capabilities.includes("calendar_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={account.capabilities.includes("calendar_free_busy")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show></span></Show></Row>;
                     }}</For>
                   </Show>
                 </Show>
@@ -3340,6 +3382,13 @@ export default function Settings() {
                     <label>What should the summary focus on?<textarea rows={3} value={mailCalendarRoutinePrompt()} onInput={(event) => setMailCalendarRoutinePrompt(event.currentTarget.value)} /></label>
                     <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone}. Event triggers read only timed events matching the selected start or end boundary and offset; catch-up is limited to the window above. Email watches discover up to 100 message IDs without downloading bodies, then read batches of up to 20. Apple uses mailbox UID cursors, Gmail follows history pages, and Microsoft follows Graph delta pages. Failed or interrupted batches are retried, and the model is skipped when no matching items are waiting. Continuous mode checks about once a minute while this service is running; a sleeping host is offline. Content returned by a run is recorded in append-only Agent history and cannot currently be selectively erased.</p>
                     <div class="settings-actions"><button class="btn primary" disabled={mailCalendarRoutineSaving() || !mailCalendarEditorAccount() || !mailCalendarRoutineName().trim() || !mailCalendarRoutinePrompt().trim() || mailCalendarRoutineOperations().length === 0 || !settingsAgents().some((agent) => agent.id === activeAgentId())} onClick={() => void createMailCalendarRoutine()}>{mailCalendarRoutineSaving() ? "Saving…" : "Save paused routine"}</button></div>
+                  </div>
+                </Show>
+                <Show when={(mailCalendarTasks() ?? []).some((task) => task.enabled)}>
+                  <div class="settings-actions">
+                    <button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines()}>
+                      {mailCalendarPausing() === "all" ? "Pausing routines…" : "Pause all routines"}
+                    </button>
                   </div>
                 </Show>
                 <Show when={mailCalendarTasks.loading} fallback={<div class="mail-calendar-drafts"><Show when={(mailCalendarTasks()?.length ?? 0) > 0} fallback={<p class="settings-hint">No scheduled mail/calendar routines yet.</p>}>

@@ -726,6 +726,15 @@ remains open.
   Verification: fixed-time server coverage checks starting, active, and stale
   states; the authenticated HTTP response includes the heartbeat; the rendered
   connected-review browser fixture passes 13 checks; client typecheck passes.
+- 2026-10-01: Scoped the mail/calendar routine list and bulk controls to the
+  selected Agent, even when the workspace task endpoint returns routines owned
+  by other Agents. Added pause-all and per-account pause actions; pausing a
+  currently working routine also requests cancellation of its active Agent run.
+  Partial failures are reported instead of presented as a complete pause.
+  Verification: the rendered same-origin connected-review fixture passes 25
+  checks, including foreign-Agent exclusion, both pause scopes, and active-run
+  cancellation; client typecheck and `git diff --check` pass. Synthetic UI
+  evidence only; provider conformance and sustained service recovery remain open.
 - 2026-10-01: The conversation workspace now collapses repeated provider message
   IDs when a person loads another page, matching the bounded citation-navigation
   path. The connected-account browser fixture returns a duplicate from the next

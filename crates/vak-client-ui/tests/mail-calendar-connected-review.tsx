@@ -30,6 +30,7 @@ let saved: any = null;
 let latestConflictCandidate: any = null;
 let forceCandidateConflict = false;
 let task: any = null;
+const foreignAgentTask = { id: "foreign-agent-routine", name: "Private other agent routine", agent_id: "fixture-other-agent", enabled: true, interval_secs: 60, mail_calendar_scope: { account_id: "other-account" } };
 const agent = { id: "fixture-review-owner", name: "Review fixture", revision: 1, lifecycle: "active", character: "vak", animation: "off" };
 
 window.fetch = async (input, init) => {
@@ -78,7 +79,7 @@ window.fetch = async (input, init) => {
     }], next_cursor: null });
     return json({ messages: [sourceMessage], next_cursor: "older-page" });
   }
-  if (url.pathname === "/tasks" && method === "GET") return json({ tasks: task ? [task] : [] });
+  if (url.pathname === "/tasks" && method === "GET") return json({ tasks: [...(task ? [task] : []), foreignAgentTask] });
   if (url.pathname === "/tasks" && method === "POST") {
     task = {
       id: "routine-event-fixture", name: body.name, agent_id: body.agent_id,
@@ -256,6 +257,15 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   await waitFor(() => document.querySelector(".mail-calendar-routine-history li") !== null, "the preview run history entry");
   await click("Resume");
   await waitFor(() => task?.enabled === true, "the resumed event-trigger routine");
+  await waitFor(() => document.querySelector("button")?.isConnected === true, "the routine controls");
+  const foreignRoutineWasHidden = !document.body.textContent?.includes("Private other agent routine");
+  task = { ...task, last_run_status: "working", last_session_id: "fixture-active-session" };
+  await click("Pause all routines");
+  await waitFor(() => task?.enabled === false, "the pause-all control");
+  await click("Resume");
+  await waitFor(() => task?.enabled === true, "the per-routine resume control");
+  await click("Pause routines for this account");
+  await waitFor(() => task?.enabled === false, "the per-account pause control");
   const passed = [
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
     check(document.body.textContent?.includes("service API answers, but its background scheduler has not checked in recently") === true, "The owner UI distinguishes API reachability from a stale background scheduler heartbeat"),
@@ -276,7 +286,10 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
     check(requests.some((request) => request.method === "DELETE" && request.path.endsWith("/candidates/review-create_event-candidate")) && effectCalls.length === 0, "Deleting a draft removes only the Agent work-area copy without contacting a provider effect"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing event Review leaves the draft in the work area without creating an event"),
     check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
-    check(task?.enabled === true && task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine previews while paused, then resumes with a bounded one-minute cadence"),
+    check(task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine preview retains its bounded one-minute cadence"),
+    check(foreignRoutineWasHidden, "Routine rows are limited to the selected Agent even when the workspace task list includes another Agent"),
+    check(task?.enabled === false && requests.some((request) => request.path === "/tasks/routine-event-fixture" && request.method === "PATCH" && request.body.enabled === false), "Pause all and per-account controls pause only this Agent’s routines"),
+    check(requests.some((request) => request.path === "/sessions/fixture-active-session/cancel" && request.method === "POST"), "Pausing a working routine also asks its active Agent run to stop"),
     check(requests.some((request) => request.path.endsWith("/run-now") && request.method === "POST") && requests.some((request) => request.path.endsWith("/history")), "A one-off preview run appears in the routine's run history"),
     check(!requests.some((request) => new URL(request.path, location.origin).origin !== location.origin), "All fixture requests stay same-origin; no provider or credential endpoint is contacted"),
   ];
