@@ -2274,3 +2274,11 @@ remains open.
   the editor becomes visible without a provider write. UI typecheck and
   `git diff --check` pass. Real-provider and 24/7 service acceptance remain
   open.
+- 2026-10-01: Re-ran the complete `scripts/test-mail-calendar-mock-pack.sh`
+  against the conversation reply handoff. The production web build/typecheck,
+  126 provider/vault tests plus state registry, 18 Core mail/calendar tests,
+  17 Server mail/calendar tests, four owner-authenticated HTTP tests, the
+  restart/requeue regression, and all five isolated parser/worker tests pass.
+  The rendered generated-data daily Canvas fixture also passes all 41 checks.
+  No real provider accounts or data were used; live-provider and 24-hour
+  service-recovery acceptance remain open.
