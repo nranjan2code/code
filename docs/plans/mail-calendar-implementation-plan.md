@@ -2166,3 +2166,10 @@ remains open.
   query propagation, and the full Canvas suite passes 27 checks with typecheck.
   Provider inbox cursor paging and the remaining Settings-only setup/history
   surfaces remain open.
+- 2026-10-01: Rebuilt the committed web bundle and ran the mail/calendar
+  synthetic backend gates: 124 provider/contract/vault tests plus the state
+  registry test, 17 Core mail/calendar tests, 17 Server unit tests, four
+  owner-scoped mail/calendar HTTP tests, the routine-history HTTP test, the
+  watcher-restart test, and all five isolated parser/worker tests pass. The
+  production Vite build succeeds (with existing dynamic-import and large-chunk
+  warnings); no live provider or account data was used.
