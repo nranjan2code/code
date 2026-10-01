@@ -117,10 +117,29 @@ fn text(t: &str) -> AssistantMessage {
     }
 }
 
+async fn session_is_running(client: &reqwest::Client, base: &str, id: &str) -> bool {
+    let Ok(res) = client.get(format!("{base}/sessions")).send().await else {
+        return true;
+    };
+    let Ok(body) = res.json::<serde_json::Value>().await else {
+        return true;
+    };
+    body["sessions"]
+        .as_array()
+        .and_then(|all| all.iter().find(|s| s["session_id"] == id))
+        .is_some_and(|s| s["running"] == true)
+}
+
 async fn wait_transcript(client: &reqwest::Client, base: &str, id: &str) -> serde_json::Value {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     loop {
         assert!(std::time::Instant::now() < deadline, "transcript timeout");
+        // The transcript answers with the durable prefix while a run is
+        // live, so wait for the session to go idle before reading it.
+        if session_is_running(client, base, id).await {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            continue;
+        }
         if let Ok(res) = client
             .get(format!("{base}/sessions/{id}/transcript"))
             .send()
@@ -860,7 +879,18 @@ async fn bestofn_fans_out_keep_and_discard() {
     let wait_child = |cid: String| {
         let client = client.clone();
         let base = base.clone();
-        async move { wait_transcript(&client, &base, &cid).await }
+        async move {
+            // A child's run is not in the session list, so wait for the
+            // transcript to reach its finished length instead.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+            loop {
+                let t = wait_transcript(&client, &base, &cid).await;
+                if t["count"].as_u64() == Some(2) || std::time::Instant::now() > deadline {
+                    return t;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+        }
     };
 
     let mut child_ids = Vec::new();
