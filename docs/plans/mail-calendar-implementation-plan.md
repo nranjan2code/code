@@ -2038,3 +2038,8 @@ remains open.
   cards expose an accessible name and open event details using Enter and
   Space. The isolated synthetic browser fixture passes 18 checks; this covers
   keyboard activation, not screen-reader or responsive-theme acceptance.
+- 2026-10-01: Extended connected-review browser acceptance to confirm deletion
+  of a saved event candidate uses the owning Agent's candidate endpoint and
+  makes no provider-effect request. The same-origin synthetic Settings fixture
+  passes 20 checks; persistent storage reopen and broader mobile/theme
+  screenshots remain open.

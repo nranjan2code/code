@@ -47,6 +47,11 @@ window.fetch = async (input, init) => {
     };
     return json({ candidate: saved });
   }
+  if (url.pathname.endsWith("/candidates/review-create_event-candidate") && method === "DELETE") {
+    const deleted = saved?.id === "review-create_event-candidate";
+    if (deleted) saved = null;
+    return json({ deleted });
+  }
   if (url.pathname.endsWith("/mail-folders")) return json({ folders: [{ provider_id: "INBOX", name: "Inbox" }] });
   if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "primary-calendar", name: "Personal", primary: true }] });
   if (url.pathname.endsWith("/mail-preview")) return json({ messages: [sourceMessage] });
@@ -191,6 +196,12 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   const eventReview = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
   const eventModal = document.body.textContent ?? "";
   const eventKeyboard = await exerciseReviewKeyboard(eventReviewOpener);
+  const eventSaved = saved;
+  await click("Delete draft");
+  await waitFor(() => [...document.querySelectorAll<HTMLElement>(".sheet[role='dialog']")].at(-1)?.textContent?.includes("Delete this local draft?") === true, "the explicit local-draft deletion confirmation");
+  const deleteDialog = [...document.querySelectorAll<HTMLElement>(".sheet[role='dialog']")].at(-1)!;
+  [...deleteDialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Delete draft")?.click();
+  await waitFor(() => saved === null, "the confirmed local draft deletion");
   const effectCalls = requests.filter((request) => /\/(send|create-event|update-event|cancel-event)$/.test(request.path));
   const eventTriggerLabel = [...document.querySelectorAll<HTMLLabelElement>("label.capability-item")].find((label) => label.textContent?.includes("Run around a calendar event"));
   const eventTriggerCheckbox = eventTriggerLabel?.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -220,9 +231,10 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
     check(mailKeyboard.forwardWraps && mailKeyboard.reverseWraps && mailKeyboard.escapeRestoresFocus, "Email Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
     check(requests.some((request) => request.path.endsWith("/calendar-preview") && request.method === "POST") && document.body.textContent?.includes("Friday launch review"), "Calendar preview reads the selected account's bounded event range"),
-    check(saved?.action?.kind === "create_event" && saved?.action?.draft?.title === "Synthetic project follow-up" && saved?.action?.draft?.location === "Project room", "The work area saves the reviewed event fields"),
+    check(eventSaved?.action?.kind === "create_event" && eventSaved?.action?.draft?.title === "Synthetic project follow-up" && eventSaved?.action?.draft?.location === "Project room", "The work area saves the reviewed event fields"),
     check(eventReview.includes("Only this saved revision will be created") && eventReview.includes("AttendeesNone") && eventReview.includes("ReminderNone") && eventModal.includes("will not invite attendees or set a reminder"), "Calendar Review shows the exact saved revision and effect limits"),
     check(eventKeyboard.forwardWraps && eventKeyboard.reverseWraps && eventKeyboard.escapeRestoresFocus, "Calendar Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
+    check(requests.some((request) => request.method === "DELETE" && request.path.endsWith("/candidates/review-create_event-candidate")) && effectCalls.length === 0, "Deleting a draft removes only the Agent work-area copy without contacting a provider effect"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing event Review leaves the draft in the work area without creating an event"),
     check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
     check(task?.enabled === true && task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine previews while paused, then resumes with a bounded one-minute cadence"),

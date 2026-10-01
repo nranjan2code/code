@@ -59,10 +59,11 @@ workspace against a same-origin fake connected Google account. It exercises
 inbox and calendar previews, conversation opening, reply editing, saved
 message/thread lineage, timed event drafting, exact local previews, and exact
 email and calendar-effect Reviews. It closes both Reviews without confirming,
-then configures an event-trigger routine, runs its paused preview, opens run
-history, and resumes it. It asserts that no provider effect route or external
-request was made. This validates the owner UI boundary with fabricated
-fixtures; it does not replace live provider conformance checks.
+then confirms that deleting a saved candidate calls only the Agent-scoped
+candidate route. It configures an event-trigger routine, runs its paused
+preview, opens run history, and resumes it. It asserts that no provider effect
+route or external request was made. This validates the owner UI boundary with
+fabricated fixtures; it does not replace live provider conformance checks.
 
 # Result card
 
