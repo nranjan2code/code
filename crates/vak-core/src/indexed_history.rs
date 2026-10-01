@@ -369,6 +369,9 @@ mod tests {
         core.set_sessions_home(dir.path().join("home"));
         let session_id = uuid::Uuid::now_v7().to_string();
         let header = SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: core.agent_identity().cloned(),
             session_id: session_id.clone(),
             created_at: chrono::Utc::now(),

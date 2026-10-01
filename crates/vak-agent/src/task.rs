@@ -789,6 +789,9 @@ impl TaskTool {
             })
             .unwrap_or_default();
         let header = SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: child_identity.clone().or_else(|| Some(vak_core_identity())),
             session_id: session_id.clone(),
             created_at: chrono::Utc::now(),

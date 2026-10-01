@@ -101,6 +101,9 @@ async fn non_ollama_provider_still_gets_a_prefill_tps_sample_from_wall_clock_lat
     std::fs::create_dir_all(&home).unwrap();
     let provider: Arc<dyn Provider> = Arc::new(SlowNoPrefillMs);
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "capacity-feedback".into(),
         created_at: chrono::Utc::now(),

@@ -21065,6 +21065,9 @@ mod sandbox_promotion_tests {
         let mut log = vak_session::SessionLog::create(
             path,
             vak_session::types::SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: Some(vak_core::vak_agent_identity()),
                 session_id: session_id.into(),
                 created_at: chrono::Utc::now(),

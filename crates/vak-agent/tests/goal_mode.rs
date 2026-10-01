@@ -107,6 +107,9 @@ fn setup_with_delta(
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "goal".into(),
         created_at: chrono::Utc::now(),

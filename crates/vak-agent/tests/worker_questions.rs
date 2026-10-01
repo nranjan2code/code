@@ -132,6 +132,9 @@ async fn run_with_worker_question(
     std::fs::create_dir_all(&home).unwrap();
     let parent_id = "parent-q".to_string();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: parent_id.clone(),
         created_at: chrono::Utc::now(),

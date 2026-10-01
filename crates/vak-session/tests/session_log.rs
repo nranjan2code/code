@@ -16,6 +16,9 @@ use vak_session::{
 
 fn header() -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "s-test".into(),
         created_at: chrono::Utc::now(),
@@ -392,6 +395,9 @@ fn restart_attaches_completed_child_for_verification_without_marking_it_succeede
     let mut child = SessionLog::create(
         child_path,
         SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: None,
             session_id: "child-1".into(),
             ..header()

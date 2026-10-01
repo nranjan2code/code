@@ -115,6 +115,9 @@ fn setup(provider: Arc<MatrixProvider>, cfg_tweaks: impl FnOnce(&mut AgentConfig
     let cwd = dir.path().to_path_buf();
     std::mem::forget(dir);
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "matrix".into(),
         created_at: chrono::Utc::now(),

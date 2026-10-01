@@ -17,6 +17,9 @@ use vak_session::{SessionLog, SessionPath};
 
 fn header() -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "s-intent".into(),
         created_at: chrono::Utc::now(),

@@ -97,6 +97,9 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
     let parent_id = "parent-tail".to_string();
 
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: parent_id.clone(),
         created_at: chrono::Utc::now(),

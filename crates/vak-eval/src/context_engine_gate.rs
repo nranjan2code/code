@@ -31,6 +31,9 @@ const REPLAY_SMALL_HORIZON_TOKENS: u64 = 1_500;
 
 fn header(cwd: &Path, session_id: &str) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),

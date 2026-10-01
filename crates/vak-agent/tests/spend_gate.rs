@@ -88,6 +88,9 @@ fn setup(
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "spend".into(),
         created_at: chrono::Utc::now(),
@@ -212,6 +215,9 @@ async fn budget_approval_raises_cap_for_rest_of_run() {
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "raise".into(),
         created_at: chrono::Utc::now(),

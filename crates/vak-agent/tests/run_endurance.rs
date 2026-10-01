@@ -60,6 +60,9 @@ impl Provider for FlakyThenGood {
 fn build_agent(provider: Arc<dyn Provider>, session_id: &str, attempts: u32) -> Agent {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),

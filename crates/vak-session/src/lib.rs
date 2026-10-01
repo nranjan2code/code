@@ -5,9 +5,11 @@
 //! from the file. Branching is in-place via parent ids; compaction is an
 //! entry, never a deletion.
 
+pub mod ids;
 mod index;
 pub mod log;
 pub mod search;
+pub mod trace;
 pub mod turns;
 pub mod types;
 pub mod work;

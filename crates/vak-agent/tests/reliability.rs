@@ -67,6 +67,9 @@ fn build(
 ) -> Agent {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "rel".into(),
         created_at: chrono::Utc::now(),
@@ -230,6 +233,9 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
 
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "hung".into(),
         created_at: chrono::Utc::now(),
@@ -358,6 +364,9 @@ fn text_msg_for_hung(t: &str) -> AssistantMessage {
 
 fn hung_header(provider: &str, session_id: &str, dir: &std::path::Path) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),

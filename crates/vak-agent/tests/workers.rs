@@ -87,6 +87,9 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
     let parent_id = "parent-x".to_string();
 
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: parent_id.clone(),
         created_at: chrono::Utc::now(),

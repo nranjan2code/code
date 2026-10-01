@@ -5530,6 +5530,9 @@ impl Core {
             ))
         });
         let header = SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: self.agent_identity.clone(),
             session_id,
             created_at: chrono::Utc::now(),
@@ -10945,6 +10948,9 @@ mod capacity_probe_tests {
 
     fn header() -> SessionHeader {
         SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: None,
             session_id: "s-capacity-probe".into(),
             created_at: chrono::Utc::now(),

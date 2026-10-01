@@ -16,6 +16,9 @@ use vak_session::{Fidelity, SessionLog, TurnIndex, WorkingSetPlan};
 
 fn header() -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "s-test".into(),
         created_at: chrono::Utc::now(),

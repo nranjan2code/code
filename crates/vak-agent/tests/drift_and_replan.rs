@@ -109,6 +109,9 @@ fn text(t: &str) -> AssistantMessage {
 
 fn header(session_id: &str, dir: &std::path::Path) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),

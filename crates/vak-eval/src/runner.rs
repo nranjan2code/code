@@ -346,6 +346,9 @@ async fn run_case_with_tools(
     }
 
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: Some(vak_session::types::AgentIdentity {
             id: "vak".into(),
             revision: 1,

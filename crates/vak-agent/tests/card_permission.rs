@@ -103,6 +103,9 @@ async fn run_calls(mode: Mode, tool: &'static str, presents: bool, calls: usize)
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "card-perm".into(),
         created_at: chrono::Utc::now(),
@@ -244,6 +247,9 @@ async fn a_failed_card_does_not_hold_back_a_complete_answer() {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "card-failed".into(),
         created_at: chrono::Utc::now(),

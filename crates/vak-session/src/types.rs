@@ -186,6 +186,16 @@ pub struct SessionHeader {
     /// ledgers; every newly admitted session receives it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub conversation: Option<ConversationContext>,
+    /// The Space the session belongs to (`spc_`). Additive; absent until the
+    /// trace key is threaded through admission.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub space: Option<crate::ids::SpaceId>,
+    /// The Run that admitted the session (`run_`, the W3C trace-id).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<crate::ids::RunId>,
+    /// Why the session exists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<crate::trace::Cause>,
     pub contract: FrozenContract,
 }
 

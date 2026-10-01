@@ -1073,6 +1073,9 @@ mod tests {
         core.set_sessions_home(home.path().to_path_buf());
 
         let header = SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: None,
             session_id: "s-health".into(),
             created_at: chrono::Utc::now(),
