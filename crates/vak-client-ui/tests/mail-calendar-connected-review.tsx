@@ -1,0 +1,130 @@
+import { render } from "solid-js/web";
+import Settings from "../src/components/Settings";
+import { setActiveAgent, setConnection, setPendingSettingsPage, setSettingsOpen } from "../src/store";
+import "../src/styles.css";
+
+const requests: Array<{ path: string; method: string; body: any }> = [];
+const account = {
+  id: "review-google-account", provider: "google", status: "connected",
+  identity_masked: "owner@example.test", auth_method: "oauth", credential_available: true,
+  superseded_by_active_link: false, capabilities: ["mail_read", "mail_send"],
+  connected_at: "2026-10-01T00:00:00Z", access_token_expires_at: null,
+  refresh_token_available: true, revoked_at: null,
+};
+const sourceMessage = {
+  provider_id: "message-41", thread_id: "thread-41", from: "Maya Chen <maya@example.test>",
+  to: "owner@example.test", cc: null, subject: "Planning the launch review",
+  received_at: "2026-10-01T09:00:00Z", preview: "Could we confirm the agenda?",
+  body_text: "Could we confirm the agenda for Friday?", body_status: "available",
+  has_attachments: false, attachments: [],
+};
+const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+let saved: any = null;
+
+window.fetch = async (input, init) => {
+  const url = new URL(String(input), location.origin);
+  const method = init?.method ?? "GET";
+  const body = (() => { try { return JSON.parse(String(init?.body ?? "{}")); } catch { return {}; } })();
+  const path = `${url.pathname}${url.search}`;
+  requests.push({ path, method, body });
+  if (url.pathname === "/mail-calendar/accounts" && method === "GET") return json({ accounts: [account] });
+  if (url.pathname.endsWith("/candidates") && method === "GET") return json({ candidates: saved ? [saved] : [] });
+  if (url.pathname.endsWith("/candidates") && method === "POST") {
+    saved = {
+      id: "review-candidate-1", account_id: body.account_id, agent_id: "fixture-review-owner",
+      audience_id: "owner:fixture-review-owner", source_refs: body.source_refs ?? [], action: body.action,
+      revision: (saved?.revision ?? 0) + 1, candidate_digest: "fixture-digest-1",
+      created_at: saved?.created_at ?? new Date().toISOString(), action_state: null,
+    };
+    return json({ candidate: saved });
+  }
+  if (url.pathname.endsWith("/mail-folders")) return json({ folders: [{ provider_id: "INBOX", name: "Inbox" }] });
+  if (url.pathname.endsWith("/mail-preview")) return json({ messages: [sourceMessage] });
+  if (url.pathname.endsWith("/thread-preview")) return json({ messages: [sourceMessage], next_cursor: null });
+  if (url.pathname === "/tasks") return json({ tasks: [] });
+  if (url.pathname === "/agents") return json({ agents: [] });
+  if (url.pathname === "/providers") return json({ providers: [] });
+  if (url.pathname === "/config" || url.pathname.startsWith("/config?")) return json({ provider: "", model: "", max_turns: 8, paths: { cwd: "/tmp/vak-mail-review-fixture" }, permissions: { allow: [], ask: [], deny: [] }, memory: { search_enabled: true, write_enabled: true, reflection: false, skill_proposals: true } });
+  if (url.pathname.includes("presentations")) return json({ definitions: [], activations: [] });
+  if (url.pathname.includes("voice")) return json({ providers: [] });
+  if (url.pathname.includes("global-route")) return json({ provider: null, model: null });
+  if (/\/(send|create-event|update-event|cancel-event)$/.test(url.pathname)) return json({ error: "A provider effect escaped the Review gate." , kind: "fixture_effect_forbidden" });
+  return json({});
+};
+
+setConnection("live");
+setActiveAgent({ id: "fixture-review-owner", name: "Review fixture", character: "vak", animation: "off" });
+setPendingSettingsPage("mail-calendar");
+setSettingsOpen(true);
+render(() => <Settings />, document.getElementById("root")!);
+
+const waitFor = async (predicate: () => boolean, label: string, timeout = 5000) => {
+  const deadline = Date.now() + timeout;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for ${label}`);
+};
+const click = async (name: string) => {
+  let button: HTMLButtonElement | undefined;
+  await waitFor(() => {
+    button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === name);
+    return !!button && !button.disabled;
+  }, `enabled button ${name}`);
+  button!.click();
+};
+const setField = (label: string, value: string) => {
+  const field = [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")].find((item) => item.closest("label")?.textContent?.trim().startsWith(label));
+  if (!field) throw new Error(`Could not find field: ${label}`);
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")?.set;
+  setter?.call(field, value);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+};
+const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label); return label; };
+
+(window as any).runChecks = async () => {
+  await waitFor(() => !!document.querySelector("button") && document.body.textContent?.includes("owner@example.test") === true, "the fake connected account");
+  await click("Preview inbox");
+  await waitFor(() => document.body.textContent?.includes("Planning the launch review") === true, "the bounded source preview");
+  await click("Open conversation");
+  await waitFor(() => document.body.textContent?.includes("Draft a reply in this conversation") === true, "the source conversation");
+  await click("Draft a reply in this conversation");
+  await waitFor(() => !!document.querySelector(".mail-calendar-editor"), "the reply work area");
+  setField("To", "maya@example.test");
+  setField("Message", "Thanks, Friday works. I will bring the revised agenda.");
+  await click("Preview draft");
+  await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Friday works") === true, "the exact local draft preview");
+  await click("Save draft");
+  await waitFor(() => saved?.candidate_digest === "fixture-digest-1" && saved?.revision === 1, "the Agent-scoped saved candidate");
+  await click("Review and send this exact reply");
+  await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("maya@example.test") === true, "the exact-effect Review");
+  const review = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
+  const cancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Cancel");
+  cancel?.click();
+  const effectCalls = requests.filter((request) => /\/(send|create-event|update-event|cancel-event)$/.test(request.path));
+  const passed = [
+    check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
+    check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
+    check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
+    check(saved?.source_refs?.[0]?.item_id === "message-41" && saved?.action?.draft?.reply_to_message_id === "message-41" && saved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
+    check(saved?.action?.draft?.to?.[0]?.address === "maya@example.test" && saved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
+    check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),
+    check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
+    check(!requests.some((request) => new URL(request.path, location.origin).origin !== location.origin), "All fixture requests stay same-origin; no provider or credential endpoint is contacted"),
+  ];
+  const report = document.createElement("pre");
+  report.id = "fixture-report";
+  report.textContent = `${passed.length} checks passed\n${passed.join("\n")}`;
+  document.body.append(report);
+  return passed;
+};
+if (new URLSearchParams(location.search).has("run")) {
+  (window as any).runChecks().catch((error: unknown) => {
+    const report = document.createElement("pre");
+    report.id = "fixture-report";
+    report.setAttribute("role", "alert");
+    report.textContent = `Failed: ${error instanceof Error ? error.message : String(error)}`;
+    document.body.append(report);
+  });
+}

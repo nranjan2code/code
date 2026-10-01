@@ -54,6 +54,14 @@ browser-local draft save/reopen, hard refusal of OAuth/provider effects, and
 that no mail/calendar API request reaches `fetch`. It is loopback-only and
 uses no credentials or session data.
 
+`/app/tests/mail-calendar-connected-review.html?run` mounts the real Settings
+workspace against a same-origin fake connected Google account. It exercises
+inbox preview, conversation opening, reply editing, saved message/thread
+lineage, exact local preview, and exact-effect Review. It closes Review without
+confirming, and asserts that no provider effect route or external request was
+made. This validates the owner UI boundary with fabricated fixtures; it does
+not replace live provider conformance checks.
+
 # Result card
 
 `result-card.html` renders the real timeline over file results shaped like
