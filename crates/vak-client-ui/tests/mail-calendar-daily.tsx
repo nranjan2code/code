@@ -1,7 +1,11 @@
 import { render } from "solid-js/web";
 import DailyMailCalendarViewer from "../src/components/canvas/DailyMailCalendarViewer";
+import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../src/mailCalendarDemo";
 import { pendingSettingsPage, settingsOpen } from "../src/store";
 import "../src/styles.css";
+
+const restoreSyntheticDemo = syntheticMailCalendarEnabled();
+setSyntheticMailCalendarEnabled(false);
 
 const providerTypes = [
   { prefix: "g-account", provider: "google", capabilities: ["mail_read", "calendar_read"] },
@@ -145,6 +149,16 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const gridEvents = [...document.querySelectorAll<HTMLElement>(".mail-calendar-grid-event")];
   const overlapLanesWork = gridEvents.length >= 2 && Math.abs(gridEvents[0].getBoundingClientRect().left - gridEvents[1].getBoundingClientRect().left) > 20;
   const eventTitleIsVisible = gridEvents[0]?.textContent?.includes("google sample event 1") ?? false;
+  const gridEventHasKeyboardSemantics = gridEvents[0]?.getAttribute("role") === "button"
+    && gridEvents[0]?.getAttribute("tabindex") === "0"
+    && !!gridEvents[0]?.getAttribute("aria-label");
+  gridEvents[0]?.focus();
+  gridEvents[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  const enterOpensDetails = await waitFor(() => document.querySelector(".daily-mail-calendar-event-detail h4")?.textContent?.includes("google sample event 1") === true);
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-event-detail-heading button")?.click();
+  gridEvents[0]?.focus();
+  gridEvents[0]?.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true }));
+  const spaceOpensDetails = await waitFor(() => document.querySelector(".daily-mail-calendar-event-detail h4")?.textContent?.includes("google sample event 1") === true);
   gridEvents[0]?.click();
   const eventSelectionWorks = !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("google sample event 1") && !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("Draft an update");
   [...document.querySelectorAll<HTMLButtonElement>(".daily-mail-calendar-event-detail button")]
@@ -176,6 +190,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
     check(overlapLanesWork && eventTitleIsVisible, "Concurrent events receive stable separate lanes with visible titles"),
+    check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens the mail/calendar workspace without a provider effect"),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), "Manual refresh reloads the bounded sources and the view explains its refresh cadence"),
@@ -198,11 +213,13 @@ if (new URLSearchParams(location.search).has("run")) {
     report.setAttribute("role", "status");
     report.textContent = `${passed.length} checks passed\n${passed.join("\n")}`;
     document.body.append(report);
+    if (restoreSyntheticDemo) setSyntheticMailCalendarEnabled(true);
   }).catch((error: unknown) => {
     const report = document.createElement("pre");
     report.id = "fixture-report";
     report.setAttribute("role", "alert");
     report.textContent = `Failed: ${error instanceof Error ? error.message : String(error)}`;
     document.body.append(report);
+    if (restoreSyntheticDemo) setSyntheticMailCalendarEnabled(true);
   });
 }

@@ -2034,3 +2034,7 @@ remains open.
   The browser fixture passes 19 checks with synthetic account data and no
   provider/credential requests; screen-reader and responsive theme coverage
   remain open.
+- 2026-10-01: Extended the rendered daily calendar fixture to verify event
+  cards expose an accessible name and open event details using Enter and
+  Space. The isolated synthetic browser fixture passes 18 checks; this covers
+  keyboard activation, not screen-reader or responsive-theme acceptance.
