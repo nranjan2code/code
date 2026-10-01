@@ -2134,9 +2134,8 @@ remains open.
   direct “Open Today in Canvas” action to the Agent mail/calendar Settings
   page. The page now names itself as connected-account/access management and
   explicitly states that drafts, Review, and routines remain there pending
-  migration. This is navigation and disclosure progress, not completion of the
-  shared working-area requirement: the full draft, Review, range/folder preview,
-  and routine workflows still need to move into Canvas.
+  migration. At that point it was navigation and disclosure only; later
+  entries record the draft/Review and date-range calendar migrations.
 - 2026-10-01: Added an Agent-filtered mail/calendar routine list to Today Canvas
   (eight per page) and handoff to the existing Canvas routine detail view for
   status, schedule, run-once, pause/resume, and delivery retry. The list filters
@@ -2153,3 +2152,10 @@ remains open.
   stability, and refresh coalescing; `npm run typecheck` passes. Settings still
   contains date-range/folder previews, routine creation/configuration/history,
   and budgets, so the shared Canvas working-area requirement remains open.
+- 2026-10-01: Added an inclusive date-range picker (up to 30 days) to the
+  Canvas calendar and week-by-week paging for longer ranges. Range refresh
+  retains the existing calendar until the new read settles. The synthetic
+  daily fixture now passes 26 checks, including provider request boundaries,
+  week navigation, and stable content during refresh; UI typecheck passes.
+  Folder/search controls and provider calendar continuation beyond the
+  bounded event page remain open.

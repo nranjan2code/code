@@ -905,6 +905,12 @@ run, last result, pause/resume, run-once, and delivery retry. Routine changes
 notify an open Today view to refresh. Routine creation, trigger editing,
 history, and budgets have not yet moved out of Settings.
 
+The Canvas calendar lets the owner choose an inclusive date range of up to 30
+days and pages a longer range one week at a time. Refresh keeps the prior
+calendar visible while the new range loads. Provider reads remain bounded to
+50 events per connected calendar for the selected range; provider cursor
+pagination and a surfaced truncation indicator remain open.
+
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
 Canvas work area described above. The current implementation still mixes

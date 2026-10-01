@@ -38,6 +38,7 @@ const requests: string[] = [];
 const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const savedCandidates: Array<Record<string, any>> = [];
 let candidateId = 0;
+const calendarReadRanges: Array<{ from: string; to: string }> = [];
 const fixtureErrors: string[] = [];
 let fixtureResponses = 0;
 let inventoryGate: Promise<void> | null = null;
@@ -103,6 +104,8 @@ window.fetch = async (input, init) => {
       return json({ provider_id: body.thread_id, messages, next_cursor: page === 1 ? "fixture-page-2" : null });
     }
     if (url.pathname.endsWith("/calendar-preview")) {
+      const range = JSON.parse(String(init?.body ?? "{}")) as { from: string; to: string };
+      calendarReadRanges.push(range);
       return json({ events: Array.from({ length: 50 }, (_, index) => {
       const start = new Date(localDayStart.getTime() + (7 * 60 + index * 18) * 60_000);
       const end = new Date(start.getTime() + 30 * 60_000);
@@ -256,6 +259,29 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const queuedAccountRefreshWorks = firstGatedInventoryStarted
     && await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 45
       && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
+  const calendarsBeforeRange = requests.filter((path) => path.endsWith("/calendar-preview")).length;
+  const rangeFrom = day(new Date());
+  const rangeThroughDate = new Date(`${rangeFrom}T12:00:00`);
+  rangeThroughDate.setDate(rangeThroughDate.getDate() + 14);
+  const rangeThrough = day(rangeThroughDate);
+  const fromInput = document.querySelector<HTMLInputElement>("input[aria-label='Calendar start date']");
+  const throughInput = document.querySelector<HTMLInputElement>("input[aria-label='Calendar end date']");
+  if (fromInput && throughInput) {
+    fromInput.value = rangeFrom; fromInput.dispatchEvent(new Event("input", { bubbles: true }));
+    throughInput.value = rangeThrough; throughInput.dispatchEvent(new Event("input", { bubbles: true }));
+    document.querySelector<HTMLButtonElement>(".daily-mail-calendar-calendar-tools button:last-of-type")?.click();
+  }
+  const dateRangeCalendarWorks = await waitFor(() => requests.filter((path) => path.endsWith("/calendar-preview")).length === calendarsBeforeRange + 6
+    && document.querySelector(".daily-mail-calendar-calendar-heading h3")?.textContent?.includes("15 days"));
+  const exclusiveThrough = new Date(`${rangeThrough}T00:00:00`); exclusiveThrough.setDate(exclusiveThrough.getDate() + 1);
+  const dateRangeBoundariesCorrect = calendarReadRanges.slice(-6).length === 6
+    && calendarReadRanges.slice(-6).every((range) => range.from === new Date(`${rangeFrom}T00:00:00`).toISOString() && range.to === exclusiveThrough.toISOString());
+  const calendarPageNav = document.querySelector<HTMLElement>("nav[aria-label='Calendar week pages']");
+  const calendarWeekPagingStartsCorrectly = calendarPageNav?.textContent?.includes("Week 1 of 3") === true;
+  calendarPageNav?.querySelector<HTMLButtonElement>("button:last-child")?.click();
+  const calendarNextWeekWorks = await waitFor(() => calendarPageNav?.textContent?.includes("Week 2 of 3") === true);
+  calendarPageNav?.querySelector<HTMLButtonElement>("button:first-child")?.click();
+  const calendarPreviousWeekWorks = await waitFor(() => calendarPageNav?.textContent?.includes("Week 1 of 3") === true);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
@@ -277,6 +303,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(backgroundRefreshKeepsContent, "A background refresh keeps the current page visible without replacing it with a loading screen"),
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
     check(queuedAccountRefreshWorks, "An account change during an in-flight refresh queues one immediate follow-up refresh"),
+    check(dateRangeCalendarWorks && dateRangeBoundariesCorrect && calendarWeekPagingStartsCorrectly && calendarNextWeekWorks && calendarPreviousWeekWorks, "Canvas calendar reads inclusive date ranges and paginates longer selections by week without blanking the prior view"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),

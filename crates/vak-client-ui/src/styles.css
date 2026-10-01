@@ -2447,7 +2447,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .daily-mail-calendar-calendar-heading span { color: var(--muted); font-size: var(--fs-meta); }
 .daily-mail-calendar-calendar-tools { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); }
 .daily-mail-calendar-calendar-tools label { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--fs-meta); }
-.daily-mail-calendar-calendar-tools select { max-width: min(360px, 52vw); min-height: 36px; padding: 4px 30px 4px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); font-size: var(--fs-control); }
+.daily-mail-calendar-calendar-tools select, .daily-mail-calendar-calendar-tools input[type="date"] { max-width: min(360px, 52vw); min-height: 36px; padding: 4px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); font-size: var(--fs-control); }
 .daily-mail-calendar-event-detail { position: sticky; top: 0; z-index: 4; display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
 .daily-mail-calendar-event-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
 .daily-mail-calendar-event-detail-heading span { color: var(--muted); font-size: var(--fs-meta); }

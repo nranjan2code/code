@@ -13,6 +13,8 @@ import type { TaskDef } from "../../types";
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const prettyDay = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
 const tomorrow = (date: Date) => { const next = new Date(date); next.setDate(next.getDate() + 1); return dateKey(next); };
+const inclusiveDays = (from: string, through: string) => Math.round((Date.parse(`${through}T12:00:00`) - Date.parse(`${from}T12:00:00`)) / 86_400_000) + 1;
+const addDays = (day: string, amount: number) => { const date = new Date(`${day}T12:00:00`); date.setDate(date.getDate() + amount); return dateKey(date); };
 
 type DailyAccount = {
   account: api.MailCalendarAccount;
@@ -50,12 +52,9 @@ function routineFreshness(task: TaskDef) {
   return ` · ${label} ${new Date(checkedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
 }
 
-async function readToday(agentId: string): Promise<{ day: string; accounts: DailyAccount[]; routines: TaskDef[]; routinesUnavailable: boolean; refreshedAt: string }> {
-  const startDate = new Date();
-  const day = dateKey(startDate);
-  const end = tomorrow(startDate);
+async function readToday(agentId: string, day: string, through: string): Promise<{ day: string; through: string; accounts: DailyAccount[]; routines: TaskDef[]; routinesUnavailable: boolean; refreshedAt: string }> {
   const fromInstant = new Date(`${day}T00:00:00`);
-  const toInstant = new Date(`${end}T00:00:00`);
+  const toInstant = new Date(`${tomorrow(new Date(`${through}T12:00:00`))}T00:00:00`);
   const from = fromInstant.toISOString();
   const to = toInstant.toISOString();
   const inventory = await api.listMailCalendarAccounts(agentId);
@@ -96,13 +95,16 @@ async function readToday(agentId: string): Promise<{ day: string; accounts: Dail
   } catch {
     routinesUnavailable = true;
   }
-  return { day, accounts: results, routines, routinesUnavailable, refreshedAt: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) };
+  return { day, through, accounts: results, routines, routinesUnavailable, refreshedAt: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) };
 }
 
 export default function DailyMailCalendarViewer(props: ViewerProps) {
+  const [rangeFrom, setRangeFrom] = createSignal(dateKey(new Date()));
+  const [rangeThrough, setRangeThrough] = createSignal(dateKey(new Date()));
+  const [rangeError, setRangeError] = createSignal("");
   const loader = createLoader(
     () => [props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "", props.reloadKey] as const,
-    ([agentId]) => readToday(agentId),
+    ([agentId]) => readToday(agentId, rangeFrom(), rangeThrough()),
   );
   const [selectedEvent, setSelectedEvent] = createSignal<api.MailCalendarEventPreview | null>(null);
   const [selectedConversation, setSelectedConversation] = createSignal<SelectedConversation | null>(null);
@@ -110,6 +112,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [conversationError, setConversationError] = createSignal<string | null>(null);
   const [conversationRequest, setConversationRequest] = createSignal(0);
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
+  const [calendarPage, setCalendarPage] = createSignal(0);
   const [mailPage, setMailPage] = createSignal(0);
   const [routinePage, setRoutinePage] = createSignal(0);
   const [eventAction, setEventAction] = createSignal("");
@@ -117,6 +120,17 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [accountRefreshPending, setAccountRefreshPending] = createSignal(false);
   const [syntheticDemo, setSyntheticDemo] = createSignal(syntheticMailCalendarEnabled());
   const freshnessLabel = () => `${syntheticDemo() ? "Synthetic demo data · no provider connected" : "From connected accounts"} · updated ${loader.data()?.refreshedAt ?? ""}`;
+  const applyDateRange = () => {
+    const count = inclusiveDays(rangeFrom(), rangeThrough());
+    if (!Number.isFinite(count) || count < 1 || count > 30) {
+      setRangeError("Choose an end date on or after the start date, within a 30-day range.");
+      return;
+    }
+    setRangeError("");
+    setSelectedEvent(null);
+    setCalendarPage(0);
+    loader.reload();
+  };
   let lastRefresh = Date.now();
   const refreshIfStale = () => {
     if (document.visibilityState !== "visible" || loader.loading() || Date.now() - lastRefresh < 60_000) return;
@@ -204,6 +218,15 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     <LoadState loader={loader}>{(data) => {
       const events = () => data.accounts.flatMap((account) => account.events);
       const visibleEvents = () => events().filter((event) => calendarAccountFilter() === "all" || event.account_id === calendarAccountFilter());
+      const calendarPageCount = () => Math.max(1, Math.ceil(inclusiveDays(data.day, data.through) / 7));
+      const calendarPageFrom = () => addDays(data.day, calendarPage() * 7);
+      const calendarPageThrough = () => calendarPage() + 1 >= calendarPageCount()
+        ? data.through
+        : addDays(calendarPageFrom(), 6);
+      const calendarPageEvents = () => visibleEvents().filter((event) => {
+        const day = event.starts_on ?? (event.starts_at ? dateKey(new Date(event.starts_at)) : "");
+        return day >= calendarPageFrom() && day <= calendarPageThrough();
+      });
       const calendarAccounts = () => data.accounts.filter((account) => account.account.capabilities.includes("calendar_read") && account.events.length > 0);
       const hasMailCapability = () => data.accounts.some((account) => account.account.capabilities.includes("mail_read"));
       const hasCalendarCapability = () => data.accounts.some((account) => account.account.capabilities.includes("calendar_read") || account.account.capabilities.includes("calendar_free_busy"));
@@ -248,13 +271,15 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
           <section class="daily-mail-calendar-empty"><h3>No connected accounts</h3><p>Connect mail or a calendar to see today’s agenda and recent messages here.</p><button type="button" class="artifact-canvas-btn" onClick={openSettings}>Open email and calendar settings</button></section>
         </Show>
         <Show when={data.accounts.length > 0}>
-          <section class="daily-mail-calendar-section"><div class="daily-mail-calendar-calendar-heading"><h3>Today’s calendar</h3><div class="daily-mail-calendar-calendar-tools"><label>Show calendars<select aria-label="Show calendars" value={calendarAccountFilter()} onChange={(event) => { setCalendarAccountFilter(event.currentTarget.value); setSelectedEvent(null); }}><option value="all">All calendars ({events().length})</option><For each={calendarAccounts()}>{(account) => <option value={account.account.id}>{providerName(account.account)} ({account.events.length})</option>}</For></select></label><span>Auto-refreshes every 5 minutes while open</span></div></div>
+            <section class="daily-mail-calendar-section"><div class="daily-mail-calendar-calendar-heading"><div><h3>{data.day === data.through ? data.day === dateKey(new Date()) ? "Today’s calendar" : prettyDay(data.day) : `${prettyDay(data.day)} – ${prettyDay(data.through)} · ${inclusiveDays(data.day, data.through)} days`}</h3><p>Choose up to 30 days · times use your device time zone</p></div><div class="daily-mail-calendar-calendar-tools"><label>From<input aria-label="Calendar start date" type="date" value={rangeFrom()} onInput={(event) => setRangeFrom(event.currentTarget.value)} /></label><label>Through<input aria-label="Calendar end date" type="date" value={rangeThrough()} onInput={(event) => setRangeThrough(event.currentTarget.value)} /></label><button type="button" class="settings-button" onClick={() => { setRangeThrough(addDays(rangeFrom(), 6)); setRangeError(""); }}>Use 7 days</button><button type="button" class="settings-button" onClick={applyDateRange}>Refresh dates</button><label>Show calendars<select aria-label="Show calendars" value={calendarAccountFilter()} onChange={(event) => { setCalendarAccountFilter(event.currentTarget.value); setSelectedEvent(null); }}><option value="all">All calendars ({events().length})</option><For each={calendarAccounts()}>{(account) => <option value={account.account.id}>{providerName(account.account)} ({account.events.length})</option>}</For></select></label><span>Auto-refreshes every 5 minutes while open</span></div></div>
+            <Show when={rangeError()}><p class="daily-mail-calendar-warning" role="alert">{rangeError()}</p></Show>
             <Show when={!hasCalendarCapability()}><p class="settings-hint">No connected account has calendar access.</p></Show>
             <For each={calendarFailedAccounts()}>{(account) => <p class="daily-mail-calendar-warning" role="status">Calendar unavailable for {providerName(account.account)}. Check this account in Settings.</p>}</For>
             <Show when={selectedEvent()}>{(event) => <aside class="daily-mail-calendar-event-detail" aria-label="Selected event details"><div class="daily-mail-calendar-event-detail-heading"><div><span>Event details</span><h4>{event().title}</h4></div><button type="button" class="settings-button" onClick={() => setSelectedEvent(null)}>Close</button></div><dl><div><dt>When</dt><dd>{event().all_day ? "All day" : event().starts_at && event().ends_at ? `${new Date(event().starts_at!).toLocaleString()} – ${new Date(event().ends_at!).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "Time unavailable"}</dd></div><div><dt>Calendar</dt><dd>{event().account_name ?? "Connected calendar"}</dd></div><Show when={event().location}><div><dt>Location</dt><dd>{event().location}</dd></div></Show><Show when={event().description}><div><dt>Description</dt><dd>{event().description}</dd></div></Show></dl><p>This view is read-only. Prepare a change as a local draft, then review its exact effect before anything is sent to the provider.</p><div class="settings-actions"><Show when={event().account_id && event().version && event().provider_id && event().starts_at && event().ends_at && !event().private && !event().all_day && !event().recurring && event().attendee_count === 0 && event().account_name?.startsWith("Google")}><button type="button" class="settings-button" disabled={!!eventAction()} onClick={() => void prepareEventAction("update")}>{eventAction() === "update" ? "Preparing draft…" : "Draft an update"}</button></Show><Show when={event().can_cancel && event().account_id && event().version}><button type="button" class="settings-button danger" disabled={!!eventAction()} onClick={() => void prepareEventAction("cancel")}>{eventAction() === "cancel" ? "Preparing review…" : "Review cancellation"}</button></Show><button type="button" class="settings-button" onClick={() => openDraftWorkspace()}>Open drafts and review</button></div><Show when={eventActionError()}><p role="alert" class="daily-mail-calendar-warning">{eventActionError()}</p></Show></aside>}</Show>
-            <Show when={visibleEvents().length > 0}><For each={[calendarAccountFilter()]}>{() => <MailCalendarAgenda events={visibleEvents()} from={data.day} to={data.day} conflicts={new Set()} initialView="day" onSelect={setSelectedEvent} />}</For></Show>
-            <Show when={hasCalendarCapability() && events().length === 0 && calendarFailedAccounts().length === 0}><p class="settings-hint">No events today.</p></Show>
-            <For each={data.accounts.filter((account) => account.busy.length > 0)}>{(account) => <div class="daily-mail-calendar-busy"><strong>Busy · {providerName(account.account)}</strong><For each={account.busy}>{(slot) => <span>{new Date(slot.starts_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–{new Date(slot.ends_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}</For></div>}</For>
+            <Show when={calendarPageCount() > 1}><nav class="daily-mail-calendar-pagination" aria-label="Calendar week pages"><button type="button" class="settings-button" disabled={calendarPage() === 0} onClick={() => { setCalendarPage((page) => Math.max(0, page - 1)); setSelectedEvent(null); }}>Previous week</button><span aria-live="polite">Week {calendarPage() + 1} of {calendarPageCount()} · {prettyDay(calendarPageFrom())} – {prettyDay(calendarPageThrough())}</span><button type="button" class="settings-button" disabled={calendarPage() + 1 >= calendarPageCount()} onClick={() => { setCalendarPage((page) => Math.min(calendarPageCount() - 1, page + 1)); setSelectedEvent(null); }}>Next week</button></nav></Show>
+            <Show when={calendarPageEvents().length > 0}><For each={[calendarAccountFilter()]}>{() => <MailCalendarAgenda events={calendarPageEvents()} from={calendarPageFrom()} to={calendarPageThrough()} conflicts={new Set()} initialView={calendarPageFrom() === calendarPageThrough() ? "day" : "week"} onSelect={setSelectedEvent} />}</For></Show>
+            <Show when={hasCalendarCapability() && calendarPageEvents().length === 0 && calendarFailedAccounts().length === 0}><p class="settings-hint">No events for this date range.</p></Show>
+            <For each={data.accounts.filter((account) => account.busy.length > 0)}>{(account) => <div class="daily-mail-calendar-busy"><strong>Busy · {providerName(account.account)}</strong><For each={account.busy.filter((slot) => { const day = dateKey(new Date(slot.starts_at)); return day >= calendarPageFrom() && day <= calendarPageThrough(); })}>{(slot) => <span>{new Date(slot.starts_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}–{new Date(slot.ends_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>}</For></div>}</For>
           </section>
           <section class="daily-mail-calendar-section"><h3>Recent email</h3>
             <Show when={!hasMailCapability()}><p class="settings-hint">No connected account has email access.</p></Show>
