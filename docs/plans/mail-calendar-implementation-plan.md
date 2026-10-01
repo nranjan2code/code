@@ -2043,3 +2043,8 @@ remains open.
   makes no provider-effect request. The same-origin synthetic Settings fixture
   passes 20 checks; persistent storage reopen and broader mobile/theme
   screenshots remain open.
+- 2026-10-01: Extended the same browser fixture to close a saved reply, reopen
+  it from the Agent draft list, and verify the edited recipient and message
+  body remain intact before opening exact Review. The full fixture passes 20
+  checks against synthetic same-origin endpoints; this does not prove reload
+  persistence from the encrypted vault or mobile/theme acceptance.

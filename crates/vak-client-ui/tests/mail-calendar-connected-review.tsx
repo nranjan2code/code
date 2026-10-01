@@ -173,6 +173,12 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Friday works") === true, "the exact local draft preview");
   await click("Save draft");
   await waitFor(() => saved?.candidate_digest === "fixture-digest-1" && saved?.revision === 1, "the Agent-scoped saved candidate");
+  await click("Close");
+  await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Open"), "the saved reply in the work-area list");
+  await click("Open");
+  await waitFor(() => document.querySelector<HTMLInputElement>(".mail-calendar-editor input")?.value === "maya@example.test", "the saved reply reopened with its recipient");
+  const reopenedReplyBody = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value;
+  await click("Preview draft");
   const mailReviewOpener = await click("Review and send this exact reply");
   await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("maya@example.test") === true, "the exact-effect Review");
   const review = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
@@ -226,7 +232,7 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),
     check(mailSaved?.source_refs?.[0]?.item_id === "message-41" && mailSaved?.action?.draft?.reply_to_message_id === "message-41" && mailSaved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
-    check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
+    check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Friday works") && reopenedReplyBody?.includes("Friday works"), "The saved reply reopens with the edited recipient and body intact"),
     check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),
     check(mailKeyboard.forwardWraps && mailKeyboard.reverseWraps && mailKeyboard.escapeRestoresFocus, "Email Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
