@@ -2101,9 +2101,12 @@ impl<'de> Deserialize<'de> for SensitiveInput {
     }
 }
 
-/// Store an iCloud app-specific password without exposing it to a provider
-/// request here. Content reads remain disabled until the lifecycle erasure
-/// gate is implemented.
+/// Verify and store a provider app password for the supported, local-only
+/// read-only profile. The credential is checked against the provider's fixed
+/// TLS endpoint before it is written to the owning Agent vault. iCloud app-
+/// specific passwords have broader provider authority than these local grants;
+/// account disconnect removes the vault credential, but copied append-only
+/// session content remains subject to the documented M7 erasure gate.
 pub(super) async fn connect_app_password(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
