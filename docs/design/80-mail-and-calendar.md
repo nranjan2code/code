@@ -354,8 +354,9 @@ Provider push subscriptions can later shorten update delay; a push is only a
 hint to fetch and verify current state, never a source of content or
 authorization. The
 starter remains an on-demand Agent conversation for a cited, read-only day
-plan. Account and routine administration remain in Settings; connected-account
-source-to-Review browser acceptance is still open.
+plan. Account administration remains in Settings; routine creation and
+operation live in Today Canvas. The Canvas acceptance uses synthetic linked
+accounts; live-provider and sustained service recovery acceptance remain open.
 
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and
@@ -932,8 +933,8 @@ per-Agent routine authoring and operations, and the Canvas-owned Drafts and
 Review area. Reply and event
 actions save an Agent-scoped candidate, then open it in Canvas; revision,
 digest, permission, and final-confirmation checks still gate provider effects.
-Provider inbox cursor paging, the complete conversation workspace, and routine
-budget administration remain open. The connected Settings
+Provider inbox cursor paging, the complete conversation workspace, and
+operator-visible routine budget controls remain open. The connected Settings
 fixture confirms that it no longer renders
 a duplicate daily preview or draft workspace; separate Canvas fixtures cover
 the working views with synthetic provider fixtures.
