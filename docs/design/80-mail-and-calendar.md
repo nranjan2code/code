@@ -73,9 +73,15 @@ option is rejected when commitments are disabled and runs are refused if that
 setting is later disabled. This is the first cross-activity integration; files,
 other services, writing commitments, and automatic provider effects remain
 separately gated or deferred.
-Mail previews and conversation pages also carry bounded sender, To, and Cc
-fields from Google, Microsoft Graph, and Apple IMAP. Bcc is not requested from
-Microsoft and is never projected into the owner or Agent result.
+Mail previews and conversation pages also carry bounded sender, Reply-To, To,
+and Cc fields from Google, Microsoft Graph, and Apple IMAP where available.
+Google requests the Reply-To metadata header and Graph selects `replyTo`; Apple
+IMAP's envelope does not provide it and Apple replies are unsupported. Reply-To
+is treated as untrusted provider data. A Google or Microsoft reply draft uses
+its first parsed Reply-To mailbox when present, otherwise the sender address;
+the recipient remains editable and the exact final address is shown for review.
+Bcc is not requested from Microsoft and is never projected into the owner or
+Agent result.
 iCloud links now verify fixed-host IMAP MailRead-only, CalDAV CalendarFreeBusy-only,
 or CalDAV CalendarRead-only access as separate account selections. Apple inbox previews expose bounded
 metadata, and the person or Agent can request one selected message body through
@@ -199,7 +205,9 @@ Microsoft conversation messages include bounded attachment cards; selected
 previewable files use the existing network-denied document worker. The owner
 can start a local email draft from any message in an opened Google or Microsoft
 conversation; the candidate retains that selected provider message as its
-source reference. The owner can create a provider-threaded reply. The send
+source reference. The owner can create a provider-threaded reply. Reply drafts
+prefer the bounded provider Reply-To mailbox when available and otherwise use
+From; the owner can edit and review the exact recipient. The send
 broker requires both MailRead and MailSend, re-fetches the selected provider
 message immediately before dispatch, and blocks a changed message,
 thread/conversation ID, or subject. Google serialization uses validated

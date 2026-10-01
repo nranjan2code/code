@@ -161,6 +161,8 @@ pub struct MailItem {
     pub thread_id: Option<String>,
     pub from: Option<String>,
     #[serde(default)]
+    pub reply_to: Option<String>,
+    #[serde(default)]
     pub to: Option<String>,
     #[serde(default)]
     pub cc: Option<String>,
@@ -886,7 +888,7 @@ impl ProviderReadClient {
                         url.query_pairs_mut()
                             .append_pair("$top", &limit.to_string())
                             .append_pair("$orderby", "receivedDateTime desc")
-                            .append_pair("$select", "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments");
+                            .append_pair("$select", "id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments");
                         if let Some(query) = query.as_deref() {
                             url.query_pairs_mut()
                                 .append_pair("$search", &format!("\"{query}\""));
@@ -1274,7 +1276,7 @@ impl ProviderReadClient {
                         .header("Prefer", "outlook.body-content-type=\"text\"")
                         .query(&[(
                             "$select",
-                            "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                            "id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
                         )]);
                 }
                 Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
@@ -1342,6 +1344,7 @@ impl ProviderReadClient {
                     .query(&[
                         ("format", "metadata"),
                         ("metadataHeaders", "From"),
+                        ("metadataHeaders", "Reply-To"),
                         ("metadataHeaders", "To"),
                         ("metadataHeaders", "Cc"),
                         ("metadataHeaders", "Subject"),
@@ -1422,7 +1425,7 @@ impl ProviderReadClient {
                                 .map_err(|_| ProviderReadError::InvalidResponse)?;
                         url.query_pairs_mut()
                     .append_pair("$top", &limit.to_string())
-                            .append_pair("$select", "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments")
+                            .append_pair("$select", "id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments")
                             .append_pair("$filter", &format!("conversationId eq '{escaped}'"))
                             .append_pair("$orderby", "receivedDateTime asc");
                         url
@@ -2146,7 +2149,7 @@ impl ProviderReadClient {
             ])
             .query(&[(
                 "$select",
-                "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                "id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
             )]);
         if let Some(query) = query {
             request = request.query(&[("$search", format!("\"{query}\""))]);
@@ -2849,6 +2852,7 @@ where
             provider_id: format!("{uid_validity}:{uid}"),
             thread_id: None,
             from,
+            reply_to: None,
             to,
             cc,
             preview: subject.clone(),
@@ -3144,6 +3148,7 @@ where
             provider_id: format!("{}:{uid}", parsed[0].0),
             thread_id: None,
             from,
+            reply_to: None,
             to,
             cc,
             subject: subject.clone(),
@@ -3874,7 +3879,7 @@ fn validate_graph_thread_url(
             != Some(limit)
         || pairs.get("$select").map(|value| value.as_ref())
             != Some(
-                "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                "id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
             )
         || pairs.get("$orderby").map(|value| value.as_ref()) != Some("receivedDateTime asc")
     {
@@ -3993,6 +3998,7 @@ fn parse_google_message(value: &Value) -> MailItem {
             .and_then(Value::as_str)
             .map(bounded_text),
         from: header("From").map(|value| bounded_mail_text(value.as_bytes(), 512)),
+        reply_to: header("Reply-To"),
         to: header("To"),
         cc: header("Cc"),
         subject: header("Subject")
@@ -4151,6 +4157,7 @@ fn parse_graph_message(value: &Value) -> Option<MailItem> {
             .pointer("/from/emailAddress/address")
             .and_then(Value::as_str)
             .map(|value| bounded_mail_text(value.as_bytes(), 512)),
+        reply_to: graph_recipients(value.get("replyTo")),
         to: graph_recipients(value.get("toRecipients")),
         cc: graph_recipients(value.get("ccRecipients")),
         subject: value
@@ -4492,7 +4499,7 @@ mod tests {
         );
 
         let graph = "https://graph.example/v1.0";
-        let valid = "https://graph.example/v1.0/me/messages?$top=20&$select=id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments&$filter=conversationId%20eq%20%27conv%27%2742%27&$orderby=receivedDateTime%20asc&$skiptoken=next";
+        let valid = "https://graph.example/v1.0/me/messages?$top=20&$select=id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments&$filter=conversationId%20eq%20%27conv%27%2742%27&$orderby=receivedDateTime%20asc&$skiptoken=next";
         let cursor = encode_graph_thread_cursor(valid, "conv'42", graph, 20).unwrap();
         assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph, 20).is_ok());
         assert!(decode_graph_thread_cursor(&cursor, "conv'42", graph, 5).is_err());
@@ -4955,6 +4962,7 @@ mod tests {
                     let query = request.uri().query().unwrap_or_default();
                     assert!(query.contains("format=metadata"));
                     assert!(query.contains("metadataHeaders=From"));
+                    assert!(query.contains("metadataHeaders=Reply-To"));
                     let rows = (0..21)
                         .map(|index| {
                             let thread_id = if mismatch.load(Ordering::SeqCst) && index == 1 {
@@ -5067,7 +5075,7 @@ mod tests {
             .append_pair("$top", "20")
             .append_pair(
                 "$select",
-                "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
+                "id,conversationId,from,replyTo,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments",
             )
             .append_pair("$filter", "conversationId eq 'conv''42'")
             .append_pair("$orderby", "receivedDateTime asc")
@@ -5606,30 +5614,40 @@ mod tests {
     }
 
     #[test]
-    fn mail_parsers_project_bounded_to_and_cc_but_never_bcc() {
+    fn mail_parsers_project_bounded_reply_to_to_and_cc_but_never_bcc() {
         let google = parse_google_message(&json!({
             "id": "gmail-message",
             "threadId": "gmail-thread",
             "payload": {"headers": [
                 {"name": "From", "value": "sender@example.test"},
+                {"name": "Reply-To", "value": "Reply Desk <reply@example.test>"},
                 {"name": "To", "value": "Recipient <to@example.test>"},
                 {"name": "Cc", "value": "Copy <cc@example.test>"},
                 {"name": "Bcc", "value": "Hidden <bcc@example.test>"}
             ]}
         }));
         assert_eq!(google.to.as_deref(), Some("Recipient <to@example.test>"));
+        assert_eq!(
+            google.reply_to.as_deref(),
+            Some("Reply Desk <reply@example.test>")
+        );
         assert_eq!(google.cc.as_deref(), Some("Copy <cc@example.test>"));
         let serialized = serde_json::to_value(&google).unwrap();
         assert!(serialized.get("bcc").is_none());
 
         let graph = parse_graph_message(&json!({
             "id": "graph-message",
+            "replyTo": [{"emailAddress":{"name":"Reply Desk", "address":"reply@example.test"}}],
             "toRecipients": [{"emailAddress":{"name":"Recipient", "address":"to@example.test"}}],
             "ccRecipients": [{"emailAddress":{"address":"cc@example.test"}}],
             "bccRecipients": [{"emailAddress":{"address":"bcc@example.test"}}]
         }))
         .unwrap();
         assert_eq!(graph.to.as_deref(), Some("Recipient <to@example.test>"));
+        assert_eq!(
+            graph.reply_to.as_deref(),
+            Some("Reply Desk <reply@example.test>")
+        );
         assert_eq!(graph.cc.as_deref(), Some("cc@example.test"));
         let serialized = serde_json::to_value(&graph).unwrap();
         assert!(serialized.get("bcc").is_none());
@@ -5641,6 +5659,12 @@ mod tests {
         assert!(!noisy.contains('\r'));
         assert!(!noisy.contains('\n'));
         assert!(noisy.len() <= MAX_MAIL_RECIPIENTS_TEXT_BYTES);
+        assert!(
+            graph
+                .reply_to
+                .as_ref()
+                .is_some_and(|value| value.len() <= MAX_MAIL_RECIPIENTS_TEXT_BYTES)
+        );
     }
 
     #[tokio::test]

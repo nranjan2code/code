@@ -206,6 +206,7 @@ export interface MailCalendarMailPreview {
   provider_id: string;
   thread_id: string | null;
   from: string | null;
+  reply_to?: string | null;
   to: string | null;
   cc: string | null;
   subject: string;

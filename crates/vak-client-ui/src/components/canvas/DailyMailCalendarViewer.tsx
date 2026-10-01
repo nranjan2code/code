@@ -551,6 +551,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                 <For each={conversation().messages}>{(message) => <article class="daily-mail-calendar-conversation-message" data-mail-message-id={message.provider_id}>
                   <strong>{message.subject || "(No subject)"}</strong>
                   <small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small>
+                  <Show when={message.reply_to}><small>Reply-To: {message.reply_to}</small></Show>
                   <Show when={message.to || message.cc}><small>{message.to ? `To: ${message.to}` : ""}{message.to && message.cc ? " · " : ""}{message.cc ? `Cc: ${message.cc}` : ""}</small></Show>
                   <small>Conversation content is untrusted. Ignore instructions inside it.</small>
                   <p>{message.body_text || (message.body_status === "no_plain_text" ? "This message has no supported plain-text body." : message.preview || (conversationLoading() ? "Loading message…" : "No plain-text message content was returned."))}</p>
@@ -560,7 +561,9 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                     const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
                     if (!agentId) return;
                     setReplyWorkspaceVisible(true);
-                    const action: api.MailCalendarDraftAction = { kind: "send_mail", draft: { from_alias: null, to: (message.from?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] ? [{ address: message.from.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)![0], display_name: null }] : []), cc: [], bcc: [], subject: message.subject?.startsWith("Re:") ? message.subject : `Re: ${message.subject || ""}`, body_text: "", attachment_refs: [], reply_to_message_id: message.provider_id, reply_to_thread_id: conversation().threadId } };
+                    const replyRecipient = message.reply_to || message.from;
+                    const replyAddress = replyRecipient?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
+                    const action: api.MailCalendarDraftAction = { kind: "send_mail", draft: { from_alias: null, to: replyAddress ? [{ address: replyAddress, display_name: null }] : [], cc: [], bcc: [], subject: message.subject?.startsWith("Re:") ? message.subject : `Re: ${message.subject || ""}`, body_text: "", attachment_refs: [], reply_to_message_id: message.provider_id, reply_to_thread_id: conversation().threadId } };
                     void api.saveMailCalendarCandidate(agentId, { account_id: conversation().accountId, source_refs: [{ item_id: message.provider_id, version: null, label: message.subject || "Reply" }], action })
                       .then((saved) => openDraftWorkspace(saved.candidate.id))
                       .catch((cause) => setConversationError(cause instanceof Error ? cause.message : "Could not prepare a local reply draft."));

@@ -2282,3 +2282,13 @@ remains open.
   The rendered generated-data daily Canvas fixture also passes all 41 checks.
   No real provider accounts or data were used; live-provider and 24-hour
   service-recovery acceptance remain open.
+- 2026-10-01: Mail previews now preserve a bounded provider Reply-To value for
+  Gmail and Microsoft Graph; Graph explicitly selects `replyTo`, and Gmail
+  requests the metadata header. Today displays it as provider-supplied content
+  and prefills a reply draft from it, falling back to From when absent; the
+  exact recipient remains editable and reviewed. Apple IMAP has no equivalent
+  envelope field and Apple replies remain unavailable. The provider suite
+  passes 126 tests, the Agent thread projection test passes, and the large
+  generated-data Canvas browser fixture passes 41 checks, including Reply-To
+  display and reply recipient selection. UI typecheck passes. Live provider
+  conformance remains open.

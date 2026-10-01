@@ -139,7 +139,7 @@ window.fetch = async (input, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { thread_id?: string; cursor?: string };
       const page = body.cursor ? 2 : 1;
       const messages = page === 1
-        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "available", has_attachments: true, attachments: [{ provider_id: "fixture-attachment", filename: "agenda.txt", mime_type: "text/plain", size_bytes: 24, previewable: true }] }]
+        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", reply_to: "Reply Desk <reply@example.test>", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "available", has_attachments: true, attachments: [{ provider_id: "fixture-attachment", filename: "agenda.txt", mime_type: "text/plain", size_bytes: 24, previewable: true }] }]
         : [
             { provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "Repeated first message", body_text: "Duplicate must collapse", body_status: "available", has_attachments: false },
             { provider_id: `${accountId}-thread-message-2`, thread_id: body.thread_id, from: "owner@example.test", to: "sender@example.test", cc: null, subject: "Re: Synthetic conversation", received_at: "2026-10-01T10:05:00Z", preview: "Second page preview", body_text: "Second page full message", body_status: "available", has_attachments: false },
@@ -263,7 +263,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
-  const conversationOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 1);
+  const conversationOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 1
+    && document.querySelector(".daily-mail-calendar-conversation")?.textContent?.includes("Reply-To: Reply Desk <reply@example.test>") === true);
   const conversationHasFocusedWorkspace = await waitFor(() => document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open") === true
     && !document.querySelector(".daily-mail-calendar-calendar-tools")
     && !document.querySelector(".mail-calendar-routine-workspace")
@@ -288,7 +289,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     return !!editor && getComputedStyle(editor).display !== "none" && !!editor.querySelector("textarea");
   };
   const conversationHandoffWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "send_mail"
-    && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1")
+    && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"
+    && body.action.draft.to?.[0]?.address === "reply@example.test")
     && inlineReplyEditorVisible());
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
   const conversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
@@ -450,11 +452,11 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check((firstRoutine()?.textContent ?? "").includes("Up to 10 results per run"), "Saved routine cards show the broker-enforced per-run result budget"),
     check(pauseAllStopsActiveRun, "Canvas pause-all disables enabled routines and asks a currently running Agent session to stop"),
     check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
-    check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
+    check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation and Reply-To header inside Today without adding it to session history"),
     check(conversationHasFocusedWorkspace, `Opening a conversation gives it a focused Canvas workspace and moves keyboard focus to its heading (${focusedWorkspaceDiagnostics})`),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
-    check(conversationHandoffWorks, "Draft reply reveals its editable Agent-scoped Canvas draft while leaving the provider untouched"),
+    check(conversationHandoffWorks, "Draft reply prefers the message Reply-To, reveals its editable Agent-scoped Canvas draft, and leaves the provider untouched"),
     check(conversationReturnsToInbox, "Back to inbox restores the inbox and returns keyboard focus to the opened message"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(appleMessageBodyPreviewWorks, "An Apple selected-message preview loads its body in Canvas without a conversation id"),
