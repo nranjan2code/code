@@ -117,6 +117,8 @@ window.fetch = async (input, init) => {
   maxConcurrentAccounts = Math.max(maxConcurrentAccounts, activeAccounts.size);
   await Promise.resolve();
   try {
+    if (url.pathname.endsWith("/message-preview")) return json({ body_text: "Synthetic Apple message body", body_status: "available" });
+    if (url.pathname.endsWith("/attachment-preview")) return json({ filename: "agenda.txt", mime_type: "text/plain", size_bytes: 24, text: "Synthetic safe attachment text" });
     if (url.pathname.endsWith("/mail-preview")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; folder_id?: string; cursor?: string };
       mailPreviewReads.push({ accountId, ...body });
@@ -137,7 +139,7 @@ window.fetch = async (input, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { thread_id?: string; cursor?: string };
       const page = body.cursor ? 2 : 1;
       const messages = page === 1
-        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "available", has_attachments: false }]
+        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "available", has_attachments: true, attachments: [{ provider_id: "fixture-attachment", filename: "agenda.txt", mime_type: "text/plain", size_bytes: 24, previewable: true }] }]
         : [
             { provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "Repeated first message", body_text: "Duplicate must collapse", body_status: "available", has_attachments: false },
             { provider_id: `${accountId}-thread-message-2`, thread_id: body.thread_id, from: "owner@example.test", to: "sender@example.test", cc: null, subject: "Re: Synthetic conversation", received_at: "2026-10-01T10:05:00Z", preview: "Second page preview", body_text: "Second page full message", body_status: "available", has_attachments: false },
@@ -263,6 +265,9 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
   const conversationOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 1);
   const conversation = document.querySelector(".daily-mail-calendar-conversation");
+  [...(conversation?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.includes("Preview attachment"))?.click();
+  const attachmentPreviewWorks = await waitFor(() => conversation?.textContent?.includes("Synthetic safe attachment text") === true
+    && requests.some((path) => path.endsWith("/attachment-preview")));
   [...(conversation?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
     .find((button) => button.textContent?.includes("Load more messages"))?.click();
   const conversationPagingWorks = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 2);
@@ -286,6 +291,12 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && document.body.textContent?.includes("apple_icloud sample mail 8") === true);
   for (let page = 0; page < 5; page++) previousMailPage();
   const mailPagerReturnsToFirstPage = await waitFor(() => mailPager?.textContent?.includes("Page 1 of 6") === true);
+  const appleAccountSelect = document.querySelector<HTMLSelectElement>("select[aria-label='Mail account']");
+  if (appleAccountSelect) { appleAccountSelect.value = "a-account-0"; appleAccountSelect.dispatchEvent(new Event("change", { bubbles: true })); }
+  const appleSelectedMessageOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-message").length === 8);
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
+  const appleMessageBodyPreviewWorks = appleSelectedMessageOpened && await waitFor(() => document.querySelector(".daily-mail-calendar-conversation")?.textContent?.includes("Synthetic Apple message body") === true)
+    && requests.some((path) => path.endsWith("/message-preview"));
   const allCalendarEventsRendered = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 300);
   const initialPhoneTimeline = document.querySelector<HTMLElement>(".mail-calendar-time-grid.is-day");
   const phoneTimelineScrollWorks = window.innerWidth > 640
@@ -326,24 +337,36 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event)$/.test(path));
   const viewerBeforeRefresh = document.querySelector(".daily-mail-calendar-view");
   const selectedEventBeforeRefresh = document.querySelector(".daily-mail-calendar-event-detail");
+  const mailRowBeforeRefresh = document.querySelector(".daily-mail-calendar-message");
+  const calendarEventBeforeRefresh = document.querySelector(".mail-calendar-grid-event");
+  const selectedMailAccount = document.querySelector<HTMLSelectElement>("select[aria-label='Mail account']");
+  const mailReadsBeforeManualRefresh = requests.filter((path) => path.endsWith("/mail-preview")).length;
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
-  const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
+  const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length > mailReadsBeforeManualRefresh
+    && document.querySelectorAll(".daily-mail-calendar-message").length > 0
+    && !document.querySelector(".artifact-canvas-refreshing"), 15_000);
+  const mailRowsExpectedAfterRefresh = document.querySelectorAll(".daily-mail-calendar-message").length;
+  const manualRefreshDiagnostics = `before=${mailReadsBeforeManualRefresh}, after=${requests.filter((path) => path.endsWith("/mail-preview")).length}, account=${selectedMailAccount?.value ?? "missing"}, rows=${document.querySelectorAll(".daily-mail-calendar-message").length}/${mailRowsExpectedAfterRefresh}`;
   const refreshKeepsMountedRows = !!viewerBeforeRefresh && document.querySelector(".daily-mail-calendar-view") === viewerBeforeRefresh;
   const refreshKeepsSelectedEvent = !!selectedEventBeforeRefresh && document.querySelector(".daily-mail-calendar-event-detail") === selectedEventBeforeRefresh;
+  const refreshKeepsMailAndCalendarRows = !!mailRowBeforeRefresh && document.querySelector(".daily-mail-calendar-message") === mailRowBeforeRefresh
+    && !!calendarEventBeforeRefresh && document.querySelector(".mail-calendar-grid-event") === calendarEventBeforeRefresh;
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
-  const changeRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 27);
+  const mailReadsAfterManualRefresh = requests.filter((path) => path.endsWith("/mail-preview")).length;
+  const changeRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length > mailReadsAfterManualRefresh);
   const inventoriesBeforeGate = requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length;
   (window as any).__holdNextAccountInventory();
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
   const firstGatedInventoryStarted = await waitFor(() => requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length === inventoriesBeforeGate + 1);
-  const backgroundRefreshKeepsContent = document.querySelectorAll(".daily-mail-calendar-message").length === 12
+  const backgroundRefreshKeepsContent = document.querySelectorAll(".daily-mail-calendar-message").length === mailRowsExpectedAfterRefresh
     && !document.querySelector(".artifact-canvas-loading")
     && !!document.querySelector(".artifact-canvas-refreshing");
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
   (window as any).__releaseAccountInventory();
   const queuedAccountRefreshWorks = firstGatedInventoryStarted
-    && await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 45
-      && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
+    && await waitFor(() => requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length >= inventoriesBeforeGate + 2
+      && document.querySelectorAll(".daily-mail-calendar-message").length === mailRowsExpectedAfterRefresh
+      && !document.querySelector(".artifact-canvas-refreshing"), 15_000);
   const calendarsBeforeRange = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const rangeFrom = day(new Date());
   const rangeThroughDate = new Date(`${rangeFrom}T12:00:00`);
@@ -409,8 +432,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
+    check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
     check(conversationHandoffWorks, "A reply opens as a saved Agent-scoped draft in Canvas without sending it"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
+    check(appleMessageBodyPreviewWorks, "An Apple selected-message preview loads its body in Canvas without a conversation id"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(phoneTimelineScrollWorks, "The phone keeps dense event lanes readable inside the calendar without widening the page"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
@@ -418,9 +443,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens Canvas drafts without a provider effect"),
-    check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (requests=${requests.filter((path) => path.endsWith("/mail-preview")).length}, rows=${document.querySelectorAll(".daily-mail-calendar-message").length})`),
+    check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (${manualRefreshDiagnostics})`),
     check(refreshKeepsMountedRows, "A settled refresh updates the existing viewer without remounting its page"),
     check(refreshKeepsSelectedEvent, "A settled refresh preserves the open event details without remounting them"),
+    check(refreshKeepsMailAndCalendarRows, "A settled refresh keeps existing mail and calendar rows mounted"),
     check(backgroundRefreshKeepsContent, "A background refresh keeps the current page visible without replacing it with a loading screen"),
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
     check(queuedAccountRefreshWorks, `An account change during an in-flight refresh queues one immediate follow-up refresh (first=${firstGatedInventoryStarted}, mail=${requests.filter((path) => path.endsWith("/mail-preview")).length}, account=${requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length})`),

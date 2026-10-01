@@ -2237,3 +2237,14 @@ remains open.
   again on a later turn. Vault lifecycle and Core counter regressions pass;
   UI typecheck and the 35-check synthetic Canvas fixture pass. Full connected
   conversation navigation remains open.
+- 2026-10-01: Kept same-source refreshes visually stable by reconciling mail
+  rows and calendar cards on stable provider identities; updates reuse visible
+  row elements while the Canvas shows its small background-refresh status.
+  Added synthetic regression coverage proving the viewer, selected event, mail
+  row, and calendar event stay mounted across refresh. Apple selected-message
+  preview and bounded Google/Microsoft attachment text preview are wired to
+  Canvas. The large synthetic browser fixture now checks both safe previews
+  alongside refresh stability; all 38 browser checks pass with synthetic
+  data. `npm run typecheck`, `git diff --check`, and the web production build
+  pass. Full editable
+  conversation workspace and provider connection acceptance remain open.

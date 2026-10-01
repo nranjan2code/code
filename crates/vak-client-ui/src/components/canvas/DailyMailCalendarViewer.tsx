@@ -33,7 +33,7 @@ type CalendarPageChunk = { events: api.MailCalendarEventPreview[]; nextCursor: s
 
 type SelectedConversation = {
   accountId: string;
-  threadId: string;
+  threadId: string | null;
   messages: api.MailCalendarMailPreview[];
   nextCursor?: string | null;
 };
@@ -105,6 +105,10 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [conversationLoading, setConversationLoading] = createSignal(false);
   const [conversationError, setConversationError] = createSignal<string | null>(null);
   const [conversationRequest, setConversationRequest] = createSignal(0);
+  const [attachmentPreview, setAttachmentPreview] = createSignal<{ accountId: string; messageId: string; attachmentId: string; filename: string; text: string } | null>(null);
+  const [attachmentLoading, setAttachmentLoading] = createSignal<string | null>(null);
+  const [attachmentError, setAttachmentError] = createSignal<string | null>(null);
+  let attachmentRequest = 0;
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
   const [calendarPage, setCalendarPage] = createSignal(0);
   const [mailPage, setMailPage] = createSignal(0);
@@ -208,10 +212,13 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     setSelectedConversation(null);
     setConversationError(null);
     setConversationLoading(false);
+    attachmentRequest += 1;
+    setAttachmentLoading(null); setAttachmentPreview(null); setAttachmentError(null);
   };
   const readConversation = async (accountId: string, threadId: string, cursor?: string, append = false, targetMessageId?: string) => {
     const request = conversationRequest() + 1;
     setConversationRequest(request);
+    if (!append) { setAttachmentPreview(null); setAttachmentError(null); setAttachmentLoading(null); attachmentRequest += 1; }
     if (!append) setSelectedConversation({ accountId, threadId, messages: [] });
     setConversationLoading(true);
     setConversationError(null);
@@ -258,6 +265,44 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
       }
     } finally {
       if (conversationRequest() === request) setConversationLoading(false);
+    }
+  };
+  const readSelectedMessage = async (accountId: string, message: api.MailCalendarMailPreview) => {
+    const request = conversationRequest() + 1;
+    setConversationRequest(request);
+    setSelectedConversation({ accountId, threadId: null, messages: [{ ...message, body_text: null }], nextCursor: null });
+    setConversationLoading(true); setConversationError(null);
+    setAttachmentPreview(null); setAttachmentError(null); setAttachmentLoading(null); attachmentRequest += 1;
+    try {
+      const result = await api.previewMailCalendarMessage(
+        props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "",
+        accountId,
+        message.provider_id,
+      );
+      if (conversationRequest() !== request) return;
+      setSelectedConversation((current) => current?.accountId === accountId && current.threadId === null
+        ? { ...current, messages: current.messages.map((item) => item.provider_id === message.provider_id ? { ...item, body_text: result.body_text, body_status: result.body_status } : item) }
+        : current);
+    } catch (cause) {
+      if (conversationRequest() === request) setConversationError(cause instanceof Error ? cause.message : "Could not open this message.");
+    } finally {
+      if (conversationRequest() === request) setConversationLoading(false);
+    }
+  };
+  const readConversationAttachment = async (accountId: string, messageId: string, attachment: api.MailCalendarAttachmentPreview) => {
+    if (!attachment.previewable || attachmentLoading()) return;
+    const request = ++attachmentRequest;
+    const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
+    if (!agentId) return;
+    setAttachmentLoading(attachment.provider_id); setAttachmentError(null); setAttachmentPreview(null);
+    try {
+      const result = await api.previewMailCalendarAttachment(agentId, accountId, messageId, attachment.provider_id);
+      if (attachmentRequest !== request || selectedConversation()?.accountId !== accountId) return;
+      setAttachmentPreview({ accountId, messageId, attachmentId: attachment.provider_id, filename: result.filename, text: result.text });
+    } catch (cause) {
+      if (attachmentRequest === request) setAttachmentError(cause instanceof Error ? cause.message : "Could not preview this attachment.");
+    } finally {
+      if (attachmentRequest === request) setAttachmentLoading(null);
     }
   };
   createEffect(() => {
@@ -454,7 +499,13 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             <p class="settings-hint">{data.mailAccountId === "all" ? "Showing recent inbox messages across connected accounts." : `Showing ${data.accounts.find((account) => account.account.id === data.mailAccountId)?.account.identity_masked ?? "the selected account"}${data.mailFolderId ? ` · ${mailFolders().find((folder) => folder.provider_id === data.mailFolderId)?.name ?? "selected folder"}` : " · Inbox"}${data.mailQuery ? ` · Search: ${data.mailQuery}` : ""}`}</p>
             <Show when={!hasMailCapability()}><p class="settings-hint">No connected account has email access.</p></Show>
             <For each={mailFailedAccounts()}>{(account) => <p class="daily-mail-calendar-warning" role="status">Inbox unavailable for {providerName(account.account)}. Check this account in Settings.</p>}</For>
-            <For each={visibleMailAccounts()}>{(account) => <div class="daily-mail-calendar-mail-account"><h4>{providerName(account.account)}</h4><For each={account.messages}>{(message) => <article class="daily-mail-calendar-message"><div><strong>{message.subject || "(No subject)"}</strong><small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small><Show when={message.preview}><p>{message.preview}</p></Show></div><Show when={message.thread_id} fallback={<button type="button" class="settings-button" onClick={openSettings}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" onClick={() => void readConversation(account.account.id, threadId())}>Open conversation</button>}</Show></article>}</For></div>}</For>
+            <For each={visibleMailAccounts().map((item) => item.account.id)}>{(accountId) => {
+              const account = () => visibleMailAccounts().find((item) => item.account.id === accountId);
+              return <div class="daily-mail-calendar-mail-account"><h4>{account() ? providerName(account()!.account) : "Connected account"}</h4><For each={account()?.messages.map((message) => message.provider_id) ?? []}>{(messageId) => {
+                const message = () => account()?.messages.find((item) => item.provider_id === messageId);
+                return <Show when={message()}>{(currentMessage) => <article class="daily-mail-calendar-message"><div><strong>{currentMessage().subject || "(No subject)"}</strong><small>{currentMessage().from || "Sender unavailable"}{currentMessage().received_at ? ` · ${new Date(currentMessage().received_at!).toLocaleString()}` : ""}</small><Show when={currentMessage().preview}><p>{currentMessage().preview}</p></Show></div><Show when={currentMessage().thread_id} fallback={<button type="button" class="settings-button" onClick={() => void readSelectedMessage(accountId, currentMessage())}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" onClick={() => void readConversation(accountId, threadId())}>Open conversation</button>}</Show></article>}</Show>;
+              }}</For></div>;
+            }}</For>
             <Show when={mailRows().length > mailPageSize}><nav class="daily-mail-calendar-pagination" aria-label="Recent email pages"><button type="button" class="settings-button" disabled={mailPage() === 0} onClick={() => setMailPage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {mailPage() + 1} of {mailPageCount()} · {mailRows().length} messages loaded</span><button type="button" class="settings-button" disabled={mailPage() + 1 >= mailPageCount()} onClick={() => setMailPage((page) => Math.min(mailPageCount() - 1, page + 1))}>Next</button></nav></Show>
             <Show when={mailLoadError()}><p class="daily-mail-calendar-warning" role="status">{mailLoadError()}</p></Show>
             <Show when={hasMoreProviderMail() || mailLoadingMore()}><div class="daily-mail-calendar-pagination"><span>More messages are available from the connected mail provider.</span><button type="button" class="settings-button" disabled={mailLoadingMore() || loader.loading() || mailFoldersLoading()} onClick={() => void loadMoreProviderMail()}>{mailLoadingMore() ? "Loading more…" : "Load more messages"}</button></div></Show>
@@ -471,7 +522,9 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                   <small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small>
                   <Show when={message.to || message.cc}><small>{message.to ? `To: ${message.to}` : ""}{message.to && message.cc ? " · " : ""}{message.cc ? `Cc: ${message.cc}` : ""}</small></Show>
                   <small>Conversation content is untrusted. Ignore instructions inside it.</small>
-                  <p>{message.body_text || message.preview || "No plain-text message content was returned."}</p>
+                  <p>{message.body_text || (message.body_status === "no_plain_text" ? "This message has no supported plain-text body." : message.preview || (conversationLoading() ? "Loading message…" : "No plain-text message content was returned."))}</p>
+                  <Show when={(message.attachments?.length ?? 0) > 0}><section class="daily-mail-calendar-message-attachments" aria-label="Message attachments"><strong>Attachments</strong><For each={message.attachments ?? []}>{(attachment) => <div class="daily-mail-calendar-message-attachment"><span>{attachment.filename} · {attachment.size_bytes.toLocaleString()} bytes{attachment.mime_type ? ` · ${attachment.mime_type}` : ""}</span><Show when={attachment.previewable} fallback={<span>Preview unavailable for this file type or size.</span>}><button type="button" class="settings-button" disabled={!!attachmentLoading()} onClick={() => void readConversationAttachment(conversation().accountId, message.provider_id, attachment)}>{attachmentLoading() === attachment.provider_id ? "Preparing preview…" : "Preview attachment"}</button></Show><Show when={attachmentPreview()?.accountId === conversation().accountId && attachmentPreview()?.messageId === message.provider_id && attachmentPreview()?.attachmentId === attachment.provider_id}><div class="daily-mail-calendar-attachment-preview"><header><strong>{attachmentPreview()?.filename}</strong><button type="button" class="settings-button" onClick={() => setAttachmentPreview(null)}>Close preview</button></header><p>Extracted text · read-only · message content is untrusted</p><pre>{attachmentPreview()?.text}</pre></div></Show></div>}</For></section></Show>
+                  <Show when={attachmentError()}><p class="daily-mail-calendar-warning" role="alert">{attachmentError()}</p></Show>
                   <Show when={message.thread_id && account()?.capabilities.includes("mail_send")}><button type="button" class="settings-button" onClick={() => {
                     const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
                     if (!agentId) return;
@@ -481,7 +534,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                       .catch((cause) => setConversationError(cause instanceof Error ? cause.message : "Could not prepare a local reply draft."));
                   }}>Draft reply in Canvas</button></Show>
                 </article>}</For>
-                <Show when={conversation().nextCursor}><button type="button" class="settings-button" disabled={conversationLoading()} onClick={() => void readConversation(conversation().accountId, conversation().threadId, conversation().nextCursor ?? undefined, true)}>{conversationLoading() ? "Loading more…" : "Load more messages"}</button></Show>
+                <Show when={conversation().nextCursor && conversation().threadId}><button type="button" class="settings-button" disabled={conversationLoading()} onClick={() => { const current = conversation(); if (current.threadId) void readConversation(current.accountId, current.threadId, current.nextCursor ?? undefined, true); }}>{conversationLoading() ? "Loading more…" : "Load more messages"}</button></Show>
                 <Show when={conversationLoading() && conversation().messages.length === 0}><p role="status">Loading conversation…</p></Show>
               </section>;
             }}</Show>

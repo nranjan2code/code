@@ -905,6 +905,18 @@ bound to the Agent account, folder or label, search scope, page size, and
 provider origin where applicable; changing any of those starts a fresh page
 sequence. Same-source Canvas refreshes retain the current preview while
 loading; changing its Agent or source shows the initial loading state.
+Repeated mail rows and calendar cards are keyed by stable account/provider
+item identity, so a refresh updates their displayed values without tearing
+down the visible rows. A lightweight status reports background work while the
+current page, pagination, and selected event remain visible.
+
+Opening an Apple iCloud message reads only that selected message through the
+owner preview endpoint; it does not manufacture a conversation id or add the
+message to session history. Google and Microsoft conversation previews can
+show attachment metadata and, when eligible, request a bounded safe-text
+preview through the isolated attachment worker. Preview output is labelled as
+untrusted and read-only. This is a reader preview; the complete editable mail
+workspace remains open.
 
 Today also lists this Agent's mail/calendar routines, eight per page. The
 routine list is filtered by both the current Agent id and the typed

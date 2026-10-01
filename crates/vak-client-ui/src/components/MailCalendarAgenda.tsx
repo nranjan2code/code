@@ -30,6 +30,7 @@ const addDays = (key: string, amount: number) => {
 };
 const wallMinutes = (date: Date) => date.getHours() * 60 + date.getMinutes() + date.getSeconds() / 60;
 const eventLayoutKey = (day: string, event: MailCalendarEventPreview) => `${day}::${event.account_id ?? ""}::${event.provider_id}`;
+const eventIdentity = (event: MailCalendarEventPreview) => `${event.account_id ?? ""}::${event.provider_id}`;
 
 export function MailCalendarAgenda(props: Props) {
   const [view, setView] = createSignal<View>(props.initialView ?? "agenda");
@@ -127,15 +128,18 @@ export function MailCalendarAgenda(props: Props) {
       <Show when={view() !== "agenda"}><span>{view() === "day" ? dayLabel(shownDays()[0] ?? props.from) : `Week from ${dayLabel(shownDays()[0] ?? props.from)}`}</span></Show>
     </div>
     <Show when={view() === "agenda"}>
-      <div class="mail-calendar-agenda-list"><For each={shownDays()}>{(key) => <section class="mail-calendar-agenda-day"><h3>{dayLabel(key)}</h3><Show when={eventsByDay(key).length > 0} fallback={<p class="settings-hint">No events</p>}><div class="mail-calendar-agenda-events"><For each={eventsByDay(key)}>{(event) => renderEvent(event, key)}</For></div></Show></section>}</For></div>
+      <div class="mail-calendar-agenda-list"><For each={shownDays()}>{(key) => <section class="mail-calendar-agenda-day"><h3>{dayLabel(key)}</h3><Show when={eventsByDay(key).length > 0} fallback={<p class="settings-hint">No events</p>}><div class="mail-calendar-agenda-events"><For each={eventsByDay(key).map(eventIdentity)}>{(identity) => { const event = () => eventsByDay(key).find((item) => eventIdentity(item) === identity); return <Show when={event()}>{(current) => renderEvent(current(), key)}</Show>; }}</For></div></Show></section>}</For></div>
     </Show>
     <Show when={view() === "day" || view() === "week"}>
       <div class={`mail-calendar-time-grid ${view() === "day" ? "is-day" : "is-week"}`} style={{ "--mail-calendar-day-min-width": `${Math.max(680, maxLaneCount() * 144)}px` }}>
         <div class="mail-calendar-time-labels"><div class="mail-calendar-all-day-label">All day</div><For each={Array.from({ length: visibleHours().end - visibleHours().start }, (_, index) => index + visibleHours().start)}>{(hour) => <div>{new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" })}</div>}</For></div>
         <For each={shownDays()}>{(key) => <section class="mail-calendar-time-day" aria-label={dayLabel(key)}>
-          <h3>{dayLabel(key)}</h3><div class="mail-calendar-all-day-lane"><For each={eventsByDay(key).filter((event) => event.all_day)}>{(event) => <button type="button" class="mail-calendar-all-day-event" aria-label={`Open ${event.title}`} onClick={() => selectEvent(event)}>{event.title}</button>}</For></div>
+          <h3>{dayLabel(key)}</h3><div class="mail-calendar-all-day-lane"><For each={eventsByDay(key).filter((event) => event.all_day).map(eventIdentity)}>{(identity) => { const event = () => eventsByDay(key).find((item) => item.all_day && eventIdentity(item) === identity); return <Show when={event()}>{(current) => <button type="button" class="mail-calendar-all-day-event" aria-label={`Open ${current().title}`} onClick={() => selectEvent(current())}>{current().title}</button>}</Show>; }}</For></div>
           <div class="mail-calendar-hour-lanes" style={{ "--mail-calendar-hours": String(visibleHours().end - visibleHours().start) }}><For each={Array.from({ length: visibleHours().end - visibleHours().start }, (_, hour) => hour)}>{() => <div />}</For>
-            <For each={eventsByDay(key).filter((event) => !event.all_day && event.starts_at && event.ends_at)}>{(event) => {
+            <For each={eventsByDay(key).filter((event) => !event.all_day && event.starts_at && event.ends_at).map(eventIdentity)}>{(identity) => {
+              const event = () => eventsByDay(key).find((item) => !item.all_day && item.starts_at && item.ends_at && eventIdentity(item) === identity);
+              return <Show when={event()}>{(currentEvent) => {
+              const event = currentEvent();
               const start = new Date(event.starts_at!).getTime();
               const end = new Date(event.ends_at!).getTime();
               const localStart = new Date(start);
@@ -152,6 +156,7 @@ export function MailCalendarAgenda(props: Props) {
               const layout = eventLayouts().get(eventLayoutKey(key, event)) ?? { lane: 0, laneCount: 1 };
               const height = Math.max(1, bottom - top);
               return <article class={`mail-calendar-grid-event${props.conflicts.has(conflictKey(event)) ? " is-conflict" : ""}${props.onSelect ? " is-selectable" : ""}`} role={props.onSelect ? "button" : undefined} aria-label={props.onSelect ? `${event.title}, ${labelTime(event, key)}, ${event.account_name ?? "Calendar"}` : undefined} tabIndex={props.onSelect ? 0 : undefined} onClick={() => selectEvent(event)} onKeyDown={(e) => { if (props.onSelect && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); selectEvent(event); } }} style={{ top: `${(top - visibleStart) / range * 100}%`, height: `${height / range * 100}%`, left: `calc(${layout.lane / layout.laneCount * 100}% + 2px)`, width: `calc(${100 / layout.laneCount}% - 4px)` }} title={`${event.title} · ${labelTime(event, key)} · ${event.account_name ?? "Calendar"}`}><strong>{event.title}</strong><Show when={!props.onSelect && event.account_name}><small>{event.account_name}</small></Show><Show when={eligibleUpdate(event)}><button class="settings-button" onClick={(e) => { e.stopPropagation(); props.onDraftUpdate?.(event); }}>Draft update</button></Show><Show when={eligibleCancel(event)}><button class="settings-button danger" onClick={(e) => { e.stopPropagation(); props.onDraftCancel?.(event); }}>Review cancellation</button></Show></article>;
+              }}</Show>;
             }}</For>
           </div>
         </section>}</For>
