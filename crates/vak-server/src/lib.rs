@@ -7498,14 +7498,20 @@ async fn transcript(
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(s) = guard.as_ref() else {
-            return (
+        if let Some(s) = guard.as_ref() {
+            return Json(transcript_json(s)).into_response();
+        }
+        // The runner temporarily owns the writer handle, but JSONL appends
+        // are flushed as they land. Return the durable prefix read-only so a
+        // client reopening during a long run can still paint prior turns.
+        return match open_historical_session(&state, &id) {
+            Some(s) => Json(transcript_json(&s)).into_response(),
+            None => (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({ "error": "run in progress" })),
             )
-                .into_response();
+                .into_response(),
         };
-        return Json(transcript_json(s)).into_response();
     }
     match open_historical_session(&state, &id) {
         Some(s) => Json(transcript_json(&s)).into_response(),

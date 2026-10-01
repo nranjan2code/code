@@ -989,6 +989,7 @@ export function transcriptToItems(
   id: string,
   messages: Message[],
   entries?: TranscriptEntryMeta[],
+  running = false,
 ): Item[] {
   const next: Item[] = [];
   let assistantSeq = 0;
@@ -1039,15 +1040,15 @@ export function transcriptToItems(
       }
     }
   }
-  // Nothing here can still be in flight: hydration only runs for a session
-  // that is not currently running, so a tool without a recorded result had
-  // its end event lost rather than being genuinely mid-execution.
+  // During reconnect, the read-only transcript may be a prefix of an active
+  // run. Keep unresolved calls visibly in flight; after settlement, an absent
+  // result means its end event was lost and the card can be closed.
   for (let i = 0; i < next.length; i++) {
     const it = next[i];
-    if (it.kind === "tool" && !it.done) {
+    if (!running && it.kind === "tool" && !it.done) {
       next[i] = { ...it, done: true, preview: it.preview ?? null };
     }
-    if (it.kind === "approval" && it.resolved === null) {
+    if (!running && it.kind === "approval" && it.resolved === null) {
       next[i] = { ...it, resolved: "gone" };
     }
   }
@@ -1065,9 +1066,9 @@ function keepUnchanged(current: Item[], incoming: Item[]): Item[] {
   });
 }
 
-export function hydrateFromTranscript(id: string, messages: Message[], entries?: TranscriptEntryMeta[]) {
+export function hydrateFromTranscript(id: string, messages: Message[], entries?: TranscriptEntryMeta[], running = false) {
   const current: Item[] = itemsBySession[id] ?? [];
-  const incoming = keepUnchanged(current, transcriptToItems(id, messages, entries));
+  const incoming = keepUnchanged(current, transcriptToItems(id, messages, entries, running));
 
   if (current.length === 0) {
     setItemsBySession(id, incoming);

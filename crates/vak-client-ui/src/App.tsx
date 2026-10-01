@@ -228,7 +228,7 @@ export async function retryHydrate(id: string) {
   }
 }
 
-async function settledTranscript(id: string): ReturnType<typeof api.transcript> {
+async function readableTranscript(id: string): ReturnType<typeof api.transcript> {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     try {
       const transcript = await api.transcript(id);
@@ -256,7 +256,7 @@ async function hydrate(id: string, background = false) {
   if (!background) setHydratingId(id);
   try {
     const [t, presentation, sandbox] = await Promise.all([
-      isRunning(id) ? Promise.resolve(undefined) : settledTranscript(id),
+      readableTranscript(id),
       // A presentation snapshot is an optional projection. If it cannot be
       // read, preserve the last known projection rather than treating a
       // transient/permission error as an authoritative empty result.
@@ -270,8 +270,8 @@ async function hydrate(id: string, background = false) {
     const unchanged = lastHydrated.get(id) === read && itemsOf(id).length > 0 && (!presentation || presentationOf(id) !== null);
     if (unchanged) return;
     lastHydrated.set(id, read);
-    if (!isRunning(id) && t) {
-      hydrateFromTranscript(id, t.messages, t.entries);
+    if (t) {
+      hydrateFromTranscript(id, t.messages, t.entries, isRunning(id));
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
     }
