@@ -341,6 +341,8 @@ async fn budget_alert_recorded_once_per_window_alongside_delivery() {
             usd: Some(9.0),
             source: "estimated".into(),
             session_id: "seed".into(),
+            trace: None,
+            actor: None,
         })
         .unwrap();
 

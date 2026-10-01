@@ -174,6 +174,8 @@ async fn budget_denied_skips_before_any_dispatch() {
             usd: Some(50.0),
             source: "test-seed".into(),
             session_id: "seed".into(),
+            trace: None,
+            actor: None,
         })
         .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));

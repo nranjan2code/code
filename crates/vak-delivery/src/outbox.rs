@@ -18,7 +18,13 @@ pub struct OutboxRecord {
     pub updated_at_ms: u64,
     pub packet: Option<DeliveryPacket>,
     pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(OutboxRecord, "outbox_record");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -97,6 +103,8 @@ impl Outbox {
             updated_at_ms: now,
             packet: None,
             last_error: None,
+            trace: None,
+            actor: None,
         };
         create_record(&path, &record)?;
         Ok(record)

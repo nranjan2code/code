@@ -169,6 +169,22 @@ pub struct SkillProposal {
     pub name: String,
     pub description: String,
     pub path: PathBuf,
+    /// The conversation (and turn, when recorded) the draft came from, read
+    /// from its `proposed-by` trailer.
+    pub derived_from: Option<vak_session::trace::DerivedFrom>,
+}
+
+/// Parse `<!-- proposed-by: <sid> at <ts>; ...; turn: <t> -->`.
+pub fn proposal_provenance(body: &str) -> Option<vak_session::trace::DerivedFrom> {
+    let line = body.lines().rev().find(|l| l.contains("proposed-by:"))?;
+    let rest = line.split("proposed-by:").nth(1)?.trim();
+    let conversation = rest.split_whitespace().next()?.to_string();
+    let turn = line
+        .split(';')
+        .find_map(|part| part.trim().strip_prefix("turn:"))
+        .map(|t| t.trim().trim_end_matches("-->").trim().to_string())
+        .filter(|t| !t.is_empty());
+    Some(vak_session::trace::DerivedFrom { conversation, turn })
 }
 
 fn proposals_dir(home: &Path, cwd: &Path) -> PathBuf {
@@ -323,6 +339,9 @@ fn list_proposals_in_dir(dir: &Path, home: &Path, cwd: &Path) -> Vec<SkillPropos
                 id,
                 name: skill.name,
                 description: with_duplicate_note(&skill.description, tag.as_deref()),
+                derived_from: std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|b| proposal_provenance(&b)),
                 path,
             });
         }

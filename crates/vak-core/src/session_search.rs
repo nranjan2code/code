@@ -500,6 +500,7 @@ mod tests {
                 attributes: Default::default(),
                 relations: Default::default(),
                 updated_at: chrono::Utc::now(),
+                derived_from: None,
             },
         )
         .unwrap();

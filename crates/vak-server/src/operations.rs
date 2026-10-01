@@ -49,7 +49,13 @@ pub struct IncidentRecord {
     pub workspace: Option<String>,
     pub evidence: Vec<String>,
     pub resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(IncidentRecord, "incident_record");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActionVerification {
@@ -69,7 +75,13 @@ pub struct ActionReceipt {
     pub succeeded: bool,
     pub verification: ActionVerification,
     pub persisted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(ActionReceipt, "action_receipt");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct IncidentEvent {
@@ -167,6 +179,8 @@ fn new_record(candidate: IncidentCandidate, now: DateTime<Utc>) -> IncidentRecor
         workspace: candidate.workspace,
         evidence: candidate.evidence,
         resolution: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -320,6 +334,8 @@ mod tests {
                 detail: "probe reached running".to_string(),
             },
             persisted: true,
+            trace: None,
+            actor: None,
         };
         record_action(dir.path(), &receipt).unwrap();
         assert_eq!(recent_actions(dir.path(), 10), vec![receipt]);

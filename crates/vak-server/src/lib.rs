@@ -74,6 +74,8 @@ mod service_control;
 mod site;
 mod stream;
 pub mod surfaces;
+#[cfg(test)]
+mod traced_rows_tests;
 mod voice;
 mod web;
 
@@ -1740,7 +1742,7 @@ async fn replay_operations_outbox(
                     }
                     .to_string(),
                 },
-                persisted: false,
+                persisted: false, trace: None, actor: None,
             };
             receipt.persisted =
                 operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
@@ -2193,6 +2195,8 @@ async fn ops_action(
             detail: verification_detail.to_string(),
         },
         persisted: false,
+        trace: None,
+        actor: None,
     };
     receipt.persisted = operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
     let receipt_json = serde_json::to_value(&receipt).unwrap_or_else(|_| serde_json::json!({}));
@@ -2490,6 +2494,7 @@ async fn upsert_entity_route(
         attributes: body.attributes,
         relations: body.relations,
         updated_at: chrono::Utc::now(),
+        derived_from: None,
     };
 
     match vak_core::entities::upsert_entity(&home, cwd, record) {
@@ -8386,6 +8391,8 @@ async fn create_coworking_invitation(
         token_hash: coworking::token_hash(&token),
         created_at: now.to_rfc3339(),
         expires_at: (now + chrono::Duration::hours(i64::from(body.expires_in_hours))).to_rfc3339(),
+        trace: None,
+        actor: None,
     };
     match coworking::invite(
         &coworking::store_path(&state.core.sessions_home()),
@@ -23530,6 +23537,8 @@ mod sandbox_promotion_tests {
             token_hash: coworking::token_hash(token),
             created_at: chrono::Utc::now().to_rfc3339(),
             expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+            trace: None,
+            actor: None,
         };
         coworking::invite(&coworking::store_path(dir.path()), grant).unwrap();
         coworking::invite(
@@ -23544,6 +23553,8 @@ mod sandbox_promotion_tests {
                 token_hash: coworking::token_hash("participant-wrong-audience"),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                trace: None,
+                actor: None,
             },
         )
         .unwrap();
@@ -23670,6 +23681,8 @@ mod sandbox_promotion_tests {
                 token_hash: coworking::token_hash(token),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                trace: None,
+                actor: None,
             },
         )
         .unwrap();
@@ -23774,6 +23787,8 @@ mod sandbox_promotion_tests {
                 token_hash: coworking::token_hash(token),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                trace: None,
+                actor: None,
             },
         )
         .unwrap();
@@ -23789,6 +23804,8 @@ mod sandbox_promotion_tests {
                 token_hash: coworking::token_hash("participant-other-token"),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                trace: None,
+                actor: None,
             },
         )
         .unwrap();
@@ -23973,6 +23990,8 @@ mod sandbox_promotion_tests {
                 token_hash: coworking::token_hash(token),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                trace: None,
+                actor: None,
             },
         )
         .unwrap();
@@ -24064,6 +24083,8 @@ mod sandbox_promotion_tests {
                 token_hash: coworking::token_hash("read-only-token"),
                 created_at: chrono::Utc::now().to_rfc3339(),
                 expires_at: (chrono::Utc::now() + chrono::Duration::hours(1)).to_rfc3339(),
+                trace: None,
+                actor: None,
             },
         )
         .unwrap();

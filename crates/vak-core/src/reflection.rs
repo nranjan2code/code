@@ -305,6 +305,7 @@ pub fn apply(
     home: &std::path::Path,
     cwd: &std::path::Path,
     session_id: &str,
+    turn: Option<&str>,
     proposals: &Proposals,
 ) -> Result<(usize, bool), String> {
     let existing: Vec<String> = memory::list_notes(home, cwd)
@@ -319,7 +320,7 @@ pub fn apply(
         if duplicate {
             continue;
         }
-        memory::append_note(home, cwd, &n.kind, &n.tag, session_id, &n.note)?;
+        memory::append_note_from_turn(home, cwd, &n.kind, &n.tag, session_id, turn, &n.note)?;
         written += 1;
     }
     let mut queued = false;
@@ -330,12 +331,13 @@ pub fn apply(
         let dir = home.join("skill-proposals").join(memory::hash_cwd(cwd));
         std::fs::create_dir_all(&dir).map_err(|e| format!("create proposals dir: {e}"))?;
         let body = format!(
-            "---\nname: \"{name}\"\ndescription: \"{desc}\"\n---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id}; source: reflection -->\n",
+            "---\nname: \"{name}\"\ndescription: \"{desc}\"\n---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id}; source: reflection{turn_part} -->\n",
             name = sk.name,
             desc = sk.description.replace('"', "'"),
             instr = sk.instructions,
             sid = session_id,
             ts = chrono::Utc::now().to_rfc3339(),
+            turn_part = turn.map(|t| format!("; turn: {t}")).unwrap_or_default(),
         );
         std::fs::write(dir.join(format!("{id}.md")), body)
             .map_err(|e| format!("write proposal: {e}"))?;

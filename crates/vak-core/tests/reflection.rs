@@ -88,7 +88,7 @@ async fn reflection_writes_once_and_dedups_repeats() {
     assert_eq!(proposals.skill.as_ref().unwrap().name, "ship-it");
 
     // First apply writes the note and queues the skill.
-    let (notes, queued) = apply(&home, &cwd, "sess-1", &proposals).unwrap();
+    let (notes, queued) = apply(&home, &cwd, "sess-1", None, &proposals).unwrap();
     assert_eq!(notes, 1);
     assert!(queued);
     assert_eq!(memory::list_notes(&home, &cwd).len(), 1);
@@ -103,7 +103,7 @@ async fn reflection_writes_once_and_dedups_repeats() {
     )
     .await
     .unwrap();
-    let (notes2, queued2) = apply(&home, &cwd, "sess-2", &again).unwrap();
+    let (notes2, queued2) = apply(&home, &cwd, "sess-2", None, &again).unwrap();
     assert_eq!(notes2, 0, "near-duplicate note must be skipped");
     // A second identical skill proposal queues under a distinct id; review
     // queue dedup is the human reviewer's call.

@@ -34,6 +34,9 @@ pub struct EntityRecord {
     #[serde(default)]
     pub relations: Vec<EntityRelation>,
     pub updated_at: DateTime<Utc>,
+    /// The conversation and turn this entity was derived from, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_from: Option<vak_session::trace::DerivedFrom>,
 }
 
 pub fn entities_file(home: &Path, cwd: Option<&Path>) -> PathBuf {
@@ -302,6 +305,7 @@ impl vak_tools::Tool for EntityRecordTool {
             attributes,
             relations,
             updated_at: Utc::now(),
+            derived_from: None,
         };
 
         match upsert_entity(&self.sessions_home, Some(&self.cwd), record) {
@@ -453,6 +457,7 @@ mod tests {
                 target_entity_id: "srv-aws-us-east-1".into(),
             }],
             updated_at: Utc::now(),
+            derived_from: None,
         };
 
         // 1. Upsert

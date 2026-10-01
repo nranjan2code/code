@@ -42,6 +42,9 @@ pub struct NoteBlock {
     pub tag: String,
     pub session_id: String,
     pub text: String,
+    /// The conversation and turn this note was derived from, when the writer
+    /// knew the turn. The conversation is `session_id`.
+    pub derived_from: Option<vak_session::trace::DerivedFrom>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -119,7 +122,20 @@ pub fn append_note(
     session_id: &str,
     text: &str,
 ) -> Result<NoteBlock, String> {
-    append_block(&memory_path(home, cwd), kind, tag, session_id, text)
+    append_block(&memory_path(home, cwd), kind, tag, session_id, None, text)
+}
+
+/// `append_note` that also records the turn the note was derived from.
+pub fn append_note_from_turn(
+    home: &Path,
+    cwd: &Path,
+    kind: &str,
+    tag: &str,
+    session_id: &str,
+    turn: Option<&str>,
+    text: &str,
+) -> Result<NoteBlock, String> {
+    append_block(&memory_path(home, cwd), kind, tag, session_id, turn, text)
 }
 
 /// Append to the global USER.md profile tier (same grammar, same validation,
@@ -131,7 +147,7 @@ pub fn append_profile_note(
     text: &str,
     session: &str,
 ) -> Result<NoteBlock, String> {
-    append_block(&profile_path(home), kind, tag, session, text)
+    append_block(&profile_path(home), kind, tag, session, None, text)
 }
 
 fn append_block(
@@ -139,6 +155,7 @@ fn append_block(
     kind: &str,
     tag: &str,
     session_id: &str,
+    turn: Option<&str>,
     text: &str,
 ) -> Result<NoteBlock, String> {
     if !matches!(
@@ -150,6 +167,12 @@ fn append_block(
     validate_field("kind", kind, 32)?;
     validate_field("tag", tag, 96)?;
     validate_field("session", session_id, 160)?;
+    if let Some(t) = turn {
+        validate_field("turn", t, 160)?;
+        if t.is_empty() || t.contains(char::is_whitespace) {
+            return Err("turn contains invalid characters or is too long".into());
+        }
+    }
     let text = text.trim();
     if text.is_empty() {
         return Err("note must not be empty".into());
@@ -162,8 +185,9 @@ fn append_block(
         std::fs::create_dir_all(parent).map_err(|e| format!("create memory dir: {e}"))?;
     }
     let _lock = StoreLock::acquire(path)?;
+    let turn_part = turn.map(|t| format!(" turn={t}")).unwrap_or_default();
     let header = format!(
-        "## {} [{kind}] tag={tag} session={session_id}",
+        "## {} [{kind}] tag={tag} session={session_id}{turn_part}",
         ts.to_rfc3339()
     );
     let block = format!("{header}\n{text}\n");
@@ -184,6 +208,10 @@ fn append_block(
         tag: tag.to_string(),
         session_id: session_id.to_string(),
         text: text.to_string(),
+        derived_from: turn.map(|t| vak_session::trace::DerivedFrom {
+            conversation: session_id.to_string(),
+            turn: Some(t.to_string()),
+        }),
     })
 }
 
@@ -288,6 +316,7 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
         kind: String,
         tag: String,
         session_id: String,
+        turn: Option<String>,
     }
 
     fn flush(open: &mut Option<Open>, body: &mut String, out: &mut Vec<NoteBlock>) {
@@ -299,6 +328,10 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
                     ts: o.ts,
                     kind: o.kind,
                     tag: o.tag,
+                    derived_from: o.turn.map(|t| vak_session::trace::DerivedFrom {
+                        conversation: o.session_id.clone(),
+                        turn: Some(t),
+                    }),
                     session_id: o.session_id,
                     text,
                 });
@@ -314,7 +347,7 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
     for line in raw.lines() {
         if let Some(rest) = line.strip_prefix("## ") {
             match parse_header(rest) {
-                Some((ts, kind, tag, sid)) => {
+                Some((ts, kind, tag, sid, turn)) => {
                     flush(&mut open, &mut body, &mut out);
                     open = Some(Open {
                         header_line: line.to_string(),
@@ -322,6 +355,7 @@ pub fn parse_blocks(raw: &str) -> Vec<NoteBlock> {
                         kind,
                         tag,
                         session_id: sid,
+                        turn,
                     });
                 }
                 None => {
@@ -484,7 +518,9 @@ pub fn amend_note(path: &Path, note_id: &str, new_text: &str) -> Result<(), Stri
 }
 
 /// `2026-08-23T12:00:00+00:00 [decision] tag=x session=abc` → parts.
-fn parse_header(rest: &str) -> Option<(DateTime<Utc>, String, String, String)> {
+type ParsedHeader = (DateTime<Utc>, String, String, String, Option<String>);
+
+fn parse_header(rest: &str) -> Option<ParsedHeader> {
     let mut parts = rest.splitn(2, char::is_whitespace);
     let ts_raw = parts.next()?.trim();
     let ok_ts = DateTime::parse_from_rfc3339(ts_raw).ok()?;
@@ -501,12 +537,15 @@ fn parse_header(rest: &str) -> Option<(DateTime<Utc>, String, String, String)> {
 
     let mut tag = String::new();
     let mut session = String::new();
+    let mut turn = None;
     let mut leftover = String::new();
     for token in remainder.split_whitespace() {
         if let Some(v) = token.strip_prefix("tag=") {
             tag = v.to_string();
         } else if let Some(v) = token.strip_prefix("session=") {
             session = v.to_string();
+        } else if let Some(v) = token.strip_prefix("turn=") {
+            turn = Some(v.to_string());
         } else if !token.is_empty() {
             leftover.push_str(token);
             leftover.push(' ');
@@ -517,7 +556,7 @@ fn parse_header(rest: &str) -> Option<(DateTime<Utc>, String, String, String)> {
     if tag.is_empty() && !leftover.trim().is_empty() {
         tag = leftover.trim().to_string();
     }
-    Some((ok_ts.with_timezone(&Utc), kind, tag, session))
+    Some((ok_ts.with_timezone(&Utc), kind, tag, session, turn))
 }
 
 #[cfg(test)]

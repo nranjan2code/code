@@ -71,7 +71,13 @@ pub struct Entry {
     pub result_id: Option<String>,
     #[serde(default)]
     pub dedupe_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(Entry, "inbox_entry");
 
 #[derive(Serialize, Deserialize)]
 struct AckLine {
@@ -182,6 +188,8 @@ pub fn record_with_result_and_key(
         task_id: task_id.map(str::to_string),
         result_id: result_id.map(str::to_string),
         dedupe_key: dedupe_key.map(str::to_string),
+        trace: None,
+        actor: None,
     };
     let line = serde_json::to_string(&entry).map_err(|e| InboxError::Serialize(e.to_string()))?;
     append_line(&path, &line)?;

@@ -18,7 +18,13 @@ pub struct SecurityEvent {
     /// Source IP when available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(SecurityEvent, "security_event");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -81,6 +87,8 @@ pub fn record(
         label: label.to_string(),
         detail: detail.to_string(),
         ip: ip.map(str::to_string),
+        trace: None,
+        actor: None,
     };
     let _ = append_event(home, &event);
     event

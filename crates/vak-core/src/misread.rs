@@ -93,7 +93,13 @@ pub struct MisreadRow {
     /// system working as designed, not the reading being wrong.
     #[serde(default)]
     pub sliced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(MisreadRow, "misread_row");
 
 /// Append-only observations about intent readings.
 ///
@@ -168,6 +174,8 @@ impl MisreadLedger {
             outcome: outcome.as_str().to_string(),
             wanted,
             sliced,
+            trace: None,
+            actor: None,
         };
         let Ok(line) = serde_json::to_string(&row) else {
             return;

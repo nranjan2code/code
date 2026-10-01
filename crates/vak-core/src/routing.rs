@@ -28,7 +28,13 @@ pub struct EvidenceRow {
     /// success | failure | unknown
     pub outcome: String,
     pub latency_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(EvidenceRow, "evidence_row");
 
 fn p50(samples: &mut [u64]) -> Option<u64> {
     if samples.is_empty() {
@@ -117,6 +123,8 @@ impl EvidenceLedger {
                         model: model.to_string(),
                         outcome: outcome.into(),
                         latency_ms: a.latency_ms,
+                        trace: None,
+                        actor: None,
                     });
                 }
             }
@@ -452,6 +460,8 @@ mod tests {
                 model: "m".into(),
                 outcome: "failure".into(),
                 latency_ms: 5,
+                trace: None,
+                actor: None,
             })
             .unwrap();
         ledger
@@ -461,6 +471,8 @@ mod tests {
                 model: "m".into(),
                 outcome: "success".into(),
                 latency_ms: 900,
+                trace: None,
+                actor: None,
             })
             .unwrap();
         ledger
@@ -470,6 +482,8 @@ mod tests {
                 model: "m".into(),
                 outcome: "success".into(),
                 latency_ms: 42,
+                trace: None,
+                actor: None,
             })
             .unwrap();
         let mut file_path = dir.path().join("routing-evidence.jsonl");

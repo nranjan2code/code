@@ -117,7 +117,13 @@ pub struct Event {
     pub ts: chrono::DateTime<chrono::Utc>,
     #[serde(flatten)]
     pub kind: EventKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(Event, "commitment_event");
 
 impl Event {
     pub fn new(commitment_id: impl Into<String>, kind: EventKind) -> Self {
@@ -126,6 +132,8 @@ impl Event {
             commitment_id: commitment_id.into(),
             ts: chrono::Utc::now(),
             kind,
+            trace: None,
+            actor: None,
         }
     }
 }

@@ -123,6 +123,7 @@ pub fn consolidate_memory(home: &Path, cwd: &Path) -> Result<ConsolidationReport
                         attributes: attrs,
                         relations: Vec::new(),
                         updated_at: Utc::now(),
+                        derived_from: None,
                     };
 
                     if entities::upsert_entity(home, Some(cwd), record).is_ok() {

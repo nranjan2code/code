@@ -134,6 +134,42 @@ impl TraceKey {
     }
 }
 
+/// A durable ledger row that carries the trace key and the acting principal
+/// it was written under. Both are optional and additive (invariant 29): a
+/// write site with no real key yet leaves them `None`.
+pub trait Traced {
+    /// Stable name of the row type, for the enumeration test.
+    const ROW_TYPE: &'static str;
+    fn trace(&self) -> Option<&TraceKey>;
+    fn actor(&self) -> Option<&PrincipalId>;
+}
+
+/// Implements `Traced` for a row type with `trace: Option<TraceKey>` and
+/// `actor: Option<PrincipalId>` fields.
+#[macro_export]
+macro_rules! impl_traced {
+    ($ty:ty, $name:literal) => {
+        impl $crate::trace::Traced for $ty {
+            const ROW_TYPE: &'static str = $name;
+            fn trace(&self) -> Option<&$crate::trace::TraceKey> {
+                self.trace.as_ref()
+            }
+            fn actor(&self) -> Option<&$crate::ids::PrincipalId> {
+                self.actor.as_ref()
+            }
+        }
+    };
+}
+
+/// Where a derived record came from: the conversation and turn that caused
+/// it to be written. Additive provenance, never authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DerivedFrom {
+    pub conversation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<String>,
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
