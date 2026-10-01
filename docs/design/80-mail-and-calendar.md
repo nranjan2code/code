@@ -213,7 +213,9 @@ to provider, account, audience, thread, and message IDs. Click-through citation
 navigation now accepts the exact inline `mailcite:` token from that citation
 and opens the connected account's owner-only conversation preview; the server
 re-fetches the thread from the provider, and the UI scrolls to the cited
-message when it is in the loaded page. Full thread workspace remains open.
+message by following bounded provider pages up to 420 messages; any remaining
+pages can be loaded manually. The conversation is opened in the Today Canvas.
+A full conversation workspace remains open.
 The interactive mail tool now lists a bounded set of provider folders/labels
 on an owner's request, then accepts a selected ID for recent-mail reads only
 after verifying it against the same account. Scheduled routines cannot list
@@ -340,8 +342,8 @@ An Agent conversation now offers a **Today** Canvas action alongside the
 **Plan my day** starter. The Canvas reads today's agenda, busy intervals, and
 up to eight recent messages per linked account through the owner-authenticated
 preview routes. It loads only when opened or refreshed, shows source-specific
-read failures, and links supported messages to their provider-reverified
-conversation in Settings. Opening it does not add provider content to session
+read failures, and opens supported messages in their provider-reverified
+conversation in Canvas. Opening it does not add provider content to session
 history or send/change anything. It reads at most two accounts concurrently
 to bound provider request bursts while retaining the combined view. While
 visible, it refreshes every five minutes, after a minute away when the owner
@@ -918,19 +920,18 @@ account reaches that limit. Provider cursor pagination remains open.
 
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
-Canvas work area described above. The current implementation still mixes
-account configuration with previews, drafts, Reviews, and routines on the
-Settings page. Settings links directly to the Today Canvas, which contains
-the read-only agenda and recent-mail view, per-Agent routine links, and a
-Canvas-owned Drafts and Review area. Reply and event actions save an
-Agent-scoped candidate, then open it in Canvas; the existing revision, digest,
-permission, and final-confirmation checks still gate provider effects. This is
-only a partial separation: date-range and folder previews, routine creation
-and trigger configuration, history, and budgets remain in Settings. Do not
-treat the Settings page as the finished working area. Move those workflows
-into Canvas while preserving the existing Agent ownership, permission checks,
-exact Review payloads, and vault-backed local draft behavior; Settings should
-retain connection, access, and account-lifecycle controls.
+Canvas work area. Settings now retains connection, access, and account
+lifecycle controls plus routine creation, schedule/trigger configuration,
+history, and budgets. It links directly to Today Canvas, which contains the
+read-only agenda, recent mail with folder/search controls, paged per-Agent
+routine status, and the Canvas-owned Drafts and Review area. Reply and event
+actions save an Agent-scoped candidate, then open it in Canvas; revision,
+digest, permission, and final-confirmation checks still gate provider effects.
+Provider inbox cursor paging, the complete conversation workspace, and moving
+routine authoring/history into Canvas remain open. The connected Settings
+fixture confirms that it no longer renders
+a duplicate daily preview or draft workspace; separate Canvas fixtures cover
+the working views with synthetic provider fixtures.
 
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized
