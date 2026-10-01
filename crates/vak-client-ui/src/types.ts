@@ -295,6 +295,8 @@ export type ClientEvent =
   /** A worker is waiting on an answer to one question. */
   | { WorkerQuestion: { id: string; label: string; question: string; options: string[] } }
   | { WorkerQuestionAnswered: { id: string } }
+  /** The wait ended with no answer (expired, skipped, withdrawn). */
+  | { WorkerQuestionClosed: { id: string } }
   /** A long provider-side backoff is happening. No attempt count, delay or
    *  raw reason rides along — the header shows a neutral "Retrying" state. */
   | "Retrying"

@@ -125,6 +125,10 @@ pub enum ClientEvent {
     WorkerQuestionAnswered {
         id: String,
     },
+    /// The wait ended with no answer (expired, skipped, withdrawn).
+    WorkerQuestionClosed {
+        id: String,
+    },
     /// A long provider-side backoff is happening. No attempt count, delay or
     /// raw reason: the header shows a neutral "Retrying" state and nothing
     /// more (docs/audits Finding 1 — the previous wire sent the raw provider
@@ -229,6 +233,9 @@ pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
         }),
         AgentEvent::WorkerQuestionAnswered { id, .. } => {
             Some(ClientEvent::WorkerQuestionAnswered { id })
+        }
+        AgentEvent::WorkerQuestionClosed { id, .. } => {
+            Some(ClientEvent::WorkerQuestionClosed { id })
         }
         AgentEvent::WorkerFinished {
             label,

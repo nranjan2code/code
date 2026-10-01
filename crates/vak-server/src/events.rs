@@ -59,6 +59,19 @@ pub enum SystemEvent {
         tool: String,
     },
 
+    // ---- worker questions ----
+    /// A worker is waiting on an answer to one question.
+    WorkerQuestion {
+        id: String,
+        session_id: String,
+        label: String,
+    },
+    /// It was answered, or the wait ended without one.
+    WorkerQuestionClosed {
+        id: String,
+        session_id: String,
+    },
+
     // ---- security ----
     SecurityEvent {
         kind: String,
@@ -163,7 +176,9 @@ fn event_session_id(event: &SystemEvent) -> Option<String> {
     match event {
         SystemEvent::SessionCreated { session_id, .. }
         | SystemEvent::SessionEntryAppended { session_id, .. }
-        | SystemEvent::ApprovalRequested { session_id, .. } => Some(session_id.clone()),
+        | SystemEvent::ApprovalRequested { session_id, .. }
+        | SystemEvent::WorkerQuestion { session_id, .. }
+        | SystemEvent::WorkerQuestionClosed { session_id, .. } => Some(session_id.clone()),
         _ => None,
     }
 }

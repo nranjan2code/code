@@ -25,12 +25,12 @@ import {
   summarizeEvent,
 } from "./display";
 import {
-  activity, approvalsVersion, conn, feed, navigate, observingSince, pushToast, sessionsVersion,
+  activity, approvalsVersion, questionsVersion, conn, feed, navigate, observingSince, pushToast, sessionsVersion,
   setAuthed, statsVersion, selectedAgentId, adminAgents, selectedAgentIdOrUndefined, mapAdminAgents,
 } from "./store";
 import { clock, shortId, timeAgo } from "./time";
 import type {
-  FinOpsStatus, OnboardingState, OperationsSnapshot, PendingApproval, StepState,
+  FinOpsStatus, OnboardingState, OperationsSnapshot, PendingApproval, PendingWorkerQuestion, StepState,
 } from "./types";
 
 // ---- shared vocabulary -----------------------------------------------------
@@ -425,6 +425,51 @@ function ApprovalGates(props: { approvals: PendingApproval[]; onAnswered: () => 
   );
 }
 
+/// Workers waiting on a question. Unlike an approval gate this is not answered
+/// here: the answer is information for the worker, given in its conversation,
+/// from the approver chat, or at the terminal, so this lists and links.
+function WorkerQuestions(props: { questions: PendingWorkerQuestion[] }) {
+  return (
+    <section class="panel home-gates home-questions">
+      <div class="panel-title-row">
+        <div>
+          <span class="eyebrow">Waiting on an answer</span>
+          <h2>
+            {props.questions.length} worker{props.questions.length === 1 ? " is" : "s are"} waiting on a question
+          </h2>
+          <p class="dim">
+            Each worker pauses until someone answers or the wait ends. Answer in its conversation or from the approver chat;
+            an answer helps it continue and does not approve any action.
+          </p>
+        </div>
+      </div>
+      <ul class="home-gate-list">
+        <For each={props.questions}>
+          {(q) => (
+            <li>
+              <div class="home-gate-head">
+                <span class="chip chip-tool">{q.worker}</span>
+                <span class="mono dim">{shortId(q.session_id)}</span>
+                <span class="when">waiting {timeAgo(q.asked_at)}</span>
+              </div>
+              <div class="home-question-text">{q.question}</div>
+              <Show when={q.options.length > 0}>
+                <div class="home-question-options" aria-label="Choices offered">
+                  <For each={q.options}>{(option) => <span class="chip">{option}</span>}</For>
+                </div>
+              </Show>
+              <div class="row-gap">
+                <span class="spacer" />
+                <button class="ghost small" onClick={() => navigate(`#/sessions/${q.session_id}`)}>Read the session</button>
+              </div>
+            </li>
+          )}
+        </For>
+      </ul>
+    </section>
+  );
+}
+
 // ---- right now -------------------------------------------------------------
 
 function RightNow(props: { ops: OperationsSnapshot | null; error: boolean }) {
@@ -783,6 +828,7 @@ export function Home() {
   const [ops, opsActions] = createResource(() => api.operations());
   const [finops, finopsActions] = createResource(selectedAgentId, () => api.finops(selectedAgentIdOrUndefined()));
   const [approvals, approvalActions] = createResource(approvalsVersion, () => api.approvals());
+  const [questions] = createResource(questionsVersion, () => api.questions());
   const [sessions, sessionsActions] = createResource(
     () => ({ ver: sessionsVersion(), agent: selectedAgentId() }),
     ({ agent }) => api.sessions(100, agent === "global" || agent === "all" ? undefined : agent),
@@ -865,6 +911,12 @@ export function Home() {
     return selectedAgentId() === "global" || selectedAgentId() === "all"
       ? rows
       : rows.filter((approval) => sessionIds().has(approval.session_id));
+  });
+  const scopedQuestions = createMemo(() => {
+    const rows = questions()?.questions ?? [];
+    return selectedAgentId() === "global" || selectedAgentId() === "all"
+      ? rows
+      : rows.filter((question) => sessionIds().has(question.session_id));
   });
   const scopedBestofn = createMemo(() => {
     const rows = bestofn()?.runs ?? [];
@@ -1416,6 +1468,10 @@ export function Home() {
 
       <Show when={scopedApprovals().length > 0}>
         <ApprovalGates approvals={scopedApprovals()} onAnswered={() => approvalActions.refetch()} />
+      </Show>
+
+      <Show when={scopedQuestions().length > 0}>
+        <WorkerQuestions questions={scopedQuestions()} />
       </Show>
 
       <div class="home-grid">

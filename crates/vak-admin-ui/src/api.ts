@@ -31,6 +31,7 @@ import type {
   ApprovalAnswer,
   GatewayApprovalPolicy,
   PendingApproval,
+  PendingWorkerQuestion,
   PermissionMode,
   PermissionRules,
   PermissionRulesView,
@@ -388,6 +389,8 @@ export const api = {
 
   approvals: (): Promise<{ approvals: PendingApproval[]; total: number }> =>
     fetch("/admin/api/approvals").then((r) => handle(r)),
+  questions: (): Promise<{ questions: PendingWorkerQuestion[]; total: number }> =>
+    fetch("/admin/api/questions").then((r) => handle(r)),
 
   /// Answer one gate. `remember` additionally persists the narrowest rule
   /// that covers this call, so the same shape stops asking. Only meaningful

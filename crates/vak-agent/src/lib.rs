@@ -280,6 +280,12 @@ pub enum AgentEvent {
         label: String,
         source: String,
     },
+    /// The wait ended with no answer: it expired, was skipped or withdrawn,
+    /// or the worker was cancelled.
+    WorkerQuestionClosed {
+        id: String,
+        label: String,
+    },
     /// Latest durable managed-work projection. This is a live projection only;
     /// the session ledger remains the source of truth and can rebuild it.
     WorkState {

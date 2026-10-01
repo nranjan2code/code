@@ -408,11 +408,24 @@ export type SystemEvent =
   | { type: "ApprovalRequested"; data: { id: string; session_id: string; tool: string; reason: string } }
   | { type: "ApprovalGranted"; data: { id: string; tool: string } }
   | { type: "ApprovalDenied"; data: { id: string; tool: string } }
+  | { type: "WorkerQuestion"; data: { id: string; session_id: string; label: string } }
+  | { type: "WorkerQuestionClosed"; data: { id: string; session_id: string } }
   | { type: "SecurityEvent"; data: { kind: string; label: string } }
   | { type: "ProviderError"; data: { provider: string; model: string; error: string } }
   | { type: "RateLimit"; data: { provider: string; retry_after_secs: number | null } }
   | { type: "Heartbeat" }
   | { type: "Lagged"; data: { missed: number } };
+
+/** A worker waiting on an answer. Read only here: it is answered in its own
+ *  conversation, from the approver chat, or at the terminal. */
+export interface PendingWorkerQuestion {
+  session_id: string;
+  question_id: string;
+  worker: string;
+  question: string;
+  options: string[];
+  asked_at: string;
+}
 
 export interface PendingApproval {
   session_id: string;

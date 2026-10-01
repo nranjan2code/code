@@ -172,6 +172,44 @@ pub(crate) async fn list_pending_approvals(
     Json(serde_json::json!({ "approvals": items, "total": total }))
 }
 
+// ---- GET /admin/api/questions ----------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub(crate) struct PendingWorkerQuestion {
+    pub session_id: String,
+    pub question_id: String,
+    pub worker: String,
+    pub question: String,
+    pub options: Vec<String>,
+    pub asked_at: String,
+}
+
+/// Worker questions waiting on an answer, across every live session. Read
+/// only: a question is answered in its own conversation, by the approver chat
+/// or at the terminal (docs/design/84-worker-questions-and-control.md §4.5),
+/// so this lists and links and never answers.
+pub(crate) async fn list_pending_questions(
+    State(state): State<AppState>,
+) -> Json<serde_json::Value> {
+    let mut items: Vec<PendingWorkerQuestion> = Vec::new();
+    for handle in state.live_handles() {
+        for question in handle.core.workers().questions().pending(&handle.id) {
+            items.push(PendingWorkerQuestion {
+                session_id: handle.id.clone(),
+                question_id: question.id,
+                worker: question.label,
+                question: question.question,
+                options: question.options,
+                asked_at: question.asked_at.to_rfc3339(),
+            });
+        }
+    }
+    // Oldest first: a worker that has waited longest is the most blocked.
+    items.sort_by(|a, b| a.asked_at.cmp(&b.asked_at));
+    let total = items.len();
+    Json(serde_json::json!({ "questions": items, "total": total }))
+}
+
 // ---- GET /admin/api/sessions/:id/transcript --------------------------------
 
 #[derive(Debug, Deserialize)]
@@ -1709,6 +1747,7 @@ pub(crate) fn routes() -> axum::Router<AppState> {
             get(session_transcript_admin),
         )
         .route("/admin/api/approvals", get(list_pending_approvals))
+        .route("/admin/api/questions", get(list_pending_questions))
         .route("/admin/api/bestofn", get(list_bestofn))
         .route("/admin/api/search", get(search_admin))
         .route("/admin/api/events", get(admin_events_sse))
@@ -2030,6 +2069,90 @@ mod tests {
         let json = body_json(resp).await;
         assert_eq!(json["total"], 0);
         assert!(json["approvals"].is_array());
+    }
+
+    #[tokio::test]
+    async fn pending_questions_lists_a_waiting_workers_question_read_only() {
+        let state = test_state();
+        let token = (*state.auth_token).clone();
+        let id = {
+            let core = state.core.clone();
+            let s = core.start_session().await.unwrap();
+            let id = s.header().map(|h| h.session_id.clone()).unwrap_or_default();
+            crate::register_handle(
+                &state,
+                id.clone(),
+                s,
+                state.core.cwd().clone(),
+                state.core.clone(),
+            );
+            id
+        };
+        let _waiting = state
+            .core
+            .workers()
+            .questions()
+            .open(vak_agent::PendingQuestion {
+                id: "q-admin".into(),
+                worker_id: "child-1".into(),
+                label: "Totals".into(),
+                parent_session_id: id.clone(),
+                question: "Which fiscal year?".into(),
+                options: vec!["2025".into(), "2026".into()],
+                asked_at: chrono::Utc::now(),
+            })
+            .unwrap();
+
+        let app =
+            crate::router_with_state(state.clone()).layer(axum::middleware::from_fn_with_state(
+                crate::AuthPolicy {
+                    token: (*state.auth_token).clone(),
+                    home: state.core.sessions_home(),
+                    trusted_hosts: Vec::new(),
+                    public_url: None,
+                    browser_sessions: state.browser_sessions.clone(),
+                },
+                crate::require_bearer,
+            ));
+        let get = |uri: &str, method: &str| {
+            Request::builder()
+                .method(method)
+                .uri(uri)
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::empty())
+                .unwrap()
+        };
+        let resp = app
+            .clone()
+            .oneshot(get("/admin/api/questions", "GET"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let json = body_json(resp).await;
+        assert_eq!(json["total"], 1, "{json}");
+        let row = &json["questions"][0];
+        assert_eq!(row["session_id"], id.as_str());
+        assert_eq!(row["worker"], "Totals");
+        assert_eq!(row["question"], "Which fiscal year?");
+        assert_eq!(row["options"], serde_json::json!(["2025", "2026"]));
+
+        // Read only: the admin path offers no way to answer.
+        let resp = app
+            .oneshot(get("/admin/api/questions/q-admin", "POST"))
+            .await
+            .unwrap();
+        assert!(
+            matches!(
+                resp.status(),
+                StatusCode::NOT_FOUND | StatusCode::METHOD_NOT_ALLOWED
+            ),
+            "{}",
+            resp.status()
+        );
+        assert!(
+            state.core.workers().questions().is_open("q-admin"),
+            "listing and probing never answer"
+        );
     }
 
     #[tokio::test]

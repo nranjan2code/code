@@ -4073,6 +4073,28 @@ pub(crate) fn register_handle(
                                 .unwrap_or_else(std::sync::PoisonError::into_inner),
                             framed,
                         );
+                        // The admin console reads pending questions from the
+                        // hub, so a question reaches it whichever surface
+                        // announced it.
+                        if let Some(hub) = events::global() {
+                            match &event {
+                                AgentEvent::WorkerQuestion { id, label, .. } => {
+                                    hub.emit(events::SystemEvent::WorkerQuestion {
+                                        id: id.clone(),
+                                        session_id: durable_session_id.clone(),
+                                        label: label.clone(),
+                                    })
+                                }
+                                AgentEvent::WorkerQuestionAnswered { id, .. }
+                                | AgentEvent::WorkerQuestionClosed { id, .. } => {
+                                    hub.emit(events::SystemEvent::WorkerQuestionClosed {
+                                        id: id.clone(),
+                                        session_id: durable_session_id.clone(),
+                                    })
+                                }
+                                _ => {}
+                            }
+                        }
                         let activity = match event {
                             AgentEvent::WorkerStarted { label } => {
                                 Some(vak_session::ActivityRecord {

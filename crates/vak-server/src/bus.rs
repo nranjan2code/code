@@ -289,6 +289,14 @@ impl ServerBus {
                     }
                 ))
             }
+            SystemEvent::WorkerQuestion { .. } => Subject::Custom(format!(
+                "vak.events.{}.{}.worker.question",
+                self.workspace_id, sess
+            )),
+            SystemEvent::WorkerQuestionClosed { .. } => Subject::Custom(format!(
+                "vak.events.{}.{}.worker.question.closed",
+                self.workspace_id, sess
+            )),
             SystemEvent::SecurityEvent { .. } => Subject::Custom(format!(
                 "vak.events.{}.{}.security",
                 self.workspace_id, sess

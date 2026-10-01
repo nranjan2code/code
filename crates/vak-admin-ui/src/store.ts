@@ -102,6 +102,8 @@ function describe(ev: SystemEvent): { kind: Toast["kind"]; text: string } | null
       return { kind: "info", text: `granted ${ev.data.tool}` };
     case "ApprovalDenied":
       return { kind: "info", text: `denied ${ev.data.tool}` };
+    case "WorkerQuestion":
+      return { kind: "warn", text: `${ev.data.label} is asking a question` };
     case "SecurityEvent":
       return { kind: "alert", text: `${ev.data.kind} · ${ev.data.label}` };
     case "RateLimit":
@@ -153,10 +155,12 @@ function recordPulse(type: string) {
 // Bumped whenever approval-related events arrive; consumers createResource
 // on this to refetch the pending list live.
 const [approvalsVersion, bumpApprovals] = createSignal(0);
+// Bumped when a worker's question is asked or its wait ends.
+const [questionsVersion, bumpQuestions] = createSignal(0);
 const [sessionsVersion, bumpSessions] = createSignal(0);
 const [statsVersion, bumpStats] = createSignal(0);
 const [bestofnVersion, bumpBestofn] = createSignal(0);
-export { approvalsVersion, sessionsVersion, statsVersion, bestofnVersion };
+export { approvalsVersion, questionsVersion, sessionsVersion, statsVersion, bestofnVersion };
 
 export function ingest(ev: SystemEvent) {
   const d = describe(ev);
@@ -164,6 +168,7 @@ export function ingest(ev: SystemEvent) {
   recordPulse(ev.type);
   setFeed((prev) => [...prev.slice(-59), { id: ++feedSeq, ts: new Date().toISOString(), event: ev }]);
   if (ev.type.startsWith("Approval")) bumpApprovals((v) => v + 1);
+  if (ev.type.startsWith("WorkerQuestion")) bumpQuestions((v) => v + 1);
   if (ev.type === "SessionCreated" || ev.type === "SessionEntryAppended" || ev.type === "Agent" || ev.type === "ConfigChanged") {
     bumpSessions((v) => v + 1);
     bumpStats((v) => v + 1);

@@ -1262,6 +1262,9 @@ export function applyEvent(
   } else if ("WorkerQuestionAnswered" in ev) {
     updateList("main", id, (items) => items.map((item) =>
       item.kind === "question" && item.id === ev.WorkerQuestionAnswered.id ? { ...item, resolved: "answered" } : item));
+  } else if ("WorkerQuestionClosed" in ev) {
+    updateList("main", id, (items) => items.map((item) =>
+      item.kind === "question" && item.id === ev.WorkerQuestionClosed.id && !item.resolved ? { ...item, resolved: "gone" } : item));
   } else if ("WorkerStarted" in ev) {
     pushItem(b, id, {
       kind: "worker",

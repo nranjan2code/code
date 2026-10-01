@@ -247,6 +247,21 @@ impl AskParentTool {
     }
 }
 
+impl AskParentTool {
+    /// Tell listeners the question is no longer waiting, so a card or an
+    /// admin list drops it now rather than at its next refresh.
+    async fn closed(&self, info: &PendingQuestion) {
+        if let Some(events) = &self.events {
+            let _ = events
+                .send(crate::AgentEvent::WorkerQuestionClosed {
+                    id: info.id.clone(),
+                    label: info.label.clone(),
+                })
+                .await;
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for AskParentTool {
     fn name(&self) -> &str {
@@ -366,6 +381,7 @@ impl Tool for AskParentTool {
             _ = tokio::time::sleep(window) => None,
             _ = ctx.cancel.cancelled() => {
                 self.board.questions().close(&info.id);
+                self.closed(&info).await;
                 return ToolOutput::error("cancelled while waiting for an answer");
             }
         };
@@ -373,6 +389,7 @@ impl Tool for AskParentTool {
         // resolves nothing (AGENTS.md invariant 15).
         self.board.questions().close(&info.id);
         let Some(answer) = outcome else {
+            self.closed(&info).await;
             return ToolOutput::ok(
                 "No answer arrived. Decide from your task and state the assumption you made, or stop and say what you need.",
             );

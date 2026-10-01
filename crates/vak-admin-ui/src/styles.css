@@ -2717,6 +2717,8 @@ a.tab-btn {
 .home-gate-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
 .home-gate-head .when { margin-left: auto; color: var(--faint); font-size: 12px; font-family: var(--mono); }
 .home-gate-reason { color: var(--yellow); font-size: 12px; margin-bottom: 6px; }
+.home-question-text { margin-bottom: 7px; color: var(--text); line-height: 1.5; overflow-wrap: anywhere; }
+.home-question-options { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 9px; }
 .home-gate-args { margin-bottom: 9px; }
 .home-gate-args summary { cursor: pointer; color: var(--muted); font-size: 12px; }
 .home-gate-args summary:hover { color: var(--text-soft); }
