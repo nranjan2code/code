@@ -50,6 +50,50 @@ impl Provider for Counting {
     }
 }
 
+struct GatedProvider {
+    calls: Arc<AtomicUsize>,
+    started: tokio::sync::mpsc::UnboundedSender<()>,
+    release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
+}
+
+#[async_trait::async_trait]
+impl Provider for GatedProvider {
+    fn name(&self) -> &str {
+        "gated"
+    }
+
+    async fn stream(
+        &self,
+        _request: ChatRequest,
+        cancel: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let _ = self.started.send(());
+        let release = self.release.lock().await.take();
+        if let Some(release) = release {
+            tokio::select! {
+                _ = release => {},
+                _ = cancel.cancelled() => {
+                    return Err(LlmError::Aborted { partial: None });
+                },
+            }
+        }
+        let (mut sink, rx) = stream::channel(8);
+        let done = AssistantMessage {
+            content: vec![ContentBlock::text("routine done")],
+            stop_reason: vak_llm::types::StopReason::EndTurn,
+            usage: Usage::default(),
+            model: "gated-model".into(),
+            response_id: None,
+        };
+        sink.push(stream::StreamEvent::Start {
+            partial: done.clone(),
+        });
+        sink.close_message(done).await;
+        Ok(rx)
+    }
+}
+
 struct Server {
     base: String,
     token: String,
@@ -94,6 +138,16 @@ impl Server {
     async fn run_now(&self, id: &str) -> reqwest::StatusCode {
         self.client()
             .post(format!("{}/tasks/{id}/run-now", self.base))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    }
+
+    async fn patch_task(&self, id: &str, patch: &serde_json::Value) -> reqwest::StatusCode {
+        self.client()
+            .patch(format!("{}/tasks/{id}", self.base))
+            .json(patch)
             .send()
             .await
             .unwrap()
@@ -310,6 +364,56 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     assert_eq!(history["runs"][0]["status"], "complete");
     assert_eq!(history["runs"][0]["session_id"], session_id);
     assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run_settle() {
+    let (_dir, ws, home) = space(true, |ws| {
+        let mut task = prompt_task("pause-during-run", ws, None);
+        task["enabled"] = serde_json::json!(false);
+        serde_json::json!([task])
+    });
+    vak_config::paths::set_home_override(&home);
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_sessions_home(home.clone());
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    core.set_provider_instance(Arc::new(GatedProvider {
+        calls: calls.clone(),
+        started: started_tx,
+        release: tokio::sync::Mutex::new(Some(release_rx)),
+    }));
+    let server = serve_core(core, calls.clone()).await;
+
+    assert_eq!(
+        server.run_now("pause-during-run").await,
+        reqwest::StatusCode::ACCEPTED
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(10), started_rx.recv())
+        .await
+        .expect("run started before pause")
+        .expect("provider signaled run start");
+
+    assert_eq!(
+        server
+            .patch_task("pause-during-run", &serde_json::json!({"enabled": false}))
+            .await,
+        reqwest::StatusCode::OK
+    );
+    release_tx.send(()).expect("active run still waiting");
+    assert!(
+        eventually(15, || async {
+            server.task("pause-during-run").await["last_run_status"] == "complete"
+        })
+        .await,
+        "pausing prevents later admission without corrupting the active run"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(server.task("pause-during-run").await["enabled"], false);
 }
 
 async fn eventually<F, Fut>(secs: u64, mut check: F) -> bool

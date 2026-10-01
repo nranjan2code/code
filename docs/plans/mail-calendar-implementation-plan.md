@@ -653,6 +653,14 @@ the draft remains available, and no provider effect request occurs. The
 same-origin synthetic browser run passes 19 checks; screen-reader testing and
 phone/light/dark viewport acceptance remain open.
 
+**Implemented increment (2026-10-02):** a scheduled-run integration test now
+pauses a TaskDef while its model call is blocked, then releases the call and
+verifies that the in-flight run settles successfully while no later run is
+admitted. Pause takes effect for future admissions; it does not silently cancel
+or discard a run already in progress. This verifies the shared scheduler
+control path with a gated synthetic provider; full mail/calendar provider
+outage and sustained-service acceptance remain open.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
