@@ -1722,6 +1722,13 @@ remains open.
   Apple IMAP now also presents a synthetic 2,000-message mailbox and verifies
   that only the newest 20 metadata records are fetched. Apple CalDAV retains
   separate protocol/parser budget fixtures.
+- 2026-10-01: Packaged the synthetic-only provider and boundary regressions as
+  `./scripts/test-mail-calendar-mock-pack.sh`, documented at
+  `crates/vak-mail-calendar/MOCK_REGRESSION_PACK.md`. One offline command runs
+  the provider/vault crate, Core and server mail/calendar boundary tests, and
+  parser-worker integration fixtures. Inputs are generated in memory and test
+  servers bind only to loopback; the pack requires no live account or
+  credential and does not access the developer data home.
 - 2026-10-01: Reverified the current branch: all 109 mail/calendar unit tests
   and its state-registry test pass; all 11 Core mail/calendar boundary tests,
   13 server mail/calendar unit tests, 4 owner-authenticated HTTP tests, 5
