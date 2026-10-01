@@ -674,13 +674,16 @@ remains open.
 
 - 2026-10-01: Added a browser acceptance fixture that mounts the actual
   connected-account Settings workspace with a same-origin fake Google account.
-  Eight checks cover Agent-scoped account inventory, bounded inbox preview,
+  It exercises Agent-scoped account inventory, bounded inbox preview,
   conversation opening, reply source lineage, edits, saved draft preview, and
-  exact-effect Review. The test closes Review without confirming and verifies
-  no provider effect or external request occurred. This closes the mock-data
-  owner-UI path; live provider conformance and the wider connected-account
-  acceptance gates remain open. `npm run typecheck` and the rendered browser
-  fixture pass.
+  exact-effect Review. It closes Review without confirming, then configures an
+  event-trigger routine, previews it while paused, opens run history, and
+  resumes it. Eleven browser checks verify that no provider effect or external
+  request occurs. The test exposed a stale run-history binding in Settings;
+  changing the list to read its signal reactively makes the returned preview
+  visible. `npm run typecheck` and the rendered browser fixture pass. This
+  closes the mock-data owner-UI path; live provider conformance, full
+  conversation behavior, and 24-hour service recovery remain open.
 - 2026-10-01: Added the backward-compatible event-relative trigger contract
   to `RoutineScope`, with signed offsets, start/end boundaries, a bounded
   catch-up window, calendar-read validation, and opaque occurrence keys. Contract

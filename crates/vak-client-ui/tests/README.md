@@ -58,9 +58,10 @@ uses no credentials or session data.
 workspace against a same-origin fake connected Google account. It exercises
 inbox preview, conversation opening, reply editing, saved message/thread
 lineage, exact local preview, and exact-effect Review. It closes Review without
-confirming, and asserts that no provider effect route or external request was
-made. This validates the owner UI boundary with fabricated fixtures; it does
-not replace live provider conformance checks.
+confirming, then configures an event-trigger routine, runs its paused preview,
+opens run history, and resumes it. It asserts that no provider effect route or
+external request was made. This validates the owner UI boundary with
+fabricated fixtures; it does not replace live provider conformance checks.
 
 # Result card
 

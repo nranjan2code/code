@@ -3310,7 +3310,7 @@ export default function Settings() {
                         ? `last successful check ${relTime(task.mail_calendar_last_check_at)}${watchFreshness === "overdue" ? " · check overdue; the service may be asleep or disconnected" : ""}`
                         : "no successful check yet"
                       : task.last_run_at ? `last run ${relTime(task.last_run_at)}` : "not run yet";
-                    const runs = mailCalendarRunHistory()[task.id] ?? [];
+                    const runs = () => mailCalendarRunHistory()[task.id] ?? [];
                     return <article class="mail-calendar-draft-row"><div>
                       <strong>{task.name}</strong>
                       <span>{status} · {frequency} · {lastActivity}{task.enabled && task.next_run_at ? ` · next ${new Date(task.next_run_at).toLocaleString()}` : ""}</span>
@@ -3318,8 +3318,8 @@ export default function Settings() {
                         <summary>Run history</summary>
                         <Show when={mailCalendarRunHistoryLoading() === task.id}><span role="status">Loading run history…</span></Show>
                         <Show when={mailCalendarRunHistoryLoading() !== task.id}>
-                          <Show when={runs.length > 0} fallback={<span>No recorded runs yet.</span>}>
-                            <ul><For each={runs}>{(run) => <li><time dateTime={run.started_at}>{new Date(run.started_at).toLocaleString()}</time><span>{run.trigger === "manual" ? "Manual preview/run" : "Scheduled"} · {run.status.replaceAll("_", " ")}</span><Show when={run.session_id}><button class="settings-button" onClick={() => setTranscriptViewId(run.session_id!)}>Open result</button></Show></li>}</For></ul>
+                          <Show when={runs().length > 0} fallback={<span>No recorded runs yet.</span>}>
+                            <ul><For each={runs()}>{(run) => <li><time dateTime={run.started_at}>{new Date(run.started_at).toLocaleString()}</time><span>{run.trigger === "manual" ? "Manual preview/run" : "Scheduled"} · {run.status.replaceAll("_", " ")}</span><Show when={run.session_id}><button class="settings-button" onClick={() => setTranscriptViewId(run.session_id!)}>Open result</button></Show></li>}</For></ul>
                           </Show>
                         </Show>
                       </details>

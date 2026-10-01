@@ -7,7 +7,7 @@ const requests: Array<{ path: string; method: string; body: any }> = [];
 const account = {
   id: "review-google-account", provider: "google", status: "connected",
   identity_masked: "owner@example.test", auth_method: "oauth", credential_available: true,
-  superseded_by_active_link: false, capabilities: ["mail_read", "mail_send"],
+  superseded_by_active_link: false, capabilities: ["mail_read", "mail_send", "calendar_read"],
   connected_at: "2026-10-01T00:00:00Z", access_token_expires_at: null,
   refresh_token_available: true, revoked_at: null,
 };
@@ -20,6 +20,8 @@ const sourceMessage = {
 };
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 let saved: any = null;
+let task: any = null;
+const agent = { id: "fixture-review-owner", name: "Review fixture", revision: 1, lifecycle: "active", character: "vak", animation: "off" };
 
 window.fetch = async (input, init) => {
   const url = new URL(String(input), location.origin);
@@ -39,10 +41,30 @@ window.fetch = async (input, init) => {
     return json({ candidate: saved });
   }
   if (url.pathname.endsWith("/mail-folders")) return json({ folders: [{ provider_id: "INBOX", name: "Inbox" }] });
+  if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "primary-calendar", name: "Personal", primary: true }] });
   if (url.pathname.endsWith("/mail-preview")) return json({ messages: [sourceMessage] });
   if (url.pathname.endsWith("/thread-preview")) return json({ messages: [sourceMessage], next_cursor: null });
-  if (url.pathname === "/tasks") return json({ tasks: [] });
-  if (url.pathname === "/agents") return json({ agents: [] });
+  if (url.pathname === "/tasks" && method === "GET") return json({ tasks: task ? [task] : [] });
+  if (url.pathname === "/tasks" && method === "POST") {
+    task = {
+      id: "routine-event-fixture", name: body.name, agent_id: body.agent_id,
+      agent_revision: body.agent_revision, enabled: false, interval_secs: body.interval_secs,
+      schedule: body.schedule ?? null, timezone: body.timezone, mail_calendar_scope: body.mail_calendar_scope,
+      last_session_id: null, last_run_status: null, last_run_at: null, next_run_at: null,
+      mail_calendar_last_check_at: null,
+    };
+    return json({ task });
+  }
+  if (url.pathname === "/tasks/routine-event-fixture/run-now" && method === "POST") {
+    task = { ...task, last_session_id: "fixture-preview-session", last_run_status: "complete", last_run_at: new Date().toISOString() };
+    return json({ started: true });
+  }
+  if (url.pathname === "/tasks/routine-event-fixture" && method === "PATCH") {
+    task = { ...task, ...body };
+    return json(task);
+  }
+  if (url.pathname.includes("/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-run-1", routine_id: "routine-event-fixture", account_id: account.id, trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString(), session_id: "fixture-preview-session" }] });
+  if (url.pathname === "/agents") return json({ agents: [agent] });
   if (url.pathname === "/providers") return json({ providers: [] });
   if (url.pathname === "/config" || url.pathname.startsWith("/config?")) return json({ provider: "", model: "", max_turns: 8, paths: { cwd: "/tmp/vak-mail-review-fixture" }, permissions: { allow: [], ask: [], deny: [] }, memory: { search_enabled: true, write_enabled: true, reflection: false, skill_proposals: true } });
   if (url.pathname.includes("presentations")) return json({ definitions: [], activations: [] });
@@ -103,6 +125,22 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
   const cancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Cancel");
   cancel?.click();
   const effectCalls = requests.filter((request) => /\/(send|create-event|update-event|cancel-event)$/.test(request.path));
+  const eventTriggerLabel = [...document.querySelectorAll<HTMLLabelElement>("label.capability-item")].find((label) => label.textContent?.includes("Run around a calendar event"));
+  const eventTriggerCheckbox = eventTriggerLabel?.querySelector<HTMLInputElement>("input[type=checkbox]");
+  eventTriggerCheckbox?.click();
+  await waitFor(() => (document.querySelector("select[aria-label='Routine calendar source']") as HTMLSelectElement | null)?.value === "primary-calendar", "the verified calendar source selector");
+  setField("Routine name", "Prepare for the next meeting");
+  await click("Save paused routine");
+  await waitFor(() => task?.id === "routine-event-fixture", "the paused event-trigger routine");
+  await click("Preview run");
+  await waitFor(() => document.body.textContent?.includes("Open latest run") === true, "the settled one-off routine preview");
+  const history = [...document.querySelectorAll<HTMLElement>(".mail-calendar-routine-history summary")].find((summary) => summary.textContent?.includes("Run history"));
+  history?.click();
+  await waitFor(() => (document.querySelector(".mail-calendar-routine-history") as HTMLDetailsElement | null)?.open === true, "the expanded routine history panel");
+  await waitFor(() => requests.some((request) => request.path.endsWith("/routines/routine-event-fixture/history")), "the routine run history request");
+  await waitFor(() => document.querySelector(".mail-calendar-routine-history li") !== null, "the preview run history entry");
+  await click("Resume");
+  await waitFor(() => task?.enabled === true, "the resumed event-trigger routine");
   const passed = [
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
     check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
@@ -111,6 +149,9 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
     check(saved?.action?.draft?.to?.[0]?.address === "maya@example.test" && saved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
     check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
+    check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
+    check(task?.enabled === true && task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine previews while paused, then resumes with a bounded one-minute cadence"),
+    check(requests.some((request) => request.path.endsWith("/run-now") && request.method === "POST") && requests.some((request) => request.path.endsWith("/history")), "A one-off preview run appears in the routine's run history"),
     check(!requests.some((request) => new URL(request.path, location.origin).origin !== location.origin), "All fixture requests stay same-origin; no provider or credential endpoint is contacted"),
   ];
   const report = document.createElement("pre");
