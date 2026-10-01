@@ -14,6 +14,7 @@ import {
   setNotice,
   setProviders,
   setSettingsOpen,
+  openArtifactCanvas,
   pendingMailCalendarCitation,
   setPendingMailCalendarCitation,
   setSetupEpoch,
@@ -3074,7 +3075,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "mail-calendar"}>
-              <header><h1>Email and calendar</h1><p>Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
+              <header class="mail-calendar-settings-header"><div class="mail-calendar-settings-intro"><h1>Connected accounts and access</h1><p>Manage the accounts and permissions available to {agentName()}.</p><p class="settings-hint">Today’s agenda and recent email are in Canvas. Drafts, Review and routines still live on this page while their move is in progress.</p></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open Today in Canvas</button><p class="settings-hint">Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
                 <p class="settings-hint" role="status">
                   <Show when={connection() === "offline"} fallback={connection() === "live" && health()
                     ? health()?.automation_scheduler?.status === "stale"

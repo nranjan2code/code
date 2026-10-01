@@ -2295,6 +2295,9 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .settings-main { min-width: 0; overflow-x: hidden; overflow-y: auto; background: var(--bg); }
 .settings-content { width: min(860px, calc(100% - 70px)); margin: 0 auto; padding: 62px 0 90px; font-size: var(--fs-ui); }
 .settings-content > header { margin-bottom: 35px; }
+.settings-content > header.mail-calendar-settings-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.mail-calendar-settings-intro { flex: 1 1 420px; }
+.mail-calendar-settings-header > .settings-hint { flex-basis: 100%; }
 .settings-content > header.archived-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-5); }
 .archived-header .settings-button { display: inline-flex; align-items: center; gap: 6px; color: var(--red); border-color: color-mix(in srgb, var(--red) 25%, transparent); background: color-mix(in srgb, var(--red) 7%, transparent); }
 .archived-header .settings-button:hover, .settings-button.danger:hover { border-color: color-mix(in srgb, var(--red) 45%, transparent); background: color-mix(in srgb, var(--red) 13%, transparent); }

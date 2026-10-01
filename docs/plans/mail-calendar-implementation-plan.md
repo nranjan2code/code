@@ -2130,3 +2130,10 @@ remains open.
   including navigating to the final item and back to the source conversation
   before creating its local reply. UI paging does not fetch additional inbox
   cursors; provider-level inbox continuation remains an open requirement.
+- 2026-10-01: Clarified the Settings/Canvas boundary in the design and added a
+  direct “Open Today in Canvas” action to the Agent mail/calendar Settings
+  page. The page now names itself as connected-account/access management and
+  explicitly states that drafts, Review, and routines remain there pending
+  migration. This is navigation and disclosure progress, not completion of the
+  shared working-area requirement: the full draft, Review, range/folder preview,
+  and routine workflows still need to move into Canvas.

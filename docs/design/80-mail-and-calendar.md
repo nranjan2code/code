@@ -897,6 +897,19 @@ and Microsoft thread previews do use provider cursors. Same-source Canvas
 refreshes retain the current preview while loading; changing its Agent or
 source shows the initial loading state.
 
+Account configuration belongs in Agent Settings; reading and working with
+mail, events, drafts, Reviews, and routine activity belongs in the shared
+Canvas work area described above. The current implementation still mixes
+account configuration with previews, drafts, Reviews, and routines on the
+Settings page. Settings now links directly to the Today Canvas, which contains
+the read-only agenda and recent-mail view, but this is only a partial
+separation: draft and Review handoffs, date-range and folder previews, and
+routine management still return to Settings. Do not treat the Settings page as
+the finished working area. Move those workflows into Canvas while preserving
+the existing Agent ownership, permission checks, exact Review payloads, and
+vault-backed local draft behavior; Settings should retain connection, access,
+and account-lifecycle controls.
+
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized
 structured content with remote resources blocked; do not mount mail HTML in
