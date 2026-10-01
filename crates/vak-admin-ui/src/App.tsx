@@ -16,6 +16,7 @@ import { SecurityCenter } from "./SecurityCenter";
 import { Inbox } from "./Inbox";
 import { BackupModels } from "./BackupModels";
 import { SessionsList, SessionForensics } from "./SessionForensics";
+import "./focusTrap";
 import { clock, shortId, timeAgo } from "./time";
 import {
   AccessPicker, BUILTIN_TOOLS, MATCHER_TOOLS, MatcherBuilder, ScheduleBuilder,
@@ -2120,6 +2121,7 @@ function MemoryView() {
   const [busy, setBusy] = createSignal(false);
   const [editing, setEditing] = createSignal<string | null>(null);
   const [editText, setEditText] = createSignal("");
+  const [forgetTarget, setForgetTarget] = createSignal<MemoryItem | null>(null);
   const [cleaning, setCleaning] = createSignal(false);
   const [togglingFlag, setTogglingFlag] = createSignal<string | null>(null);
   const [filterScope, setFilterScope] = createSignal<"all" | "profile" | "workspace">("all");
@@ -2127,6 +2129,9 @@ function MemoryView() {
   const [query, setQuery] = createSignal("");
   const canWriteMemory = () => selectedAgentId() !== "all" && selectedAgentId() !== "global";
   const memoryOwner = (note?: MemoryItem) => note?.admin_agent_id ?? selectedAgentIdOrUndefined();
+  const canManageMemoryNote = (note: MemoryItem) => Boolean(memoryOwner(note));
+  const noteKey = (note: MemoryItem) => `${memoryOwner(note) ?? ""}/${note.scope}/${note.id}`;
+  const memoryOwnerName = (note: MemoryItem) => adminAgents().find((agent) => agent.id === memoryOwner(note))?.name ?? "this agent";
 
   const notes = createMemo(() => memoryData()?.notes ?? []);
   const profileCount = createMemo(() => notes().filter((n) => n.scope === "profile").length);
@@ -2205,11 +2210,17 @@ function MemoryView() {
     }
   };
 
-  const forget = async (id: string) => {
-    if (!confirmDestructive("Forget this note? Vakyartha stops taking it into account.")) return;
+  const forget = async (note: MemoryItem) => {
+    if (!canManageMemoryNote(note)) return;
+    setForgetTarget(note);
+  };
+
+  const confirmForget = async () => {
+    const note = forgetTarget();
+    if (!note || !canManageMemoryNote(note)) return;
+    setForgetTarget(null);
     try {
-      const note = memoryData()?.notes?.find((m) => m.id === id);
-      await api.forgetMemory(id, note?.scope === "profile" ? "profile" : "workspace", memoryOwner(note));
+      await api.forgetMemory(note.id, note.scope === "profile" ? "profile" : "workspace", memoryOwner(note));
       await refetch();
       pushToast("info", "Forgotten");
     } catch (err) {
@@ -2238,7 +2249,7 @@ function MemoryView() {
         description="Things Vakyartha should keep in mind between sessions — about you, or about this workspace."
         actions={<button class="ghost small" disabled={cleaning() || !canWriteMemory()} onClick={() => void cleanArtifacts()}>{cleaning() ? "Cleaning…" : "Clean artifacts"}</button>}
       />
-      <Show when={!canWriteMemory()}><div class="info-banner">This combined view gathers notes from each agent. Select one agent to add, edit, forget, or clean its memory.</div></Show>
+      <Show when={!canWriteMemory()}><div class="info-banner">This combined view gathers notes from each agent. Select one agent to add notes or clean memory. You can amend or forget a listed note here; each action applies only to its owning agent.</div></Show>
 
       <div class="stat-strip">
         <StatCard label="Total memories" value={notes().length} />
@@ -2313,9 +2324,9 @@ function MemoryView() {
                         <Show when={m.tag}><strong class="mono">{m.tag}</strong></Show>
                         <span class="dim" style="margin-left:auto; font-size:12px">{timeAgo(m.ts)}</span>
                       </div>
-                      <Show when={editing() === m.id} fallback={<div class="note-text">{m.text}</div>}>
+                      <Show when={editing() === noteKey(m)} fallback={<div class="note-text">{m.text}</div>}>
                         <textarea value={editText()} onInput={(e) => setEditText(e.currentTarget.value)} />
-                        <button class="small" onClick={async () => {
+                        <button class="small" disabled={!canManageMemoryNote(m)} onClick={async () => {
                           if (!editText().trim()) return;
                           try {
                             await api.amendMemory(m.id, m.scope === "profile" ? "profile" : "workspace", editText().trim(), memoryOwner(m));
@@ -2328,14 +2339,14 @@ function MemoryView() {
                         }}>Save</button>
                       </Show>
                       <div class="note-foot">
-                        <Show when={editing() !== m.id}>
-                          <button class="small" disabled={!canWriteMemory()} onClick={() => { setEditing(m.id); setEditText(m.text); }}>Amend</button>
+                        <Show when={editing() !== noteKey(m)}>
+                          <button class="small" disabled={!canManageMemoryNote(m)} onClick={() => { setEditing(noteKey(m)); setEditText(m.text); }}>Amend</button>
                         </Show>
                         <Show when={m.session_id}>
                           <button class="ghost small" onClick={() => navigate(`#/sessions/${m.session_id}`)}>From this session</button>
                         </Show>
                         <span class="spacer" />
-                        <button class="danger small" disabled={!canWriteMemory()} onClick={() => forget(m.id)}>Forget</button>
+                        <button class="danger small" disabled={!canManageMemoryNote(m)} onClick={() => void forget(m)}>Forget</button>
                       </div>
                     </li>
                   )}
@@ -2398,6 +2409,23 @@ function MemoryView() {
           </div>
         </section>
       </div>
+      <Show when={forgetTarget()}>{(note) => (
+        <div class="ops-dialog-backdrop" role="presentation" onClick={(event) => { if (event.target === event.currentTarget) setForgetTarget(null); }}>
+          <section class="ops-dialog" role="alertdialog" aria-modal="true" aria-labelledby="forget-memory-title" aria-describedby="forget-memory-description" use:trapFocus onKeyDown={(event) => { if (event.key === "Escape") setForgetTarget(null); }}>
+            <div class="panel-title-row">
+              <div>
+                <span class="eyebrow">Remove saved memory</span>
+                <h2 id="forget-memory-title">Forget this note?</h2>
+              </div>
+            </div>
+            <p id="forget-memory-description">This removes the note from {memoryOwnerName(note())}’s memory and future searches. Its source conversation remains in history.</p>
+            <div class="row-gap" style="display:flex;justify-content:flex-end;margin-top:18px">
+              <button class="ghost small" onClick={() => setForgetTarget(null)}>Cancel</button>
+              <button class="danger small" onClick={() => void confirmForget()}>Forget note</button>
+            </div>
+          </section>
+        </div>
+      )}</Show>
     </div>
   );
 }

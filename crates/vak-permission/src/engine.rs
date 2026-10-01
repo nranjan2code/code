@@ -52,7 +52,7 @@ const WRITE_TOOLS: [&str; 3] = ["write", "edit", "office_apply"];
 /// Learning-loop journaling into vak's own per-workspace store
 /// (docs/design/26-learning.md): sanctioned under workspace-write, still
 /// denied by read-only's default arm below.
-const LEARNING_TOOLS: [&str; 2] = ["remember", "propose_skill"];
+const LEARNING_TOOLS: [&str; 3] = ["remember", "forget_memory", "propose_skill"];
 /// Tools whose reach exceeds the workspace (docs/design/29-personal-os.md
 /// P4). Outside FullAccess they gate on approval rather than following the
 /// surrounding mode's arm: read-only would otherwise deny them outright,

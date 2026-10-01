@@ -3674,6 +3674,10 @@ impl Core {
                 cwd: self.inner.cwd.clone(),
                 session_id: scope.session_id.clone(),
             }));
+            tools.push(Arc::new(learning::ForgetMemoryTool {
+                sessions_home: self.sessions_home(),
+                cwd: self.inner.cwd.clone(),
+            }));
             tools.push(Arc::new(entities::EntityRecordTool {
                 sessions_home: self.sessions_home(),
                 cwd: self.inner.cwd.clone(),
@@ -8239,11 +8243,10 @@ mod channel_mcp_network_tests {
             ..Default::default()
         });
         let names = core.tool_names();
-        assert!(
-            !names
-                .iter()
-                .any(|n| matches!(n.as_str(), "remember" | "propose_skill" | "session_search"))
-        );
+        assert!(!names.iter().any(|n| matches!(
+            n.as_str(),
+            "remember" | "forget_memory" | "propose_skill" | "session_search"
+        )));
         assert!(!core.channel_tool_allowed("remember"));
     }
 
@@ -8972,7 +8975,7 @@ pub const NETWORK_TOOLS: [&str; 2] = ["webfetch", "browse"];
 /// denies at the rule layer. Visibility filtering already removes these
 /// from the registry; the rules are the second, execution-scoped half, so
 /// a path that assembles its own tool list cannot reintroduce one.
-const CHANNEL_BLOCKABLE_TOOLS: [&str; 10] = [
+const CHANNEL_BLOCKABLE_TOOLS: [&str; 11] = [
     "read",
     "write",
     "edit",
@@ -8980,6 +8983,7 @@ const CHANNEL_BLOCKABLE_TOOLS: [&str; 10] = [
     "glob",
     "grep",
     "remember",
+    "forget_memory",
     "propose_skill",
     "webfetch",
     "browse",

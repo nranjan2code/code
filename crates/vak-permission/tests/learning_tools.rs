@@ -10,7 +10,7 @@ use vak_permission::{Mode, PermissionEngine};
 #[test]
 fn learning_tools_allowed_under_workspace_write_without_rules() {
     let engine = PermissionEngine::default();
-    for tool in ["remember", "propose_skill"] {
+    for tool in ["remember", "forget_memory", "propose_skill"] {
         let d = engine.evaluate(
             tool,
             &json!({}),

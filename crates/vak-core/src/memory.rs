@@ -263,6 +263,17 @@ pub fn list_profile_notes(home: &Path) -> Vec<NoteBlock> {
     blocks_at(&profile_path(home))
 }
 
+/// Forget one note in the Agent's workspace tier without exposing the
+/// backing path to callers.
+pub fn forget_workspace_note(home: &Path, cwd: &Path, note_id: &str) -> Result<usize, String> {
+    forget_note(&memory_path(home, cwd), note_id)
+}
+
+/// Forget one note in the Agent's profile tier without exposing the path.
+pub fn forget_profile_note(home: &Path, note_id: &str) -> Result<usize, String> {
+    forget_note(&profile_path(home), note_id)
+}
+
 fn blocks_at(path: &Path) -> Vec<NoteBlock> {
     let Ok(raw) = std::fs::read_to_string(path) else {
         return Vec::new();

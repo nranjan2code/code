@@ -97,7 +97,8 @@ text of the preceding block — hand-edits never lose data.
 
 | Tool | Args | Effect | Permission |
 |---|---|---|---|
-| `remember` | `note` (required), `kind` (fact\|decision\|preference\|reference\|invariant), `tag` | append block | Allowed in WorkspaceWrite+ (journaling into vak's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
+| `remember` | `note` (required), `kind` (fact\|decision\|preference\|reference\|invariant), `tag` | append block and return its `memory/<id>` source id | Allowed in WorkspaceWrite+ (journaling into vak's own per-workspace store, like session ledgers themselves); denied in ReadOnly |
+| `forget_memory` | `note_id` (required; exact `memory/<id>` or `profile/<id>` from `session_search`) | remove exactly one curated memory block; the source conversation remains in history | Allowed in WorkspaceWrite+; denied in ReadOnly |
 | `propose_skill` | `name`, `description`, `instructions` | queue file | Same |
 
 The permission engine classifies both explicitly so they do not fall into
@@ -108,9 +109,11 @@ would stall on a forwarded gate.
 
 `vak_session::search_extended(..., extras: &[ExternalDoc])` scores memory
 blocks with the same scorer plus a bonus that places them above equally
-relevant transcript lines; hits surface as `role: "memory"` with the block's
-tag/kind in the snippet prefix. `session_search` and `GET /search` both feed
-parsed MEMORY.md entries in.
+relevant transcript lines; hits surface as `role: "memory"` with a stable
+`memory/<id>` or `profile/<id>` source id and the block's tag/kind in the
+snippet prefix. This gives `forget_memory` an exact target after the agent
+searches for the note the user asked it to forget. `session_search` and
+`GET /search` both feed parsed MEMORY.md entries in.
 
 ## Promotion
 

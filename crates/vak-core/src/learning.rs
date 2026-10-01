@@ -1,5 +1,5 @@
-//! Learning loop (docs/design/26-learning.md): the `remember` tool appends
-//! durable notes; `propose_skill` queues skill drafts for human promotion.
+//! Learning loop (docs/design/26-learning.md): `remember` appends durable
+//! notes, `forget_memory` removes them, and `propose_skill` queues skill drafts.
 //! Proposals never enter discovery by themselves — promotion is an explicit
 //! human action over HTTP or CLI.
 
@@ -19,6 +19,75 @@ pub struct RememberTool {
     pub session_id: String,
 }
 
+/// Remove one curated memory note after `session_search` identifies its
+/// stable id. Session ledgers remain append-only; this edits only MEMORY.md.
+pub struct ForgetMemoryTool {
+    pub sessions_home: PathBuf,
+    pub cwd: PathBuf,
+}
+
+#[async_trait::async_trait]
+impl vak_tools::Tool for ForgetMemoryTool {
+    fn name(&self) -> &str {
+        "forget_memory"
+    }
+
+    fn serves(&self) -> &'static [&'static str] {
+        &["memory"]
+    }
+
+    fn description(&self) -> &str {
+        "Forget one saved memory note when the user asks to delete or forget it. First use session_search with the note's topic to identify the exact saved note; pass its returned memory/<id> or profile/<id> source id here. If the result is ambiguous, ask which note they mean. This removes the note from durable memory and future memory search; it does not erase the conversation that originally created it."
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "note_id": {"type": "string", "description": "Exact memory/<id> or profile/<id> source id returned by session_search"}
+            },
+            "required": ["note_id"]
+        })
+    }
+
+    async fn execute(&self, args: &Value, _ctx: &vak_tools::ToolContext) -> vak_tools::ToolOutput {
+        let Some(source_id) = args.get("note_id").and_then(Value::as_str) else {
+            return vak_tools::ToolOutput::error("missing required argument 'note_id'");
+        };
+        let (scope, result) = if let Some(id) = source_id.strip_prefix("memory/") {
+            (
+                "workspace",
+                memory::forget_workspace_note(&self.sessions_home, &self.cwd, id),
+            )
+        } else if let Some(id) = source_id.strip_prefix("profile/") {
+            (
+                "profile",
+                memory::forget_profile_note(&self.sessions_home, id),
+            )
+        } else {
+            return vak_tools::ToolOutput::error(
+                "note_id must be the exact memory/<id> or profile/<id> source id from session_search",
+            );
+        };
+        match result {
+            Ok(_) => vak_tools::ToolOutput::ok(format!(
+                "Forgot the {scope} memory note. It will no longer appear in future memory searches; its source conversation remains in history."
+            )),
+            Err(error) => {
+                vak_tools::ToolOutput::error(format!("could not forget memory note: {error}"))
+            }
+        }
+    }
+
+    fn claims(&self, _args: &Value) -> vak_tools::ResourceClaims {
+        vak_tools::ResourceClaims {
+            exclusive: true,
+            read_only: false,
+            paths: vec![],
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl vak_tools::Tool for RememberTool {
     fn name(&self) -> &str {
@@ -34,7 +103,9 @@ impl vak_tools::Tool for RememberTool {
          (decisions, facts, preferences, pointers). Use sparingly for things \
          worth remembering after this conversation ends — not transient \
          details. Notes are recalled via session_search and are visible to \
-         the user, who can edit them."
+         the user, who can edit or forget them. When asked to forget a note, \
+         find its exact source id with session_search, then call forget_memory; \
+         do not replace it with a note saying not to remember it."
     }
 
     fn schema(&self) -> Value {
@@ -69,8 +140,9 @@ impl vak_tools::Tool for RememberTool {
             &self.session_id,
             note,
         ) {
-            Ok(_) => vak_tools::ToolOutput::ok(format!(
-                "remembered ({kind}{tag_suffix}). It will surface in future session_search queries.",
+            Ok(note) => vak_tools::ToolOutput::ok(format!(
+                "remembered ({kind}{tag_suffix}) as memory/{}. It will surface in future session_search queries; use forget_memory with that source id if the user later asks to forget it.",
+                note.id,
                 tag_suffix = if tag.is_empty() {
                     String::new()
                 } else {

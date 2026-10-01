@@ -111,7 +111,9 @@ impl vak_tools::Tool for SessionSearchTool {
 
     fn description(&self) -> &str {
         "Search past conversations and sessions (user requests and assistant answers) \
-         plus your durable memory notes and the user profile. Use when the user \
+         plus your durable memory notes and the user profile. Memory hits include \
+         an exact memory/<id> or profile/<id> source identifier for forget_memory. \
+         Use when the user \
          references earlier work ('that script we wrote', 'the bug from Tuesday') or when \
          prior decisions or stated preferences would help. Returns ranked snippets \
          with the source id and date. Read-only; current conversation is \
@@ -173,18 +175,11 @@ impl vak_tools::Tool for SessionSearchTool {
             .collect::<Vec<_>>();
         let mut extras: Vec<ExternalDoc> = notes
             .iter()
-            .map(|n| {
-                let key = if n.tag.is_empty() {
-                    n.kind.clone()
-                } else {
-                    n.tag.clone()
-                };
-                ExternalDoc {
-                    id: key,
-                    text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
-                    ts: Some(n.ts),
-                    role: Some("memory".into()),
-                }
+            .map(|n| ExternalDoc {
+                id: format!("memory/{}", n.id),
+                text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
+                ts: Some(n.ts),
+                role: Some("memory".into()),
             })
             .collect();
         // A remote audience does not inherit the local user's global profile
@@ -198,12 +193,7 @@ impl vak_tools::Tool for SessionSearchTool {
             crate::memory::list_profile_notes(&home)
                 .iter()
                 .map(|n| {
-                    let key = if n.tag.is_empty() {
-                        n.kind.clone()
-                    } else {
-                        n.tag.clone()
-                    };
-                    let id = format!("profile/{key}");
+                    let id = format!("profile/{}", n.id);
                     extras.push(ExternalDoc {
                         id: id.clone(),
                         text: format!("[{}{}] {}", n.kind, tag_suffix(&n.tag), n.text),
@@ -372,7 +362,7 @@ mod tests {
             .await;
         assert!(!out.is_error, "{}", out.content);
         // Profile-tier hits carry the profile/ id prefix AND role.
-        assert!(out.content.contains("profile/editor · "), "{}", out.content);
+        assert!(out.content.contains("profile/"), "{}", out.content);
         assert!(out.content.contains("· profile (score "), "{}", out.content);
         assert!(out.content.contains("vim keybindings"), "{}", out.content);
     }
