@@ -1088,6 +1088,45 @@ export function StructuredView(props: { output: import("../types").StructuredOut
 
 type StructuredRendererComponent = (props: { data: any; output: import("../types").StructuredOutput }) => JSX.Element;
 
+function WeatherCard(props: { data: any }) {
+  const data = props.data && typeof props.data === "object" ? props.data : {};
+  const valueFor = (...keys: string[]) => {
+    for (const key of keys) {
+      const value = data[key] ?? data[key.toLowerCase()];
+      if (typeof value === "string" || typeof value === "number") return String(value);
+    }
+    return undefined;
+  };
+  const title = valueFor("location", "city", "place") ?? valueFor("title") ?? "Current weather";
+  const condition = valueFor("condition", "conditions", "weather", "summary", "description");
+  const temperature = valueFor("temperature", "temp", "temperature_c", "temperature_f");
+  const feelsLike = valueFor("feels_like", "feels like", "apparent_temperature");
+  const humidity = valueFor("humidity");
+  const wind = valueFor("wind_speed", "wind speed", "wind");
+  const windDirection = valueFor("wind_direction", "wind direction");
+  const observed = valueFor("observed_at", "updated_at", "time", "date");
+  const used = new Set(["location", "city", "place", "title", "condition", "conditions", "weather", "summary", "description", "temperature", "temp", "temperature_c", "temperature_f", "feels_like", "feels like", "apparent_temperature", "humidity", "wind_speed", "wind speed", "wind", "wind_direction", "wind direction", "observed_at", "updated_at", "time", "date"]);
+  const extras = Object.entries(data).filter(([key, value]) => !used.has(key.toLowerCase()) && (typeof value === "string" || typeof value === "number"));
+  return (
+    <section class="canvas-card weather-card" aria-label={`Weather for ${title}`}>
+      <header class="weather-card-head">
+        <div class="weather-card-title"><small>Current weather</small><strong>{title}</strong></div>
+        <Show when={observed}><span class="weather-card-time">{observed}</span></Show>
+      </header>
+      <div class="weather-card-main">
+        <Show when={temperature}><strong class="weather-card-temperature">{temperature}</strong></Show>
+        <Show when={condition}><span class="weather-card-condition">{condition}</span></Show>
+      </div>
+      <div class="weather-card-facts">
+        <Show when={feelsLike}><span><small>Feels like</small><strong>{feelsLike}</strong></span></Show>
+        <Show when={humidity}><span><small>Humidity</small><strong>{humidity}</strong></span></Show>
+        <Show when={wind || windDirection}><span><small>Wind</small><strong>{[wind, windDirection].filter(Boolean).join(" ")}</strong></span></Show>
+        <For each={extras}>{([key, value]) => <span><small>{key.replace(/_/g, " ")}</small><strong>{String(value)}</strong></span>}</For>
+      </div>
+    </section>
+  );
+}
+
 // Every named semantic type resolves through this single registry. Tests derive
 // their coverage from this registry so newly registered types cannot bypass the
 // completed-turn rendering contract.
@@ -1225,7 +1264,7 @@ const STRUCTURED_RENDERERS: Record<string, StructuredRendererComponent> = {
   "media.audio": ({ data }) => <GenericSpecRenderer node={buildMediaSpec(data, "audio")} />,
 
   // 11. Metrics & Weather
-  "weather": (props) => STRUCTURED_RENDERERS.metric(props),
+  "weather": ({ data }) => <WeatherCard data={data} />,
   "telemetry.metric": (props) => STRUCTURED_RENDERERS.metric(props),
   // Validated alongside "timeline" as the generic declarative renderer's
   // second proving case (see presentation/GenericSpecRenderer.tsx). The
