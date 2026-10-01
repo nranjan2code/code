@@ -178,6 +178,10 @@ async fn serve(ws: &Path, home: &Path) -> Server {
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     let dispatches = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
+    serve_core(core, dispatches).await
+}
+
+async fn serve_core(core: Core, dispatches: Arc<AtomicUsize>) -> Server {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (app, token) = vak_server::secured_router_with(core, false);
@@ -187,6 +191,125 @@ async fn serve(ws: &Path, home: &Path) -> Server {
         token,
         dispatches,
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
+    use vak_mail_calendar::connection_ledger::ConnectionLedger;
+    use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
+    use vak_mail_calendar::{Capability, Provider};
+
+    let (_dir, ws, home) = space(true, |_| serde_json::json!([]));
+    vak_config::paths::set_home_override(&home);
+    let core = Core::new_with_trust(ws.clone(), true).unwrap();
+    core.set_sessions_home(home.clone());
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
+
+    let agent_id = format!("mail-routine-{}", uuid::Uuid::now_v7());
+    let agent = vak_server::agents::find_template("writer")
+        .unwrap()
+        .to_agent_definition(&agent_id, None);
+    vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+
+    let account_id = uuid::Uuid::now_v7().to_string();
+    let vault = AccountVault::for_agent(&agent_id).unwrap();
+    let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
+    vault
+        .store(
+            &account_id,
+            AccountSecretMaterial::new(
+                "google:synthetic-subject".into(),
+                Some("demo@example.test".into()),
+                None,
+                Some("synthetic-access-token".into()),
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut account = vak_mail_calendar::ConnectedAccount {
+        id: account_id.clone(),
+        provider: Provider::Google,
+        status: vak_mail_calendar::AccountStatus::Pending,
+        owner_agent_id: agent_id.clone(),
+        allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+        capabilities: [Capability::MailRead].into_iter().collect(),
+        provider_scopes: ["https://www.googleapis.com/auth/gmail.readonly".into()]
+            .into_iter()
+            .collect(),
+        credential_ref: credential_ref.clone(),
+        principal_ref: credential_ref,
+        revision: 1,
+        connected_at: chrono::Utc::now(),
+        access_token_expires_at: None,
+        refresh_token_available: false,
+        revoked_at: None,
+    };
+    let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
+    ledger.append_pending(account.clone()).unwrap();
+    account.status = vak_mail_calendar::AccountStatus::Connected;
+    account.revision = 2;
+    ledger.append_connected(account).unwrap();
+
+    let dispatches = Arc::new(AtomicUsize::new(0));
+    core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
+    let server = serve_core(core, dispatches.clone()).await;
+    let create = server
+        .client()
+        .post(format!("{}/tasks", server.base))
+        .json(&serde_json::json!({
+            "name": "Synthetic mail review",
+            "prompt": "Summarize the selected recent mail.",
+            "interval_secs": 3600,
+            "agent_id": agent_id,
+            "agent_revision": agent.revision,
+            "mail_calendar_scope": {
+                "account_id": account_id,
+                "operations": ["recent_mail"],
+                "max_items": 5,
+                "watch_new_mail": false,
+                "read_commitments": false
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(create.status(), reqwest::StatusCode::OK);
+    let (_, task_list) = server.get("/tasks").await;
+    let created = task_list["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["name"] == "Synthetic mail review")
+        .cloned()
+        .unwrap();
+    let task_id = created["id"].as_str().unwrap();
+    assert_eq!(created["enabled"], false);
+    assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
+
+    assert!(
+        eventually(15, || async {
+            server.task(task_id).await["last_run_status"] == "complete"
+        })
+        .await,
+        "routine reaches a settled successful state"
+    );
+    let task = server.task(task_id).await;
+    let session_id = task["last_session_id"]
+        .as_str()
+        .expect("routine session is linked");
+    let (_, history) = server
+        .get(&format!(
+            "/mail-calendar/accounts/{agent_id}/routines/{task_id}/history"
+        ))
+        .await;
+    assert_eq!(history["runs"][0]["trigger"], "manual");
+    assert_eq!(history["runs"][0]["status"], "complete");
+    assert_eq!(history["runs"][0]["session_id"], session_id);
+    assert_eq!(dispatches.load(Ordering::SeqCst), 1);
 }
 
 async fn eventually<F, Fut>(secs: u64, mut check: F) -> bool

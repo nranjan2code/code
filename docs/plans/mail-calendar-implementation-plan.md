@@ -1969,3 +1969,10 @@ remains open.
   an extra server request, and then verifies Exit returns to connected-account
   mode. The shared synthetic-mode regression passes 14 assertions; browser
   acceptance of the full connected-account source-to-Review flow remains open.
+- 2026-10-01: Added an authenticated server integration test for the routine
+  preview/run path. It creates a paused Google MailRead routine for a local
+  synthetic account, triggers a manual run through `/tasks/{id}/run-now`, and
+  verifies completion plus the owner-only history record's link to the Agent
+  session. The fake model provider handles dispatch; no provider network request
+  or live credential is used. Full scheduled provider polling and sustained
+  service recovery acceptance remain open.
