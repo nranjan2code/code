@@ -1902,3 +1902,8 @@ remains open.
   refuses provider connection/effect requests before any server fetch. Added an
   isolated browser regression page for the mode; connected-account and
   provider acceptance remain open.
+- 2026-10-01: Mounted the same Settings switch in the isolated regression
+  fixture and exercised it in both directions. All 10 demo-mode checks pass;
+  the existing Today regression still passes all 16 checks, and the production
+  web build succeeds. This does not close connected-account or provider
+  acceptance.

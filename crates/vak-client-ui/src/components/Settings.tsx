@@ -2,6 +2,7 @@ import { trapFocus } from "../focusTrap";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { host } from "../host";
 import { canOfferSyntheticMailCalendar, setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../mailCalendarDemo";
+import { SyntheticMailCalendarDemoControl } from "./SyntheticMailCalendarDemoControl";
 import {
   technicalDetails,
   openConnect,
@@ -3005,8 +3006,7 @@ export default function Settings() {
               </header>
               <Show when={canOfferSyntheticMailCalendar()}>
                 <Group title="Safe practice mode">
-                  <label class="capability-item"><input type="checkbox" checked={syntheticMailDemo()} onChange={(event) => { const enabled = event.currentTarget.checked; setSyntheticMailCalendarEnabled(enabled); setSyntheticMailDemo(enabled); setMailCalendarPreview(null); setMailCalendarFolderState(null); setMailCalendarRunHistory({}); }} /><span>Use synthetic demo data</span></label>
-                  <p class="settings-hint" role="status">{syntheticMailDemo() ? "Synthetic mode is on. Sample Google, Microsoft and iCloud accounts, messages and events are generated in this browser. Nothing is read from or written to a provider; provider actions and real routines are disabled. Local drafts stay in this browser." : "Try the email and calendar screens with sample accounts. This never needs credentials."}</p>
+                  <SyntheticMailCalendarDemoControl checked={syntheticMailDemo()} onChange={(enabled) => { setSyntheticMailCalendarEnabled(enabled); setSyntheticMailDemo(enabled); setMailCalendarPreview(null); setMailCalendarFolderState(null); setMailCalendarRunHistory({}); }} />
                 </Group>
               </Show>
               <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
