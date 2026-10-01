@@ -11,6 +11,72 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
+fn seed_icloud_fixture(
+    agent_id: &str,
+    status: vak_mail_calendar::AccountStatus,
+    audit_home: &std::path::Path,
+) -> String {
+    let vault = vak_mail_calendar::vault::AccountVault::for_agent(agent_id).unwrap();
+    let ledger =
+        vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent(agent_id).unwrap();
+    let account_id = uuid::Uuid::now_v7().to_string();
+    let credential_ref =
+        vak_mail_calendar::vault::AccountVault::credential_ref(&account_id).unwrap();
+    let material = vak_mail_calendar::vault::AccountSecretMaterial::new(
+        "owner@example.com".into(),
+        Some("owner@example.com".into()),
+        None,
+        None,
+        None,
+        Some("owner@example.com".into()),
+        Some("abcd-efgh-ijkl-mnop".into()),
+    )
+    .unwrap();
+    let mut account = vak_mail_calendar::ConnectedAccount {
+        id: account_id.clone(),
+        provider: vak_mail_calendar::Provider::AppleIcloud,
+        status: vak_mail_calendar::AccountStatus::Pending,
+        owner_agent_id: agent_id.into(),
+        allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+        capabilities: [
+            vak_mail_calendar::Capability::MailRead,
+            vak_mail_calendar::Capability::CalendarFreeBusy,
+        ]
+        .into_iter()
+        .collect(),
+        provider_scopes: Default::default(),
+        credential_ref: credential_ref.clone(),
+        principal_ref: credential_ref,
+        revision: 1,
+        connected_at: chrono::Utc::now(),
+        access_token_expires_at: None,
+        refresh_token_available: false,
+        revoked_at: None,
+    };
+    ledger.append_pending(account.clone()).unwrap();
+    account.status = status;
+    account.revision = 2;
+    let account_id_for_vault = account_id.clone();
+    ledger
+        .append_connected_if_pending(account, || vault.store(&account_id_for_vault, material))
+        .unwrap();
+    vak_core::security_events::record(
+        audit_home,
+        vak_core::security_events::EventKind::MailCalendarAccount,
+        "account_connected",
+        &serde_json::json!({
+            "agent_id": agent_id,
+            "account_id": account_id,
+            "provider": vak_mail_calendar::Provider::AppleIcloud,
+            "capabilities": ["mail_read", "calendar_free_busy"],
+            "outcome": "connected_unverified",
+        })
+        .to_string(),
+        None,
+    );
+    account_id
+}
+
 struct Scripted {
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
@@ -518,18 +584,28 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert_eq!(after_rejected_icloud.status(), reqwest::StatusCode::OK);
     let rejected_inventory: serde_json::Value = after_rejected_icloud.json().await.unwrap();
     assert_eq!(rejected_inventory["accounts"], serde_json::json!([]));
-    let connected = reqwest::Client::new()
+    // Seed a synthetic connected-unverified record. Never send fixture
+    // credentials to Apple's live IMAP or CalDAV endpoints from this test.
+    let apple_account_id = seed_icloud_fixture(
+        "vak",
+        vak_mail_calendar::AccountStatus::ConnectedUnverified,
+        &account_audit_home,
+    );
+
+    let duplicate_same_selection = reqwest::Client::new()
         .post(&icloud_url)
         .bearer_auth(&token)
         .json(&body)
         .send()
         .await
         .unwrap();
-    assert_eq!(connected.status(), reqwest::StatusCode::OK);
-    let response_body = connected.text().await.unwrap();
-    assert_eq!(response_body, r#"{"connected":true}"#);
-    assert!(!response_body.contains("abcd-efgh-ijkl-mnop"));
-    assert!(!response_body.contains("owner@example.com"));
+    assert_eq!(
+        duplicate_same_selection.status(),
+        reqwest::StatusCode::CONFLICT
+    );
+    let duplicate_body = duplicate_same_selection.text().await.unwrap();
+    assert!(!duplicate_body.contains("abcd-efgh-ijkl-mnop"));
+    assert!(!duplicate_body.contains("owner@example.com"));
 
     let apple_accounts: serde_json::Value = reqwest::Client::new()
         .get(format!("http://{addr}/mail-calendar/accounts?agent_id=vak"))
@@ -540,7 +616,7 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
         .json()
         .await
         .unwrap();
-    let apple_account_id = apple_accounts["accounts"][0]["id"].as_str().unwrap();
+    assert_eq!(apple_accounts["accounts"][0]["id"], apple_account_id);
     let unverified_preview = reqwest::Client::new()
         .post(format!(
             "http://{addr}/mail-calendar/accounts/vak/{apple_account_id}/mail-preview"
@@ -863,14 +939,11 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     // Pausing an Agent stops new connections and refreshes, but owner-only
     // inventory and disconnect remain available to clean up its credentials.
     let paused_icloud_url = format!("http://{addr}/mail-calendar/accounts/mail-paused/icloud");
-    let paused_connection = reqwest::Client::new()
-        .post(&paused_icloud_url)
-        .bearer_auth(&token)
-        .json(&body)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(paused_connection.status(), reqwest::StatusCode::OK);
+    let paused_account_id = seed_icloud_fixture(
+        "mail-paused",
+        vak_mail_calendar::AccountStatus::ConnectedUnverified,
+        &account_audit_home,
+    );
     let paused_ledger =
         vak_mail_calendar::connection_ledger::ConnectionLedger::for_agent("mail-paused").unwrap();
     let connected_record = paused_ledger.read_all().unwrap().remove(0);
@@ -918,16 +991,6 @@ async fn mail_calendar_account_metadata_requires_owner_and_active_agent_but_allo
     assert_eq!(interrupted_cleanup.status(), reqwest::StatusCode::OK);
     let pending_vault = vak_mail_calendar::vault::AccountVault::for_agent("mail-paused").unwrap();
     assert!(pending_vault.load(&pending_id).is_err());
-
-    let paused_account_id = paused_accounts["accounts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|account| account["status"] == "connected_unverified")
-        .unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
 
     let inactive_icloud = reqwest::Client::new()
         .post(&paused_icloud_url)

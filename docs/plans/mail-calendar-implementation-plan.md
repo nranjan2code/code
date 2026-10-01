@@ -2374,3 +2374,8 @@ remains open.
   describes the separate checks and Apple's broader password authority. The
   focused Server test, UI and fixture typechecks, production web build, Rust
   formatting, and diff check pass. No live Apple credentials were used.
+- 2026-10-01: The account-metadata HTTP regression now seeds encrypted local
+  iCloud vault/ledger fixtures instead of trying dummy app passwords against
+  Apple's live IMAP and CalDAV endpoints. The complete synthetic mail/calendar
+  regression pack passes, including 128 provider/vault, 19 Core, 17 Server,
+  four authenticated HTTP, restart/requeue, and five isolated-worker tests.
