@@ -77,11 +77,12 @@ multistatus XML, projects at most 100 events, refuses ambiguous or unsupported
 local times, and redacts private event details while preserving busy times. It
 runs through the versioned tool-worker broker, with a private empty scratch
 directory and the network-denied verification sandbox on supported platforms.
-The same worker now has a bounded MIME decoder that selects explicit
-`text/plain` parts, skips HTML and attachments, caps decoded text and part
-count, and explicitly labels messages without plain text. Apple Mail does not
-yet fetch and pass a selected message through this parser, so Apple message
-bodies remain unavailable.
+The same worker has a bounded MIME decoder that selects explicit `text/plain`
+parts, skips HTML and attachments, caps decoded text and part count, and labels
+messages without plain text. Apple owner previews and the brokered Agent read
+tool fetch one explicitly selected message through fixed-UID read-only IMAP
+and pass the bounded MIME response through this worker. No live Apple message
+fetch has been performed.
 After parsing, the broker also applies the requested time-range overlap filter
 locally to every provider response. This prevents a provider response that
 ignores the requested range from broadening the preview.
@@ -1746,3 +1747,15 @@ remains open.
   the latter attempts a synthetic Microsoft update at candidate creation and
   with a simulated legacy candidate at dispatch, verifying both rejections
   leave no candidate or action receipt behind.
+- 2026-10-01: Added owner calendar source discovery and selection for Google,
+  Microsoft, and Apple. Provider IDs are checked against a fresh bounded
+  inventory before reads; Apple IDs are opaque hashes of validated CalDAV
+  collection paths discovered and parsed in the isolated worker. Non-default
+  previews are read-only for provider effects, which remain scoped to the
+  account's default calendar. Provider fixtures reject an unlisted Google
+  source; Core tests cover stable opaque Apple IDs and bounded names. All 121
+  `vak-mail-calendar` tests and its state-registry test, 14 Core mail/calendar
+  tests, 15 server mail/calendar tests, UI typecheck, production web build,
+  format check, and diff check pass. The local install's data home is distinct from
+  `~/vak-home` (the workspace); no local account credentials were read or
+  changed. Browser acceptance and live-provider behavior remain open.
