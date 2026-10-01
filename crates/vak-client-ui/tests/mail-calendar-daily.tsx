@@ -34,6 +34,8 @@ const routines: TaskDef[] = Array.from({ length: 19 }, (_, index) => ({
 }));
 routines.push({ ...routines[0], id: "other-agent-routine", name: "Must not appear", agent_id: "different-agent" });
 routines.push({ ...routines[0], id: "non-mail-routine", name: "Must also not appear", mail_calendar_scope: null });
+routines[1].last_run_status = "working";
+routines[1].last_session_id = "fixture-active-session";
 const requests: string[] = [];
 const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const savedCandidates: Array<Record<string, any>> = [];
@@ -55,11 +57,39 @@ window.fetch = async (input, init) => {
   try {
     const url = new URL(String(input), location.origin);
     requests.push(`${url.pathname}${url.search}`);
-    if (url.pathname === "/tasks") return json({ tasks: routines });
+    if (url.pathname === "/agents") return json({ agents: [{ id: "fixture-owner", name: "Fixture owner", revision: 7 }] });
+    if (url.pathname === "/tasks" && (!init?.method || init.method === "GET")) return json({ tasks: routines });
+    if (url.pathname === "/tasks" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
+      const task: TaskDef = {
+        id: "fixture-created-routine", name: body.name, prompt: body.prompt, agent_id: body.agent_id,
+        agent_revision: body.agent_revision, enabled: false, interval_secs: body.interval_secs,
+        schedule: body.schedule ?? null, timezone: body.timezone, cwd: "/tmp/fixture", created_at: new Date().toISOString(),
+        mail_calendar_scope: { routine_id: "fixture-created-routine", ...body.mail_calendar_scope },
+      };
+      routines.push(task);
+      return json({ task });
+    }
+    if (url.pathname.startsWith("/tasks/") && init?.method === "PATCH") {
+      const id = url.pathname.split("/").at(-1)!;
+      const index = routines.findIndex((task) => task.id === id);
+      if (index >= 0) routines[index] = { ...routines[index], ...JSON.parse(String(init.body ?? "{}")) };
+      return json(routines[index]);
+    }
+    if (url.pathname.endsWith("/run-now") && init?.method === "POST") return json({ started: true });
+    if (url.pathname === "/sessions/fixture-active-session/cancel" && init?.method === "POST") return json({ cancelled: true });
+    if (url.pathname.startsWith("/mail-calendar/accounts/fixture-owner/routines/") && url.pathname.endsWith("/history")) return json({ runs: [{ run_id: "fixture-routine-run", routine_id: "fixture-routine-0", account_id: "g-account-0", session_id: "fixture-routine-session", trigger: "manual", status: "complete", started_at: new Date().toISOString(), finished_at: new Date().toISOString() }] });
+    if (url.pathname.startsWith("/tasks/") && init?.method === "DELETE") {
+      const id = url.pathname.split("/").at(-1)!;
+      const index = routines.findIndex((task) => task.id === id);
+      if (index >= 0) routines.splice(index, 1);
+      return json({ deleted: index >= 0 });
+    }
     if (url.pathname.endsWith("/mail-folders")) {
       const accountId = url.pathname.split("/")[4];
       return json({ folders: [{ provider_id: `${accountId}-inbox`, name: "Inbox" }, { provider_id: `${accountId}-projects`, name: "Projects" }] });
     }
+    if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "g-account-0-primary", name: "Personal", primary: true }] });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "GET") return json({ candidates: savedCandidates });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
@@ -184,6 +214,38 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const openedRoutine = canvasSubject();
   const routineCanvasHandoffWorks = openedRoutine?.kind === "automation" && openedRoutine.taskId === "fixture-routine-8";
   document.querySelector<HTMLButtonElement>("nav[aria-label='Routine pages'] button:first-child")?.click();
+  document.querySelector<HTMLDetailsElement>(".mail-calendar-routine-create")?.querySelector("summary")?.click();
+  const routineFormLoaded = await waitFor(() => document.querySelector<HTMLSelectElement>("select[aria-label='Routine account']")?.value === "g-account-0"
+    && document.querySelector<HTMLSelectElement>("select[aria-label='Routine calendar source']")?.value === "g-account-0-primary");
+  const routineNameField = document.querySelector<HTMLInputElement>(".mail-calendar-routine-create input");
+  if (routineNameField) {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(routineNameField), "value")?.set;
+    setter?.call(routineNameField, "Prepare the morning brief");
+    routineNameField.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  document.querySelector<HTMLButtonElement>(".mail-calendar-routine-create button")?.click();
+  const routineCreationStaysAgentScoped = await waitFor(() => routines.some((task) => task.id === "fixture-created-routine"));
+  const createdRoutine = routines.find((task) => task.id === "fixture-created-routine");
+  document.querySelector<HTMLButtonElement>(".mail-calendar-routine-workspace > .daily-mail-calendar-calendar-heading button")?.click();
+  const pauseAllStopsActiveRun = await waitFor(() => routines[1].enabled === false && requests.includes("/sessions/fixture-active-session/cancel"));
+  const firstRoutine = () => document.querySelector<HTMLElement>(".daily-mail-calendar-routine");
+  firstRoutine()?.querySelector<HTMLDetailsElement>(".mail-calendar-routine-history")?.querySelector("summary")?.click();
+  const routineHistoryLoadsInCanvas = await waitFor(() => requests.includes("/mail-calendar/accounts/fixture-owner/routines/fixture-routine-0/history")
+    && firstRoutine()?.querySelector(".mail-calendar-routine-history li") !== null);
+  const action = (label: string) => [...(firstRoutine()?.querySelectorAll<HTMLButtonElement>(".settings-actions button") ?? [])].find((button) => button.textContent?.trim() === label);
+  action("Preview run")?.click();
+  const routinePreviewRunWorks = await waitFor(() => requests.includes("/tasks/fixture-routine-0/run-now"));
+  const routineResumeReady = await waitFor(() => action("Resume") !== undefined && !action("Resume")!.disabled);
+  action("Resume")?.click();
+  const routineResumeWorks = await waitFor(() => routines.find((task) => task.id === "fixture-routine-0")?.enabled === true);
+  const routinePauseReady = await waitFor(() => action("Pause") !== undefined && !action("Pause")!.disabled);
+  action("Pause")?.click();
+  const routinePauseWorks = await waitFor(() => routines.find((task) => task.id === "fixture-routine-0")?.enabled === false);
+  const routinePauseSettled = await waitFor(() => action("Resume") !== undefined && !action("Resume")!.disabled);
+  [...(firstRoutine()?.querySelectorAll<HTMLButtonElement>(".settings-actions button") ?? [])].find((button) => button.textContent?.trim() === "Delete")?.click();
+  const confirmDeleteButton = [...(firstRoutine()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === "Confirm delete");
+  confirmDeleteButton?.click();
+  const routineDeletionWorks = await waitFor(() => !routines.some((task) => task.id === "fixture-routine-0"));
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
@@ -316,6 +378,9 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
     check(routinePagingStartsCorrectly && routineNextPageWorks, "Canvas routine list paginates mail/calendar routines and excludes other Agents and non-mail tasks"),
     check(routineCanvasHandoffWorks, "Opening a listed routine hands off to its existing Canvas routine workspace"),
+    check(routineFormLoaded && routineCreationStaysAgentScoped && createdRoutine?.agent_id === "fixture-owner" && createdRoutine?.enabled === false && createdRoutine?.mail_calendar_scope?.calendar_source_id === "g-account-0-primary", "Routine creation now lives in Canvas and saves a paused Agent-scoped routine pinned to the verified calendar source"),
+    check(pauseAllStopsActiveRun, "Canvas pause-all disables enabled routines and asks a currently running Agent session to stop"),
+    check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(conversationHandoffWorks, "A reply opens as a saved Agent-scoped draft in Canvas without sending it"),

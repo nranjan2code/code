@@ -29,7 +29,11 @@ const json = (value: unknown) => new Response(JSON.stringify(value), { headers: 
 let saved: any = null;
 let latestConflictCandidate: any = null;
 let forceCandidateConflict = false;
-let task: any = null;
+let task: any = {
+  id: "account-pause-routine", name: "Account pause fixture", agent_id: "fixture-review-owner",
+  enabled: true, interval_secs: 60, mail_calendar_scope: { account_id: "review-google-account", operations: ["recent_mail"], max_items: 10 },
+  last_session_id: "fixture-active-session", last_run_status: "working", last_run_at: null,
+};
 const foreignAgentTask = { id: "foreign-agent-routine", name: "Private other agent routine", agent_id: "fixture-other-agent", enabled: true, interval_secs: 60, mail_calendar_scope: { account_id: "other-account" } };
 const agent = { id: "fixture-review-owner", name: "Review fixture", revision: 1, lifecycle: "active", character: "vak", animation: "off" };
 
@@ -100,7 +104,7 @@ window.fetch = async (input, init) => {
     task = { ...task, last_session_id: "fixture-preview-session", last_run_status: "complete", last_run_at: new Date().toISOString() };
     return json({ started: true });
   }
-  if (url.pathname === "/tasks/routine-event-fixture" && method === "PATCH") {
+  if (url.pathname.startsWith("/tasks/") && method === "PATCH") {
     task = { ...task, ...body };
     return json(task);
   }
@@ -147,13 +151,6 @@ const click = async (name: string): Promise<HTMLButtonElement> => {
   button!.click();
   return button!;
 };
-const setField = (label: string, value: string) => {
-  const field = [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")].find((item) => item.closest("label")?.textContent?.trim().startsWith(label));
-  if (!field) throw new Error(`Could not find field: ${label}`);
-  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")?.set;
-  setter?.call(field, value);
-  field.dispatchEvent(new Event("input", { bubbles: true }));
-};
 const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label); return label; };
 const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   let sheet: HTMLElement | undefined;
@@ -182,44 +179,18 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   await waitFor(() => document.body.textContent?.includes("background scheduler has not checked in recently") === true, "stale scheduler health disclosure");
   const settingsHasNoDailyWorkspace = ![...document.querySelectorAll<HTMLButtonElement>("button")]
     .some((button) => ["Preview inbox", "Preview calendar", "Check availability"].includes(button.textContent?.trim() ?? ""))
-    && !document.querySelector(".mail-calendar-draft-workspace, .daily-mail-calendar-viewer");
+    && !document.querySelector(".mail-calendar-draft-workspace, .daily-mail-calendar-viewer")
+    && !document.querySelector(".mail-calendar-routine-create")
+    && ![...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Save paused routine");
   const canvasEntryPointWorks = [...document.querySelectorAll<HTMLButtonElement>("button")]
     .some((button) => button.textContent?.trim() === "Open in Canvas");
-  const eventTriggerLabel = [...document.querySelectorAll<HTMLLabelElement>("label.capability-item")].find((label) => label.textContent?.includes("Run around a calendar event"));
-  const eventTriggerCheckbox = eventTriggerLabel?.querySelector<HTMLInputElement>("input[type=checkbox]");
-  eventTriggerCheckbox?.click();
-  await waitFor(() => (document.querySelector("select[aria-label='Routine calendar source']") as HTMLSelectElement | null)?.value === "primary-calendar", "the verified calendar source selector");
-  setField("Routine name", "Prepare for the next meeting");
-  await click("Save paused routine");
-  await waitFor(() => task?.id === "routine-event-fixture", "the paused event-trigger routine");
-  await click("Preview run");
-  await waitFor(() => document.body.textContent?.includes("Open latest run") === true, "the settled one-off routine preview");
-  const history = [...document.querySelectorAll<HTMLElement>(".mail-calendar-routine-history summary")].find((summary) => summary.textContent?.includes("Run history"));
-  history?.click();
-  await waitFor(() => (document.querySelector(".mail-calendar-routine-history") as HTMLDetailsElement | null)?.open === true, "the expanded routine history panel");
-  await waitFor(() => requests.some((request) => request.path.endsWith("/routines/routine-event-fixture/history")), "the routine run history request");
-  await waitFor(() => document.querySelector(".mail-calendar-routine-history li") !== null, "the preview run history entry");
-  await click("Resume");
-  await waitFor(() => task?.enabled === true, "the resumed event-trigger routine");
-  await waitFor(() => document.querySelector("button")?.isConnected === true, "the routine controls");
-  const foreignRoutineWasHidden = !document.body.textContent?.includes("Private other agent routine");
-  task = { ...task, last_run_status: "working", last_session_id: "fixture-active-session" };
-  await click("Pause all routines");
-  await waitFor(() => task?.enabled === false, "the pause-all control");
-  await click("Resume");
-  await waitFor(() => task?.enabled === true, "the per-routine resume control");
   await click("Pause routines for this account");
   await waitFor(() => task?.enabled === false, "the per-account pause control");
   const passed = [
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
     check(document.body.textContent?.includes("service API answers, but its background scheduler has not checked in recently") === true, "The owner UI distinguishes API reachability from a stale background scheduler heartbeat"),
-    check(canvasEntryPointWorks && settingsHasNoDailyWorkspace, "Settings links to Canvas and keeps daily previews and draft editing out of the account panel"),
-    check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
-    check(task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine preview retains its bounded one-minute cadence"),
-    check(foreignRoutineWasHidden, "Routine rows are limited to the selected Agent even when the workspace task list includes another Agent"),
-    check(task?.enabled === false && requests.some((request) => request.path === "/tasks/routine-event-fixture" && request.method === "PATCH" && request.body.enabled === false), "Pause all and per-account controls pause only this Agent’s routines"),
-    check(requests.some((request) => request.path === "/sessions/fixture-active-session/cancel" && request.method === "POST"), "Pausing a working routine also asks its active Agent run to stop"),
-    check(requests.some((request) => request.path.endsWith("/run-now") && request.method === "POST") && requests.some((request) => request.path.endsWith("/history")), "A one-off preview run appears in the routine's run history"),
+    check(canvasEntryPointWorks && settingsHasNoDailyWorkspace, "Settings links to Canvas and keeps mail/calendar work and routine authoring out of account controls"),
+    check(task?.enabled === false && requests.some((request) => request.path === "/tasks/account-pause-routine" && request.method === "PATCH" && request.body.enabled === false), "The account-level pause control pauses only this Agent’s routines"),
     check(!requests.some((request) => new URL(request.path, location.origin).origin !== location.origin), "All fixture requests stay same-origin; no provider or credential endpoint is contacted"),
   ];  const report = document.createElement("pre");
   report.id = "fixture-report";

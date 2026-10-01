@@ -2192,3 +2192,14 @@ remains open.
   paged routine status and handoff to their operational view. The connected
   Settings fixture passes 10 checks, the daily synthetic Canvas fixture passes
   27, `npm run typecheck` passes, and no provider request or real data is used.
+- 2026-10-01: Moved routine creation, schedule/trigger setup, run history,
+  preview/run, pause/resume, and deletion into the Agent's Today Canvas. Settings
+  remains the place to manage accounts, grants, connection lifecycle, and
+  account-level pause. The Canvas routine workspace refreshes without clearing
+  current rows, filters by Agent and mail/calendar scope, paginates eight rows
+  at a time, and confirms deletion while preserving run history. Expanded the
+  synthetic daily regression to exercise routine lifecycle and kept the
+  connected Settings fixture focused on account administration. Verification
+  is in progress; budget administration, provider inbox cursors, complete
+  conversation workspace, 24/7 service acceptance, and lifecycle erasure remain
+  open.

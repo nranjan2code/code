@@ -907,10 +907,15 @@ source shows the initial loading state.
 Today also lists this Agent's mail/calendar routines, eight per page. The
 routine list is filtered by both the current Agent id and the typed
 mail/calendar scope; other Agents' tasks and unrelated schedules are omitted.
-Opening a routine uses the existing Canvas routine viewer for status, next
-run, last result, pause/resume, run-once, and delivery retry. Routine changes
-notify an open Today view to refresh. Routine creation, trigger editing,
-history, and budgets have not yet moved out of Settings.
+Opening a routine uses the Canvas routine viewer for status, next run, last
+result, pause/resume, run-once, delivery retry, and per-run history. Today
+Canvas also owns routine creation and trigger/schedule setup. New routines are
+saved paused; the owner can preview a run, inspect its history, then resume or
+pause it. Routine lists are paginated, scoped to the current Agent, and retain
+existing content while refreshes settle. Routine changes notify an open Today
+view to refresh. Settings retains connected-account credentials, grants,
+connection lifecycle, and an account-level pause control; it links to the
+Canvas for routine work. Budget administration remains in Settings.
 
 The Canvas calendar lets the owner choose an inclusive date range of up to 30
 days and pages a longer range one week at a time. Refresh keeps the prior
@@ -920,15 +925,15 @@ account reaches that limit. Provider cursor pagination remains open.
 
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
-Canvas work area. Settings now retains connection, access, and account
-lifecycle controls plus routine creation, schedule/trigger configuration,
-history, and budgets. It links directly to Today Canvas, which contains the
-read-only agenda, recent mail with folder/search controls, paged per-Agent
-routine status, and the Canvas-owned Drafts and Review area. Reply and event
+Canvas work area. Settings retains connection, access, account lifecycle, and
+account-level routine pause controls. It links directly to Today Canvas, which
+contains the read-only agenda, recent mail with folder/search controls, paged
+per-Agent routine authoring and operations, and the Canvas-owned Drafts and
+Review area. Reply and event
 actions save an Agent-scoped candidate, then open it in Canvas; revision,
 digest, permission, and final-confirmation checks still gate provider effects.
-Provider inbox cursor paging, the complete conversation workspace, and moving
-routine authoring/history into Canvas remain open. The connected Settings
+Provider inbox cursor paging, the complete conversation workspace, and routine
+budget administration remain open. The connected Settings
 fixture confirms that it no longer renders
 a duplicate daily preview or draft workspace; separate Canvas fixtures cover
 the working views with synthetic provider fixtures.
