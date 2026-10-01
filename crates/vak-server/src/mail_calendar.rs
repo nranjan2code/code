@@ -2370,21 +2370,18 @@ pub(super) async fn connect_app_password(
         .copied()
         .collect::<BTreeSet<_>>();
     let supported_read_only = capabilities.len() == request.capabilities.len()
-        && !capabilities.is_empty()
-        && capabilities.iter().all(|capability| {
-            matches!(capability, Capability::MailRead)
-                || (provider == Provider::AppleIcloud
-                    && matches!(
-                        capability,
-                        Capability::CalendarFreeBusy | Capability::CalendarRead
-                    ))
-        });
+        && verifiable_app_password_selection(provider, &capabilities);
     let microsoft_personal_email =
         provider != Provider::Microsoft || valid_microsoft_personal_email(&email);
     let audit_capabilities = capabilities.clone();
-    let verified_mail_only =
-        capabilities.len() == 1 && capabilities.contains(&Capability::MailRead);
-    let verified_calendar_only = verified_icloud_calendar_selection(provider, &capabilities);
+    let verifies_mail = capabilities.contains(&Capability::MailRead);
+    let verifies_icloud_calendar = provider == Provider::AppleIcloud
+        && capabilities.iter().any(|capability| {
+            matches!(
+                capability,
+                Capability::CalendarRead | Capability::CalendarFreeBusy
+            )
+        });
     if !valid_email || !valid_password || !supported_read_only || !microsoft_personal_email {
         request.app_specific_password.0.zeroize();
         return (
@@ -2471,7 +2468,7 @@ pub(super) async fn connect_app_password(
             }
         }
     }
-    if verified_mail_only && matches!(provider, Provider::Google | Provider::Microsoft) {
+    if verifies_mail && matches!(provider, Provider::Google | Provider::Microsoft) {
         let (imap_login, imap_password) = match material.icloud_imap_credentials() {
             Ok(credentials) => credentials,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -2497,7 +2494,7 @@ pub(super) async fn connect_app_password(
             };
             return (StatusCode::UNAUTHORIZED, message).into_response();
         }
-    } else if verified_mail_only {
+    } else if verifies_mail {
         let (imap_login, imap_password) = match material.icloud_imap_credentials() {
             Ok(credentials) => credentials,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -2516,7 +2513,7 @@ pub(super) async fn connect_app_password(
                 .into_response();
         }
     }
-    if verified_calendar_only {
+    if verifies_icloud_calendar {
         let (caldav_login, caldav_password) = match material.icloud_imap_credentials() {
             Ok(credentials) => credentials,
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
@@ -2603,11 +2600,9 @@ pub(super) async fn connect_app_password(
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
     }
-    // The current schema has one account status for all selected capabilities.
-    // Keep broader combinations unverified because one account status covers
-    // every selected capability. Mail-only and calendar-only links each have
-    // an independently verified fixed-host read path.
-    account.status = if verified_mail_only || verified_calendar_only {
+    // This account status covers every selected capability. Mark it connected
+    // only after each requested fixed-host protocol check has succeeded.
+    account.status = if supported_read_only {
         AccountStatus::Connected
     } else {
         AccountStatus::ConnectedUnverified
@@ -2629,7 +2624,7 @@ pub(super) async fn connect_app_password(
         &account_id,
         provider,
         &audit_capabilities,
-        if verified_mail_only || verified_calendar_only {
+        if supported_read_only {
             "connected"
         } else {
             "connected_unverified"
@@ -2712,14 +2707,24 @@ fn valid_provider_email(email: &str) -> bool {
     valid_local && valid_domain
 }
 
-fn verified_icloud_calendar_selection(
+fn verifiable_app_password_selection(
     provider: Provider,
     capabilities: &BTreeSet<Capability>,
 ) -> bool {
-    provider == Provider::AppleIcloud
-        && capabilities.len() == 1
-        && (capabilities.contains(&Capability::CalendarRead)
-            || capabilities.contains(&Capability::CalendarFreeBusy))
+    if capabilities.is_empty() {
+        return false;
+    }
+    match provider {
+        Provider::Google | Provider::Microsoft => {
+            capabilities.len() == 1 && capabilities.contains(&Capability::MailRead)
+        }
+        Provider::AppleIcloud => capabilities.iter().all(|capability| {
+            matches!(
+                capability,
+                Capability::MailRead | Capability::CalendarRead | Capability::CalendarFreeBusy
+            )
+        }),
+    }
 }
 
 fn valid_provider_app_password(provider: Provider, password: &str) -> bool {
@@ -2784,7 +2789,7 @@ mod tests {
         OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
         oauth_callback_cookie, oauth_callback_page, oauth_callback_set_cookie, oauth_callback_uri,
         registered_agent, same_provider_principal, valid_agent, valid_microsoft_personal_email,
-        valid_provider_app_password, valid_provider_email, verified_icloud_calendar_selection,
+        valid_provider_app_password, valid_provider_email, verifiable_app_password_selection,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
     use std::collections::BTreeSet;
@@ -2879,20 +2884,56 @@ mod tests {
     }
 
     #[test]
-    fn icloud_calendar_read_and_freebusy_are_individually_verified_but_not_combined() {
-        for capability in [Capability::CalendarRead, Capability::CalendarFreeBusy] {
-            assert!(verified_icloud_calendar_selection(
+    fn app_password_selection_verifies_every_supported_icloud_read_independently() {
+        for capability in [
+            Capability::MailRead,
+            Capability::CalendarRead,
+            Capability::CalendarFreeBusy,
+        ] {
+            assert!(verifiable_app_password_selection(
                 Provider::AppleIcloud,
                 &BTreeSet::from([capability]),
             ));
         }
-        assert!(!verified_icloud_calendar_selection(
+        assert!(verifiable_app_password_selection(
+            Provider::AppleIcloud,
+            &BTreeSet::from([Capability::MailRead, Capability::CalendarRead]),
+        ));
+        assert!(verifiable_app_password_selection(
+            Provider::AppleIcloud,
+            &BTreeSet::from([Capability::MailRead, Capability::CalendarFreeBusy]),
+        ));
+        assert!(verifiable_app_password_selection(
             Provider::AppleIcloud,
             &BTreeSet::from([Capability::CalendarRead, Capability::CalendarFreeBusy]),
         ));
-        assert!(!verified_icloud_calendar_selection(
+        assert!(verifiable_app_password_selection(
+            Provider::AppleIcloud,
+            &BTreeSet::from([
+                Capability::MailRead,
+                Capability::CalendarRead,
+                Capability::CalendarFreeBusy,
+            ]),
+        ));
+        assert!(verifiable_app_password_selection(
             Provider::Google,
-            &BTreeSet::from([Capability::CalendarFreeBusy]),
+            &BTreeSet::from([Capability::MailRead]),
+        ));
+        assert!(!verifiable_app_password_selection(
+            Provider::Google,
+            &BTreeSet::from([Capability::MailRead, Capability::CalendarRead]),
+        ));
+        assert!(!verifiable_app_password_selection(
+            Provider::Microsoft,
+            &BTreeSet::from([Capability::MailRead, Capability::CalendarFreeBusy]),
+        ));
+        assert!(!verifiable_app_password_selection(
+            Provider::AppleIcloud,
+            &BTreeSet::from([Capability::MailRead, Capability::MailSend]),
+        ));
+        assert!(!verifiable_app_password_selection(
+            Provider::AppleIcloud,
+            &BTreeSet::new(),
         ));
     }
 

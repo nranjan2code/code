@@ -70,9 +70,10 @@ validates every discovered href against the Apple HTTPS origin, and retrieves
 a bounded time-range query. Apple CalendarFreeBusy-only links now use the
 CalDAV `free-busy-query` report and return only worker-projected UTC busy
 intervals; no event details cross the worker boundary for this operation.
-CalendarRead, CalendarFreeBusy, and MailRead are each verified only as
-individual selections; mixed selections remain `connected_unverified`.
-No credentialed live Apple Calendar request has been made; local fixtures
+MailRead, CalendarRead, and CalendarFreeBusy can now be selected together.
+IMAP and CalDAV are verified independently before a combined account is
+activated; one failed protocol check rejects the link. No credentialed live
+Apple Calendar request has been made; local fixtures
 verify response bounds, origin checks, busy projection, and worker parsing,
 so the provider's authenticated discovery and free/busy semantics still need
 live verification. Event changes remain unavailable.
@@ -103,7 +104,7 @@ implementation.
 |---|---|---|
 | Google Workspace / Gmail | Preferred: delegated OAuth authorization code with PKCE through the system browser. Additional: Google App Password over fixed-host Gmail IMAP, when the account offers App Passwords. | Incremental OAuth scope verification and separate effect capabilities. App Password is a long-lived credential, less secure than OAuth, and may be unavailable for managed, Advanced Protection, or some 2-Step Verification configurations. Its local-only route verifies TLS IMAP access, stores only in the Agent vault, and permits Inbox metadata plus selected worker-parsed messages, scheduled UID watches, and MailRead only. It never grants Calendar or send. |
 | Microsoft 365 / Outlook | Preferred: delegated Entra OAuth with PKCE. Additional: local app password for personal Outlook.com/Live/Hotmail/MSN accounts, limited to fixed-host IMAP MailRead and verified before storage. | Microsoft 365 and work/school Exchange remain OAuth-only because Exchange Online disables Basic Authentication. Microsoft documents app passwords for consumer legacy clients, while Outlook.com's current IMAP setup requires OAuth2; this fallback may be rejected as legacy authentication changes. It is local-only, less secure, and never accepts the ordinary Microsoft password. No calendar or provider write access. Graph `getSchedule` does not support personal Microsoft accounts, so OAuth personal accounts report free/busy unavailable. |
-| Apple iCloud | Current: local Apple app-specific password over fixed-host IMAP and CalDAV. Investigate Apple's newer account-authorization flow for supported third-party apps before claiming it as a Vakyartha option. | Exactly `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected plain-text message reads parsed in the worker; exactly `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded event previews through worker-isolated discovery and parsing; exactly `CalendarFreeBusy` uses CalDAV `free-busy-query` and returns only worker-projected UTC intervals. Event effects, HTML-only message bodies, and mixed capability selections are unavailable or `connected_unverified`. Apple app-specific passwords are broader than per-operation grants and must carry a warning before entry and revocation instructions after connection. |
+| Apple iCloud | Current: local Apple app-specific password over fixed-host IMAP and CalDAV. Investigate Apple's newer account-authorization flow for supported third-party apps before claiming it as a Vakyartha option. | `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected plain-text message reads parsed in the worker; `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded event previews through worker-isolated discovery and parsing; `CalendarFreeBusy` uses CalDAV `free-busy-query` and returns only worker-projected UTC intervals. Selected read capabilities can be combined only after each required protocol check succeeds. Event effects and HTML-only message bodies remain unavailable. Apple app-specific passwords are broader than per-operation grants and must carry a warning before entry and revocation instructions after connection. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -2365,3 +2366,11 @@ remains open.
   fixture-only type errors inside the regression gate. The fixture check,
   regular UI typecheck, shell syntax, and diff checks pass; rendered browser
   acceptance remains open.
+- 2026-10-01: iCloud App Password links can now request one or more of MailRead,
+  CalendarRead, and CalendarFreeBusy. The server independently verifies fixed-
+  host IMAP when MailRead is selected and CalDAV when either calendar access is
+  selected; the account is activated only after all selected checks succeed.
+  Google and Microsoft App Password links remain MailRead-only. The owner UI
+  describes the separate checks and Apple's broader password authority. The
+  focused Server test, UI and fixture typechecks, production web build, Rust
+  formatting, and diff check pass. No live Apple credentials were used.

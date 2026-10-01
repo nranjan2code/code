@@ -3,8 +3,9 @@
 Status: **in progress on `codex/mail-calendar` (2026-10-01).** Google,
 Microsoft, and Apple account linking and bounded owner previews are implemented
 using the current 4.x storage model. Google and Microsoft support OAuth and an
-optional, warned local App Password path; Apple supports verified, separate
-Mail, Calendar, or free/busy access. Owners can search all three providers,
+optional, warned local App Password path; Apple supports separately verified
+Mail, Calendar, and free/busy capabilities, including combinations when each
+selected protocol verifies. Owners can search all three providers,
 select Gmail labels or Microsoft folders, and browse paginated Google
 or Microsoft conversations. Brokered Agent reads cover selected Google and
 Microsoft folders and threads with per-message citations; channel access fails
@@ -89,8 +90,10 @@ its first parsed Reply-To mailbox when present, otherwise the sender address;
 the recipient remains editable and the exact final address is shown for review.
 Bcc is not requested from Microsoft and is never projected into the owner or
 Agent result.
-iCloud links now verify fixed-host IMAP MailRead-only, CalDAV CalendarFreeBusy-only,
-or CalDAV CalendarRead-only access as separate account selections. Apple inbox previews expose bounded
+iCloud links verify each explicitly selected read capability before saving one
+account: MailRead uses fixed-host IMAP, while CalendarRead and CalendarFreeBusy
+use fixed-host CalDAV checks. Combined read selections are active only when
+every selected protocol check succeeds. Apple inbox previews expose bounded
 metadata, and the person or Agent can request one selected message body through
 a fixed-UID, read-only fetch parsed in the isolated worker. Calendar previews perform fixed-origin CalDAV discovery and
 range-bounded event reads; provider XML and iCalendar content are parsed in the
@@ -98,10 +101,9 @@ network-denied worker. CalDAV results are filtered locally against the
 requested time range after worker parsing. A bounded worker-side MIME parser
 selects bounded plain-text parts and skips HTML and attachments. Apple free/busy
 uses CalDAV `free-busy-query`; the worker returns only busy intervals without
-event details. Apple event changes and mixed capability selections remain
-unavailable or unverified. No credentialed live Apple Calendar request has
-been made, so authenticated provider discovery and free/busy semantics still
-need live verification.**
+event details. Apple event changes remain unavailable. No credentialed live
+Apple Calendar request has been made, so authenticated provider discovery and
+free/busy semantics still need live verification.**
 On 2026-09-30 the owner authorized mail/calendar implementation against the
 current 4.x storage model, deferring the data-architecture refactor. The owner
 authorized a feature branch after the design review. Typed contracts,

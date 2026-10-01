@@ -125,23 +125,26 @@ Read before changing behaviour in these areas:
   session with a 512 KiB transport budget. A selected Apple message is fetched
   by UID with `BODY.PEEK[]`, checked against UIDVALIDITY, capped at 128 KiB,
   and parsed in the network-denied worker; only bounded plain text is returned.
-  Apple event changes remain unavailable, and mixed capability selections
-  remain unverified. CalendarRead-only links verify
-  fixed-host CalDAV and expose bounded previews after worker-isolated discovery
-  and parsing, followed by a local time-range overlap check; Apple free/busy,
+  Apple event changes remain unavailable. Selected Apple MailRead,
+  CalendarRead, and CalendarFreeBusy capabilities can now be combined only
+  after each selected IMAP/CalDAV protocol check succeeds. CalendarRead-only
+  links verify fixed-host CalDAV and expose bounded previews after
+  worker-isolated discovery and parsing, followed by a local time-range
+  overlap check; Apple free/busy,
   Apple Mail HTML bodies and Apple event changes are unavailable. Inbox
   metadata and selected plain-text message reads are implemented; messages
-  without plain text are labelled. Mixed capability selections remain
-  unverified.
+  without plain text are labelled. Combined capabilities never bypass their
+  separate provider protocol verification.
   Microsoft event update/cancel/RSVP, attachments, aliases, reply
   semantics, and model-initiated effects remain unavailable. Google supports
   OAuth plus an explicitly warned, local-only App Password fallback for
   MailRead. Microsoft supports OAuth plus a warned, local-only App Password
   fallback for personal Outlook.com/Live/Hotmail/MSN MailRead; Microsoft 365
   and work/school Exchange stay OAuth-only. Apple uses a warned app-specific
-  password for separately verified MailRead, CalendarRead, or
-  CalendarFreeBusy; Apple's newer account authorization is not yet a verified
-  integration path for Vakyartha. The owner preview projects bounded From, To,
+  password for explicitly selected MailRead, CalendarRead, and/or
+  CalendarFreeBusy capabilities after separate protocol verification; Apple's
+  newer account authorization is not yet a verified integration path for
+  Vakyartha. The owner preview projects bounded From, To,
   and Cc fields for all three providers and never exposes Bcc. Synthetic load
   tests cover 5,000 listed Gmail messages and 1,000 calendar events while
   enforcing the preview limits. Live provider checks, source-to-Review browser
