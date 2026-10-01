@@ -2389,3 +2389,12 @@ remains open.
   calendar actions. All 43 checks pass at desktop and 390px phone width, with
   no horizontal overflow or browser console errors. UI typechecks and the full
   synthetic regression pack pass. No live provider data was used.
+- 2026-10-01: Extended the rendered synthetic Today Canvas fixture to create a
+  calendar event-trigger routine through the real routine editor. It verifies
+  the saved routine remains paused, uses the selected calendar and the shared
+  five-result budget, includes only the owning Agent's read-only commitments,
+  and preserves the chosen event-end boundary, 15-minute offset, and 45-minute
+  catch-up window. The browser fixture passes all 43 checks at desktop width
+  and 390px phone width, with no horizontal overflow. Regular and fixture UI
+  typechecks pass. This covers configuration in synthetic data; full scheduled
+  provider execution and live-provider conformance remain open.

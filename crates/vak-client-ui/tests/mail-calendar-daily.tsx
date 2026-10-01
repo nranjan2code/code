@@ -245,6 +245,25 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     routineBudget.value = "5";
     routineBudget.dispatchEvent(new Event("change", { bubbles: true }));
   }
+  const routineCheckbox = (text: string) => [...document.querySelectorAll<HTMLInputElement>(".mail-calendar-routine-create input[type='checkbox']")]
+    .find((input) => input.closest("label")?.textContent?.includes(text));
+  routineCheckbox("Include this Agent’s open commitments")?.click();
+  routineCheckbox("Run around a calendar event")?.click();
+  const eventBoundary = document.querySelector<HTMLSelectElement>("select[aria-label='Event trigger boundary']");
+  if (eventBoundary) {
+    eventBoundary.value = "end";
+    eventBoundary.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const eventNumber = (label: string, value: string) => {
+    const input = document.querySelector<HTMLInputElement>(`input[aria-label='${label}']`);
+    if (input) {
+      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+      setter?.call(input, value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  };
+  eventNumber("Event trigger offset minutes", "15");
+  eventNumber("Event trigger catch up minutes", "45");
   document.querySelector<HTMLButtonElement>(".mail-calendar-routine-create button")?.click();
   const routineCreationStaysAgentScoped = await waitFor(() => routines.some((task) => task.id === "fixture-created-routine"));
   const createdRoutine = routines.find((task) => task.id === "fixture-created-routine");
@@ -479,7 +498,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
     check(routinePagingStartsCorrectly && routineNextPageWorks, "Canvas routine list paginates mail/calendar routines and excludes other Agents and non-mail tasks"),
     check(routineCanvasHandoffWorks, "Opening a listed routine hands off to its existing Canvas routine workspace"),
-    check(routineFormLoaded && routineCreationStaysAgentScoped && createdRoutine?.agent_id === "fixture-owner" && createdRoutine?.enabled === false && createdRoutine?.mail_calendar_scope?.calendar_source_id === "g-account-0-primary" && createdRoutine?.mail_calendar_scope?.max_items === 5, "Canvas saves the selected per-run result budget with the paused Agent-scoped routine"),
+    check(routineFormLoaded && routineCreationStaysAgentScoped && createdRoutine?.agent_id === "fixture-owner" && createdRoutine?.enabled === false && createdRoutine?.interval_secs === 60 && createdRoutine?.mail_calendar_scope?.calendar_source_id === "g-account-0-primary" && createdRoutine?.mail_calendar_scope?.max_items === 5 && createdRoutine?.mail_calendar_scope?.read_commitments === true && createdRoutine?.mail_calendar_scope?.calendar_event_trigger?.boundary === "end" && createdRoutine?.mail_calendar_scope?.calendar_event_trigger?.offset_minutes === 15 && createdRoutine?.mail_calendar_scope?.calendar_event_trigger?.max_lateness_minutes === 45, "Canvas saves a paused Agent-scoped event trigger with its selected calendar, catch-up window, read-only commitments, and shared result budget"),
     check((firstRoutine()?.textContent ?? "").includes("Up to 10 results per run"), "Saved routine cards show the broker-enforced per-run result budget"),
     check(pauseAllStopsActiveRun, "Canvas pause-all disables enabled routines and asks a currently running Agent session to stop"),
     check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
