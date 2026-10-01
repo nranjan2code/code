@@ -62,6 +62,7 @@ const SPECS: Record<ArtifactDisplayType, ViewerSpec> = {
     safetyFooter: false,
   },
   automation: { type: "automation", badge: "Routine", views: [], defaultView: () => null, layout: "split", reloadable: true, devices: false, popout: false, feedback: "none", selects: () => null, safetyFooter: false },
+  daily_mail_calendar: { type: "daily_mail_calendar", badge: "Today", views: [], defaultView: () => null, layout: "split", reloadable: true, devices: false, popout: false, feedback: "none", selects: () => null, safetyFooter: false },
   office: { type: "office", badge: "Document", views: [], defaultView: () => null, layout: "focused", reloadable: false, devices: false, popout: false, feedback: "on_request", selects: () => "anchor", safetyFooter: false },
 };
 

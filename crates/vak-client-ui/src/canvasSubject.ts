@@ -10,7 +10,7 @@
 
 import { isOfficePath } from "./officeFiles.ts";
 
-export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation";
+export type ArtifactDisplayType = "html" | "pdf" | "image" | "table" | "code" | "server" | "office" | "automation" | "daily_mail_calendar";
 
 interface SubjectBase {
   title: string;
@@ -32,6 +32,8 @@ export type CanvasSubject =
   /** A dev server the session's launch configuration names. */
   /** A scheduled routine, read from the task list. */
   | (SubjectBase & { kind: "automation"; taskId: string })
+  /** A live, owner-only daily view of connected mail and calendar accounts. */
+  | (SubjectBase & { kind: "daily_mail_calendar"; agentId: string })
   | (SubjectBase & { kind: "live_server"; serverName: string; sessionId: string; candidateId?: string; path?: string });
 
 /** The identity a file was opened from; the shape decides which route reads it. */
@@ -75,6 +77,7 @@ export function previewSource(subject: CanvasSubject): PreviewSource | null {
     case "draft_file": return { kind: "candidate", session_id: subject.sessionId, candidate_id: subject.candidateId, path: subject.path };
     case "inline":
     case "automation":
+    case "daily_mail_calendar":
     case "live_server": return null;
   }
 }
@@ -99,12 +102,13 @@ export function subjectPath(subject: CanvasSubject): string {
     case "inline": return subject.basePath ?? "";
     case "live_server": return subject.path ?? "";
     case "automation": return "";
+    case "daily_mail_calendar": return "";
     default: return subject.path;
   }
 }
 
 export function subjectSessionId(subject: CanvasSubject): string | undefined {
-  return subject.kind === "inline" || subject.kind === "automation" ? undefined : subject.sessionId;
+  return subject.kind === "inline" || subject.kind === "automation" || subject.kind === "daily_mail_calendar" ? undefined : subject.sessionId;
 }
 
 export function subjectCandidateId(subject: CanvasSubject): string | undefined {
@@ -126,6 +130,7 @@ export function subjectKey(subject: CanvasSubject): string {
     case "draft_file": return `draft:${subject.sessionId}:${subject.candidateId}:${subject.path}`;
     case "live_server": return `server:${subject.sessionId}:${subject.candidateId ?? ""}:${subject.serverName}`;
     case "automation": return `task:${subject.taskId}`;
+    case "daily_mail_calendar": return `daily_mail_calendar:${subject.agentId}`;
     case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
   }
 }
@@ -143,6 +148,7 @@ export function displayType(subject: CanvasSubject): ArtifactDisplayType {
   if (subject.kind === "live_server") return "server";
   if (subject.kind === "inline") return "html";
   if (subject.kind === "automation") return "automation";
+  if (subject.kind === "daily_mail_calendar") return "daily_mail_calendar";
   const path = subject.path.toLowerCase();
   if (path.endsWith(".pdf")) return "pdf";
   if (path.endsWith(".csv") || path.endsWith(".tsv")) return "table";

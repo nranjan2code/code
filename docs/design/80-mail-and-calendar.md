@@ -321,13 +321,16 @@ setting is later disabled. This is the first cross-activity integration; files,
 other services, writing commitments, and automatic provider effects remain
 separately gated or deferred.
 
-The Agent's empty conversation now offers a **Plan my day** starter. It asks
-the Agent to use only its available, authorized calendar, recent mail, and
-open commitments, cite the events and messages it uses, disclose unavailable
-sources, and keep the response read-only. This is an on-demand conversation
-entry point; a dedicated daily mail/calendar Canvas and connected-account
-source-to-Review browser workflow are still open. Account and routine
-administration remain in Settings.
+An Agent conversation now offers a **Today** Canvas action alongside the
+**Plan my day** starter. The Canvas reads today's agenda, busy intervals, and
+up to eight recent messages per linked account through the owner-authenticated
+preview routes. It loads only when opened or refreshed, shows source-specific
+read failures, and links supported messages to their provider-reverified
+conversation in Settings. Opening it does not add provider content to session
+history or send/change anything. The starter remains an on-demand Agent
+conversation for a cited, read-only day plan. Account and routine
+administration remain in Settings; connected-account source-to-Review browser
+acceptance is still open.
 
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and

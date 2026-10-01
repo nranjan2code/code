@@ -36,6 +36,16 @@ browser at 1440 px wide: below 1100 px the layout switch is hidden by design.
 The pure rules are in `canvas-subject.mjs`, `canvas-stack.mjs` and
 `preview-isolation.mjs` (`node tests/<file>`).
 
+# Daily mail and calendar Canvas
+
+Open `/app/tests/mail-calendar-daily.html?run` in the Vite web dev server. This
+mounts the real daily Canvas viewer over local HTTP fixtures: three synthetic
+accounts, 24 mail rows, 100 events, and eight free/busy intervals. Loading it with `?run` runs `window.runChecks()` and
+prints the assertions. It checks that the account request carries the owning
+Agent ID, each provider uses only its granted mail/calendar operation, source
+labels survive aggregation, and free/busy shows no event titles. It has no
+provider credentials, provider traffic, or session writes.
+
 # Result card
 
 `result-card.html` renders the real timeline over file results shaped like

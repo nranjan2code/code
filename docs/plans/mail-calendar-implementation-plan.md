@@ -1838,10 +1838,21 @@ remains open.
   connected. This confirms local draft persistence and preview in the current
   build, not connected-account source-to-Review behavior or the required saved
   viewport/theme screenshot set.
-- 2026-10-01: Added a `Plan my day` starter to an Agent's empty conversation.
-  It invokes the ordinary Agent conversation with a read-only request for
-  authorized calendar, recent mail, and available commitments, requires event
-  and message citations, and asks the Agent to disclose unavailable sources.
-  This creates a day-to-day chat entry point without exposing provider
-  credentials or adding a data-fetch path to the client. A dedicated daily
-  Canvas remains open.
+- 2026-10-01: Added a dedicated **Today** Canvas action to Agent conversations.
+  It reads the local day's events and availability plus up to eight recent
+  messages per connected account through owner-authenticated preview routes.
+  Reads occur only on open or explicit refresh; failures are shown per source,
+  supported messages open the revalidated account conversation preview, and
+  provider content is not appended to session history. Added design records
+  for the Canvas subject and retained the **Plan my day** chat starter for a
+  cited read-only plan. This does not close the
+  connected-account source-to-Review browser workflow.
+- 2026-10-01: Ran the daily Canvas browser fixture over generated content for
+  all three providers: 24 inbox rows, 100 events, and eight free/busy slots.
+  All eight checks passed, including Agent-scoped account lookup, provider
+  capability routing, visible source identity, and event-title redaction from
+  the free/busy-only account. Ran the feature binary from the canonical
+  `~/vak-home`; the Today Canvas loaded in the local profile and showed the
+  no-connected-accounts empty state. No provider content or credentials were
+  accessed in that profile check. Account-linked source-to-Review behavior
+  still needs an Agent with connected accounts.
