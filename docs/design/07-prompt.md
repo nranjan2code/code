@@ -278,6 +278,14 @@ retained.
   heartbeat reviews commitments, routines and unfinished conversations. The
   whole-document `.vak/SYSTEM.md` override is no longer read.
 
+- Unreleased (nudge audit): `[empty-step]` and `[grounding-check]` no longer
+  quote the request (they took its first 600 characters, "Complete this
+  already-admitted target"). Both now point at the person's message that
+  opened the turn, which is in the same request, and say this is not a new
+  request. This brings them in line with `[steering-drift]` and the rule in
+  doc 68 §6 that runtime text never restates the directive. The tests that
+  required the quote now require its absence.
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

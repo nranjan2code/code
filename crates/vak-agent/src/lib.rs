@@ -2245,15 +2245,14 @@ impl Agent {
                         .await
                         .append_message(MessageRecord::control(
                         vak_intent::control::ControlKind::EmptyStep,
-                        format!(
-                            "[empty-step]: Your last response had no visible answer and no tool call. \
-                             Complete this already-admitted target now (this is context, not a new request): {:?}. \
-                             Make the tool call you planned, or write the answer as text.",
-                            prompt_owned.chars().take(600).collect::<String>()
-                        ),
+                        "[empty-step]: Your last response had no visible answer and no tool call. \
+                         Carry on with the request in the person's message that opened this turn; \
+                         this is not a new request. Make the tool call you planned, or write the \
+                         answer as text."
+                            .to_string(),
                     )) {
- return nudge_write_failed(error);
- }
+                        return nudge_write_failed(error);
+                    }
                     let _ = events.send(AgentEvent::DraftDiscarded { turn }).await;
                     turn += 1;
                     continue;
@@ -2314,12 +2313,11 @@ impl Agent {
                             return TurnOutcome::MaxTurnsReached;
                         }
                         let tool_list = tool_names.join(", ");
-                        let target = prompt_owned.chars().take(600).collect::<String>();
                         if let Err(error) = self.session.lock().await.append_message(MessageRecord::control(vak_intent::control::ControlKind::GroundingCheck, format!(
                                 "[grounding-check]: Your last answer does not use what {tool_list} just returned. \
-                                 Complete this already-admitted target (this is context, not a new request): {target:?}. \
-                                 Answer from those results and name the sources you used, or, if they do not \
-                                 answer the target, say so plainly instead of answering from memory."
+                                 Answer the request in the person's message that opened this turn from \
+                                 those results and name the sources you used, or, if they do not answer \
+                                 it, say so plainly instead of answering from memory. This is not a new request."
                             ))) {
  return nudge_write_failed(error);
  }

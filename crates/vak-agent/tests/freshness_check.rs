@@ -347,9 +347,9 @@ async fn a_thinking_only_step_gets_one_redo_to_act() {
     );
     assert!(
         nudges.iter().any(|text| {
-            text.starts_with("[empty-step]") && text.contains("explain how copper is refined")
+            text.starts_with("[empty-step]") && !text.contains("explain how copper is refined")
         }),
-        "empty-step repair must retain the already-admitted target: {nudges:?}"
+        "empty-step repair must not quote the request back: {nudges:?}"
     );
 }
 
