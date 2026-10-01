@@ -3,9 +3,8 @@ Status: in progress. Built: M3 (pause and stop now, §7), M1 (a worker's
 question: the board, `ask_parent`, the HTTP list and answer endpoints and the
 events, §4) and M2 (read-only background tasks, the `workers` tool and the
 stop-gate join, §5). M4 is partly built: the web and desktop client's
-question card and the gateway forward to the approver chat. The CLI prompt and
-the admin view are proposed, and until the CLI prompt exists a worker there is
-told at once that nobody can answer (§4.5). It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
+question card, the gateway forward to the approver chat and the `vak exec`
+terminal prompt. Only the admin read-only view is proposed. It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
 `docs/design/47-commitment-kernel.md` (the control plane), and the `task`
 tool of `docs/design/03-agent-loop.md`. Where this document and AGENTS.md
 disagree, AGENTS.md wins until the change is made to both.
@@ -177,7 +176,7 @@ a plain API caller do not.
 |---|---|
 | HTTP and clients | `AgentEvent::WorkerQuestion { id, label, question, options }` on the parent's event stream; `GET /sessions/{id}/questions`; `POST /sessions/{id}/questions/{qid}` `{ text }`; the client renders a card beside the approvals card |
 | Gateway chat | built. Forwarded to the approver chat like a gate, in forward mode only, and announced as `Question from <worker> [<code>]` with its choices. The approver chat answers with `answer <code> <text>`, or `answer <text>` when only one is waiting; with several waiting a reply must name one. The code is the random tail of the question id, because the head of a v7 id repeats for questions asked a minute apart. The window is the gateway's approval timeout (never longer than 15 minutes), silence or expiry means no and a late reply resolves nothing, a reply from any other chat is ordinary conversation, and a failed announcement ends the worker's wait at once. Revoking a session withdraws its questions. `Approver::announce_question` carries the question to the surface; the answer returns through the board |
-| CLI | a prompt on a terminal when attended; otherwise not answerable |
+| CLI | built, for `vak exec`. Attended means stdin and stderr are both terminals. The question is printed to stderr with its choices numbered, and a line is read from the keyboard: a number picks that choice, anything else is the answer as typed, and Enter skips, which tells the worker no answer arrived. Gates are unchanged (auto-approved with `--yes`, auto-denied otherwise), so `answerable` and `answers_questions` are independent. A piped or scripted run is unattended and the worker is told at once. One prompt at a time, read on a detached OS thread so a pending prompt never holds up process exit. `vak term`, a client of a server, uses the web path and does not send `can_show_questions` |
 | Admin | the question appears under the session's pending items; read-only |
 
 ### 4.6 Alternatives considered
@@ -317,7 +316,7 @@ the person sees lists what each stopped run had already done, from the ledger.
 | M1 (built, surfaces in M4) | `QuestionBoard`, `ask_parent` for foreground workers, HTTP list and answer endpoints, event, fail-closed rules, ledger records | a worker's question is answered by the person and appears in the child's ledger; unanswerable returns at once; timeout leaves a late answer resolving nothing; the 4th question is refused; an answer never approves a gated call |
 | M2 (built) | `task { background }`, progress tracking, the `workers` tool, `WorkersRunning` stop-gate reason, parent-model `reply` | an Agent lists and messages its own worker mid-run; another session's worker is unknown; a parent cannot finish with a running worker until it waits or the budget is spent; cap enforced |
 | M3 (built) | `POST /agents/{id}/pause` with `stop_running`, `resume`, the activity and security event | pausing with stop_running cancels live runs of that Agent only, keeps partial output, rejects pending gates and questions; without it, a running turn finishes and the next is refused |
-| M4 (client card and gateway built; CLI and admin proposed) | client question card, gateway forward, CLI prompt, admin read-only view | each surface answers a question; a non-approver chat cannot; silence means no |
+| M4 (client card, gateway and CLI built; admin proposed) | client question card, gateway forward, CLI prompt, admin read-only view | each surface answers a question; a non-approver chat cannot; silence means no |
 
 Each phase ships whole: code, tests, this document's status line, and the
 AGENTS.md changes it makes (the Layout entry for the new tools, and invariant

@@ -703,8 +703,9 @@ pub trait Approver: Send + Sync {
     }
 
     /// Whether this surface can show a worker's question and take a free-text
-    /// answer (docs/design/84-worker-questions-and-control.md §4.5). A
-    /// surface that can answer a yes/no gate but cannot ask this would leave
+    /// answer (docs/design/84-worker-questions-and-control.md §4.5). Decided
+    /// on its own, apart from `answerable`: a terminal that auto-denies gates
+    /// can still ask a question. A surface that cannot ask this would leave
     /// a worker blocked until the question expired, so the default is `false`
     /// and a worker is told at once that nobody can answer.
     fn answers_questions(&self) -> bool {

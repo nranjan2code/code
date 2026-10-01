@@ -22,6 +22,7 @@ mod memory;
 mod office;
 mod plugins;
 mod prompts;
+mod question_prompt;
 mod setup;
 mod tasks;
 mod update_check;
@@ -1305,11 +1306,17 @@ async fn run_exec(
         }
     });
 
-    let approver: Option<std::sync::Arc<dyn vak_agent::Approver>> = Some(if yes {
+    // Gates are auto-approved or auto-denied as before. A worker's question
+    // is different: only a person can answer it, so with a terminal in front
+    // of one it is asked there (docs/design/84-worker-questions-and-control.md).
+    let gates: std::sync::Arc<dyn vak_agent::Approver> = if yes {
         std::sync::Arc::new(vak_agent::AutoApprove)
     } else {
         std::sync::Arc::new(vak_agent::AutoDeny)
-    });
+    };
+    let approver: Option<std::sync::Arc<dyn vak_agent::Approver>> = Some(std::sync::Arc::new(
+        question_prompt::CliApprover::new(gates),
+    ));
     let permission = if write_paths.is_empty() {
         None
     } else {

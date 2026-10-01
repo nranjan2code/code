@@ -11,6 +11,8 @@ path = "src/main.rs"
 [dependencies]
 percent-encoding = "2"
 vak-agent = { workspace = true }
+# `Approver` is an async trait; the terminal question prompt implements it.
+async-trait = { workspace = true }
 vak-config = { workspace = true }
 vak-commit = { workspace = true }
 vak-core = { workspace = true }
