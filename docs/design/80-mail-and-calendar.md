@@ -66,7 +66,7 @@ select event start or end, an offset, a catch-up limit, and scheduled or
 about-once-a-minute polling in the routine editor. The full conversation
 workspace, Apple provider effects, broader Microsoft/event update and
 cancellation profiles, RSVP, complete event-trigger browser acceptance,
-reconciliation for cancellations and Microsoft event updates, live-provider conformance, full connected
+reconciliation for Microsoft event updates, live-provider conformance, full connected
 source-to-Review browser acceptance, and 24-hour service-recovery acceptance
 remain open. `/health` exposes a volatile scheduler heartbeat for starting,
 active, or stale background scheduling, but this is not the sustained
@@ -164,7 +164,11 @@ look for that exact marker. A unique match confirms the stored receipt; no
 match or multiple matches leaves it unknown and permanently non-retryable.
 The supported Google conditional update also stores the attempt marker on the
 event; reconciliation reads that exact event and confirms only the matching
-marker. Email sends on Gmail and Microsoft Graph carry the durable attempt id
+marker. Google cancellation stores the attempt marker in the same conditional
+PATCH as `status=cancelled`; after an ambiguous response, reconciliation reads
+the event tombstone and confirms only when its ID, cancelled status, and
+private marker all match. A missing tombstone or marker remains unknown and
+non-retryable. Email sends on Gmail and Microsoft Graph carry the durable attempt id
 as an opaque Message-ID/custom Internet header. The owner can check Sent mail;
 Gmail uses the exact RFC Message-ID query, while Graph checks a bounded,
 time-filtered Sent Items page. Only a unique exact marker confirms the receipt;
@@ -177,12 +181,16 @@ by RFC Message-ID](https://developers.google.com/workspace/gmail/api/reference/r
 [Microsoft Graph custom Internet message headers](https://learn.microsoft.com/en-us/graph/api/user-sendmail?view=graph-rest-1.0),
 [Graph message listing](https://learn.microsoft.com/en-us/graph/api/user-list-messages?view=graph-rest-1.0),
 [Google private extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
+and [Google event status and cancelled-event reads](https://developers.google.com/workspace/calendar/api/v3/reference/events)
 and [Microsoft Graph single-value extended properties](https://learn.microsoft.com/en-us/graph/api/singlevaluelegacyextendedproperty-post-singlevalueextendedproperties?view=graph-rest-1.0).
 These effects require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain
 non-retryable and appear in the local candidate list. Google event update
 re-reads the source event and sends a conditional ETag update; stale versions
-conflict and require a fresh preview and candidate. Microsoft update,
+conflict and require a fresh preview and candidate. Google cancellation
+re-reads the source event and conditionally writes its cancelled status and
+attempt marker together; reconciliation confirms only that exact marker on the
+cancelled event. Microsoft update,
 cancellation outside the single-event Google profile above, RSVP operations,
 Agent-initiated effects, and 24-hour recovery acceptance remain open.
 The server checks provider/action compatibility both when saving a candidate
@@ -286,8 +294,8 @@ local server-process runs through
 child completion; it does not provide multi-host coordination. Email send, a
 constrained timed event create, Google standalone event update, and one Google
 standalone event cancellation profile have effect-aware owner confirmation
-paths; other event update/cancellation profiles, RSVP, standing grants,
-complete receipt reconciliation, durable continuous service recovery, and
+and supported exact-marker reconciliation paths; other event update/cancellation profiles, RSVP, standing grants,
+other receipt reconciliation, durable continuous service recovery, and
 full provider conformance remain in progress. The
 account-deletion limitation below is disclosed before content features are
 enabled.

@@ -642,16 +642,17 @@ impl ProviderEffectClient {
         }
     }
 
-    /// Delete only an unchanged public, standalone, timed Google event with
-    /// no guests, when the connected user is its organizer. Google Calendar's
-    /// documented If-Match conditional modification closes the stale-source
-    /// race; other providers are deliberately unsupported here.
+    /// Cancel only an unchanged public, standalone, timed Google event with
+    /// no guests, when the connected user is its organizer. Store the attempt
+    /// marker in the same conditional PATCH as `status=cancelled`, so an
+    /// ambiguous result can be reconciled by reading the cancellation tombstone.
     pub async fn cancel_event(
         &self,
         account: &ConnectedAccount,
         vault: &AccountVault,
         agent_id: &str,
         audience: &str,
+        attempt_id: &str,
         event_id: &str,
         source_version: &str,
         occurrence_id: Option<&str>,
@@ -666,6 +667,9 @@ impl ProviderEffectClient {
             return Err(ProviderEffectError::Unsupported);
         }
         validate_event_cancel(event_id, source_version, occurrence_id, whole_series)?;
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
@@ -699,13 +703,81 @@ impl ProviderEffectClient {
             .map_err(|_| ProviderEffectError::Rejected)?;
         let response = self
             .http
-            .delete(format!("{url}?sendUpdates=none"))
+            .patch(format!("{url}?sendUpdates=none"))
             .bearer_auth(token.as_str())
             .header(reqwest::header::IF_MATCH, if_match)
+            .json(&json!({
+                "status": "cancelled",
+                "extendedProperties": {"private": {GOOGLE_ACTION_PROPERTY: attempt_id}}
+            }))
             .send()
             .await
             .map_err(|_| ProviderEffectError::Unknown)?;
-        classify_deleted_event_response(response, event_id).await
+        classify_updated_event_response(response).await
+    }
+
+    /// Confirm an ambiguous cancellation only when the same event is returned
+    /// as cancelled and carries this exact attempt's private marker.
+    pub async fn reconcile_cancelled_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        attempt_id: &str,
+        event_id: &str,
+    ) -> Result<Option<String>, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider != Provider::Google {
+            return Err(ProviderEffectError::Unsupported);
+        }
+        if !valid_attempt_id(attempt_id)
+            || event_id.is_empty()
+            || event_id.len() > 512
+            || event_id.chars().any(char::is_control)
+        {
+            return Err(ProviderEffectError::Rejected);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let url = path_url(
+            &self.google_calendar_base,
+            &["calendars", "primary", "events", event_id],
+        )?;
+        let response = self
+            .http
+            .get(url)
+            .bearer_auth(token.as_str())
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        match response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            StatusCode::NOT_FOUND => return Ok(None),
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let body = response_json(response).await?;
+        let is_cancelled = body.get("id").and_then(Value::as_str) == Some(event_id)
+            && body.get("status").and_then(Value::as_str) == Some("cancelled");
+        let marker = body
+            .pointer("/extendedProperties/private/vak_action_id")
+            .and_then(Value::as_str);
+        if is_cancelled && marker == Some(attempt_id) {
+            Ok(Some(event_id.to_owned()))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -1260,27 +1332,6 @@ async fn classify_updated_event_response(
     Ok(ProviderAcceptance {
         provider_item_id: Some(id.to_owned()),
     })
-}
-
-async fn classify_deleted_event_response(
-    response: Response,
-    event_id: &str,
-) -> Result<ProviderAcceptance, ProviderEffectError> {
-    match response.status() {
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-            Err(ProviderEffectError::ReauthorizationRequired)
-        }
-        StatusCode::PRECONDITION_FAILED | StatusCode::NOT_FOUND => {
-            Err(ProviderEffectError::Conflict)
-        }
-        StatusCode::NO_CONTENT => Ok(ProviderAcceptance {
-            provider_item_id: Some(event_id.to_owned()),
-        }),
-        status if status.is_redirection() || status.is_server_error() => {
-            Err(ProviderEffectError::Unknown)
-        }
-        _ => Err(ProviderEffectError::Rejected),
-    }
 }
 
 async fn response_json(response: Response) -> Result<Value, ProviderEffectError> {
@@ -1985,7 +2036,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn google_cancel_rechecks_source_and_uses_etag_and_no_guest_notifications() {
+    async fn google_cancel_stores_attempt_marker_and_reconciles_ambiguous_cancellation() {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-cancel-{}", uuid::Uuid::now_v7());
         let account_id = uuid::Uuid::now_v7().to_string();
@@ -2026,21 +2077,28 @@ mod tests {
             refresh_token_available: false,
             revoked_at: None,
         };
-        let delete_observed = Arc::new(Mutex::new(None));
-        let delete_capture = delete_observed.clone();
+        let event_state = Arc::new(Mutex::new(json!({
+            "id":"abcde", "etag":"\"v1\"", "eventType":"default",
+            "visibility":"default", "attendees":[], "organizer":{"self":true},
+            "start":{"dateTime":"2026-10-01T09:00:00Z"},
+            "end":{"dateTime":"2026-10-01T10:00:00Z"}
+        })));
+        let state_for_get = event_state.clone();
+        let state_for_patch = event_state.clone();
+        let patch_observed = Arc::new(Mutex::new(None));
+        let patch_capture = patch_observed.clone();
         let app = Router::new().route(
             "/calendar/v3/calendars/primary/events/abcde",
-            get(|| async {
-                Json(json!({
-                    "id":"abcde", "etag":"\"v1\"", "eventType":"default",
-                    "visibility":"default", "attendees":[], "organizer":{"self":true},
-                    "start":{"dateTime":"2026-10-01T09:00:00Z"},
-                    "end":{"dateTime":"2026-10-01T10:00:00Z"}
-                }))
+            get(move || {
+                let state = state_for_get.clone();
+                async move { Json(state.lock().unwrap().clone()) }
             })
-            .delete(
-                move |headers: axum::http::HeaderMap, uri: axum::http::Uri| {
-                    let observed = delete_capture.clone();
+            .patch(
+                move |headers: axum::http::HeaderMap,
+                      uri: axum::http::Uri,
+                      Json(body): Json<Value>| {
+                    let observed = patch_capture.clone();
+                    let state = state_for_patch.clone();
                     async move {
                         *observed.lock().unwrap() = Some((
                             headers
@@ -2048,8 +2106,16 @@ mod tests {
                                 .and_then(|v| v.to_str().ok())
                                 .map(str::to_owned),
                             uri.query().map(str::to_owned),
+                            body.clone(),
                         ));
-                        axum::http::StatusCode::NO_CONTENT
+                        *state.lock().unwrap() = json!({
+                            "id":"abcde", "etag":"\"v2\"", "status":"cancelled",
+                            "extendedProperties":{"private":{"vak_action_id":body.pointer("/extendedProperties/private/vak_action_id").and_then(Value::as_str).unwrap_or_default()}},
+                            "organizer":{"self":true}
+                        });
+                        // Simulate the provider applying the cancellation but
+                        // losing the response after the effect committed.
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR
                     }
                 },
             ),
@@ -2059,26 +2125,61 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let mut client = ProviderEffectClient::new().unwrap();
         client.google_calendar_base = format!("http://{address}/calendar/v3");
-        let accepted = client
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let error = client
             .cancel_event(
                 &account,
                 &vault,
                 &agent_id,
                 &format!("agent:{agent_id}"),
+                &attempt_id,
                 "abcde",
                 "\"v1\"",
                 None,
                 false,
             )
             .await
-            .unwrap();
-        assert_eq!(accepted.provider_item_id.as_deref(), Some("abcde"));
+            .unwrap_err();
+        assert_eq!(error, ProviderEffectError::Unknown);
         assert_eq!(
-            delete_observed.lock().unwrap().as_ref(),
+            patch_observed.lock().unwrap().as_ref(),
             Some(&(
                 Some("\"v1\"".to_owned()),
-                Some("sendUpdates=none".to_owned())
+                Some("sendUpdates=none".to_owned()),
+                json!({
+                    "status":"cancelled",
+                    "extendedProperties":{"private":{"vak_action_id":attempt_id}}
+                })
             ))
+        );
+        assert_eq!(
+            client
+                .reconcile_cancelled_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &attempt_id,
+                    "abcde",
+                )
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("abcde")
+        );
+        assert_eq!(
+            client
+                .reconcile_cancelled_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &format!("agent:{agent_id}"),
+                    &uuid::Uuid::now_v7().to_string(),
+                    "abcde",
+                )
+                .await
+                .unwrap(),
+            None
         );
         server.abort();
     }

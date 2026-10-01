@@ -1214,6 +1214,7 @@ pub(super) async fn send_mail_candidate(
                     &vault,
                     &agent_id,
                     &candidate.audience_id,
+                    &receipt.attempt_id,
                     event_id,
                     source_version,
                     occurrence_id.as_deref(),
@@ -1229,7 +1230,7 @@ pub(super) async fn send_mail_candidate(
             receipt.provider_item_id = accepted.provider_item_id;
             receipt.detail_code = Some(
                 if matches!(candidate.action, ProposedAction::CancelEvent { .. }) {
-                    "provider_accepted_event_removed"
+                    "provider_accepted_event_cancelled"
                 } else {
                     "provider_accepted_not_delivery"
                 }
@@ -1308,7 +1309,7 @@ pub(super) struct ReconcileEventRequest {
     candidate_digest: String,
 }
 
-/// Reconcile an event create or supported update after an ambiguous dispatch.
+/// Reconcile a supported calendar effect after ambiguous dispatch.
 /// Provider-private attempt markers can prove the exact attempt; absence is
 /// inconclusive and never enables a retry.
 pub(super) async fn reconcile_event_candidate(
@@ -1371,13 +1372,19 @@ pub(super) async fn reconcile_event_candidate(
         )
             .into_response();
     }
-    let reconcile_update_event = match &candidate.action {
-        ProposedAction::CreateEvent { .. } => None,
-        ProposedAction::UpdateEvent { event_id, .. } => Some(event_id.as_str()),
+    let (reconcile_update_event, reconcile_cancel_event) = match &candidate.action {
+        ProposedAction::CreateEvent { .. } => (None, None),
+        ProposedAction::UpdateEvent { event_id, .. } => (Some(event_id.as_str()), None),
+        ProposedAction::CancelEvent {
+            event_id,
+            occurrence_id,
+            whole_series,
+            ..
+        } if occurrence_id.is_none() && !whole_series => (None, Some(event_id.as_str())),
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                "Only an ambiguous calendar event create or update can be reconciled here.",
+                "Only an ambiguous supported calendar event change can be reconciled here.",
             )
                 .into_response();
         }
@@ -1415,8 +1422,14 @@ pub(super) async fn reconcile_event_candidate(
         None => return StatusCode::FORBIDDEN.into_response(),
     };
     if !matches!(
-        (account.provider, reconcile_update_event),
-        (Provider::Google | Provider::Microsoft, None) | (Provider::Google, Some(_))
+        (
+            account.provider,
+            reconcile_update_event,
+            reconcile_cancel_event
+        ),
+        (Provider::Google | Provider::Microsoft, None, None)
+            | (Provider::Google, Some(_), None)
+            | (Provider::Google, None, Some(_))
     ) {
         return StatusCode::BAD_REQUEST.into_response();
     }
@@ -1470,6 +1483,17 @@ pub(super) async fn reconcile_event_candidate(
                 event_id,
             )
             .await
+    } else if let Some(event_id) = reconcile_cancel_event {
+        client
+            .reconcile_cancelled_event(
+                &account,
+                &vault,
+                &agent_id,
+                &candidate.audience_id,
+                &receipt.attempt_id,
+                event_id,
+            )
+            .await
     } else {
         client
             .reconcile_created_event(
@@ -1486,7 +1510,9 @@ pub(super) async fn reconcile_event_candidate(
             receipt.state = ActionState::Confirmed;
             receipt.provider_item_id = Some(provider_item_id);
             receipt.detail_code = Some(
-                if reconcile_update_event.is_some() {
+                if reconcile_cancel_event.is_some() {
+                    "provider_event_cancel_confirmed_by_reconciliation"
+                } else if reconcile_update_event.is_some() {
                     "provider_event_update_confirmed_by_reconciliation"
                 } else {
                     "provider_event_confirmed_by_reconciliation"

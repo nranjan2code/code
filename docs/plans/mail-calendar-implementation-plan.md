@@ -2449,3 +2449,18 @@ remains open.
   policy blocked the local fixture URL; no alternate browser path was used.
   Cancellation and Microsoft event update recovery plus live-provider
   conformance are still open.
+- 2026-10-02: Added exact-marker recovery for the supported Google event
+  cancellation profile. Cancellation now uses one ETag-conditional PATCH to
+  write `status=cancelled` and the attempt marker together. If the provider
+  accepts the change but the response is lost, owner reconciliation confirms
+  only a matching event ID, cancelled status, and private attempt marker;
+  absent or mismatched evidence stays unknown and non-retryable. A local
+  provider double verifies ambiguous-success recovery and rejects a mismatched
+  marker. The Today Canvas fixture now includes the cancellation recovery
+  action. Google's Events resource and extended-properties documentation were
+  checked. The full synthetic mock pack passed: 131 provider/vault tests plus
+  registry, 19 Core tests, 17 Server tests, four owner-authenticated HTTP
+  tests, restart/requeue, and five isolated-worker tests. Web build, fixture
+  typecheck, and regular UI typecheck passed. Direct browser rendering remains
+  unverified because the browser security policy blocked the local fixture URL;
+  no alternate browser path was used.
