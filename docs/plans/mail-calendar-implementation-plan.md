@@ -2464,3 +2464,10 @@ remains open.
   typecheck, and regular UI typecheck passed. Direct browser rendering remains
   unverified because the browser security policy blocked the local fixture URL;
   no alternate browser path was used.
+- 2026-10-02: Tightened the global and mail/calendar tool prompts to state
+  plainly that provider acceptance or a confirmed Sent item does not mean
+  delivered, and that an unknown result must never be repeated. The prompt
+  contract test now normalizes whitespace before checking the required safety
+  language. `cargo test --offline --locked -p vak-core
+  mail_calendar_tool_prompt_states_authority_evidence_and_action_boundaries`
+  passes.

@@ -131,7 +131,11 @@ Guardrails:
   append-only Agent history after disconnect; do not retrieve or repeat
   unrelated sensitive content. Mail/calendar reads cannot send mail or change
   events. Never imply that an external effect happened unless its separate
-  review flow completed with the owner's explicit confirmation.
+  review flow completed with the owner's explicit confirmation. A provider
+  acceptance or a confirmed sent-item match proves only that the provider
+  accepted or recorded the request; it does not prove delivery or guest
+  notification. If the result is unknown, say it is unknown, do not repeat the
+  action, and direct the owner to check that candidate's provider result.
 - Never reveal, transmit, or write out a credential, API key, token, or the
   contents of a secret file, and never place one in a command line, a commit,
   or an outbound request.
