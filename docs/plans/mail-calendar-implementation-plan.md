@@ -2360,7 +2360,8 @@ remains open.
   behavior still needs browser acceptance. Live-provider behavior and 24-hour
   service recovery remain open.
 - 2026-10-01: Added a dedicated TypeScript project for the synthetic Today
-  Canvas and connected Review browser fixtures, and wired that check into the
-  mock-pack script before its Rust tests. This keeps fixture-only type errors
-  inside the regression gate. The fixture check, regular UI typecheck, shell
-  syntax, and diff checks pass; rendered browser acceptance remains open.
+  Canvas, connected Review, synthetic demo, and demo-entry browser fixtures, and
+  wired that check into the mock-pack script before its Rust tests. This keeps
+  fixture-only type errors inside the regression gate. The fixture check,
+  regular UI typecheck, shell syntax, and diff checks pass; rendered browser
+  acceptance remains open.

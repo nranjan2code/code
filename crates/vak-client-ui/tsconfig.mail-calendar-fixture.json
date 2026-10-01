@@ -3,6 +3,8 @@
   "include": [
     "src",
     "tests/mail-calendar-daily.tsx",
-    "tests/mail-calendar-connected-review.tsx"
+    "tests/mail-calendar-connected-review.tsx",
+    "tests/mail-calendar-demo.tsx",
+    "tests/mail-calendar-demo-entry.tsx"
   ]
 }
