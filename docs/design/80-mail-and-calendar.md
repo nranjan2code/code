@@ -804,11 +804,18 @@ local device time, all-day entries, and conflict markers; the agenda groups
 entries by local date. An owner may explicitly compare up to five other
 connected calendar accounts with CalendarRead for the same date range; partial
 read failures are shown, compared events are read-only, and detected overlaps
-identify conflicts across accounts. This remains an incremental preview, not
-the complete calendar workspace: source selection, event attendee editing,
-proposed slots, and event occurrence/series choices remain open. Cancellation
-is limited to one standalone Google event with no attendees and does not cover
-occurrences or series. A previewed free slot is not an atomic booking.
+identify conflicts across accounts. The owner preview also lists and selects
+one calendar source within a connected account for Google, Microsoft, and
+Apple; selection is revalidated against the provider's current calendar
+inventory before reading. Calendar source selection is read-only for provider
+effects for now: event edits and cancellation remain bound to the account's
+default calendar, and creating a new event draft uses that same default. The
+preview disables edit/cancel actions for non-default sources. This remains an
+incremental preview, not the complete calendar workspace: event attendee
+editing, proposed slots, and event occurrence/series choices remain open.
+Cancellation is limited to one standalone Google event with no attendees and
+does not cover occurrences or series. A previewed free slot is not an atomic
+booking.
 
 Owner mail previews can select among Gmail labels and up to 100 Microsoft
 top-level mail folders, then search only inside the selected label or folder.

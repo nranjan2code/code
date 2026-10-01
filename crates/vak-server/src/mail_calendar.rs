@@ -1166,6 +1166,66 @@ pub(super) async fn mail_folders(
     }
 }
 
+pub(super) async fn calendar_sources(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, account_id)): Path<(String, String)>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    let operation_lock = state.mail_calendar_account_lock(&agent_id, &account_id);
+    let _operation_guard = operation_lock.lock().await;
+    let Some((account, vault)) = preview_account(&state, &agent_id, &account_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    record_account_event(
+        &state,
+        "calendar_sources_preview",
+        &agent_id,
+        &account_id,
+        account.provider,
+        &account.capabilities,
+        "requested",
+    );
+    let sources = vak_core::mail_calendar::calendar_sources_with_worker(
+        &vak_mail_calendar::provider::ProviderReadClient::default(),
+        &account,
+        &vault,
+        &agent_id,
+        &format!("agent:{agent_id}"),
+        &state.core.tool_worker_exe(),
+    )
+    .await;
+    match sources {
+        Ok(sources) => {
+            record_account_event(
+                &state,
+                "calendar_sources_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "succeeded",
+            );
+            Json(serde_json::json!({"sources": sources})).into_response()
+        }
+        Err(error) => {
+            mark_preview_reauthentication(&state, &account, &error);
+            record_account_event(
+                &state,
+                "calendar_sources_preview",
+                &agent_id,
+                &account_id,
+                account.provider,
+                &account.capabilities,
+                "failed",
+            );
+            provider_preview_error(error)
+        }
+    }
+}
+
 #[derive(Deserialize)]
 pub(super) struct MessagePreviewRequest {
     provider_id: String,
@@ -1191,6 +1251,8 @@ pub(super) struct CalendarPreviewRequest {
     from: DateTime<Utc>,
     to: DateTime<Utc>,
     limit: Option<usize>,
+    #[serde(default)]
+    calendar_id: Option<String>,
 }
 
 /// Owner-only interactive preview. The response is transient and is not
@@ -1572,21 +1634,40 @@ pub(super) async fn calendar_preview(
         &account.capabilities,
         "requested",
     );
-    match vak_core::mail_calendar::calendar_events_with_worker(
-        &vak_mail_calendar::provider::ProviderReadClient::default(),
-        &account,
-        &vault,
-        &agent_id,
-        &format!("agent:{agent_id}"),
-        vak_mail_calendar::provider::CalendarRange {
-            from: request.from,
-            to: request.to,
-            limit: request.limit.unwrap_or(50),
-        },
-        &state.core.tool_worker_exe(),
-    )
-    .await
-    {
+    let client = vak_mail_calendar::provider::ProviderReadClient::default();
+    let audience = format!("agent:{agent_id}");
+    let range = vak_mail_calendar::provider::CalendarRange {
+        from: request.from,
+        to: request.to,
+        limit: request.limit.unwrap_or(50),
+    };
+    let worker_exe = state.core.tool_worker_exe();
+    let result = if let Some(calendar_id) = request.calendar_id.as_deref() {
+        vak_core::mail_calendar::calendar_event_page_in_source_with_worker(
+            &client,
+            &account,
+            &vault,
+            &agent_id,
+            &audience,
+            calendar_id,
+            range,
+            &worker_exe,
+        )
+        .await
+        .map(|page| page.events)
+    } else {
+        vak_core::mail_calendar::calendar_events_with_worker(
+            &client,
+            &account,
+            &vault,
+            &agent_id,
+            &audience,
+            range,
+            &worker_exe,
+        )
+        .await
+    };
+    match result {
         Ok(events) => {
             record_account_event(
                 &state,

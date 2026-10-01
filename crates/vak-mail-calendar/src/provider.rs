@@ -22,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 const MAX_MAIL_ITEMS: usize = 20;
 const MAX_THREAD_PAGE_BYTES: usize = 512 * 1024;
 const MAX_MAIL_FOLDERS: usize = 100;
+const MAX_CALENDAR_SOURCES: usize = 50;
 pub const MAX_MAIL_ATTACHMENTS: usize = 20;
 pub const MAX_MAIL_ATTACHMENT_BYTES: usize = 1024 * 1024;
 const MAX_WATCH_SCAN_ITEMS: usize = crate::MAX_ROUTINE_MAIL_BACKLOG;
@@ -186,6 +187,14 @@ pub struct MailFolder {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CalendarSource {
+    /// Opaque provider calendar ID; treat as data, never as a URL.
+    pub provider_id: String,
+    pub name: String,
+    pub primary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailAttachmentRef {
     /// Opaque provider attachment ID. Never use as a path or URL host.
     pub provider_id: String,
@@ -257,6 +266,10 @@ impl IcloudCalDavPath {
             .join(href)
             .map_err(|_| ProviderReadError::InvalidResponse)?;
         Self::validate(url)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
     }
 
     fn validate(url: url::Url) -> Result<Self, ProviderReadError> {
@@ -413,6 +426,91 @@ impl ProviderReadClient {
                 name: "Inbox".into(),
             }]),
         }
+    }
+
+    /// List a bounded set of calendars available to this account. Apple
+    /// CalDAV discovery goes through the isolated worker in `vak-core`.
+    pub async fn list_calendar_sources(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+    ) -> Result<Vec<CalendarSource>, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
+        if account.provider == Provider::AppleIcloud {
+            return Err(ProviderReadError::Unsupported);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let (response, id_key, name_key, primary_key) = match account.provider {
+            Provider::Google => (
+                self.http
+                    .get(format!(
+                        "{}/users/me/calendarList",
+                        self.google_calendar_base
+                    ))
+                    .bearer_auth(token.as_str())
+                    .query(&[("maxResults", MAX_CALENDAR_SOURCES.to_string())])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?,
+                "id",
+                "summary",
+                "primary",
+            ),
+            Provider::Microsoft => (
+                self.http
+                    .get(format!("{}/me/calendars", self.microsoft_graph_base))
+                    .bearer_auth(token.as_str())
+                    .query(&[
+                        ("$top", MAX_CALENDAR_SOURCES.to_string()),
+                        ("$select", "id,name,isDefaultCalendar".to_owned()),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?,
+                "id",
+                "name",
+                "isDefaultCalendar",
+            ),
+            Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+        };
+        let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+        let items = value
+            .get(if account.provider == Provider::Google {
+                "items"
+            } else {
+                "value"
+            })
+            .and_then(Value::as_array)
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let mut sources = Vec::new();
+        for item in items.iter().take(MAX_CALENDAR_SOURCES) {
+            let (Some(id), Some(name)) = (
+                item.get(id_key).and_then(Value::as_str),
+                item.get(name_key).and_then(Value::as_str),
+            ) else {
+                continue;
+            };
+            if id.is_empty()
+                || id.len() > 2048
+                || id.chars().any(char::is_control)
+                || name.trim().is_empty()
+            {
+                continue;
+            }
+            sources.push(CalendarSource {
+                provider_id: id.to_owned(),
+                name: bounded_label_name(name),
+                primary: item.get(primary_key).and_then(Value::as_bool) == Some(true),
+            });
+        }
+        if sources.is_empty() {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        Ok(sources)
     }
 
     pub async fn recent_mail_in_folder(
@@ -1265,11 +1363,47 @@ impl ProviderReadClient {
             .map_err(|_| ProviderReadError::Vault)?;
         match account.provider {
             Provider::Google => {
-                self.google_events(token.as_str(), range.from, range.to, limit)
+                self.google_events(token.as_str(), "primary", range.from, range.to, limit)
                     .await
             }
             Provider::Microsoft => {
-                self.microsoft_events(token.as_str(), range.from, range.to, limit)
+                self.microsoft_events(token.as_str(), None, range.from, range.to, limit)
+                    .await
+            }
+            Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
+        }
+    }
+
+    /// Read a bounded observation from one calendar returned by
+    /// `list_calendar_sources`. A selected ID is checked against that same
+    /// account's current provider inventory before it enters a fixed-host URL.
+    pub async fn calendar_event_page_in_source(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        source_id: &str,
+        range: CalendarRange,
+    ) -> Result<CalendarEventPage, ProviderReadError> {
+        let sources = self
+            .list_calendar_sources(account, vault, agent_id, audience)
+            .await?;
+        if !sources.iter().any(|source| source.provider_id == source_id) {
+            return Err(ProviderReadError::InvalidSearch);
+        }
+        validate_range(range.from, range.to)?;
+        let limit = range.limit.clamp(1, MAX_EVENT_ITEMS);
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        match account.provider {
+            Provider::Google => {
+                self.google_events(token.as_str(), source_id, range.from, range.to, limit)
+                    .await
+            }
+            Provider::Microsoft => {
+                self.microsoft_events(token.as_str(), Some(source_id), range.from, range.to, limit)
                     .await
             }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
@@ -1684,6 +1818,7 @@ impl ProviderReadClient {
     async fn google_events(
         &self,
         token: &str,
+        calendar_id: &str,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
@@ -1696,10 +1831,10 @@ impl ProviderReadClient {
         for page in 0..MAX_CALENDAR_PAGES {
             let mut request = self
                 .http
-                .get(format!(
-                    "{}/calendars/primary/events",
-                    self.google_calendar_base
-                ))
+                .get(google_calendar_events_url(
+                    &self.google_calendar_base,
+                    calendar_id,
+                )?)
                 .bearer_auth(token)
                 .query(&[("timeMin", from.to_rfc3339()), ("timeMax", to.to_rfc3339())])
                 .query(&[
@@ -1769,6 +1904,7 @@ impl ProviderReadClient {
     async fn microsoft_events(
         &self,
         token: &str,
+        calendar_id: Option<&str>,
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
@@ -1779,10 +1915,16 @@ impl ProviderReadClient {
         let mut seen_urls = std::collections::HashSet::new();
         for page in 0..MAX_CALENDAR_PAGES {
             let url = if let Some(url) = next_url.take() {
-                validate_graph_calendar_url(url.as_str(), &self.microsoft_graph_base)?
+                validate_graph_calendar_url(url.as_str(), &self.microsoft_graph_base, calendar_id)?
             } else {
-                let mut url =
-                    graph_url_segments(&self.microsoft_graph_base, &["me", "calendarView"])?;
+                let mut url = if let Some(calendar_id) = calendar_id {
+                    graph_url_segments(
+                        &self.microsoft_graph_base,
+                        &["me", "calendars", calendar_id, "calendarView"],
+                    )?
+                } else {
+                    graph_url_segments(&self.microsoft_graph_base, &["me", "calendarView"])?
+                };
                 url.query_pairs_mut()
                     .append_pair("startDateTime", &from.to_rfc3339())
                     .append_pair("endDateTime", &to.to_rfc3339())
@@ -1829,6 +1971,7 @@ impl ProviderReadClient {
                 Some(Value::String(value)) => Some(validate_graph_calendar_url(
                     value,
                     &self.microsoft_graph_base,
+                    calendar_id,
                 )?),
                 Some(_) => return Err(ProviderReadError::InvalidResponse),
             };
@@ -2870,10 +3013,20 @@ fn validate_graph_delta_url(value: &str, graph_base: &str) -> Result<(), Provide
 fn validate_graph_calendar_url(
     value: &str,
     graph_base: &str,
+    calendar_id: Option<&str>,
 ) -> Result<url::Url, ProviderReadError> {
     let base = url::Url::parse(graph_base).map_err(|_| ProviderReadError::InvalidResponse)?;
     let next = url::Url::parse(value).map_err(|_| ProviderReadError::InvalidResponse)?;
-    let expected_path = format!("{}/me/calendarView", base.path().trim_end_matches('/'));
+    let expected_path = if let Some(calendar_id) = calendar_id {
+        graph_url_segments(
+            graph_base,
+            &["me", "calendars", calendar_id, "calendarView"],
+        )?
+        .path()
+        .to_owned()
+    } else {
+        format!("{}/me/calendarView", base.path().trim_end_matches('/'))
+    };
     if value.len() > MAX_GRAPH_WATCH_CURSOR_BYTES
         || next.scheme() != base.scheme()
         || next.host_str() != base.host_str()
@@ -3363,6 +3516,29 @@ fn graph_url_segments(base: &str, segments: &[&str]) -> Result<url::Url, Provide
             path.push(segment);
         }
     }
+    Ok(url)
+}
+
+fn google_calendar_events_url(
+    base: &str,
+    calendar_id: &str,
+) -> Result<url::Url, ProviderReadError> {
+    if calendar_id.is_empty()
+        || calendar_id.len() > 2048
+        || calendar_id.chars().any(char::is_control)
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    let mut url = url::Url::parse(&format!("{}/", base.trim_end_matches('/')))
+        .map_err(|_| ProviderReadError::InvalidResponse)?;
+    let mut path = url
+        .path_segments_mut()
+        .map_err(|_| ProviderReadError::InvalidResponse)?;
+    path.pop_if_empty()
+        .push("calendars")
+        .push(calendar_id)
+        .push("events");
+    drop(path);
     Ok(url)
 }
 
@@ -5875,16 +6051,153 @@ mod tests {
         assert!(
             validate_graph_calendar_url(
                 "https://attacker.example/me/calendarView?$skiptoken=x",
-                &format!("http://{address}/graph/v1.0")
+                &format!("http://{address}/graph/v1.0"),
+                None,
             )
             .is_err()
         );
         assert!(
             validate_graph_calendar_url(
                 &format!("http://{address}/graph/v1.0/me/messages?$skiptoken=x"),
-                &format!("http://{address}/graph/v1.0")
+                &format!("http://{address}/graph/v1.0"),
+                None,
             )
             .is_err()
+        );
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn calendar_source_selection_is_inventory_bound_for_google_and_graph() {
+        let (google_vault, mut google, google_agent, google_audience) =
+            linked_test_account(Provider::Google);
+        google.capabilities.insert(Capability::CalendarRead);
+        let (graph_vault, mut graph, graph_agent, graph_audience) =
+            linked_test_account(Provider::Microsoft);
+        graph.capabilities.insert(Capability::CalendarRead);
+        let from = Utc::now();
+        let to = from + Duration::days(1);
+        let starts = from.to_rfc3339();
+        let ends = (from + Duration::minutes(30)).to_rfc3339();
+        let google_starts = starts.clone();
+        let google_ends = ends.clone();
+        let graph_starts = starts;
+        let graph_ends = ends;
+        let app = axum::Router::new()
+            .route(
+                "/calendar/v3/users/me/calendarList",
+                axum::routing::get(|| async {
+                    axum::Json(json!({"items":[
+                        {"id":"primary-id","summary":"Main","primary":true},
+                        {"id":"work-calendar","summary":"Work","primary":false}
+                    ]}))
+                }),
+            )
+            .route(
+                "/calendar/v3/calendars/work-calendar/events",
+                axum::routing::get(move || {
+                    let starts = google_starts.clone();
+                    let ends = google_ends.clone();
+                    async move {
+                        axum::Json(json!({"items":[{
+                            "id":"google-work-event","summary":"Work event",
+                            "start":{"dateTime":starts},"end":{"dateTime":ends}
+                        }] }))
+                    }
+                }),
+            )
+            .route(
+                "/graph/v1.0/me/calendars",
+                axum::routing::get(|| async {
+                    axum::Json(json!({"value":[
+                        {"id":"default-id","name":"Calendar","isDefaultCalendar":true},
+                        {"id":"work-calendar","name":"Work","isDefaultCalendar":false}
+                    ]}))
+                }),
+            )
+            .route(
+                "/graph/v1.0/me/calendars/work-calendar/calendarView",
+                axum::routing::get(move || {
+                    let starts = graph_starts.clone();
+                    let ends = graph_ends.clone();
+                    async move {
+                        axum::Json(json!({"value":[{
+                            "id":"graph-work-event","subject":"Work event",
+                            "start":{"dateTime":starts,"timeZone":"UTC"},
+                            "end":{"dateTime":ends,"timeZone":"UTC"}
+                        }] }))
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+
+        let google_sources = client
+            .list_calendar_sources(&google, &google_vault, &google_agent, &google_audience)
+            .await
+            .unwrap();
+        assert_eq!(google_sources.len(), 2);
+        assert!(google_sources[0].primary);
+        assert_eq!(google_sources[1].name, "Work");
+        let graph_sources = client
+            .list_calendar_sources(&graph, &graph_vault, &graph_agent, &graph_audience)
+            .await
+            .unwrap();
+        assert_eq!(graph_sources.len(), 2);
+        assert!(graph_sources[0].primary);
+
+        let range = CalendarRange {
+            from,
+            to,
+            limit: 10,
+        };
+        let google_page = client
+            .calendar_event_page_in_source(
+                &google,
+                &google_vault,
+                &google_agent,
+                &google_audience,
+                "work-calendar",
+                range,
+            )
+            .await
+            .unwrap();
+        assert_eq!(google_page.events[0].provider_id, "google-work-event");
+        let graph_page = client
+            .calendar_event_page_in_source(
+                &graph,
+                &graph_vault,
+                &graph_agent,
+                &graph_audience,
+                "work-calendar",
+                range,
+            )
+            .await
+            .unwrap();
+        assert_eq!(graph_page.events[0].provider_id, "graph-work-event");
+        assert!(
+            client
+                .calendar_event_page_in_source(
+                    &google,
+                    &google_vault,
+                    &google_agent,
+                    &google_audience,
+                    "not-listed",
+                    range,
+                )
+                .await
+                .is_err()
         );
         task.abort();
     }

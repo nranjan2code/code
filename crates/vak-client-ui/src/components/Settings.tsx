@@ -1164,6 +1164,9 @@ export default function Settings() {
     to?: string;
     fromDate?: string;
     toDate?: string;
+    calendarSources?: api.MailCalendarSource[];
+    calendarSourceId?: string;
+    calendarSourceName?: string;
     refreshedAt?: string;
     query?: string;
     folderId?: string;
@@ -1437,6 +1440,7 @@ export default function Settings() {
     selectedRange?: { from: string; to: string },
     searchQuery?: string,
     selectedFolderId?: string,
+    selectedCalendarSourceId?: string,
   ) => {
     const requestedAgentId = activeAgentId();
     const requestGeneration = ++mailCalendarPreviewGeneration;
@@ -1488,10 +1492,16 @@ export default function Settings() {
         }
         const range = { from: from.toISOString(), to: to.toISOString() };
         if (kind === "calendar") {
-          const result = await api.previewMailCalendarEvents(requestedAgentId, account.id, range.from, range.to);
+          const inventory = await api.listMailCalendarSources(requestedAgentId, account.id);
+          if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
+          const calendarSource = inventory.sources.find((source) => source.provider_id === selectedCalendarSourceId)
+            ?? inventory.sources.find((source) => source.primary)
+            ?? inventory.sources[0];
+          if (!calendarSource) throw new Error("No calendar is available for this account.");
+          const result = await api.previewMailCalendarEvents(requestedAgentId, account.id, range.from, range.to, 50, calendarSource.provider_id);
           if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
           const accountName = `${account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple" : "Microsoft"}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`;
-          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events.map((event) => ({ ...event, account_id: account.id, account_name: accountName })), ...range, fromDate, toDate, refreshedAt: new Date().toISOString() });
+          setMailCalendarPreview({ accountId: account.id, kind, loading: false, events: result.events.map((event) => ({ ...event, account_id: account.id, account_name: accountName })), calendarSources: inventory.sources, calendarSourceId: calendarSource.provider_id, calendarSourceName: calendarSource.name, ...range, fromDate, toDate, refreshedAt: new Date().toISOString() });
         } else {
           const result = await api.previewMailCalendarFreeBusy(requestedAgentId, account.id, range.from, range.to);
           if (requestGeneration !== mailCalendarPreviewGeneration || requestedAgentId !== activeAgentId() || page() !== "mail-calendar") return;
@@ -1541,7 +1551,7 @@ export default function Settings() {
       if (generation === mailCalendarPreviewGeneration) setMailCalendarBusy(false);
     }
   };
-  const shiftMailCalendarPreviewRange = (preview: { accountId: string; kind: "mail" | "calendar" | "freebusy" }, days: number) => {
+  const shiftMailCalendarPreviewRange = (preview: { accountId: string; kind: "mail" | "calendar" | "freebusy"; calendarSourceId?: string }, days: number) => {
     if (preview.kind === "mail") return;
     const from = new Date(`${mailCalendarRangeFrom()}T12:00:00`);
     const to = new Date(`${mailCalendarRangeTo()}T12:00:00`);
@@ -1552,7 +1562,7 @@ export default function Settings() {
     setMailCalendarRangeFrom(range.from);
     setMailCalendarRangeTo(range.to);
     const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-    if (account) void loadMailCalendarPreview(account, preview.kind, range);
+    if (account) void loadMailCalendarPreview(account, preview.kind, range, undefined, undefined, preview.calendarSourceId);
   };
   const readAppleMailMessage = async (accountId: string, message: api.MailCalendarMailPreview) => {
     if (mailCalendarBusy() || !message.provider_id) return;
@@ -3015,12 +3025,19 @@ export default function Settings() {
                       <label>Through<input aria-label="Preview end date" type="date" value={mailCalendarRangeTo()} onInput={(event) => setMailCalendarRangeTo(event.currentTarget.value)} /></label>
                       <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => {
                         const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-                        if (account) void loadMailCalendarPreview(account, preview.kind, { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() });
+                        if (account) void loadMailCalendarPreview(account, preview.kind, { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() }, undefined, undefined, preview.calendarSourceId);
                       }}>{mailCalendarBusy() ? "Refreshing…" : "Refresh dates"}</button>
                       <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, 7)}>Next 7 days</button>
+                      <Show when={preview.kind === "calendar" && (preview.calendarSources?.length ?? 0) > 0}>
+                        <label>Calendar<select aria-label="Calendar source" value={preview.calendarSourceId ?? ""} disabled={mailCalendarBusy()} onChange={(event) => {
+                          const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
+                          if (account) void loadMailCalendarPreview(account, "calendar", { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() }, undefined, undefined, event.currentTarget.value);
+                        }}><For each={preview.calendarSources ?? []}>{(source) => <option value={source.provider_id}>{source.name}{source.primary ? " (default)" : ""}</option>}</For></select></label>
+                      </Show>
                       <Show when={preview.kind === "calendar"}><button class="settings-button" disabled={mailCalendarBusy() || preview.loading} onClick={() => void compareOtherCalendars(preview)}>{mailCalendarBusy() ? "Comparing…" : preview.comparedCalendarCount !== undefined ? "Compare again" : "Compare other calendars"}</button></Show>
                     </div>
                     <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone || "this device's time zone"}. Choose up to 30 days.</p>
+                    <Show when={preview.kind === "calendar" && preview.calendarSourceName && !preview.calendarSources?.find((source) => source.provider_id === preview.calendarSourceId)?.primary}><p class="settings-hint">Showing {preview.calendarSourceName}. Event changes and new event drafts use the account’s default calendar.</p></Show>
                     <Show when={preview.kind === "calendar" && preview.comparedCalendarCount !== undefined}><p class="settings-hint" role="status">Compared {preview.comparedCalendarCount} other calendar{preview.comparedCalendarCount === 1 ? "" : "s"}{preview.failedCalendarCount ? `; ${preview.failedCalendarCount} could not be read` : ""}{preview.skippedCalendarCount ? `; ${preview.skippedCalendarCount} more skipped because comparisons are capped at five` : ""}. Compared events are read-only.</p></Show>
                   </Show>
                   <Show when={preview.kind === "mail"}>
@@ -3053,8 +3070,7 @@ export default function Settings() {
                         to={preview.toDate ?? mailCalendarRangeTo()}
                         conflicts={mailCalendarConflictIds()}
                         primaryAccountId={preview.accountId}
-                        onDraftUpdate={(event) => {
-                          if (mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider !== "google") return;
+                        onDraftUpdate={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "google" && preview.calendarSources?.find((source) => source.provider_id === preview.calendarSourceId)?.primary ? (event) => {
                           startMailCalendarDraft(preview.accountId, "calendar", [{ item_id: event.provider_id, version: event.version, label: event.title }]);
                           setMailCalendarUpdateSource({ event_id: event.provider_id, source_version: event.version! });
                           setMailCalendarDraftTitle(event.title);
@@ -3063,8 +3079,8 @@ export default function Settings() {
                           const local = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
                           setMailCalendarDraftStarts(local(event.starts_at!));
                           setMailCalendarDraftEnds(local(event.ends_at!));
-                        }}
-                        onDraftCancel={(event) => void prepareCalendarCancellation(preview.accountId, event)}
+                        } : undefined}
+                        onDraftCancel={preview.calendarSources?.find((source) => source.provider_id === preview.calendarSourceId)?.primary ? (event) => void prepareCalendarCancellation(preview.accountId, event) : undefined}
                       />
                     </Show>
                   </Show>

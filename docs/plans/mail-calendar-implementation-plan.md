@@ -16,7 +16,12 @@ limited timed event create for Google and Microsoft without attendees,
 recurrence, or reminders.
 Calendar and availability previews now support an owner-selected, device-time-
 zone date range up to 30 days, previous/next seven-day navigation, and a visible
-refresh time. Owner folder/label selection now covers Gmail labels and up to 100
+refresh time. Calendar previews now list and select bounded calendar sources
+for all three providers, and the selected source is revalidated against the
+current provider inventory before event reads. Non-default source previews are
+read-only for provider effects; edits, cancellations, and new event drafts
+remain tied to the account's default calendar. Owner folder/label selection
+now covers Gmail labels and up to 100
 Microsoft top-level folders; Apple remains Inbox-only. Child-folder traversal,
 the full connected-account workspace and complete thread workspace remain
 open; Google and Microsoft now have an owner thread preview paged in batches
@@ -30,6 +35,10 @@ remain open.
 Apple availability now has a separate CalendarFreeBusy-only path that returns
 busy intervals through CalDAV `free-busy-query`; event detail access remains a
 separate CalendarRead grant. Mixed Apple capabilities remain unverified.
+Calendar source selection uses Google CalendarList, Microsoft Graph calendars,
+and worker-isolated Apple CalDAV collection discovery. Apple source IDs are
+opaque hashes of validated collection paths; a selection triggers fresh
+discovery and is matched before the collection is queried.
 The maintainer authorized continuing against the current 4.x storage model on
 2026-09-30.** The
 owner opened this feature branch on 2026-09-29. The design contract is

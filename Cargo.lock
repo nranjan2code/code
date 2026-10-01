@@ -7720,6 +7720,7 @@ dependencies = [
  "chrono-tz",
  "futures",
  "globset",
+ "hex",
  "semver",
  "serde",
  "serde_json",

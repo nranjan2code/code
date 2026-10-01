@@ -265,9 +265,13 @@ export function previewMailCalendarAttachment(agentId: string, accountId: string
     method: "POST", body: JSON.stringify({ message_id: messageId, attachment_id: attachmentId }),
   });
 }
-export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50): Promise<{ events: MailCalendarEventPreview[] }> {
+export interface MailCalendarSource { provider_id: string; name: string; primary: boolean }
+export function listMailCalendarSources(agentId: string, accountId: string): Promise<{ sources: MailCalendarSource[] }> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-sources`);
+}
+export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50, calendarId?: string): Promise<{ events: MailCalendarEventPreview[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-preview`, {
-    method: "POST", body: JSON.stringify({ from, to, limit }),
+    method: "POST", body: JSON.stringify({ from, to, limit, ...(calendarId ? { calendar_id: calendarId } : {}) }),
   });
 }
 export function previewMailCalendarFreeBusy(agentId: string, accountId: string, from: string, to: string): Promise<{ busy: MailCalendarBusySlot[] }> {

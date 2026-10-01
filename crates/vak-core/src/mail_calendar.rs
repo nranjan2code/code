@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use sha2::Digest;
 use std::{
     path::Path,
     sync::{
@@ -160,7 +161,7 @@ pub async fn calendar_event_page_with_worker(
                 vault,
                 agent_id,
                 audience,
-                &calendar,
+                &calendar.path,
                 range,
                 Capability::CalendarRead,
             )
@@ -174,6 +175,110 @@ pub async fn calendar_event_page_with_worker(
     }
     // Provider-side CalDAV time-range filters are useful, but the provider
     // response is untrusted. Enforce the requested window again locally.
+    events.retain(|event| event_overlaps_range(event, range));
+    events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    let has_more = events.len() >= range.limit.clamp(1, 100);
+    events.truncate(range.limit.clamp(1, 100));
+    Ok(vak_mail_calendar::provider::CalendarEventPage { events, has_more })
+}
+
+/// Return the bounded calendar inventory. Apple CalDAV collection discovery
+/// and XML parsing always run through the isolated worker.
+pub async fn calendar_sources_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    worker_exe: &Path,
+) -> Result<
+    Vec<vak_mail_calendar::provider::CalendarSource>,
+    vak_mail_calendar::provider::ProviderReadError,
+> {
+    if account.provider != Provider::AppleIcloud {
+        return client
+            .list_calendar_sources(account, vault, agent_id, audience)
+            .await;
+    }
+    discover_icloud_calendars(
+        client,
+        account,
+        vault,
+        agent_id,
+        audience,
+        Capability::CalendarRead,
+        worker_exe,
+    )
+    .await
+    .map(|calendars| {
+        calendars
+            .into_iter()
+            .map(|calendar| vak_mail_calendar::provider::CalendarSource {
+                provider_id: calendar.id,
+                name: calendar.name,
+                primary: false,
+            })
+            .collect()
+    })
+}
+
+/// Read one selected calendar only after proving its ID is still in the
+/// current account inventory. This keeps a stale or forged UI selection from
+/// turning into an arbitrary CalDAV request.
+pub async fn calendar_event_page_in_source_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    source_id: &str,
+    range: CalendarRange,
+    worker_exe: &Path,
+) -> Result<
+    vak_mail_calendar::provider::CalendarEventPage,
+    vak_mail_calendar::provider::ProviderReadError,
+> {
+    if account.provider != Provider::AppleIcloud {
+        let mut page = client
+            .calendar_event_page_in_source(account, vault, agent_id, audience, source_id, range)
+            .await?;
+        page.events
+            .retain(|event| event_overlaps_range(event, range));
+        page.events
+            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.truncate(range.limit.clamp(1, 100));
+        return Ok(page);
+    }
+    let calendars = discover_icloud_calendars(
+        client,
+        account,
+        vault,
+        agent_id,
+        audience,
+        Capability::CalendarRead,
+        worker_exe,
+    )
+    .await?;
+    let calendar = calendars
+        .iter()
+        .find(|calendar| calendar.id == source_id)
+        .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidSearch)?;
+    let response = client
+        .icloud_caldav_calendar_query_xml(
+            account,
+            vault,
+            agent_id,
+            audience,
+            &calendar.path,
+            range,
+            Capability::CalendarRead,
+        )
+        .await?;
+    let parsed = vak_tools::broker::parse_icalendar(worker_exe, &response)
+        .await
+        .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
+    let mut events: Vec<CalendarItem> = serde_json::from_value(parsed)
+        .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
     events.retain(|event| event_overlaps_range(event, range));
     events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
     let has_more = events.len() >= range.limit.clamp(1, 100);
@@ -211,7 +316,7 @@ pub async fn free_busy_with_worker(
     let mut busy = Vec::new();
     for calendar in calendars {
         let response = client
-            .icloud_caldav_freebusy(account, vault, agent_id, audience, &calendar, range)
+            .icloud_caldav_freebusy(account, vault, agent_id, audience, &calendar.path, range)
             .await?;
         let parsed = vak_tools::broker::parse_icalendar_freebusy(worker_exe, &response)
             .await
@@ -234,10 +339,7 @@ async fn discover_icloud_calendars(
     audience: &str,
     capability: Capability,
     worker_exe: &Path,
-) -> Result<
-    Vec<vak_mail_calendar::provider::IcloudCalDavPath>,
-    vak_mail_calendar::provider::ProviderReadError,
-> {
+) -> Result<Vec<IcloudCalendarSource>, vak_mail_calendar::provider::ProviderReadError> {
     let entry = vak_mail_calendar::provider::IcloudCalDavPath::well_known()?;
     let principal_xml = client
         .icloud_caldav_current_principal_xml(account, vault, agent_id, audience, capability)
@@ -290,13 +392,45 @@ async fn discover_icloud_calendars(
     }
     calendars
         .iter()
-        .map(|collection| {
+        .enumerate()
+        .map(|(index, collection)| {
             let href = collection
                 .get("href")
                 .and_then(Value::as_str)
                 .ok_or(vak_mail_calendar::provider::ProviderReadError::InvalidResponse)?;
-            vak_mail_calendar::provider::IcloudCalDavPath::from_href(&calendar_home, href)
+            let path =
+                vak_mail_calendar::provider::IcloudCalDavPath::from_href(&calendar_home, href)?;
+            let id = icloud_calendar_source_id(&path);
+            let name = collection
+                .get("display_name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .map(bounded_calendar_source_name)
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| format!("Calendar {}", index + 1));
+            Ok(IcloudCalendarSource { id, name, path })
         })
+        .collect()
+}
+
+struct IcloudCalendarSource {
+    id: String,
+    name: String,
+    path: vak_mail_calendar::provider::IcloudCalDavPath,
+}
+
+fn icloud_calendar_source_id(path: &vak_mail_calendar::provider::IcloudCalDavPath) -> String {
+    format!(
+        "caldav:{}",
+        hex::encode(sha2::Sha256::digest(path.as_str().as_bytes()))
+    )
+}
+
+fn bounded_calendar_source_name(value: &str) -> String {
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(128)
         .collect()
 }
 
@@ -1385,6 +1519,25 @@ mod tests {
             encode_citation_part("id?query#fragment"),
             "id%3Fquery%23fragment"
         );
+    }
+
+    #[test]
+    fn apple_calendar_source_ids_are_stable_opaque_and_names_are_bounded() {
+        let base = vak_mail_calendar::provider::IcloudCalDavPath::well_known().unwrap();
+        let path = vak_mail_calendar::provider::IcloudCalDavPath::from_href(
+            &base,
+            "/123456789/calendars/work/",
+        )
+        .unwrap();
+        let source_id = icloud_calendar_source_id(&path);
+        assert_eq!(source_id, icloud_calendar_source_id(&path));
+        assert!(source_id.starts_with("caldav:"));
+        assert!(!source_id.contains("work"));
+        assert_eq!(
+            bounded_calendar_source_name(" Work\nCalendar "),
+            " WorkCalendar "
+        );
+        assert_eq!(bounded_calendar_source_name(&"x".repeat(200)).len(), 128);
     }
 
     #[tokio::test]
