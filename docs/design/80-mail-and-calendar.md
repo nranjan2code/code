@@ -235,9 +235,10 @@ hidden while the message is open; keyboard focus moves to the subject. “Back t
 inbox” restores the same mail view and keyboard focus returns to the opened
 message. Replies are saved as Agent-scoped drafts; choosing “Draft reply in
 Canvas” reveals the existing Drafts and Review editor beneath the focused
-conversation so the owner can edit and save the reply without losing context.
-Sending still requires its separate exact-payload Review and confirmation. The
-message itself remains a read-only preview.
+conversation so the owner can edit and save the reply without losing context;
+keyboard focus moves to the reply body when the saved draft opens. Sending still
+requires its separate exact-payload Review and confirmation. The message itself
+remains a read-only preview.
 The interactive mail tool now lists a bounded set of provider folders/labels
 on an owner's request, then accepts a selected ID for recent-mail reads only
 after verifying it against the same account. Scheduled routines cannot list

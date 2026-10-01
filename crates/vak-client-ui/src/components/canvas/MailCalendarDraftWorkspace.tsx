@@ -12,7 +12,7 @@ const localInput = (date: Date) => new Date(date.getTime() - date.getTimezoneOff
 const actionName = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "Email" : action.kind === "cancel_event" ? "Event cancellation" : "Calendar event";
 const actionVerb = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "send" : action.kind === "cancel_event" ? "cancel" : action.kind === "update_event" ? "update" : "create";
 
-export default function MailCalendarDraftWorkspace(props: { agentId: string; openCandidate?: api.MailCalendarCandidate | null; onCandidateOpened?: (candidate: api.MailCalendarCandidate) => void }) {
+export default function MailCalendarDraftWorkspace(props: { agentId: string; openCandidate?: api.MailCalendarCandidate | null; focusReply?: boolean; onCandidateOpened?: (candidate: api.MailCalendarCandidate) => void }) {
   const [expanded, setExpanded] = createSignal(false);
   const [accounts, setAccounts] = createSignal<MailCalendarAccount[]>([]);
   const [candidates, setCandidates] = createSignal<MailCalendarCandidate[]>([]);
@@ -36,6 +36,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
   const [ends, setEnds] = createSignal("");
   const [review, setReview] = createSignal<ConfirmConfig | null>(null);
   let loadGeneration = 0;
+  let replyMessageField: HTMLTextAreaElement | undefined;
 
   const refresh = async (agentId = props.agentId) => {
     if (!agentId) return;
@@ -257,6 +258,11 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
     setExpanded(true);
     setCandidates((current) => [candidate, ...current.filter((item) => item.id !== candidate.id)]);
     beginOpen(candidate);
+    const focusReply = props.focusReply && candidate.action.kind === "send_mail" && !!candidate.action.draft.reply_to_message_id;
+    if (focusReply) requestAnimationFrame(() => {
+      replyMessageField?.scrollIntoView({ behavior: "smooth", block: "center" });
+      replyMessageField?.focus({ preventScroll: true });
+    });
     props.onCandidateOpened?.(candidate);
   });
 
@@ -273,7 +279,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
       <Show when={candidates().length > PAGE_SIZE}><nav class="daily-mail-calendar-pagination" aria-label="Draft pages"><button type="button" class="settings-button" disabled={page() === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button><span aria-live="polite">Page {page() + 1} of {pageCount()} · {candidates().length} drafts</span><button type="button" class="settings-button" disabled={page() + 1 >= pageCount()} onClick={() => setPage((value) => Math.min(pageCount() - 1, value + 1))}>Next</button></nav></Show>
       <Show when={editorKind()}>
         <div class="mail-calendar-editor"><div class="settings-preview-heading"><strong>{selectedReply() ? "Reply draft" : editorKind() === "calendar" ? "Calendar event draft" : "Email draft"}</strong><button type="button" class="settings-button" disabled={busy()} onClick={() => { setSelected(null); setEditorKind(null); }}>Close draft</button></div>
-          <Show when={editorKind() === "mail"}><label>To<input type="text" value={to()} onInput={(event) => setTo(event.currentTarget.value)} /></label><label>Cc<input type="text" value={cc()} onInput={(event) => setCc(event.currentTarget.value)} /></label><label>Bcc<input type="text" value={bcc()} onInput={(event) => setBcc(event.currentTarget.value)} /></label><label>Subject<input type="text" value={subject()} onInput={(event) => setSubject(event.currentTarget.value)} /></label><label>Message<textarea rows={8} value={body()} onInput={(event) => setBody(event.currentTarget.value)} /></label></Show>
+          <Show when={editorKind() === "mail"}><label>To<input type="text" value={to()} onInput={(event) => setTo(event.currentTarget.value)} /></label><label>Cc<input type="text" value={cc()} onInput={(event) => setCc(event.currentTarget.value)} /></label><label>Bcc<input type="text" value={bcc()} onInput={(event) => setBcc(event.currentTarget.value)} /></label><label>Subject<input type="text" value={subject()} onInput={(event) => setSubject(event.currentTarget.value)} /></label><label>{selectedReply() ? "Reply message" : "Message"}<textarea ref={replyMessageField} aria-label={selectedReply() ? "Reply message" : "Message"} rows={8} value={body()} onInput={(event) => setBody(event.currentTarget.value)} /></label></Show>
           <Show when={editorKind() === "calendar"}><label>Event title<input type="text" value={title()} onInput={(event) => setTitle(event.currentTarget.value)} /></label><div class="mail-calendar-work-actions"><label>Starts<input type="datetime-local" value={starts()} onInput={(event) => setStarts(event.currentTarget.value)} /></label><label>Ends<input type="datetime-local" value={ends()} onInput={(event) => setEnds(event.currentTarget.value)} /></label></div><label>Location<input type="text" value={location()} onInput={(event) => setLocation(event.currentTarget.value)} /></label><label>Description<textarea rows={5} value={description()} onInput={(event) => setDescription(event.currentTarget.value)} /></label></Show>
           <Show when={selected()?.source_refs.length}><p class="settings-hint">Based on: {selected()?.source_refs.map((item) => item.label || "Selected source").join(", ")}</p></Show>
           <div class="settings-actions"><button type="button" class="settings-button" disabled={busy()} onClick={() => setReview({ title: "Preview this saved draft", description: "This local preview does not contact the provider.", confirmLabel: "Close preview", reviewContent: <pre class="mail-calendar-review-payload">{JSON.stringify(actionForEditor(), null, 2)}</pre>, onConfirm: () => undefined })}>Preview draft</button><button type="button" class="btn primary" disabled={busy()} onClick={() => void save()}>{busy() ? "Saving…" : selected() ? "Save new revision" : "Save draft"}</button><Show when={selected()}>{(candidate) => <button type="button" class="btn danger" disabled={busy() || !candidate().candidate_digest || !!candidate().action_state} onClick={() => buildReview(candidate())}>Review exact provider action</button>}</Show></div>

@@ -2330,3 +2330,10 @@ remains open.
   The full mock-pack script was not rerun as one command, and the rendered Daily
   Canvas fixture still needs browser verification. No live provider data was
   used. Real-provider behavior and 24-hour service recovery remain open.
+- 2026-10-01: The conversation's “Draft reply in Canvas” handoff now scrolls
+  to and focuses the labelled reply-body field after opening the saved Agent
+  draft. The generated-data Canvas fixture asserts that focus destination along
+  with its existing exact-message and Reply-To checks. UI typecheck and the web
+  production build pass. The rendered browser fixture could not be rerun in
+  this environment, so the new focus assertion is compiled but not yet observed
+  in a browser. Provider behavior and 24-hour service recovery remain open.

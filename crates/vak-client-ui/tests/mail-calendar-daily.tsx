@@ -301,7 +301,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"
     && body.action.draft.to?.[0]?.address === "reply@example.test")
     && inlineReplyEditorVisible()
-    && document.querySelector(".mail-calendar-editor")?.textContent?.includes("Reply draft") === true);
+    && document.querySelector(".mail-calendar-editor")?.textContent?.includes("Reply draft") === true
+    && document.activeElement === document.querySelector(".mail-calendar-editor textarea[aria-label='Reply message']"));
   const replyReviewButtonReady = await waitFor(() => !!document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")
     && !document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")!.disabled);
   document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")?.click();
