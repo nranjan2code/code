@@ -22,12 +22,13 @@ const accounts = providerTypes.flatMap((provider) => Array.from({ length: 3 }, (
 })));
 const requests: string[] = [];
 const fixtureErrors: string[] = [];
+let fixtureResponses = 0;
 const activeAccounts = new Map<string, number>();
 let maxConcurrentAccounts = 0;
 const now = new Date();
 const day = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localDayStart = new Date(`${day(now)}T00:00:00`);
-const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
+const json = (value: unknown) => { fixtureResponses += 1; return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } }); };
 
 window.fetch = async (input) => {
   try {
@@ -100,7 +101,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     const mailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
     const mailRequests = requests.filter((path) => path.endsWith("/mail-preview"));
     const warnings = [...document.querySelectorAll(".daily-mail-calendar-warning")].map((node) => node.textContent?.trim()).filter(Boolean);
-    throw new Error(`Expected 72 mail rows after the initial read; found ${mailRows} from ${mailRequests.length} requests (${mailRequests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
+    throw new Error(`Expected 72 mail rows after the initial read; found ${mailRows}. Captured ${requests.length} routes and ${fixtureResponses} responses (${requests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
   }
   const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;

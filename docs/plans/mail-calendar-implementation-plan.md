@@ -1876,5 +1876,7 @@ remains open.
 - Follow-up: the updated browser fixture currently remains in “Preparing
   preview…” after capturing its nine mail-read requests, so its row, event
   selection, and refresh assertions are not verified in a rendered browser.
-  The fixture now reports captured routes and local handler errors; next
-  diagnose why the viewer's bounded preview load does not settle in that run.
+  A direct call to the same bounded read function did settle for all nine
+  accounts, while the mounted viewer stayed loading; the fixture now reports
+  captured routes and local handler errors. Next diagnose why the component
+  loader does not settle or publish its data in that run.
