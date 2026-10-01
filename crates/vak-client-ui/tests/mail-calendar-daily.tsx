@@ -287,7 +287,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"));
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
   const conversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
-    && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
+    && document.querySelectorAll(".daily-mail-calendar-message").length === 12
+    && document.activeElement instanceof HTMLElement && document.activeElement.matches(".daily-mail-calendar-message button[data-mail-open]"));
   const renderedMailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
   const mailPager = document.querySelector<HTMLElement>("nav[aria-label='Recent email pages']");
   const mailPagingStartsCorrectly = mailPager?.textContent?.includes("Page 1 of 6") === true && renderedMailRows === 12;
@@ -307,9 +308,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
   const appleMessageBodyPreviewWorks = appleSelectedMessageOpened && await waitFor(() => document.querySelector(".daily-mail-calendar-conversation")?.textContent?.includes("Synthetic Apple message body") === true)
     && requests.some((path) => path.endsWith("/message-preview"));
-  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
   const appleConversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
-    && document.querySelectorAll(".daily-mail-calendar-message").length === 8);
+    && document.querySelectorAll(".daily-mail-calendar-message").length === 8
+    && document.activeElement instanceof HTMLElement && document.activeElement.matches(".daily-mail-calendar-message button[data-mail-open]"));
   const allCalendarEventsRendered = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 300);
   const initialPhoneTimeline = document.querySelector<HTMLElement>(".mail-calendar-time-grid.is-day");
   const phoneTimelineScrollWorks = window.innerWidth > 640
@@ -448,10 +450,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
     check(conversationHandoffWorks, "A reply opens as a saved Agent-scoped draft in Canvas without sending it"),
-    check(conversationReturnsToInbox, "Returning from a conversation restores the inbox while keeping Today open"),
+    check(conversationReturnsToInbox, "Back to inbox restores the inbox and returns keyboard focus to the opened message"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(appleMessageBodyPreviewWorks, "An Apple selected-message preview loads its body in Canvas without a conversation id"),
-    check(appleConversationReturnsToInbox, "The focused Apple message preview also returns cleanly to the inbox"),
+    check(appleConversationReturnsToInbox, "Escape closes an Apple message preview and restores focus to its inbox row"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(phoneTimelineScrollWorks, "The phone keeps dense event lanes readable inside the calendar without widening the page"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),

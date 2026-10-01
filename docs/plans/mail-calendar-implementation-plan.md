@@ -2259,9 +2259,10 @@ remains open.
 - 2026-10-01: Opening a message now switches Today Canvas to a focused
   conversation workspace, moves keyboard focus to its subject, and hides the
   calendar, inbox controls, routines, and draft list until “Back to inbox” is
-  used. The Drafts component remains mounted but visually hidden so reply
-  handoffs still open a saved Agent-scoped draft. The synthetic fixture now
-  tests both conversation return paths and passes all 41 checks with generated
-  data. UI typecheck, production web build, and `git diff --check` pass. The
-  editable in-thread composer and real-provider/24-7 service acceptance remain
-  open.
+  used. “Back to inbox” restores keyboard focus to the message that opened the
+  workspace; Escape closes it and restores the same focus target. The Drafts
+  component remains mounted but visually hidden so reply handoffs still open a
+  saved Agent-scoped draft. The synthetic fixture tests both return paths and
+  passes all 41 checks with generated data. UI typecheck, production web build,
+  and `git diff --check` pass. The editable in-thread composer and
+  real-provider/24-7 service acceptance remain open.

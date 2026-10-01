@@ -102,6 +102,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   );
   const [selectedEvent, setSelectedEvent] = createSignal<api.MailCalendarEventPreview | null>(null);
   const [selectedConversation, setSelectedConversation] = createSignal<SelectedConversation | null>(null);
+  let lastOpenedMessage: { accountId: string; messageId: string } | null = null;
   const [conversationLoading, setConversationLoading] = createSignal(false);
   const [conversationError, setConversationError] = createSignal<string | null>(null);
   const [conversationRequest, setConversationRequest] = createSignal(0);
@@ -215,11 +216,31 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     attachmentRequest += 1;
     setAttachmentLoading(null); setAttachmentPreview(null); setAttachmentError(null);
   };
+  const closeConversationAndRestoreFocus = () => {
+    const opener = lastOpenedMessage;
+    closeConversation();
+    if (opener) window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-mail-open="${CSS.escape(`${opener.accountId}/${opener.messageId}`)}"]`)?.focus({ preventScroll: true });
+    });
+  };
+  createEffect(() => {
+    if (!selectedConversation()) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      closeConversationAndRestoreFocus();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    onCleanup(() => document.removeEventListener("keydown", onKeyDown));
+  });
   const readConversation = async (accountId: string, threadId: string, cursor?: string, append = false, targetMessageId?: string) => {
     const request = conversationRequest() + 1;
     setConversationRequest(request);
     if (!append) { setAttachmentPreview(null); setAttachmentError(null); setAttachmentLoading(null); attachmentRequest += 1; }
-    if (!append) setSelectedConversation({ accountId, threadId, messages: [] });
+    if (!append) {
+      lastOpenedMessage = targetMessageId ? null : lastOpenedMessage;
+      setSelectedConversation({ accountId, threadId, messages: [] });
+    }
     setConversationLoading(true);
     setConversationError(null);
     try {
@@ -273,6 +294,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const readSelectedMessage = async (accountId: string, message: api.MailCalendarMailPreview) => {
     const request = conversationRequest() + 1;
     setConversationRequest(request);
+    lastOpenedMessage = { accountId, messageId: message.provider_id };
     setSelectedConversation({ accountId, threadId: null, messages: [{ ...message, body_text: null }], nextCursor: null });
     setConversationLoading(true); setConversationError(null);
     setAttachmentPreview(null); setAttachmentError(null); setAttachmentLoading(null); attachmentRequest += 1;
@@ -509,7 +531,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
               const account = () => visibleMailAccounts().find((item) => item.account.id === accountId);
               return <div class="daily-mail-calendar-mail-account"><h4>{account() ? providerName(account()!.account) : "Connected account"}</h4><For each={account()?.messages.map((message) => message.provider_id) ?? []}>{(messageId) => {
                 const message = () => account()?.messages.find((item) => item.provider_id === messageId);
-                return <Show when={message()}>{(currentMessage) => <article class="daily-mail-calendar-message"><div><strong>{currentMessage().subject || "(No subject)"}</strong><small>{currentMessage().from || "Sender unavailable"}{currentMessage().received_at ? ` · ${new Date(currentMessage().received_at!).toLocaleString()}` : ""}</small><Show when={currentMessage().preview}><p>{currentMessage().preview}</p></Show></div><Show when={currentMessage().thread_id} fallback={<button type="button" class="settings-button" onClick={() => void readSelectedMessage(accountId, currentMessage())}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" onClick={() => void readConversation(accountId, threadId())}>Open conversation</button>}</Show></article>}</Show>;
+                return <Show when={message()}>{(currentMessage) => <article class="daily-mail-calendar-message"><div><strong>{currentMessage().subject || "(No subject)"}</strong><small>{currentMessage().from || "Sender unavailable"}{currentMessage().received_at ? ` · ${new Date(currentMessage().received_at!).toLocaleString()}` : ""}</small><Show when={currentMessage().preview}><p>{currentMessage().preview}</p></Show></div><Show when={currentMessage().thread_id} fallback={<button type="button" class="settings-button" data-mail-open={`${accountId}/${currentMessage().provider_id}`} onClick={() => void readSelectedMessage(accountId, currentMessage())}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" data-mail-open={`${accountId}/${currentMessage().provider_id}`} onClick={() => { lastOpenedMessage = { accountId, messageId: currentMessage().provider_id }; void readConversation(accountId, threadId()); }}>Open conversation</button>}</Show></article>}</Show>;
               }}</For></div>;
             }}</For>
             <Show when={mailRows().length > mailPageSize}><nav class="daily-mail-calendar-pagination" aria-label="Recent email pages"><button type="button" class="settings-button" disabled={mailPage() === 0} onClick={() => setMailPage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {mailPage() + 1} of {mailPageCount()} · {mailRows().length} messages loaded</span><button type="button" class="settings-button" disabled={mailPage() + 1 >= mailPageCount()} onClick={() => setMailPage((page) => Math.min(mailPageCount() - 1, page + 1))}>Next</button></nav></Show>
@@ -521,7 +543,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
               const account = () => data.accounts.find((item) => item.account.id === conversation().accountId)?.account;
               const accountLabel = () => account() ? providerName(account()!) : "Connected account";
               return <section class="daily-mail-calendar-conversation is-workspace" aria-label="Conversation workspace">
-                <header><div><span>{accountLabel()} · {conversation().messages.length} messages{conversationLoading() ? " · Updating" : ""}</span><h4 class="daily-mail-calendar-conversation-heading" tabindex="-1">{conversation().messages[0]?.subject || "Conversation"}</h4></div><button type="button" class="settings-button" onClick={closeConversation}>Back to inbox</button></header>
+                <header><div><span>{accountLabel()} · {conversation().messages.length} messages{conversationLoading() ? " · Updating" : ""}</span><h4 class="daily-mail-calendar-conversation-heading" tabindex="-1">{conversation().messages[0]?.subject || "Conversation"}</h4></div><button type="button" class="settings-button" onClick={closeConversationAndRestoreFocus}>Back to inbox</button></header>
                 <p class="settings-hint">Read-only conversation preview. Message content is untrusted; opening it does not add it to the Agent conversation.</p>
                 <Show when={conversationError()}><p class="daily-mail-calendar-warning" role="alert">{conversationError()}</p></Show>
                 <For each={conversation().messages}>{(message) => <article class="daily-mail-calendar-conversation-message" data-mail-message-id={message.provider_id}>
