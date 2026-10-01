@@ -227,13 +227,11 @@ a different workspace, Agent or conversation), it writes a `ConfigChange`
 security event naming any prompt change, so "my bot started answering
 differently" is answerable from the audit trail.
 
-Two pieces are not yet per turn: a saved Agent's identity and instructions
+One piece is not yet per turn: a saved Agent's identity and instructions
 are read from the session header's `AgentIdentity`, recorded at admission
-(that Agent's prompt files are read per turn), and `vak exec --session`
-still refuses a session whose layers changed since admission unless
-`--accept-drift` is passed, with a message saying the frozen prompt runs.
-Both predate this section; the second message is inaccurate, since the
-turn runs the current prompt.
+(that Agent's own prompt files are read per turn). `vak exec --session` no
+longer gates a resume on layer changes; the `--accept-drift` flag was
+removed from `exec` (it remains on `flow run --resume`, a different check).
 
 ### Budget
 
@@ -299,8 +297,7 @@ The load-bearing UX decisions:
   actually change?" never requires a git checkout.
 - **Save says when it takes effect.** An edit applies from the next turn
   of every session; a turn already running keeps the prompt it started
-  with. (The shipped Admin and Settings copy still says "applies to new
-  sessions", which is inaccurate.)
+  with. The Admin and Settings copy says so.
 - Bot and chat prompt tiers live in the existing gateway editors beside their
   `voice`, `route`, and `permission_mode` controls — the tier chain is already
   taught there, and a second place to edit chat behaviour would split it.
@@ -395,8 +392,7 @@ Shipped:
 
 7. Per-turn resolution with an admission snapshot: `Core::prompt_drift`
    as an audit signal, and a `ConfigChange` event when a gateway rotation
-   coincides with a prompt change. `vak exec --session --accept-drift` is a
-   leftover gate (see *Per-turn resolution*).
+   coincides with a prompt change.
 8. `VoiceConfig.persona` absorbed into the bot/chat `identity` block, with the
    legacy field kept as a fallback. `PATCH` on a bot and on an allowlist entry
    both accept a `prompt` tier, so the gateway layers are reachable.
@@ -430,6 +426,8 @@ way to set identity and rules (invariant 30).
   new text.
 - A turn already running keeps the prefix it started with on every step.
 - A session whose ledger predates prompt layers never reports drift.
+- `vak exec --session` resumes a session whose layers changed and runs the
+  current prompt, with no flag.
 - One persona: the `identity` block wins, `VoiceConfig.persona` is fallback.
 - A surface note never replaces or reorders the generated `Surface:` line,
   and no narrower layer can drop a wider layer's note.

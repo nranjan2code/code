@@ -609,9 +609,9 @@ stateDiagram-v2
 
 | Marker | Fires when | Asks for |
 |---|---|---|
-| `[grounding-check]` | a search/fetch succeeded and the answer ignored it | answer from those results with sources, or say they do not answer |
+| `[grounding-check]` | a search/fetch succeeded and the answer ignored it | answer the opening message from those results with sources, or say they do not answer |
 | `[freshness-check]` | a `live-data` reading got no retrieval or observation this run | fetch now, then an honest last-known statement if impossible |
-| `[empty-step]` | a thinking-only response | make the planned call or write the answer |
+| `[empty-step]` | a thinking-only response | carry on with the opening message: make the planned call or write the answer |
 | `[steering-drift]` | the step served a different directive | refocus on the latest message (never quotes it) |
 | `[presentation-check]` | the prose reads as a card shape | call the matching card tool (also loads it) |
 | `[fence-check]` | an inline `vak` fence failed to parse | fix it |
@@ -673,7 +673,7 @@ pipeline above, so they get the full prefix and tail.
 
 | Path | Surface | Prefix | Tail | Notes |
 |---|---|---|---|---|
-| CLI `vak exec` | `Cli` | full | yes | `--session` resumes; still gated by a leftover drift check (§23) |
+| CLI `vak exec` | `Cli` | full | yes | `--session` resumes and runs the current prompt |
 | `vak term` | `Terminal` | full | yes | a client of a server |
 | Desktop | `Desktop` | full | yes | |
 | Browser app | `Web` | full | yes | |
@@ -930,8 +930,8 @@ receipt's `prefix_digest` differs from the previous turn's, so a
 the conversation continues. A turn that was already running when the edit
 was saved finishes on the prefix it started with.
 
-The exception today is `vak exec --session <id>`, which refuses to resume
-until `--accept-drift` is passed (§23).
+`vak exec --session <id>` behaves the same way: it resumes and runs the
+current prompt.
 
 ---
 
@@ -986,34 +986,27 @@ until `--accept-drift` is passed (§23).
 
 ## 23. Observed gaps between the documents and the code
 
-Found while writing this reference, against the tree at 5.3.2. They are
-recorded, not fixed here.
+Found while writing this reference, against the tree at 5.3.2. Fixed since:
+the CLI resume gate and its "FROZEN prompt" message, the "applies to new
+sessions" UI copy, and the two nudges that quoted the request. Still open:
 
-1. **Leftover per-session gate in the CLI.** The prompt is resolved per
-   turn, but `vak exec --session <id>` still refuses a session whose layers
-   changed since admission unless `--accept-drift` is passed, and its
-   message says "resume executes the FROZEN prompt", which is false: the
-   turn runs the current prompt.
-2. **Saved Agent identity is per session.** A saved Agent's identity and
+1. **Saved Agent identity is per session.** A saved Agent's identity and
    instructions come from the session header's `AgentIdentity`, recorded
    at admission; editing the Agent does not reach an open session's next
    turn, unlike every other layer. The Agent's own prompt files are read
    per turn.
-3. **Doc 68 §6's tail order** lists `<thread>` before `<work_contract>`;
+2. **Doc 68 §6's tail order** lists `<thread>` before `<work_contract>`;
    `compose_tail` emits `<turn_context>`, `<intent>`, `<stance>`,
    `<work_contract>`, `<workspace_delta>`, `<conversation_thread>`. Doc
    68 also names blake3 for the prefix digest; `assemble::prefix_digest`
-   uses SHA-256.
-4. **Layer push order vs enum order.** The role layer is pushed before the
+   uses SHA-256. Doc 68 §6 now carries a note giving the code's order.
+3. **Layer push order vs enum order.** The role layer is pushed before the
    bot and chat overlays, but `PromptLayer` orders `Bot, Chat` before
    `Agent`. Narrowest-wins follows push order, so a role's identity file
    is shadowed by a bot or chat identity, while descriptors are sorted by
    enum order.
 
-5. **UI copy.** Admin `#/prompts` and the client's Settings → Prompts say
-   changes "apply to new sessions"; they apply from the next turn.
-
-Items 1, 2 and 5 are code that does not yet follow the per-turn model.
+Item 1 is code that does not yet follow the per-turn model.
 
 ---
 

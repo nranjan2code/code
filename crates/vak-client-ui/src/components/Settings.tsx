@@ -2099,7 +2099,7 @@ export default function Settings() {
                 }}</For>
               </Group>
               <Group title="Effective prompt">
-                <p class="settings-hint prompt-effective-intro">What the model actually receives, and where each part came from. Changes apply to new sessions; a running turn keeps the prompt it started with.</p>
+                <p class="settings-hint prompt-effective-intro">What the model actually receives, and where each part came from. Changes apply from the next turn of every session; a running turn keeps the prompt it started with.</p>
                 <Row title="Estimated size" description="Spent on every turn of every session."><span class="metric">~{promptEffective()?.estimated_tokens ?? 0} tokens</span></Row>
                 <div class="capability-list">
                   <For each={promptEffective()?.layers ?? []}>{(d) => (

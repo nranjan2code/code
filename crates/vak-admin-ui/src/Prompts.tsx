@@ -257,7 +257,7 @@ export function PromptsSection(props: {
       await api.putPromptBlock(props.scope(), block, content, selectedAgentIdOrUndefined());
       props.pushToast(
         "info",
-        `${block} saved to ${scopeLabel(props.scope())}. Applies to new sessions.`,
+        `${block} saved to ${scopeLabel(props.scope())}. Applies from the next turn.`,
       );
       saveHistoryEntry({
         id: Date.now().toString(),
@@ -1083,7 +1083,7 @@ export function PromptsSection(props: {
 
           <Show when={effective()}>
             <p class="dim small" style="margin-top: 10px;">
-              Fingerprint <code>{currentFingerprint().slice(0, 16)}</code> · Changes apply to new sessions; active turns keep their admission prompt.
+              Fingerprint <code>{currentFingerprint().slice(0, 16)}</code> · Changes apply from the next turn of every session; a turn already running keeps the prompt it started with.
             </p>
           </Show>
         </div>
