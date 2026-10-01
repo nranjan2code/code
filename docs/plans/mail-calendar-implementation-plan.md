@@ -32,10 +32,11 @@ continuation cursor stored atomically in the encrypted Agent vault. A local
 browser smoke check passed at 1440 × 900 and 390 × 844 with no console warnings
 or errors. The connected-account owner UI path has now passed a same-origin
 synthetic fixture from inbox preview through conversation, source-linked reply,
-and exact-effect Review; the fixture closes Review without sending. Calendar
-event-trigger setup, paused preview, history, and resume also pass there. This
-does not verify live provider data or effects; full connected workspace,
-conversation, and provider acceptance remain open.
+exact email-effect Review, calendar preview, timed-event draft, and exact
+calendar-effect Review; the fixture closes both Reviews without confirming.
+Calendar event-trigger setup, paused preview, history, and resume also pass
+there. This does not verify live provider data or effects; full connected
+workspace, conversation, and provider acceptance remain open.
 Apple availability now has a separate CalendarFreeBusy-only path that returns
 busy intervals through CalDAV `free-busy-query`; event detail access remains a
 separate CalendarRead grant. Mixed Apple capabilities remain unverified.
@@ -1981,11 +1982,13 @@ remains open.
   or live credential is used. Full scheduled provider polling and sustained
   service recovery acceptance remain open.
 - 2026-10-01: Re-ran the rendered connected-review fixture in the local browser:
-  all 13 checks passed for inbox preview, thread paging, source-linked reply,
-  exact Review with no send, and calendar event-trigger routine setup, preview,
-  history, and resume. The daily Canvas synthetic fixture also rendered data
-  across Google, Microsoft, and Apple sample accounts. These are UI fixtures,
-  not live account connections. The complete `scripts/test-mail-calendar-mock-pack.sh`
+  all 17 checks passed for inbox preview, thread paging, source-linked reply,
+  exact email Review, calendar preview, timed-event draft, exact calendar
+  Review, and event-trigger routine setup, preview, history, and resume. Both
+  effect Reviews were closed without confirmation; no effect route or external
+  request was made. The daily Canvas synthetic fixture also rendered data across
+  Google, Microsoft, and Apple sample accounts. These are UI fixtures, not live
+  account connections. The complete `scripts/test-mail-calendar-mock-pack.sh`
   passed, including 123 provider/vault, 16 Core, 16 server, 4 owner HTTP,
   restart/requeue, 5 worker checks, the production web build, and the new server
   routine-run lifecycle test. The live provider and 24-hour service acceptance

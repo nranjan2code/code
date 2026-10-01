@@ -7,7 +7,7 @@ const requests: Array<{ path: string; method: string; body: any }> = [];
 const account = {
   id: "review-google-account", provider: "google", status: "connected",
   identity_masked: "owner@example.test", auth_method: "oauth", credential_available: true,
-  superseded_by_active_link: false, capabilities: ["mail_read", "mail_send", "calendar_read"],
+  superseded_by_active_link: false, capabilities: ["mail_read", "mail_send", "calendar_read", "calendar_write"],
   connected_at: "2026-10-01T00:00:00Z", access_token_expires_at: null,
   refresh_token_available: true, revoked_at: null,
 };
@@ -17,6 +17,13 @@ const sourceMessage = {
   received_at: "2026-10-01T09:00:00Z", preview: "Could we confirm the agenda?",
   body_text: "Could we confirm the agenda for Friday?", body_status: "available",
   has_attachments: false, attachments: [],
+};
+const sourceEvent = {
+  provider_id: "event-52", account_id: "review-google-account", account_name: "Google · owner@example.test",
+  version: "event-version-4", title: "Friday launch review", starts_at: "2026-10-02T16:00:00Z",
+  ends_at: "2026-10-02T16:45:00Z", starts_on: null, ends_on: null, all_day: false,
+  location: "Room 4", description: "Review the launch checklist.", attendee_count: 0,
+  recurring: false, private: false, can_cancel: true,
 };
 const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } });
 let saved: any = null;
@@ -33,9 +40,9 @@ window.fetch = async (input, init) => {
   if (url.pathname.endsWith("/candidates") && method === "GET") return json({ candidates: saved ? [saved] : [] });
   if (url.pathname.endsWith("/candidates") && method === "POST") {
     saved = {
-      id: "review-candidate-1", account_id: body.account_id, agent_id: "fixture-review-owner",
+      id: body.candidate_id ?? `review-${body.action.kind}-candidate`, account_id: body.account_id, agent_id: "fixture-review-owner",
       audience_id: "owner:fixture-review-owner", source_refs: body.source_refs ?? [], action: body.action,
-      revision: (saved?.revision ?? 0) + 1, candidate_digest: "fixture-digest-1",
+      revision: body.expected_revision ? body.expected_revision + 1 : 1, candidate_digest: "fixture-digest-1",
       created_at: saved?.created_at ?? new Date().toISOString(), action_state: null,
     };
     return json({ candidate: saved });
@@ -43,6 +50,7 @@ window.fetch = async (input, init) => {
   if (url.pathname.endsWith("/mail-folders")) return json({ folders: [{ provider_id: "INBOX", name: "Inbox" }] });
   if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "primary-calendar", name: "Personal", primary: true }] });
   if (url.pathname.endsWith("/mail-preview")) return json({ messages: [sourceMessage] });
+  if (url.pathname.endsWith("/calendar-preview")) return json({ events: [sourceEvent] });
   if (url.pathname.endsWith("/thread-preview")) {
     if (body.cursor === "older-page") return json({ messages: [sourceMessage, {
       ...sourceMessage, provider_id: "message-40", subject: "Earlier launch note",
@@ -142,6 +150,26 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
   const review = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
   const cancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Cancel");
   cancel?.click();
+  const mailSaved = saved;
+  await click("Preview calendar");
+  await waitFor(() => document.body.textContent?.includes("Friday launch review") === true, "the bounded calendar source preview");
+  await click("New event draft");
+  await waitFor(() => document.querySelector(".mail-calendar-editor")?.textContent?.includes("Calendar event draft") === true, "the event work area");
+  setField("Title", "Synthetic project follow-up");
+  setField("Starts", "2026-10-03T10:00");
+  setField("Ends", "2026-10-03T10:30");
+  setField("Location", "Project room");
+  setField("Description", "Review the synthetic action plan.");
+  await click("Preview draft");
+  await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Synthetic project follow-up") === true, "the exact local event draft preview");
+  await click("Save draft");
+  await waitFor(() => saved?.action?.kind === "create_event" && saved?.candidate_digest === "fixture-digest-1", "the saved event candidate");
+  await click("Review and create this exact event");
+  await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("Synthetic project follow-up") === true, "the exact calendar-effect Review");
+  const eventReview = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
+  const eventModal = document.body.textContent ?? "";
+  const eventCancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Cancel");
+  eventCancel?.click();
   const effectCalls = requests.filter((request) => /\/(send|create-event|update-event|cancel-event)$/.test(request.path));
   const eventTriggerLabel = [...document.querySelectorAll<HTMLLabelElement>("label.capability-item")].find((label) => label.textContent?.includes("Run around a calendar event"));
   const eventTriggerCheckbox = eventTriggerLabel?.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -165,10 +193,14 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
     check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),
-    check(saved?.source_refs?.[0]?.item_id === "message-41" && saved?.action?.draft?.reply_to_message_id === "message-41" && saved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
-    check(saved?.action?.draft?.to?.[0]?.address === "maya@example.test" && saved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
+    check(mailSaved?.source_refs?.[0]?.item_id === "message-41" && mailSaved?.action?.draft?.reply_to_message_id === "message-41" && mailSaved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
+    check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
     check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
+    check(requests.some((request) => request.path.endsWith("/calendar-preview") && request.method === "POST") && document.body.textContent?.includes("Friday launch review"), "Calendar preview reads the selected account's bounded event range"),
+    check(saved?.action?.kind === "create_event" && saved?.action?.draft?.title === "Synthetic project follow-up" && saved?.action?.draft?.location === "Project room", "The work area saves the reviewed event fields"),
+    check(eventReview.includes("Only this saved revision will be created") && eventReview.includes("AttendeesNone") && eventReview.includes("ReminderNone") && eventModal.includes("will not invite attendees or set a reminder"), "Calendar Review shows the exact saved revision and effect limits"),
+    check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing event Review leaves the draft in the work area without creating an event"),
     check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
     check(task?.enabled === true && task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine previews while paused, then resumes with a bounded one-minute cadence"),
     check(requests.some((request) => request.path.endsWith("/run-now") && request.method === "POST") && requests.some((request) => request.path.endsWith("/history")), "A one-off preview run appears in the routine's run history"),

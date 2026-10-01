@@ -56,12 +56,13 @@ uses no credentials or session data.
 
 `/app/tests/mail-calendar-connected-review.html?run` mounts the real Settings
 workspace against a same-origin fake connected Google account. It exercises
-inbox preview, conversation opening, reply editing, saved message/thread
-lineage, exact local preview, and exact-effect Review. It closes Review without
-confirming, then configures an event-trigger routine, runs its paused preview,
-opens run history, and resumes it. It asserts that no provider effect route or
-external request was made. This validates the owner UI boundary with
-fabricated fixtures; it does not replace live provider conformance checks.
+inbox and calendar previews, conversation opening, reply editing, saved
+message/thread lineage, timed event drafting, exact local previews, and exact
+email and calendar-effect Reviews. It closes both Reviews without confirming,
+then configures an event-trigger routine, runs its paused preview, opens run
+history, and resumes it. It asserts that no provider effect route or external
+request was made. This validates the owner UI boundary with fabricated
+fixtures; it does not replace live provider conformance checks.
 
 # Result card
 
