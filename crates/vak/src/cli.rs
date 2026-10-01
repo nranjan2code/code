@@ -85,10 +85,10 @@ pub(crate) enum Command {
     },
     /// Launch the rich modern terminal console (docs/design/55-rich-terminal-surface.md)
     Term {
-        /// Target a running vak server (e.g. http://127.0.0.1:8901 or remote)
+        /// Server to connect to (default: the local service's port on 127.0.0.1)
         #[arg(long)]
         server: Option<String>,
-        /// Server bearer authentication token
+        /// Server bearer token (default: the pinned VAK_GATEWAY_TOKEN)
         #[arg(long)]
         token: Option<String>,
         /// Connect to or resume an existing session id

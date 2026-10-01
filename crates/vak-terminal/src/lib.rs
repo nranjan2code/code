@@ -69,68 +69,56 @@ pub struct TerminalOptions {
 
 /// Run the rich terminal surface, connected to a live vak server.
 ///
-/// The `--server`, `--token`, and `--session` flags are all required for a
-/// real connection.  If no server URL is supplied, the terminal falls back
-/// to the local loopback default (`http://127.0.0.1:8901`) so that a
-/// locally-started `vak serve` works out of the box.
+/// The caller resolves the server URL and token (the `vak` binary defaults
+/// them to the local service's port and the pinned `VAK_GATEWAY_TOKEN`).
+/// Everything that can fail at startup runs before the alternate screen is
+/// entered, so a refused connection or rejected token is reported on the
+/// normal terminal rather than drawn on a screen that is torn down at once.
 pub async fn run_terminal(opts: TerminalOptions) -> std::io::Result<i32> {
-    let _guard = TerminalGuard::enter()?;
-    let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)?;
-    terminal.clear()?;
-
-    // --- Resolve server connection parameters ---
     let server_url = opts
         .server_url
         .unwrap_or_else(|| "http://127.0.0.1:8901".to_string());
     let token = opts.token.unwrap_or_default();
+    let has_token = !token.trim().is_empty();
 
-    // --- Create the real API client ---
-    let api = Arc::new(ApiClient::new(server_url, &token));
+    let api = Arc::new(ApiClient::new(server_url, token.trim()));
 
-    // --- Fetch initial health — required to proceed ---
-    let health = match api.health().await {
-        Ok(h) => h,
-        Err(e) => {
-            eprintln!(
-                "vak term: cannot connect to server at {}: {}",
-                api.base_url(),
-                e
-            );
-            eprintln!("  Is the vak server running? Try `vak serve` first.");
-            return Err(std::io::Error::other(format!("connection error: {e}")));
-        }
+    let health = api.health().await.map_err(|e| {
+        std::io::Error::other(format!(
+            "cannot connect to the server at {}: {e}\n  Is it running? Check `vak self status`, or start one with `vak serve`.",
+            api.base_url()
+        ))
+    })?;
+
+    let startup_error = |what: &str, e: api::ApiError| -> std::io::Error {
+        let hint = match &e {
+            api::ApiError::Server { status: 401, .. } if !has_token => {
+                "\n  No token was given. Pass --token, or pin one with `vak self services-sync`."
+            }
+            api::ApiError::Server { status: 401, .. } => {
+                "\n  The server rejected the token. Check --token or the pinned VAK_GATEWAY_TOKEN."
+            }
+            _ => "",
+        };
+        std::io::Error::other(format!("{what} at {}: {e}{hint}", api.base_url()))
     };
 
-    // --- Resolve session (attach, create, or pick from list) ---
     let session_id = if let Some(ref sid) = opts.session_id {
         sid.clone()
     } else {
-        // Try to find a running session, or create one.
-        match api.list_sessions().await {
-            Ok(sessions) => {
-                if let Some(s) = sessions
-                    .iter()
-                    .find(|s| s.running.unwrap_or(false) && !s.archived.unwrap_or(false))
-                {
-                    s.session_id.clone()
-                } else {
-                    match api.create_session().await {
-                        Ok(id) => id,
-                        Err(e) => {
-                            eprintln!("vak term: failed to create session: {e}");
-                            return Err(std::io::Error::other(e.to_string()));
-                        }
-                    }
-                }
-            }
-            Err(_) => match api.create_session().await {
-                Ok(id) => id,
-                Err(e) => {
-                    eprintln!("vak term: failed to create session: {e}");
-                    return Err(std::io::Error::other(e.to_string()));
-                }
-            },
+        let sessions = api
+            .list_sessions()
+            .await
+            .map_err(|e| startup_error("could not list sessions", e))?;
+        match sessions
+            .iter()
+            .find(|s| s.running.unwrap_or(false) && !s.archived.unwrap_or(false))
+        {
+            Some(s) => s.session_id.clone(),
+            None => api
+                .create_session()
+                .await
+                .map_err(|e| startup_error("could not create a session", e))?,
         }
     };
 
@@ -168,6 +156,11 @@ pub async fn run_terminal(opts: TerminalOptions) -> std::io::Result<i32> {
         .get_launch_servers(&session_id)
         .await
         .unwrap_or_default();
+
+    let _guard = TerminalGuard::enter()?;
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)?;
+    terminal.clear()?;
 
     // --- Set up SSE background watchers ---
     let (tx, mut rx) = mpsc::unbounded_channel::<TerminalEvent>();

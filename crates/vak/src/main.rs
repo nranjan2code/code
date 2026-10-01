@@ -380,16 +380,22 @@ async fn main() {
             token,
             session,
         }) => {
+            let server = server.unwrap_or_else(|| {
+                format!("http://127.0.0.1:{}", vak_ops::OpsConfig::detect().port)
+            });
+            let token = token
+                .filter(|t| !t.trim().is_empty())
+                .or_else(|| vak_config::get_var("VAK_GATEWAY_TOKEN"));
             let opts = vak_terminal::TerminalOptions {
                 session_id: session,
-                server_url: server,
+                server_url: Some(server),
                 token,
                 workspace_cwd: Some(cwd),
             };
             match vak_terminal::run_terminal(opts).await {
                 Ok(code) => code,
                 Err(e) => {
-                    eprintln!("terminal error: {e}");
+                    eprintln!("vak term: {e}");
                     1
                 }
             }
