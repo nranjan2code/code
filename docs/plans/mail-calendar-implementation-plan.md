@@ -1911,3 +1911,8 @@ remains open.
   during a provider read now queues one immediate follow-up read instead of
   being dropped. Added a deterministic in-flight-read regression; all 17 Today
   checks pass, and the UI typecheck and production build succeed.
+- 2026-10-01: Made the documented synthetic regression pack build the web
+  bundle before server tests, which reject stale frontend assets. The complete
+  pack now passes: 122 provider/vault tests, 16 Core boundary tests, 16 server
+  unit tests, 4 owner-authenticated HTTP tests, the restart/requeue test, and 5
+  isolated worker tests. No live accounts or home credentials were used.

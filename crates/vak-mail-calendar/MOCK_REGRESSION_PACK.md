@@ -7,11 +7,12 @@ root:
 ./scripts/test-mail-calendar-mock-pack.sh
 ```
 
-It uses Cargo offline mode and runs the `vak-mail-calendar` crate tests, Core
-and server mail/calendar boundary tests, and isolated parser-worker tests. The
-pack also explicitly runs the server restart/requeue test for an interrupted
-continuous mail watch. Provider HTTP and IMAP tests bind loopback-only
-ephemeral listeners and use temporary vaults. The tests do not connect to
+It builds the web client locally, then uses Cargo offline mode to run the
+`vak-mail-calendar` crate tests, Core and server mail/calendar boundary tests,
+and isolated parser-worker tests. The pack also explicitly runs the server
+restart/requeue test for an interrupted continuous mail watch. Provider HTTP
+and IMAP tests bind loopback-only ephemeral listeners and use temporary vaults.
+The tests do not connect to
 Google, Microsoft, Apple, or any other external service. They do not read
 credentials from the developer's home or data home.
 

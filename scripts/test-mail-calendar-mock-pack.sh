@@ -7,7 +7,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-printf '%s\n' 'Mail/calendar mock regression pack (Cargo offline; synthetic fixtures only)'
+printf '%s\n' 'Mail/calendar mock regression pack (local builds, synthetic fixtures only)'
+npm --prefix crates/vak-client-ui run build:web
 cargo test --offline --locked -p vak-mail-calendar
 cargo test --offline --locked -p vak-core mail_calendar
 cargo test --offline --locked -p vak-server mail_calendar
