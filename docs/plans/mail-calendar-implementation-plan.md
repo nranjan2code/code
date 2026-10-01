@@ -673,8 +673,12 @@ cross-process lease exclusion, the reconnect fence, and scoped pause. A
 loopback provider test now drives the server refresh helper twice, proving the
 access token and rotated refresh token persist in the Agent vault and expiry
 metadata advances in the ledger. OAuth adapter tests cover response
-validation. Invoking this rotation through the complete scheduled-run path and
-the sustained-service acceptance remain open.
+validation. A scheduled-run integration test now invokes the owner Run now
+path twice against a loopback token endpoint: it verifies refresh occurs
+before each model dispatch and that the second request uses the rotated
+refresh token. The test-only endpoint override is behind the `test-support`
+feature and accepts loopback HTTP only. The sustained-service acceptance
+remains open.
 
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
@@ -749,8 +753,9 @@ remains open.
   server check, scheduled-run integration suite (6 tests), a synthetic
   expired-token/reconnect test, an end-to-end loopback test of server refresh
   plus vault/ledger rotation, and independent vault-handle refresh-lease
-  contention test pass. Dispatching that rotation through a complete scheduled
-  run and the sustained 24-hour service acceptance remain open.
+  contention test pass. A scheduled-run integration test also verifies
+  refresh-before-dispatch and rotated-refresh-token reuse. The sustained
+  24-hour service acceptance remains open.
 - 2026-10-01: Audited the system guardrails, the model-visible mail/calendar
   tool description and argument schemas, the provider-output trust wrapper,
   and the scheduled-run prompt path. Made the model contract explicit across

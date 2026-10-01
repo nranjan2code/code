@@ -362,7 +362,7 @@ async fn refresh_routine_account_if_needed(
         require_reconnection();
         return Err("this account needs to be reconnected before its routine can continue".into());
     }
-    #[cfg(test)]
+    #[cfg(feature = "test-support")]
     let refresh_result = {
         let test_endpoint = state
             .mail_calendar_test_refresh_endpoints
@@ -380,7 +380,7 @@ async fn refresh_routine_account_if_needed(
             None => vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await,
         }
     };
-    #[cfg(not(test))]
+    #[cfg(not(feature = "test-support"))]
     let refresh_result = vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await;
     let rotated = match refresh_result {
         Ok(tokens) => tokens,

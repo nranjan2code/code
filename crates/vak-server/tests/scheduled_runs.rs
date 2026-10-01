@@ -236,9 +236,23 @@ async fn serve(ws: &Path, home: &Path) -> Server {
 }
 
 async fn serve_core(core: Core, dispatches: Arc<AtomicUsize>) -> Server {
+    serve_core_with_router(core, dispatches, None).await
+}
+
+#[cfg(feature = "test-support")]
+async fn serve_core_with_router(
+    core: Core,
+    dispatches: Arc<AtomicUsize>,
+    test_oauth: Option<(vak_mail_calendar::Provider, String)>,
+) -> Server {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let (app, token) = vak_server::secured_router_with(core, false);
+    let (app, token) = match test_oauth {
+        Some((provider, endpoint)) => {
+            vak_server::secured_router_with_test_oauth_endpoint(core, provider, endpoint)
+        }
+        None => vak_server::secured_router_with(core, false),
+    };
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     Server {
         base: format!("http://{addr}"),
@@ -248,6 +262,7 @@ async fn serve_core(core: Core, dispatches: Arc<AtomicUsize>) -> Server {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[cfg(feature = "test-support")]
 async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     use vak_mail_calendar::connection_ledger::ConnectionLedger;
     use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
@@ -267,6 +282,7 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     vak_server::agents::save(core.cwd(), std::slice::from_ref(&agent), true).unwrap();
 
     let account_id = uuid::Uuid::now_v7().to_string();
+    let refresh_calls = Arc::new(AtomicUsize::new(0));
     let vault = AccountVault::for_agent(&agent_id).unwrap();
     let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
     vault
@@ -275,9 +291,9 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
             AccountSecretMaterial::new(
                 "google:synthetic-subject".into(),
                 Some("demo@example.test".into()),
-                None,
-                Some("synthetic-access-token".into()),
-                None,
+                Some("synthetic-google-client-id".into()),
+                Some("expired-synthetic-access-token".into()),
+                Some("synthetic-refresh-token".into()),
                 None,
                 None,
             )
@@ -297,9 +313,9 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         credential_ref: credential_ref.clone(),
         principal_ref: credential_ref,
         revision: 1,
-        connected_at: chrono::Utc::now(),
-        access_token_expires_at: None,
-        refresh_token_available: false,
+        connected_at: chrono::Utc::now() - chrono::Duration::minutes(10),
+        access_token_expires_at: Some(chrono::Utc::now() - chrono::Duration::minutes(1)),
+        refresh_token_available: true,
         revoked_at: None,
     };
     let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
@@ -310,7 +326,40 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
 
     let dispatches = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
-    let server = serve_core(core, dispatches.clone()).await;
+    async fn token_refresh(
+        axum::extract::State(calls): axum::extract::State<Arc<AtomicUsize>>,
+        axum::Form(body): axum::Form<std::collections::HashMap<String, String>>,
+    ) -> axum::Json<serde_json::Value> {
+        assert_eq!(body["grant_type"], "refresh_token");
+        let call = calls.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(
+            body["refresh_token"],
+            if call == 0 {
+                "synthetic-refresh-token"
+            } else {
+                "rotated-synthetic-refresh-token-1"
+            }
+        );
+        axum::Json(serde_json::json!({
+            "access_token": format!("rotated-synthetic-access-token-{call}"),
+            "refresh_token": format!("rotated-synthetic-refresh-token-{}", call + 1),
+            "token_type": "Bearer",
+            "expires_in": 60,
+            "scope": "https://www.googleapis.com/auth/gmail.readonly"
+        }))
+    }
+    let token_app = axum::Router::new()
+        .route("/token", axum::routing::post(token_refresh))
+        .with_state(refresh_calls.clone());
+    let token_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let token_endpoint = format!("http://{}/token", token_listener.local_addr().unwrap());
+    tokio::spawn(async move { axum::serve(token_listener, token_app).await.unwrap() });
+    let server = serve_core_with_router(
+        core,
+        dispatches.clone(),
+        Some((Provider::Google, token_endpoint)),
+    )
+    .await;
     let create = server
         .client()
         .post(format!("{}/tasks", server.base))
@@ -342,7 +391,13 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         .unwrap();
     let task_id = created["id"].as_str().unwrap();
     assert_eq!(created["enabled"], false);
-    assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
+    let run_status = server.run_now(task_id).await;
+    assert_eq!(
+        run_status,
+        reqwest::StatusCode::ACCEPTED,
+        "refusal inbox: {:?}",
+        server.inbox().await
+    );
 
     assert!(
         eventually(15, || async {
@@ -351,6 +406,8 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
         .await,
         "routine reaches a settled successful state"
     );
+    assert_eq!(server.run_now(task_id).await, reqwest::StatusCode::ACCEPTED);
+    assert!(eventually(15, || async { dispatches.load(Ordering::SeqCst) == 2 }).await);
     let task = server.task(task_id).await;
     let session_id = task["last_session_id"]
         .as_str()
@@ -363,7 +420,17 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     assert_eq!(history["runs"][0]["trigger"], "manual");
     assert_eq!(history["runs"][0]["status"], "complete");
     assert_eq!(history["runs"][0]["session_id"], session_id);
-    assert_eq!(dispatches.load(Ordering::SeqCst), 1);
+    assert_eq!(dispatches.load(Ordering::SeqCst), 2);
+    assert_eq!(refresh_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        vault.access_token(&account_id).unwrap().as_str(),
+        "rotated-synthetic-access-token-1"
+    );
+    assert!(
+        ledger.read_all().unwrap()[0]
+            .access_token_expires_at
+            .is_some_and(|expires_at| expires_at > chrono::Utc::now())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

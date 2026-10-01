@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[features]
+test-support = ["vak-mail-calendar/test-support"]
+
 [dependencies]
 base64 = { workspace = true }
 async-trait = { workspace = true }
@@ -61,7 +64,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
-vak-mail-calendar = { workspace = true, features = ["test-support"] }
+vak-mail-calendar = { workspace = true }
 vak-ooxml = { workspace = true, features = ["fixtures"] }
 vak-pdf = { workspace = true, features = ["fixtures"] }
 # A real WebSocket client for the /voice/session end-to-end test.
