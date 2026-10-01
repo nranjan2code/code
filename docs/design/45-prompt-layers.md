@@ -33,6 +33,9 @@ epistemic text goes to `tail`, outside the stable prefix and its drift
 fingerprint. Descriptors sort by block and layer breadth, preserving the
 composition order within a block.
 
+How these layers fit with the runtime sections, the per-turn tail, history
+and side dispatches is drawn end to end in `docs/design/83-prompt-system.md`.
+
 ## Problem
 
 Before this design shipped, the prompt was the one piece of agent

@@ -14,6 +14,7 @@ authoritative version.
 | Run a server or expose it remotely | [Hosting](hosting.md) |
 | Understand the product and security boundaries | [Agent-owned platform](design/64-agent-owned-platform.md) and [agent security](design/24-agent-security.md) |
 | Work with artwork and public identity | [Brand guide](brand/README.md) |
+| Understand how prompts are built and used | [The prompt system, end to end](design/83-prompt-system.md) |
 | Explore diagrams | [Architecture diagrams](architecture/README.md) and [tutor](tutor/README.md) |
 
 The architecture overview uses Mermaid and the tutor uses PNGs, so both render

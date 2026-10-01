@@ -39,6 +39,10 @@ confirm effects outside the workspace or with irreversible impact. The
 literal seed and the tests in `vak-core` are the authority for its current
 wording; the historical diff notes below explain why it evolved.
 
+For the end-to-end picture (every source of model-visible text, its
+lifetime, order, ledger record and worked scenarios) see
+`docs/design/83-prompt-system.md`.
+
 Current seed: `crates/vak-core/src/system-prompt.md` (block-marked),
 plus a runtime `Surface:` line and any appended surface notes. Layer composition, editing surfaces, and
 trust are specified in doc 45.

@@ -312,6 +312,11 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 
 ### 6. RequestAssembler: stable prefix, moving tail
 
+The code is authoritative for section order: `compose_tail` emits
+`<turn_context>`, `<intent>`, `<stance>`, `<work_contract>`,
+`<workspace_delta>`, `<conversation_thread>`, and `prefix_digest` is
+SHA-256. `docs/design/83-prompt-system.md` §10 shows the current tail.
+
 ```
 [system]   static layers only: identity, contract, guardrails, surface,
            skill list, MCP server names, tool catalogue.  ← byte-identical across turns
