@@ -770,6 +770,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/calendar-preview", post(mail_calendar::calendar_preview))
         .route("/mail-calendar/accounts/{agent_id}/{account_id}/free-busy-preview", post(mail_calendar::free_busy_preview))
         .route("/mail-calendar/accounts/{agent_id}/candidates", get(mail_calendar::list_candidates).post(mail_calendar::save_candidate))
+        .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/review-context", post(mail_calendar::candidate_review_context))
         .route("/mail-calendar/accounts/{agent_id}/routines/{routine_id}/history", get(mail_calendar::routine_history))
         .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/send", post(mail_calendar::send_mail_candidate))
         .route("/mail-calendar/accounts/{agent_id}/candidates/{candidate_id}/create-event", post(mail_calendar::send_mail_candidate))

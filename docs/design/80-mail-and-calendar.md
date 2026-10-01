@@ -24,7 +24,14 @@ or effect request is refused while demo mode is enabled. This is a local UI and
 regression aid, not a production data mode or a substitute for provider tests.
 
 The Agent-vault work area stores revisioned local drafts and shows exact-payload
-previews. Google and Microsoft support reviewed plain-text email sends and a
+previews. Email send Review now obtains the default sending identity from the
+connected account's protected vault entry and, for a reply, reads only the
+selected source message's provider From and Reply-To fields through a bounded
+metadata request. Review separates those source headers from the outgoing To,
+Cc, and Bcc fields, labels outgoing Reply-To as unset, and fetches context only
+after the owner opens Review. These transient Review details are owner-only;
+they are not stored in the candidate or exposed to the Agent. Sender aliases
+remain unsupported. Google and Microsoft support reviewed plain-text email sends and a
 limited timed-event create profile; Google also supports conditional update and
 cancellation for one unchanged, public, standalone timed event without
 attendees. Provider effects require opt-in scopes, owner confirmation, Core
@@ -693,9 +700,11 @@ access-controlled content records, not general logs.
 
 ### D7 — Mail identity and content semantics
 
-Review distinguishes From, Reply-To, To, Cc, and Bcc, showing the actual
-addresses as well as display names. Only a provider-verified sending identity
-or authorized alias may be used. A message's display name, Reply-To, or
+Review distinguishes the connected account's default From identity, source
+From and Reply-To on replies, outgoing To, Cc, Bcc, and the outgoing Reply-To
+setting, showing actual addresses as well as display names where available.
+The default From identity is read from the protected linked-account record;
+aliases are not supported. A message's display name, Reply-To, or
 authentication-looking header is not proof of a trusted sender; provider
 authentication verdicts are evidence with provenance, not permission to act.
 Reply and reply-all resolve recipients before approval and never infer a

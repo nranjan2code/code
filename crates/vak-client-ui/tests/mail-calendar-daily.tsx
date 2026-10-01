@@ -91,6 +91,15 @@ window.fetch = async (input, init) => {
     }
     if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "g-account-0-primary", name: "Personal", primary: true }] });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && (!init?.method || init.method === "GET")) return json({ candidates: savedCandidates });
+    if (url.pathname.endsWith("/review-context") && init?.method === "POST") {
+      const candidateId = decodeURIComponent(url.pathname.split("/").at(-2)!);
+      const candidate = savedCandidates.find((item) => item.id === candidateId);
+      const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
+      if (!candidate || candidate.revision !== body.expected_revision || candidate.candidate_digest !== body.candidate_digest) {
+        return new Response(JSON.stringify({ error: "The draft changed." }), { status: 409, headers: { "Content-Type": "application/json" } });
+      }
+      return json({ candidate_id: candidate.id, revision: candidate.revision, sender: "owner@gmail.test", source_from: "Launch Team <sender@example.test>", source_reply_to: "Reply Desk <reply@example.test>" });
+    }
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
       localDraftWrites.push({ path: url.pathname, body });
@@ -291,7 +300,24 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const conversationHandoffWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "send_mail"
     && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"
     && body.action.draft.to?.[0]?.address === "reply@example.test")
-    && inlineReplyEditorVisible());
+    && inlineReplyEditorVisible()
+    && document.querySelector(".mail-calendar-editor")?.textContent?.includes("Reply draft") === true);
+  const replyReviewButtonReady = await waitFor(() => !!document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")
+    && !document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")!.disabled);
+  document.querySelector<HTMLButtonElement>(".mail-calendar-editor .btn.danger")?.click();
+  const replyReviewOpened = await waitFor(() => !!document.querySelector(".sheet[role='dialog'][aria-modal='true']"));
+  const replyReviewText = document.querySelector(".sheet[role='dialog'][aria-modal='true']")?.textContent ?? "";
+  const replyReviewContextRequest = requests.some((path) => path.endsWith("/review-context"));
+  const replyReviewShowsExactIdentities = replyReviewButtonReady && replyReviewOpened
+    && replyReviewContextRequest
+    && replyReviewText.includes("owner@gmail.test")
+    && replyReviewText.includes("Launch Team <sender@example.test>")
+    && replyReviewText.includes("Reply Desk <reply@example.test>")
+    && replyReviewText.includes("reply@example.test")
+    && replyReviewText.includes("Outgoing Reply-To")
+    && replyReviewText.includes("Not set");
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await waitFor(() => !document.querySelector(".sheet[role='dialog'][aria-modal='true']"));
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-conversation header button")?.click();
   const conversationReturnsToInbox = await waitFor(() => !document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open")
     && document.querySelectorAll(".daily-mail-calendar-message").length === 12
@@ -457,6 +483,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),
     check(conversationHandoffWorks, "Draft reply prefers the message Reply-To, reveals its editable Agent-scoped Canvas draft, and leaves the provider untouched"),
+    check(replyReviewShowsExactIdentities, "Reply Review fetches vault/provider-verified sender and source headers, then distinguishes them from outgoing To and Reply-To"),
     check(conversationReturnsToInbox, "Back to inbox restores the inbox and returns keyboard focus to the opened message"),
     check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(appleMessageBodyPreviewWorks, "An Apple selected-message preview loads its body in Canvas without a conversation id"),

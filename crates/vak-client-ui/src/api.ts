@@ -316,8 +316,20 @@ export interface MailCalendarCandidate {
   candidate_digest?: string;
   action_state?: "prepared" | "awaiting_approval" | "dispatching" | "provider_accepted" | "confirmed" | "failed" | "unknown" | "cancelled" | "expired";
 }
+export interface MailCalendarReviewContext {
+  candidate_id: string;
+  revision: number;
+  sender: string;
+  source_from: string | null;
+  source_reply_to: string | null;
+}
 export function listMailCalendarCandidates(agentId: string): Promise<{ candidates: MailCalendarCandidate[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates`);
+}
+export function getMailCalendarReviewContext(agentId: string, candidateId: string, expectedRevision: number, candidateDigest: string): Promise<MailCalendarReviewContext> {
+  return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates/${encodeURIComponent(candidateId)}/review-context`, {
+    method: "POST", body: JSON.stringify({ expected_revision: expectedRevision, candidate_digest: candidateDigest }),
+  });
 }
 export function saveMailCalendarCandidate(agentId: string, payload: { account_id: string; candidate_id?: string; expected_revision?: number; source_refs?: MailCalendarCandidate["source_refs"]; action: MailCalendarDraftAction }): Promise<{ candidate: MailCalendarCandidate }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/candidates`, { method: "POST", body: JSON.stringify(payload) });

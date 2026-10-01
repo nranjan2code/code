@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { createEffect, createSignal, For, Show } from "solid-js";
 import * as api from "../../api";
 import type { MailCalendarCandidate, MailCalendarDraftAction, MailCalendarMailPreview, MailCalendarAccount } from "../../api";
 import ConfirmModal from "../ConfirmModal";
@@ -7,11 +7,12 @@ import type { ConfirmConfig } from "../ConfirmModal";
 const LOCAL_DRAFT = "local-draft";
 const PAGE_SIZE = 8;
 const parseAddresses = (value: string) => value.split(/[;,]/).map((part) => part.trim()).filter(Boolean).map((address) => ({ address, display_name: null }));
+const formatAddresses = (addresses: Array<{ address: string; display_name: string | null }>) => addresses.map(({ address, display_name }) => display_name ? `${display_name} <${address}>` : address).join(", ") || "None";
 const localInput = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 const actionName = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "Email" : action.kind === "cancel_event" ? "Event cancellation" : "Calendar event";
 const actionVerb = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "send" : action.kind === "cancel_event" ? "cancel" : action.kind === "update_event" ? "update" : "create";
 
-export default function MailCalendarDraftWorkspace(props: { agentId: string }) {
+export default function MailCalendarDraftWorkspace(props: { agentId: string; openCandidate?: api.MailCalendarCandidate | null; onCandidateOpened?: (candidate: api.MailCalendarCandidate) => void }) {
   const [expanded, setExpanded] = createSignal(false);
   const [accounts, setAccounts] = createSignal<MailCalendarAccount[]>([]);
   const [candidates, setCandidates] = createSignal<MailCalendarCandidate[]>([]);
@@ -132,7 +133,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string }) {
     openCandidate(candidate);
   };
 
-  const buildReview = (candidate: MailCalendarCandidate) => {
+  const buildReview = async (candidate: MailCalendarCandidate) => {
     const action = candidate.action;
     const account = accounts().find((item) => item.id === candidate.account_id);
     if (!candidate.candidate_digest || candidate.action_state || candidate.account_id === LOCAL_DRAFT) {
@@ -156,13 +157,26 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string }) {
       setError("Only one standalone event can be cancelled; occurrences and series are not supported."); return;
     }
 
+    let mailContext: api.MailCalendarReviewContext | null = null;
+    if (action.kind === "send_mail") {
+      setBusy(true); setError("");
+      try {
+        mailContext = await api.getMailCalendarReviewContext(props.agentId, candidate.id, candidate.revision, candidate.candidate_digest!);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "The sender and reply source could not be verified. No provider action is ready for review.");
+        return;
+      } finally {
+        setBusy(false);
+      }
+    }
+
     const reviewContent = <div class="mail-calendar-review-payload">
       {(() => {
         const mail = action.kind === "send_mail" ? action : null;
         const event = action.kind === "create_event" || action.kind === "update_event" ? action : null;
         return <>
       <dl><dt>Account</dt><dd>{account.provider}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</dd>
-        <Show when={mail}>{(value) => <><dt>To</dt><dd>{value().draft.to.map((item) => item.address).join(", ") || "None"}</dd><dt>Cc</dt><dd>{value().draft.cc.map((item) => item.address).join(", ") || "None"}</dd><dt>Bcc</dt><dd>{value().draft.bcc.map((item) => item.address).join(", ") || "None"}</dd><dt>Subject</dt><dd>{value().draft.subject || "(no subject)"}</dd></>}</Show>
+        <Show when={mail}>{(value) => <><dt>From</dt><dd>{mailContext?.sender} · connected account default sender</dd><dt>Outgoing Reply-To</dt><dd>Not set</dd><Show when={value().draft.reply_to_message_id}><dt>Source From</dt><dd>{mailContext?.source_from || "Not provided by the provider"}</dd><dt>Source Reply-To</dt><dd>{mailContext?.source_reply_to || "Not provided by the provider"}</dd></Show><dt>To</dt><dd>{formatAddresses(value().draft.to)}</dd><dt>Cc</dt><dd>{formatAddresses(value().draft.cc)}</dd><dt>Bcc</dt><dd>{formatAddresses(value().draft.bcc)}</dd><dt>Subject</dt><dd>{value().draft.subject || "(no subject)"}</dd></>}</Show>
         <Show when={event}>{(value) => <><dt>Event</dt><dd>{value().draft.title}</dd><dt>Starts</dt><dd>{new Date(value().draft.starts_at).toLocaleString()}</dd><dt>Ends</dt><dd>{new Date(value().draft.ends_at).toLocaleString()}</dd><dt>Location</dt><dd>{value().draft.location || "None"}</dd><dt>Attendees</dt><dd>{value().draft.attendee_addresses.map((item) => item.address).join(", ") || "None"}</dd></>}</Show>
         <Show when={action.kind === "cancel_event"}><dt>Event</dt><dd>{candidate.source_refs[0]?.label || "Selected event"}</dd><dt>Scope</dt><dd>This event only</dd></Show>
       </dl>
@@ -236,18 +250,14 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string }) {
   const visibleCandidates = () => candidates().slice(page() * PAGE_SIZE, (page() + 1) * PAGE_SIZE);
   const accountLabel = (id: string) => id === LOCAL_DRAFT ? "Local draft" : accounts().find((item) => item.id === id)?.identity_masked || accounts().find((item) => item.id === id)?.provider || "Account unavailable";
 
-  const workspaceEvent = (event: Event) => {
-    const detail = (event as CustomEvent<{ agentId: string; candidateId: string }>).detail;
-    if (!detail || detail.agentId !== props.agentId) return;
-    setExpanded(true);
-    void refresh(props.agentId).then(() => {
-      const found = candidates().find((candidate) => candidate.id === detail.candidateId);
-      if (found) beginOpen(found);
-    });
-  };
   createEffect(() => {
-    window.addEventListener("vak:mail-calendar-open-candidate", workspaceEvent);
-    onCleanup(() => window.removeEventListener("vak:mail-calendar-open-candidate", workspaceEvent));
+    const candidate = props.openCandidate;
+    const agentId = props.agentId;
+    if (!candidate || !agentId || candidate.agent_id !== agentId) return;
+    setExpanded(true);
+    setCandidates((current) => [candidate, ...current.filter((item) => item.id !== candidate.id)]);
+    beginOpen(candidate);
+    props.onCandidateOpened?.(candidate);
   });
 
   return <section class="daily-mail-calendar-section mail-calendar-canvas-workspace" aria-label="Mail and calendar drafts and review">

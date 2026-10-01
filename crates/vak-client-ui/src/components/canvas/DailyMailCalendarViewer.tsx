@@ -101,6 +101,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     ([agentId]) => readToday(agentId, rangeFrom(), rangeThrough(), mailAccountFilter(), mailSearchQuery(), mailFolderFilter()),
   );
   const [selectedEvent, setSelectedEvent] = createSignal<api.MailCalendarEventPreview | null>(null);
+  const [draftCandidateToOpen, setDraftCandidateToOpen] = createSignal<api.MailCalendarCandidate | null>(null);
   const [selectedConversation, setSelectedConversation] = createSignal<SelectedConversation | null>(null);
   const [replyWorkspaceVisible, setReplyWorkspaceVisible] = createSignal(false);
   let lastOpenedMessage: { accountId: string; messageId: string } | null = null;
@@ -481,9 +482,10 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
       });
       const calendarFailedAccounts = () => data.accounts.filter((account) => account.calendarError);
       const openSettings = () => { setPendingSettingsPage("mail-calendar"); setSettingsOpen(true); };
-      const openDraftWorkspace = (candidateId?: string) => window.dispatchEvent(new CustomEvent("vak:mail-calendar-open-candidate", {
-        detail: { agentId: props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "", candidateId },
-      }));
+      const openDraftWorkspace = (candidate?: api.MailCalendarCandidate) => {
+        setReplyWorkspaceVisible(true);
+        if (candidate) setDraftCandidateToOpen(candidate);
+      };
       const prepareEventAction = async (kind: "update" | "cancel") => {
         const event = selectedEvent();
         const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
@@ -495,7 +497,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             ? { kind: "update_event", event_id: event.provider_id, source_version: event.version, draft: { title: event.title, description: event.description ?? "", location: event.location, starts_at: event.starts_at!, ends_at: event.ends_at!, time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone, all_day: false, attendee_addresses: [], recurrence: null, occurrence_id: null } }
             : { kind: "cancel_event", event_id: event.provider_id, source_version: event.version, occurrence_id: null, whole_series: false };
           const saved = await api.saveMailCalendarCandidate(agentId, { account_id: event.account_id, source_refs: [{ item_id: event.provider_id, version: event.version, label: event.title }], action });
-          openDraftWorkspace(saved.candidate.id);
+          openDraftWorkspace(saved.candidate);
         } catch (cause) {
           setEventActionError(cause instanceof Error ? cause.message : "Could not prepare a local draft.");
         } finally {
@@ -565,7 +567,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                     const replyAddress = replyRecipient?.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
                     const action: api.MailCalendarDraftAction = { kind: "send_mail", draft: { from_alias: null, to: replyAddress ? [{ address: replyAddress, display_name: null }] : [], cc: [], bcc: [], subject: message.subject?.startsWith("Re:") ? message.subject : `Re: ${message.subject || ""}`, body_text: "", attachment_refs: [], reply_to_message_id: message.provider_id, reply_to_thread_id: conversation().threadId } };
                     void api.saveMailCalendarCandidate(agentId, { account_id: conversation().accountId, source_refs: [{ item_id: message.provider_id, version: null, label: message.subject || "Reply" }], action })
-                      .then((saved) => openDraftWorkspace(saved.candidate.id))
+                      .then((saved) => openDraftWorkspace(saved.candidate))
                       .catch((cause) => setConversationError(cause instanceof Error ? cause.message : "Could not prepare a local reply draft."));
                   }}>Draft reply in Canvas</button></Show>
                 </article>}</For>
@@ -578,7 +580,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
         <Show when={!selectedConversation()}>
           <Show when={props.subject.kind === "daily_mail_calendar"}><MailCalendarRoutineWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></Show>
         </Show>
-        <div style={{ display: selectedConversation() && !replyWorkspaceVisible() ? "none" : undefined }}><MailCalendarDraftWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} /></div>
+        <div style={{ display: selectedConversation() && !replyWorkspaceVisible() ? "none" : undefined }}><MailCalendarDraftWorkspace agentId={props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""} openCandidate={draftCandidateToOpen()} onCandidateOpened={(candidate) => { if (draftCandidateToOpen()?.id === candidate.id) setDraftCandidateToOpen(null); }} /></div>
         <footer class="daily-mail-calendar-privacy">Read-only preview for this Agent and your local owner session. Refresh runs every five minutes while visible and when you return after a minute away. Provider content is not added to the conversation by opening this view.</footer>
       </main>;
     }}</LoadState>

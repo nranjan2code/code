@@ -1326,6 +1326,53 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     microsoft_account.status = vak_mail_calendar::AccountStatus::Connected;
     microsoft_account.revision = 2;
     ledger.append_connected(microsoft_account).unwrap();
+
+    let review_account_id = uuid::Uuid::now_v7().to_string();
+    let review_credential_ref =
+        vak_mail_calendar::vault::AccountVault::credential_ref(&review_account_id).unwrap();
+    vault
+        .store(
+            &review_account_id,
+            vak_mail_calendar::vault::AccountSecretMaterial::new(
+                "google:review-subject".into(),
+                Some("review@example.com".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut review_account = vak_mail_calendar::ConnectedAccount {
+        id: review_account_id.clone(),
+        provider: vak_mail_calendar::Provider::Google,
+        status: vak_mail_calendar::AccountStatus::Pending,
+        owner_agent_id: agent_id.clone(),
+        allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+        capabilities: [vak_mail_calendar::Capability::MailSend]
+            .into_iter()
+            .collect(),
+        provider_scopes: [
+            "openid".into(),
+            "email".into(),
+            "https://www.googleapis.com/auth/gmail.send".into(),
+        ]
+        .into_iter()
+        .collect(),
+        credential_ref: review_credential_ref.clone(),
+        principal_ref: review_credential_ref,
+        revision: 1,
+        connected_at: chrono::Utc::now(),
+        access_token_expires_at: None,
+        refresh_token_available: false,
+        revoked_at: None,
+    };
+    ledger.append_pending(review_account.clone()).unwrap();
+    review_account.status = vak_mail_calendar::AccountStatus::Connected;
+    review_account.revision = 2;
+    ledger.append_connected(review_account).unwrap();
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1525,6 +1572,48 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
             }
         })
     };
+    let review_create = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": review_account_id,
+            "source_refs": [],
+            "action": action("Review identity")
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(review_create.status(), reqwest::StatusCode::OK);
+    let review_candidate: serde_json::Value = review_create.json().await.unwrap();
+    let review_candidate_id = review_candidate["candidate"]["id"].as_str().unwrap();
+    let review_candidate_digest = review_candidate["candidate_digest"].as_str().unwrap();
+    let review_context_url = format!("{candidates_url}/{review_candidate_id}/review-context");
+    let review_context_response = client
+        .post(&review_context_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "expected_revision": 1,
+            "candidate_digest": review_candidate_digest
+        }))
+        .send()
+        .await
+        .unwrap();
+    let review_context_status = review_context_response.status();
+    let review_context_body = review_context_response.text().await.unwrap();
+    assert_eq!(
+        review_context_status,
+        reqwest::StatusCode::OK,
+        "{review_context_body}"
+    );
+    let review_context: serde_json::Value = serde_json::from_str(&review_context_body).unwrap();
+    assert_eq!(review_context["sender"], "review@example.com");
+    assert!(review_context["source_from"].is_null());
+    assert!(review_context["source_reply_to"].is_null());
+    assert!(review_context.get("body_text").is_none());
+    vault
+        .delete_candidate(review_candidate_id, 1)
+        .expect("synthetic review candidate cleanup");
+
     let create = client
         .post(&candidates_url)
         .bearer_auth(&token)

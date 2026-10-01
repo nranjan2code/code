@@ -22,6 +22,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 const MAX_MAIL_ITEMS: usize = 20;
 const MAX_THREAD_PAGE_BYTES: usize = 512 * 1024;
+const MAX_THREAD_HEADER_RESPONSE_BYTES: usize = 32 * 1024;
 const MAX_MAIL_FOLDERS: usize = 100;
 const MAX_MAIL_FOLDER_DEPTH: usize = 8;
 const MAX_CALENDAR_SOURCES: usize = 50;
@@ -181,6 +182,16 @@ pub struct MailThread {
     pub messages: Vec<MailItem>,
     #[serde(default)]
     pub next_cursor: Option<String>,
+}
+
+/// Provider-verified source header fields used by the owner's exact reply
+/// Review. This contains no body, subject, attachments, or recipient list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailReplyHeaders {
+    pub provider_id: String,
+    pub thread_id: String,
+    pub from: Option<String>,
+    pub reply_to: Option<String>,
 }
 
 /// One bounded owner inbox/search page. Continuations are opaque and scoped
@@ -1478,6 +1489,93 @@ impl ProviderReadClient {
             provider_id: thread_id.to_owned(),
             messages,
             next_cursor,
+        })
+    }
+
+    /// Read only From and Reply-To for one selected source message. The
+    /// expected conversation ID is checked against the provider response so a
+    /// candidate cannot use a message from another conversation as context.
+    pub async fn mail_reply_headers(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        message_id: &str,
+        expected_thread_id: &str,
+    ) -> Result<MailReplyHeaders, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        if message_id.is_empty()
+            || message_id.len() > 512
+            || message_id.chars().any(char::is_control)
+            || expected_thread_id.is_empty()
+            || expected_thread_id.len() > 512
+            || expected_thread_id.chars().any(char::is_control)
+            || account.provider == Provider::AppleIcloud
+        {
+            return Err(ProviderReadError::InvalidSearch);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let value = match account.provider {
+            Provider::Google => {
+                if !valid_google_label_id(message_id) || !valid_google_label_id(expected_thread_id)
+                {
+                    return Err(ProviderReadError::InvalidSearch);
+                }
+                let url = graph_url_segments(
+                    &self.google_gmail_base,
+                    &["users", "me", "messages", message_id],
+                )?;
+                let response = self
+                    .http
+                    .get(url)
+                    .bearer_auth(token.as_str())
+                    .query(&[
+                        ("format", "metadata"),
+                        ("metadataHeaders", "From"),
+                        ("metadataHeaders", "Reply-To"),
+                    ])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                parse_response(response, MAX_THREAD_HEADER_RESPONSE_BYTES).await?
+            }
+            Provider::Microsoft => {
+                let url = graph_url_segments(
+                    &self.microsoft_graph_base,
+                    &["me", "messages", message_id],
+                )?;
+                let response = self
+                    .http
+                    .get(url)
+                    .bearer_auth(token.as_str())
+                    .query(&[("$select", "id,conversationId,from,replyTo")])
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                parse_response(response, MAX_THREAD_HEADER_RESPONSE_BYTES).await?
+            }
+            Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+        };
+        let parsed = match account.provider {
+            Provider::Google => parse_google_message(&value),
+            Provider::Microsoft => {
+                parse_graph_message(&value).ok_or(ProviderReadError::InvalidResponse)?
+            }
+            Provider::AppleIcloud => return Err(ProviderReadError::Unsupported),
+        };
+        if parsed.provider_id != message_id
+            || parsed.thread_id.as_deref() != Some(expected_thread_id)
+        {
+            return Err(ProviderReadError::InvalidResponse);
+        }
+        Ok(MailReplyHeaders {
+            provider_id: parsed.provider_id,
+            thread_id: expected_thread_id.to_owned(),
+            from: parsed.from,
+            reply_to: parsed.reply_to,
         })
     }
 
@@ -3338,24 +3436,25 @@ fn graph_recipients(value: Option<&Value>) -> Option<String> {
     let values = recipients
         .iter()
         .take(20)
-        .filter_map(|recipient| {
-            let email_address = recipient.get("emailAddress")?;
-            let address = email_address.get("address")?.as_str()?;
-            let address = bounded_mail_text(address.as_bytes(), 512);
-            if address.trim().is_empty() || !address.contains('@') {
-                return None;
-            }
-            let name = email_address
-                .get("name")
-                .and_then(Value::as_str)
-                .map(|value| bounded_mail_text(value.as_bytes(), 256))
-                .filter(|value| !value.trim().is_empty());
-            Some(name.map_or_else(|| address.clone(), |name| format!("{name} <{address}>")))
-        })
+        .filter_map(|recipient| recipient.get("emailAddress").and_then(graph_mailbox))
         .collect::<Vec<_>>()
         .join(", ");
     (!values.is_empty())
         .then(|| bounded_mail_text(values.as_bytes(), MAX_MAIL_RECIPIENTS_TEXT_BYTES))
+}
+
+fn graph_mailbox(email_address: &Value) -> Option<String> {
+    let address = email_address.get("address")?.as_str()?;
+    let address = bounded_mail_text(address.as_bytes(), 512);
+    if address.trim().is_empty() || !address.contains('@') {
+        return None;
+    }
+    let name = email_address
+        .get("name")
+        .and_then(Value::as_str)
+        .map(|value| bounded_mail_text(value.as_bytes(), 256))
+        .filter(|value| !value.trim().is_empty());
+    Some(name.map_or_else(|| address.clone(), |name| format!("{name} <{address}>")))
 }
 
 fn imap_body_has_attachments(body: &async_imap::imap_proto::types::BodyStructure<'_>) -> bool {
@@ -4153,10 +4252,7 @@ fn parse_graph_message(value: &Value) -> Option<MailItem> {
             .get("conversationId")
             .and_then(Value::as_str)
             .map(bounded_text),
-        from: value
-            .pointer("/from/emailAddress/address")
-            .and_then(Value::as_str)
-            .map(|value| bounded_mail_text(value.as_bytes(), 512)),
+        from: value.pointer("/from/emailAddress").and_then(graph_mailbox),
         reply_to: graph_recipients(value.get("replyTo")),
         to: graph_recipients(value.get("toRecipients")),
         cc: graph_recipients(value.get("ccRecipients")),
@@ -5162,6 +5258,167 @@ mod tests {
         assert_eq!(next.messages.len(), 1);
         assert_eq!(next.messages[0].body_text.as_deref(), Some("there"));
         assert!(next.next_cursor.is_none());
+        vault.remove(&account.id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn google_reply_header_review_fetches_only_selected_message_headers() {
+        use axum::http::Request;
+        use std::collections::HashMap;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
+        let app = axum::Router::new().route(
+            "/gmail/v1/users/me/messages/message_1",
+            axum::routing::get(|request: Request<axum::body::Body>| async move {
+                assert_eq!(
+                    request
+                        .headers()
+                        .get(reqwest::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("Bearer access-token")
+                );
+                let query = url::form_urlencoded::parse(
+                    request.uri().query().unwrap_or_default().as_bytes(),
+                )
+                .collect::<HashMap<_, _>>();
+                assert_eq!(
+                    query.get("format").map(|value| value.as_ref()),
+                    Some("metadata")
+                );
+                assert_eq!(
+                    query.get("metadataHeaders").map(|value| value.as_ref()),
+                    Some("Reply-To")
+                );
+                axum::Json(json!({
+                    "id":"message_1", "threadId":"thread_1",
+                    "payload":{"headers":[
+                        {"name":"From","value":"Launch Team <sender@example.test>"},
+                        {"name":"Reply-To","value":"Reply Desk <reply@example.test>"}
+                    ]}
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let headers = client
+            .mail_reply_headers(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                "message_1",
+                "thread_1",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            headers.from.as_deref(),
+            Some("Launch Team <sender@example.test>")
+        );
+        assert_eq!(
+            headers.reply_to.as_deref(),
+            Some("Reply Desk <reply@example.test>")
+        );
+        assert!(
+            client
+                .mail_reply_headers(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    "message_1",
+                    "other_thread"
+                )
+                .await
+                .is_err()
+        );
+        vault.remove(&account.id).unwrap();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn microsoft_reply_header_review_checks_selected_message_and_conversation() {
+        use axum::http::Request;
+        use std::collections::HashMap;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Microsoft);
+        let app = axum::Router::new().route(
+            "/graph/v1.0/me/messages/message-1",
+            axum::routing::get(|request: Request<axum::body::Body>| async move {
+                assert_eq!(
+                    request
+                        .headers()
+                        .get(reqwest::header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok()),
+                    Some("Bearer access-token")
+                );
+                let query = url::form_urlencoded::parse(
+                    request.uri().query().unwrap_or_default().as_bytes(),
+                )
+                .collect::<HashMap<_, _>>();
+                assert_eq!(query.get("$select").map(|value| value.as_ref()), Some("id,conversationId,from,replyTo"));
+                axum::Json(json!({
+                    "id":"message-1", "conversationId":"conversation-1",
+                    "from":{"emailAddress":{"name":"Launch Team","address":"sender@example.test"}},
+                    "replyTo":[{"emailAddress":{"name":"Reply Desk","address":"reply@example.test"}}]
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let headers = client
+            .mail_reply_headers(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                "message-1",
+                "conversation-1",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            headers.from.as_deref(),
+            Some("Launch Team <sender@example.test>")
+        );
+        assert_eq!(
+            headers.reply_to.as_deref(),
+            Some("Reply Desk <reply@example.test>")
+        );
+        assert!(
+            client
+                .mail_reply_headers(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    "message-1",
+                    "other-conversation"
+                )
+                .await
+                .is_err()
+        );
         vault.remove(&account.id).unwrap();
         task.abort();
     }

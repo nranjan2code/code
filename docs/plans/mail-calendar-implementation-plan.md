@@ -2305,3 +2305,19 @@ remains open.
   tests, 19 Core mail/calendar tests, 17 Server mail/calendar tests, four
   owner-authenticated HTTP tests, restart/requeue, and five isolated-worker
   tests. Live-provider and 24-hour service-recovery acceptance remain open.
+- 2026-10-01: Send Review now fetches a transient, owner-authenticated context
+  for the linked account's default sender and, for replies, only the selected
+  Google or Microsoft message's provider From and Reply-To metadata. The view
+  distinguishes source headers from outgoing To/Cc/Bcc and says outgoing
+  Reply-To is unset; it does not put the address into the stored candidate or
+  expose it to the Agent. Aliases remain unsupported. The reply handoff passes
+  the saved candidate directly into Canvas so it opens the exact returned
+  revision without a second fetch racing against other drafts. Two provider
+  metadata tests, the server check and 17 focused server tests passed; UI
+  typecheck and production web build passed. The rendered reply-handoff
+  assertion failed before this last change; a rerun could not be completed
+  because local browser access was blocked and the Rust test pack later ran out
+  of disk space while linking an unrelated server test binary. The Settings
+  acceptance fixture passes five checks, including keeping mail/calendar work
+  out of Settings. The Daily Canvas fixture still needs a successful rerun.
+  Real-provider behavior and 24-hour service recovery remain open.

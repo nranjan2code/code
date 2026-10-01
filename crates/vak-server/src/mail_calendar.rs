@@ -455,6 +455,13 @@ pub(super) struct SendCandidateRequest {
     confirm: bool,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CandidateReviewContextRequest {
+    expected_revision: u64,
+    candidate_digest: String,
+}
+
 pub(super) async fn list_candidates(
     State(state): State<AppState>,
     axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
@@ -484,6 +491,208 @@ pub(super) async fn list_candidates(
         .into_response(),
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
+}
+
+/// Return exact sender and source-header context for the owner's explicit
+/// Review. Full account identity is transient here; it is never stored with
+/// the candidate or returned to a model-facing tool.
+pub(super) async fn candidate_review_context(
+    State(state): State<AppState>,
+    axum::Extension(principal): axum::Extension<AuthenticatedPrincipal>,
+    Path((agent_id, candidate_id)): Path<(String, String)>,
+    Json(request): Json<CandidateReviewContextRequest>,
+) -> Response {
+    if !operator(&principal) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !registered_agent(&state, &agent_id) {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    if request.candidate_digest.len() != 64
+        || !request
+            .candidate_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit())
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let vault = match AccountVault::for_agent(&agent_id) {
+        Ok(vault) => vault,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let initial = match vault.list_candidates() {
+        Ok(candidates) => candidates
+            .into_iter()
+            .find(|candidate| candidate.id == candidate_id && candidate.agent_id == agent_id),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(initial) = initial else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let account_lock = state.mail_calendar_account_lock(&agent_id, &initial.account_id);
+    let _account_guard = account_lock.lock().await;
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let candidate = match vault.list_candidates() {
+        Ok(candidates) => candidates
+            .into_iter()
+            .find(|candidate| candidate.id == candidate_id && candidate.agent_id == agent_id),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(candidate) = candidate else {
+        return StatusCode::CONFLICT.into_response();
+    };
+    if candidate.account_id != initial.account_id
+        || candidate.audience_id != format!("agent:{agent_id}")
+        || candidate.revision != request.expected_revision
+        || !candidate
+            .digest()
+            .is_ok_and(|digest| digest == request.candidate_digest)
+    {
+        return (
+            StatusCode::CONFLICT,
+            "The draft changed. Reload and review it again.",
+        )
+            .into_response();
+    }
+    let ProposedAction::SendMail { draft } = &candidate.action else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    if draft.from_alias.is_some() || vak_mail_calendar::effect::validate_mail_draft(draft).is_err()
+    {
+        return (
+            StatusCode::BAD_REQUEST,
+            "This sender profile is not supported.",
+        )
+            .into_response();
+    }
+    let receipts = match vault.list_action_receipts() {
+        Ok(receipts) => receipts,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    if receipts
+        .iter()
+        .any(|receipt| receipt.candidate_id == candidate.id)
+    {
+        return (
+            StatusCode::CONFLICT,
+            "This draft already has a provider-action outcome.",
+        )
+            .into_response();
+    }
+    let ledger = match ConnectionLedger::for_agent(&agent_id) {
+        Ok(ledger) => ledger,
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let account = match ledger.read_all() {
+        Ok(accounts) => accounts
+            .into_iter()
+            .find(|account| account.id == candidate.account_id),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Some(account) = account else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let audience = format!("agent:{agent_id}");
+    if !matches!(account.provider, Provider::Google | Provider::Microsoft)
+        || !account.admits(&agent_id, &audience, Capability::MailSend)
+        || (draft.reply_to_message_id.is_some()
+            && !account.admits(&agent_id, &audience, Capability::MailRead))
+    {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    if !valid_agent(&state, &agent_id) {
+        return StatusCode::CONFLICT.into_response();
+    }
+    let sender = match vault.display_identity(&account.id) {
+        Ok(Some(sender)) if valid_sender_identity(&sender) => sender,
+        _ => {
+            return (
+                StatusCode::PRECONDITION_FAILED,
+                "The connected account has no verified sender identity for Review.",
+            )
+                .into_response();
+        }
+    };
+
+    let source = match (
+        draft.reply_to_message_id.as_deref(),
+        draft.reply_to_thread_id.as_deref(),
+    ) {
+        (None, None) => None,
+        (Some(message_id), Some(thread_id)) => {
+            if !candidate
+                .source_refs
+                .iter()
+                .any(|source| source.item_id == message_id)
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "The reply source does not match this draft.",
+                )
+                    .into_response();
+            }
+            record_account_event(
+                &state,
+                "mail_reply_review_context",
+                &agent_id,
+                &account.id,
+                account.provider,
+                &account.capabilities,
+                "requested",
+            );
+            match ProviderReadClient::default()
+                .mail_reply_headers(
+                    &account, &vault, &agent_id, &audience, message_id, thread_id,
+                )
+                .await
+            {
+                Ok(headers) => {
+                    record_account_event(
+                        &state,
+                        "mail_reply_review_context",
+                        &agent_id,
+                        &account.id,
+                        account.provider,
+                        &account.capabilities,
+                        "succeeded",
+                    );
+                    Some(headers)
+                }
+                Err(error) => {
+                    mark_preview_reauthentication(&state, &account, &error);
+                    record_account_event(
+                        &state,
+                        "mail_reply_review_context",
+                        &agent_id,
+                        &account.id,
+                        account.provider,
+                        &account.capabilities,
+                        "failed",
+                    );
+                    return provider_preview_error(error);
+                }
+            }
+        }
+        _ => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    Json(serde_json::json!({
+        "candidate_id": candidate.id,
+        "revision": candidate.revision,
+        "sender": sender.as_str(),
+        "source_from": source.as_ref().and_then(|headers| headers.from.as_deref()),
+        "source_reply_to": source.as_ref().and_then(|headers| headers.reply_to.as_deref()),
+    }))
+    .into_response()
+}
+
+fn valid_sender_identity(identity: &str) -> bool {
+    identity.len() <= 320
+        && !identity.is_empty()
+        && !identity.chars().any(char::is_control)
+        && identity.matches('@').count() == 1
+        && !identity.chars().any(char::is_whitespace)
 }
 
 /// Return content-free run metadata for one routine, scoped to its owning
