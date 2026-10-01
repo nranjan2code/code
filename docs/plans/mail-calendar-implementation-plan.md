@@ -614,6 +614,13 @@ answer while the scheduler is stalled, paused, or returning from host sleep.
 This is scheduler liveness, not provider freshness or an uptime guarantee; the
 sustained service acceptance test remains open.
 
+**Implemented increment (2026-10-01):** a resumed, due mail routine now has a
+server scheduler-state regression. It enters through the shared TaskDef tick,
+starts as a scheduled run, completes in the owning Agent, and records the
+matching Agent-session ID in routine history. This proves scheduler admission
+and history linkage with synthetic credentials and a fake model; it does not
+exercise provider polling or establish sustained service availability.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -1993,3 +2000,9 @@ remains open.
   restart/requeue, 5 worker checks, the production web build, and the new server
   routine-run lifecycle test. The live provider and 24-hour service acceptance
   gates remain open.
+- 2026-10-01: Added a scheduler-state integration regression for a resumed,
+  due Google MailRead routine. The shared TaskDef scheduler launches it, the
+  fake model completes its Agent run, and encrypted owner history records the
+  scheduled trigger and matching session ID. No provider request is made. The
+  targeted server test passes; provider polling and 24-hour recovery remain
+  separate acceptance gates.

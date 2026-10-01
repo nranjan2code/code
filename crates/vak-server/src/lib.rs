@@ -24967,6 +24967,146 @@ mod scheduler_state_tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn resumed_mail_calendar_routine_fires_from_the_shared_task_scheduler() {
+        use vak_mail_calendar::connection_ledger::ConnectionLedger;
+        use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
+        use vak_mail_calendar::{
+            AccountStatus, Capability, Provider, RoutineOperation, RoutineScope,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let (ws, home) = (dir.path().join("ws"), dir.path().join("home"));
+        std::fs::create_dir_all(&ws).unwrap();
+        make_repo(&ws);
+        vak_config::paths::isolate_home_for_tests();
+
+        let agent_id = format!("routine-owner-{}", uuid::Uuid::now_v7());
+        let agent = agents::builtin_templates()
+            .into_iter()
+            .find(|template| template.template_id == "writer")
+            .unwrap()
+            .to_agent_definition(&agent_id, None);
+        agents::save(&ws, std::slice::from_ref(&agent), true).unwrap();
+
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                AccountSecretMaterial::new(
+                    "google:scheduled-routine-subject".into(),
+                    Some("scheduled@example.test".into()),
+                    None,
+                    Some("synthetic-scheduler-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut account = vak_mail_calendar::ConnectedAccount {
+            id: account_id.clone(),
+            provider: Provider::Google,
+            status: AccountStatus::Pending,
+            owner_agent_id: agent_id.clone(),
+            allowed_audiences: [format!("agent:{agent_id}")].into_iter().collect(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: ["https://www.googleapis.com/auth/gmail.readonly".into()]
+                .into_iter()
+                .collect(),
+            credential_ref: credential_ref.clone(),
+            principal_ref: credential_ref,
+            revision: 1,
+            connected_at: chrono::Utc::now(),
+            access_token_expires_at: None,
+            refresh_token_available: false,
+            revoked_at: None,
+        };
+        let ledger = ConnectionLedger::for_agent(&agent_id).unwrap();
+        ledger.append_pending(account.clone()).unwrap();
+        account.status = AccountStatus::Connected;
+        account.revision = 2;
+        ledger.append_connected(account).unwrap();
+
+        let routine_id = uuid::Uuid::now_v7().to_string();
+        let scope = RoutineScope {
+            routine_id: routine_id.clone(),
+            account_id: account_id.clone(),
+            mail_folder_id: None,
+            calendar_source_id: None,
+            operations: [RoutineOperation::RecentMail].into_iter().collect(),
+            max_items: 5,
+            watch_new_mail: false,
+            read_commitments: false,
+            calendar_event_trigger: None,
+        };
+        let task: TaskDef = serde_json::from_value(serde_json::json!({
+            "id": routine_id,
+            "name": "Scheduled mail summary",
+            "prompt": "Summarize recent mail.",
+            "enabled": true,
+            "cwd": ws,
+            "created_at": chrono::Utc::now(),
+            "last_run_at": null,
+            "last_session_id": null,
+            "last_summary": null,
+            "due_at": chrono::Utc::now() - chrono::Duration::seconds(2),
+            "agent_id": agent_id,
+            "agent_revision": agent.revision,
+            "mail_calendar_scope": scope
+        }))
+        .unwrap();
+        task.validate().unwrap();
+
+        let identity = vak_session::types::AgentIdentity {
+            id: "vak".into(),
+            revision: 1,
+            name: "Vakyartha".into(),
+            character: String::new(),
+            personality: String::new(),
+            animation: "spark".into(),
+            voice: "calm".into(),
+            behaviour: String::new(),
+            responsibilities: String::new(),
+            instructions: String::new(),
+        };
+        let state = state_with(&ws, &home, vec![task], Some(identity));
+        scheduler_tick(&state).await;
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let completed = loop {
+            let task = state.tasks.lock().unwrap().get(&routine_id).cloned();
+            if let Some(task) = task
+                && task.last_run_status.as_deref() == Some("complete")
+            {
+                break Some(task);
+            }
+            if std::time::Instant::now() >= deadline {
+                break None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        };
+        let completed = completed.expect("the scheduler completes the resumed routine");
+        assert!(completed.last_session_id.is_some());
+        let runs = vault.list_routine_runs(&routine_id, &account_id).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            runs[0].trigger,
+            vak_mail_calendar::vault::RoutineRunTrigger::Scheduled
+        );
+        assert_eq!(
+            runs[0].status,
+            vak_mail_calendar::vault::RoutineRunStatus::Complete
+        );
+        assert_eq!(
+            runs[0].session_id.as_deref(),
+            completed.last_session_id.as_deref()
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn child_core_home_is_not_nested() {
         let dir = tempfile::tempdir().unwrap();
