@@ -1,0 +1,28 @@
+[package]
+name = "vak-storage-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Not a workspace member: cargo-fuzz needs nightly and its own lockfile.
+[workspace]
+
+[dependencies]
+# libFuzzer entry point for cargo-fuzz targets.
+libfuzzer-sys = "=0.4.9"
+vak-storage = { path = ".." }
+
+[[bin]]
+name = "frames"
+path = "fuzz_targets/frames.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "segments"
+path = "fuzz_targets/segments.rs"
+test = false
+doc = false

@@ -184,8 +184,13 @@ impl LocalObjectStore {
         }
     }
 
-    /// Removes every object that has no grant file. Returns how many.
+    /// Removes every object with no live grant. Returns how many.
     pub fn gc(&self) -> Result<usize> {
+        self.gc_holding(&|_| false)
+    }
+
+    /// As `gc`, but a grant held by a scope under hold is always live.
+    pub fn gc_holding(&self, held: &dyn Fn(&str) -> bool) -> Result<usize> {
         let mut removed = 0;
         for shard in fs::read_dir(self.root.join("objects"))? {
             let shard = shard?;
@@ -196,17 +201,41 @@ impl LocalObjectStore {
                 if valid_id(&id).is_err() {
                     continue;
                 }
-                let live = fs::read_dir(self.grant_dir(&id))
-                    .map(|mut d| d.next().is_some())
-                    .unwrap_or(false);
-                if !live {
+                if !self.has_live_grant(&id, held)? {
                     fs::remove_file(obj.path())?;
-                    let _ = fs::remove_dir(self.grant_dir(&id));
+                    let _ = fs::remove_dir_all(self.grant_dir(&id));
                     removed += 1;
                 }
             }
         }
         Ok(removed)
+    }
+
+    /// A grant is live while its scope is held or its key still unwraps. An
+    /// unreachable authority is an error, never a reason to collect.
+    fn has_live_grant(&self, id: &ObjectId, held: &dyn Fn(&str) -> bool) -> Result<bool> {
+        let Ok(rd) = fs::read_dir(self.grant_dir(id)) else {
+            return Ok(false);
+        };
+        for e in rd {
+            let Ok(bytes) = fs::read(e?.path()) else {
+                return Ok(true);
+            };
+            let Ok(w) = WrappedKey::decode(&bytes) else {
+                return Ok(true);
+            };
+            if held(&w.scope) {
+                return Ok(true);
+            }
+            match self.authority.unwrap(&w) {
+                Err(StorageError::Revoked(_)) => {}
+                Err(StorageError::AuthorityUnavailable(m)) => {
+                    return Err(StorageError::AuthorityUnavailable(m));
+                }
+                _ => return Ok(true),
+            }
+        }
+        Ok(false)
     }
 
     pub fn exists(&self, id: &ObjectId) -> bool {

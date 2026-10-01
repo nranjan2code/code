@@ -1,0 +1,437 @@
+//! The `Store` seam: objects plus refs behind one commit generation.
+//!
+//! Every mutating call bumps the commit generation and then runs the
+//! pre-acknowledgement hook with the new generation before returning success.
+//! A hook that refuses (a remote that has not confirmed) makes the call an
+//! error although the change is locally durable; that is how a strong
+//! durability mode is added later without changing callers. `restore` bumps
+//! the writer epoch, which fences every holder of the old epoch with no
+//! remote involved.
+
+use crate::keys::KeyAuthority;
+use crate::objects::{IdKey, LocalObjectStore, ObjectId};
+use crate::refs::{MemoryRefStore, RefStore, RefValue, SqliteRefStore};
+use crate::{Result, StorageError};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::{Arc, Mutex};
+
+pub type PreAck = Arc<dyn Fn(u64) -> Result<()> + Send + Sync>;
+
+const COMMIT_REF: &str = "_store/commit";
+const EPOCH_REF: &str = "_store/epoch";
+
+pub trait Store: Send + Sync {
+    fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId>;
+    fn get_object(&self, id: &ObjectId, scope: &str) -> Result<Vec<u8>>;
+    fn remove_grant(&self, id: &ObjectId, scope: &str) -> Result<()>;
+    /// Collects objects with no live grant (scopes in `held` always count).
+    fn gc(&self, held: &dyn Fn(&str) -> bool) -> Result<usize>;
+    fn get_ref(&self, name: &str) -> Result<Option<RefValue>>;
+    /// Refused with `StaleEpoch` when `epoch` is older than the store's.
+    fn cas_ref(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        target: &[u8],
+    ) -> Result<RefValue>;
+    /// Count of committed mutations; strictly increasing, survives reopen.
+    fn commit_generation(&self) -> Result<u64>;
+    fn epoch(&self) -> Result<u64>;
+    /// Called after restoring a store from a backup: fences the old writer.
+    fn restore(&self) -> Result<u64>;
+    fn set_pre_ack(&self, hook: Option<PreAck>) -> Result<()>;
+}
+
+/// A remote copy of a store. Declared so the durability modes can name it;
+/// no implementation exists in this crate.
+pub trait Remote: Send + Sync {
+    fn push_object(&self, id: &ObjectId, sealed: &[u8]) -> Result<()>;
+    fn fetch_object(&self, id: &ObjectId) -> Result<Option<Vec<u8>>>;
+    fn push_ref(&self, name: &str, value: &RefValue) -> Result<()>;
+    /// The highest commit generation the remote has durably accepted.
+    fn acknowledged_generation(&self) -> Result<u64>;
+}
+
+fn user_ref(name: &str) -> Result<()> {
+    if name.starts_with("_store/") {
+        Err(StorageError::Malformed("reserved ref name"))
+    } else {
+        Ok(())
+    }
+}
+
+fn counter(refs: &dyn RefStore, name: &str) -> Result<u64> {
+    match refs.get(name)? {
+        None => Ok(0),
+        Some(v) => {
+            let b: [u8; 8] = v
+                .target
+                .as_slice()
+                .try_into()
+                .map_err(|_| StorageError::Malformed("store counter"))?;
+            Ok(u64::from_le_bytes(b))
+        }
+    }
+}
+
+fn bump(refs: &dyn RefStore, name: &str) -> Result<u64> {
+    let cur = refs.get(name)?;
+    let next = counter(refs, name)? + 1;
+    refs.cas(name, cur.map(|c| c.generation), 0, &next.to_le_bytes())?;
+    Ok(next)
+}
+
+struct Meta {
+    refs: Box<dyn RefStore>,
+    serial: Mutex<()>,
+    hook: Mutex<Option<PreAck>>,
+}
+
+impl Meta {
+    fn new(refs: Box<dyn RefStore>) -> Self {
+        Self {
+            refs,
+            serial: Mutex::new(()),
+            hook: Mutex::new(None),
+        }
+    }
+
+    fn committed(&self) -> Result<u64> {
+        let generation = {
+            let _g = self
+                .serial
+                .lock()
+                .map_err(|_| StorageError::Malformed("store state poisoned"))?;
+            bump(self.refs.as_ref(), COMMIT_REF)?
+        };
+        let hook = self
+            .hook
+            .lock()
+            .map_err(|_| StorageError::Malformed("store state poisoned"))?
+            .clone();
+        if let Some(h) = hook {
+            h(generation)?;
+        }
+        Ok(generation)
+    }
+
+    fn cas_ref(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        target: &[u8],
+    ) -> Result<RefValue> {
+        user_ref(name)?;
+        let current = counter(self.refs.as_ref(), EPOCH_REF)?;
+        if epoch < current {
+            return Err(StorageError::StaleEpoch {
+                presented: epoch,
+                current,
+            });
+        }
+        let v = self.refs.cas(name, expected, epoch, target)?;
+        self.committed()?;
+        Ok(v)
+    }
+
+    fn restore(&self) -> Result<u64> {
+        let e = {
+            let _g = self
+                .serial
+                .lock()
+                .map_err(|_| StorageError::Malformed("store state poisoned"))?;
+            bump(self.refs.as_ref(), EPOCH_REF)?
+        };
+        self.committed()?;
+        Ok(e)
+    }
+
+    fn set_hook(&self, hook: Option<PreAck>) -> Result<()> {
+        *self
+            .hook
+            .lock()
+            .map_err(|_| StorageError::Malformed("store state poisoned"))? = hook;
+        Ok(())
+    }
+}
+
+pub struct LocalStore {
+    objects: LocalObjectStore,
+    meta: Meta,
+}
+
+impl LocalStore {
+    pub fn open(root: &Path, id_key: IdKey, authority: Arc<dyn KeyAuthority>) -> Result<Self> {
+        std::fs::create_dir_all(root)?;
+        Ok(Self {
+            objects: LocalObjectStore::open(&root.join("cas"), id_key, authority)?,
+            meta: Meta::new(Box::new(SqliteRefStore::open(&root.join("refs.db"))?)),
+        })
+    }
+}
+
+impl Store for LocalStore {
+    fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId> {
+        let id = self.objects.put(plaintext, scope)?;
+        self.meta.committed()?;
+        Ok(id)
+    }
+
+    fn get_object(&self, id: &ObjectId, scope: &str) -> Result<Vec<u8>> {
+        self.objects.get(id, scope)
+    }
+
+    fn remove_grant(&self, id: &ObjectId, scope: &str) -> Result<()> {
+        self.objects.remove_grant(id, scope)?;
+        self.meta.committed().map(|_| ())
+    }
+
+    fn gc(&self, held: &dyn Fn(&str) -> bool) -> Result<usize> {
+        let n = self.objects.gc_holding(held)?;
+        if n > 0 {
+            self.meta.committed()?;
+        }
+        Ok(n)
+    }
+
+    fn get_ref(&self, name: &str) -> Result<Option<RefValue>> {
+        user_ref(name)?;
+        self.meta.refs.get(name)
+    }
+
+    fn cas_ref(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        target: &[u8],
+    ) -> Result<RefValue> {
+        self.meta.cas_ref(name, expected, epoch, target)
+    }
+
+    fn commit_generation(&self) -> Result<u64> {
+        counter(self.meta.refs.as_ref(), COMMIT_REF)
+    }
+
+    fn epoch(&self) -> Result<u64> {
+        counter(self.meta.refs.as_ref(), EPOCH_REF)
+    }
+
+    fn restore(&self) -> Result<u64> {
+        self.meta.restore()
+    }
+
+    fn set_pre_ack(&self, hook: Option<PreAck>) -> Result<()> {
+        self.meta.set_hook(hook)
+    }
+}
+
+#[derive(Default)]
+struct MemObjects {
+    bodies: HashMap<ObjectId, Vec<u8>>,
+    grants: HashMap<ObjectId, HashSet<String>>,
+}
+
+/// In-memory store for tests and ephemeral work. No encryption: nothing here
+/// reaches a disk.
+pub struct MemoryStore {
+    id_key: IdKey,
+    objects: Mutex<MemObjects>,
+    meta: Meta,
+}
+
+impl MemoryStore {
+    pub fn new(id_key: IdKey) -> Self {
+        Self {
+            id_key,
+            objects: Mutex::new(MemObjects::default()),
+            meta: Meta::new(Box::new(MemoryRefStore::new())),
+        }
+    }
+
+    fn objs(&self) -> Result<std::sync::MutexGuard<'_, MemObjects>> {
+        self.objects
+            .lock()
+            .map_err(|_| StorageError::Malformed("store state poisoned"))
+    }
+}
+
+impl Store for MemoryStore {
+    fn put_object(&self, plaintext: &[u8], scope: &str) -> Result<ObjectId> {
+        let id = self.id_key.id(plaintext);
+        {
+            let mut o = self.objs()?;
+            o.bodies
+                .entry(id.clone())
+                .or_insert_with(|| plaintext.to_vec());
+            o.grants
+                .entry(id.clone())
+                .or_default()
+                .insert(scope.to_string());
+        }
+        self.meta.committed()?;
+        Ok(id)
+    }
+
+    fn get_object(&self, id: &ObjectId, scope: &str) -> Result<Vec<u8>> {
+        let o = self.objs()?;
+        if !o.grants.get(id).is_some_and(|g| g.contains(scope)) {
+            return Err(StorageError::NoGrant);
+        }
+        o.bodies.get(id).cloned().ok_or(StorageError::NotFound)
+    }
+
+    fn remove_grant(&self, id: &ObjectId, scope: &str) -> Result<()> {
+        if let Some(g) = self.objs()?.grants.get_mut(id) {
+            g.remove(scope);
+        }
+        self.meta.committed().map(|_| ())
+    }
+
+    fn gc(&self, _held: &dyn Fn(&str) -> bool) -> Result<usize> {
+        let n = {
+            let mut o = self.objs()?;
+            let dead: Vec<ObjectId> = o
+                .bodies
+                .keys()
+                .filter(|id| !o.grants.get(*id).is_some_and(|g| !g.is_empty()))
+                .cloned()
+                .collect();
+            for id in &dead {
+                o.bodies.remove(id);
+                o.grants.remove(id);
+            }
+            dead.len()
+        };
+        if n > 0 {
+            self.meta.committed()?;
+        }
+        Ok(n)
+    }
+
+    fn get_ref(&self, name: &str) -> Result<Option<RefValue>> {
+        user_ref(name)?;
+        self.meta.refs.get(name)
+    }
+
+    fn cas_ref(
+        &self,
+        name: &str,
+        expected: Option<u64>,
+        epoch: u64,
+        target: &[u8],
+    ) -> Result<RefValue> {
+        self.meta.cas_ref(name, expected, epoch, target)
+    }
+
+    fn commit_generation(&self) -> Result<u64> {
+        counter(self.meta.refs.as_ref(), COMMIT_REF)
+    }
+
+    fn epoch(&self) -> Result<u64> {
+        counter(self.meta.refs.as_ref(), EPOCH_REF)
+    }
+
+    fn restore(&self) -> Result<u64> {
+        self.meta.restore()
+    }
+
+    fn set_pre_ack(&self, hook: Option<PreAck>) -> Result<()> {
+        self.meta.set_hook(hook)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::keys::MemoryKeyAuthority;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn local(dir: &Path) -> LocalStore {
+        let a = Arc::new(MemoryKeyAuthority::new().unwrap());
+        LocalStore::open(dir, IdKey::new(&[5; 32]), a).unwrap()
+    }
+
+    fn exercise(s: &dyn Store) {
+        let g0 = s.commit_generation().unwrap();
+        let id = s.put_object(b"hello", "a").unwrap();
+        assert_eq!(s.get_object(&id, "a").unwrap(), b"hello");
+        assert!(matches!(s.get_object(&id, "b"), Err(StorageError::NoGrant)));
+        let r = s.cas_ref("head", None, 0, id.0.as_bytes()).unwrap();
+        assert_eq!(r.generation, 1);
+        assert!(s.commit_generation().unwrap() >= g0 + 2);
+        assert!(s.cas_ref("_store/epoch", None, 0, b"x").is_err());
+        s.remove_grant(&id, "a").unwrap();
+        assert_eq!(s.gc(&|_| false).unwrap(), 1);
+        assert!(s.get_object(&id, "a").is_err());
+    }
+
+    #[test]
+    fn both_stores_satisfy_the_contract() {
+        let d = tempfile::tempdir().unwrap();
+        exercise(&local(d.path()));
+        exercise(&MemoryStore::new(IdKey::new(&[5; 32])));
+    }
+
+    #[test]
+    fn commit_generation_survives_reopen() {
+        let d = tempfile::tempdir().unwrap();
+        let g = {
+            let s = local(d.path());
+            s.put_object(b"x", "a").unwrap();
+            s.commit_generation().unwrap()
+        };
+        assert_eq!(g, 1);
+        assert_eq!(local(d.path()).commit_generation().unwrap(), 1);
+    }
+
+    #[test]
+    fn restore_bumps_epoch() {
+        let d = tempfile::tempdir().unwrap();
+        for s in [
+            Box::new(local(d.path())) as Box<dyn Store>,
+            Box::new(MemoryStore::new(IdKey::new(&[1; 32]))),
+        ] {
+            let old = s.epoch().unwrap();
+            let v = s.cas_ref("head", None, old, b"1").unwrap();
+            let new = s.restore().unwrap();
+            assert_eq!(new, old + 1);
+            assert_eq!(s.epoch().unwrap(), new);
+            assert!(matches!(
+                s.cas_ref("head", Some(v.generation), old, b"2"),
+                Err(StorageError::StaleEpoch { .. })
+            ));
+            assert!(matches!(
+                s.cas_ref("other", None, old, b"2"),
+                Err(StorageError::StaleEpoch { .. })
+            ));
+            s.cas_ref("head", Some(v.generation), new, b"3").unwrap();
+        }
+    }
+
+    #[test]
+    fn pre_ack_hook_sees_each_generation_and_can_refuse() {
+        let s = MemoryStore::new(IdKey::new(&[1; 32]));
+        let seen = Arc::new(AtomicU64::new(0));
+        let s2 = seen.clone();
+        s.set_pre_ack(Some(Arc::new(move |g| {
+            s2.store(g, Ordering::SeqCst);
+            Ok(())
+        })))
+        .unwrap();
+        s.put_object(b"a", "x").unwrap();
+        assert_eq!(seen.load(Ordering::SeqCst), 1);
+        s.set_pre_ack(Some(Arc::new(|_| {
+            Err(StorageError::AuthorityUnavailable("remote down".into()))
+        })))
+        .unwrap();
+        assert!(s.put_object(b"b", "x").is_err());
+        assert_eq!(s.commit_generation().unwrap(), 2);
+        s.set_pre_ack(None).unwrap();
+        s.put_object(b"c", "x").unwrap();
+    }
+}

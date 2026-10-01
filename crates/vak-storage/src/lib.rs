@@ -1,10 +1,14 @@
 //! Storage substrate: no vak dependencies, primitives from `ring` only.
 //! Design: docs/design/73-data-architecture-and-lifecycle.md §5-§7.3.
 
+pub mod documents;
 pub mod keys;
 pub mod objects;
 pub mod records;
 pub mod refs;
+pub mod scopes;
+pub mod segments;
+pub mod store;
 
 mod seal;
 
@@ -45,6 +49,12 @@ pub enum StorageError {
     TornTail(u64),
     #[error("frame is sealed and cannot be opened with the given key")]
     Undecryptable,
+    #[error("scope is under hold: {0}")]
+    Held(String),
+    #[error("stopped after step: {0}")]
+    Interrupted(&'static str),
+    #[error("document was forgotten")]
+    Forgotten,
     #[error("malformed data: {0}")]
     Malformed(&'static str),
 }

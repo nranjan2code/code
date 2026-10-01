@@ -30,6 +30,9 @@ pub struct ChainReport {
     pub valid_len: u64,
     /// Where an incomplete trailing frame begins, if the file has one.
     pub torn_tail: Option<u64>,
+    /// Frames sealed under a scope key. Zero means the segment is plaintext
+    /// frames and may be compressed whole when sealed.
+    pub encrypted_frames: u64,
 }
 
 fn link(prev: &[u8; 32], body: &[u8]) -> [u8; 32] {
@@ -48,10 +51,15 @@ struct Frame<'a> {
 }
 
 /// Walks frames, verifying the chain. Calls `visit` for each frame.
-fn walk(data: &[u8], mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>) -> Result<ChainReport> {
+fn walk(
+    data: &[u8],
+    start: [u8; 32],
+    mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>,
+) -> Result<ChainReport> {
     let mut pos = 0usize;
-    let mut prev = GENESIS;
+    let mut prev = start;
     let mut n = 0u64;
+    let mut encrypted = 0u64;
     loop {
         let rest = &data[pos..];
         if rest.is_empty() {
@@ -60,6 +68,7 @@ fn walk(data: &[u8], mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>) -> Res
                 head: prev,
                 valid_len: pos as u64,
                 torn_tail: None,
+                encrypted_frames: encrypted,
             });
         }
         let torn = ChainReport {
@@ -67,6 +76,7 @@ fn walk(data: &[u8], mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>) -> Res
             head: prev,
             valid_len: pos as u64,
             torn_tail: Some(pos as u64),
+            encrypted_frames: encrypted,
         };
         if rest.len() < 4 {
             return Ok(torn);
@@ -91,6 +101,9 @@ fn walk(data: &[u8], mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>) -> Res
                 payload: &body[1..],
             },
         )?;
+        if body[0] & SEALED != 0 {
+            encrypted += 1;
+        }
         prev = h;
         n += 1;
         pos += 4 + len + HASH;
@@ -99,7 +112,18 @@ fn walk(data: &[u8], mut visit: impl FnMut(u64, Frame<'_>) -> Result<()>) -> Res
 
 /// Verifies the whole chain without any key.
 pub fn verify_chain(path: &Path) -> Result<ChainReport> {
-    walk(&fs::read(path)?, |_, _| Ok(()))
+    verify_chain_from(path, GENESIS)
+}
+
+/// Verifies a segment whose first frame chains from `prev` (the head of the
+/// segment before it).
+pub fn verify_chain_from(path: &Path, prev: [u8; 32]) -> Result<ChainReport> {
+    verify_bytes(&fs::read(path)?, prev)
+}
+
+/// Verifies frames held in memory. Never panics on any input.
+pub fn verify_bytes(data: &[u8], prev: [u8; 32]) -> Result<ChainReport> {
+    walk(data, prev, |_, _| Ok(()))
 }
 
 fn aad(seq: u64) -> [u8; 8] {
@@ -109,8 +133,17 @@ fn aad(seq: u64) -> [u8; 8] {
 /// Reads every entry. A sealed frame needs `key`; without it, or after the
 /// key is destroyed, it is `Undecryptable` while the chain still verifies.
 pub fn read_entries(path: &Path, key: Option<&ScopeKey>) -> Result<Vec<Vec<u8>>> {
+    entries_from_bytes(&fs::read(path)?, GENESIS, key)
+}
+
+/// As `read_entries`, over frames in memory that chain from `prev`.
+pub fn entries_from_bytes(
+    data: &[u8],
+    prev: [u8; 32],
+    key: Option<&ScopeKey>,
+) -> Result<Vec<Vec<u8>>> {
     let mut out = Vec::new();
-    walk(&fs::read(path)?, |seq, f| {
+    walk(data, prev, |seq, f| {
         let compressed = if f.flags & SEALED != 0 {
             let k = key.ok_or(StorageError::Undecryptable)?;
             seal::open(&k.0, &aad(seq), f.payload).map_err(|_| StorageError::Undecryptable)?
@@ -147,14 +180,20 @@ impl RecordWriter {
     /// Opens (creating if absent), verifying the existing chain. A torn tail
     /// is an error until `truncate_torn_tail` has been called.
     pub fn open(path: &Path) -> Result<Self> {
+        Self::open_from(path, GENESIS)
+    }
+
+    /// As `open`, for a segment that continues the chain at `prev`.
+    pub fn open_from(path: &Path, prev: [u8; 32]) -> Result<Self> {
         let r = if path.exists() {
-            verify_chain(path)?
+            verify_chain_from(path, prev)?
         } else {
             ChainReport {
                 entries: 0,
-                head: GENESIS,
+                head: prev,
                 valid_len: 0,
                 torn_tail: None,
+                encrypted_frames: 0,
             }
         };
         if let Some(at) = r.torn_tail {

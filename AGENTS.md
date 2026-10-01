@@ -1201,7 +1201,13 @@ crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
                      SQLite), objects (HMAC-keyed ids, zstd then AEAD under a
                      per-object key, grants per scope) and records (per-entry
                      AEAD frames, hash chain over the stored bytes, so it
-                     verifies without keys and after a shred); slice 1 of M2
+                     verifies without keys and after a shred), segments
+                     (verified seal: copy, verify, atomic swap, seal entry;
+                     crash-safe), scopes (persistent wrapped scope keys with
+                     grant/revoke/shred/hold), documents (versions as objects,
+                     current as a CAS ref) and the Store trait (LocalStore,
+                     MemoryStore, commit generation, pre-ack hook, restore
+                     epoch; Remote declared only); slices 1-2 of M2
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
                      delivery posture (cadence x urgency) deciding WHEN a
                      packet goes out and never what it says; an approval and
