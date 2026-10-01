@@ -110,13 +110,15 @@ const waitFor = async (predicate: () => boolean, label: string, timeout = 5000) 
   }
   throw new Error(`Timed out waiting for ${label}`);
 };
-const click = async (name: string) => {
+const click = async (name: string): Promise<HTMLButtonElement> => {
   let button: HTMLButtonElement | undefined;
   await waitFor(() => {
     button = [...document.querySelectorAll<HTMLButtonElement>("button")].find((item) => item.textContent?.trim() === name);
     return !!button && !button.disabled;
   }, `enabled button ${name}`);
+  button!.focus();
   button!.click();
+  return button!;
 };
 const setField = (label: string, value: string) => {
   const field = [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")].find((item) => item.closest("label")?.textContent?.trim().startsWith(label));
@@ -126,6 +128,27 @@ const setField = (label: string, value: string) => {
   field.dispatchEvent(new Event("input", { bubbles: true }));
 };
 const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label); return label; };
+const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
+  let sheet: HTMLElement | undefined;
+  await waitFor(() => {
+    sheet = [...document.querySelectorAll<HTMLElement>(".sheet[role='dialog'][aria-modal='true']")].at(-1);
+    return !!sheet && sheet.contains(document.activeElement);
+  }, "keyboard focus to enter the exact Review dialog");
+  const controls = [...sheet!.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")];
+  const first = controls[0];
+  const last = controls.at(-1);
+  if (!first || !last) throw new Error("The exact Review dialog has no keyboard controls");
+  last.focus();
+  last.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+  const forwardWraps = document.activeElement === first;
+  first.focus();
+  first.dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", shiftKey: true, bubbles: true, cancelable: true }));
+  const reverseWraps = document.activeElement === last;
+  window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  await waitFor(() => !sheet!.isConnected, "Escape to close exact Review");
+  await waitFor(() => document.activeElement === opener, "focus to return to the Review opener");
+  return { forwardWraps, reverseWraps, escapeRestoresFocus: document.activeElement === opener };
+};
 
 (window as any).runChecks = async () => {
   await waitFor(() => !!document.querySelector("button") && document.body.textContent?.includes("owner@example.test") === true, "the fake connected account");
@@ -145,11 +168,10 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
   await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Friday works") === true, "the exact local draft preview");
   await click("Save draft");
   await waitFor(() => saved?.candidate_digest === "fixture-digest-1" && saved?.revision === 1, "the Agent-scoped saved candidate");
-  await click("Review and send this exact reply");
+  const mailReviewOpener = await click("Review and send this exact reply");
   await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("maya@example.test") === true, "the exact-effect Review");
   const review = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
-  const cancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Cancel");
-  cancel?.click();
+  const mailKeyboard = await exerciseReviewKeyboard(mailReviewOpener);
   const mailSaved = saved;
   await click("Preview calendar");
   await waitFor(() => document.body.textContent?.includes("Friday launch review") === true, "the bounded calendar source preview");
@@ -164,12 +186,11 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
   await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Synthetic project follow-up") === true, "the exact local event draft preview");
   await click("Save draft");
   await waitFor(() => saved?.action?.kind === "create_event" && saved?.candidate_digest === "fixture-digest-1", "the saved event candidate");
-  await click("Review and create this exact event");
+  const eventReviewOpener = await click("Review and create this exact event");
   await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("Synthetic project follow-up") === true, "the exact calendar-effect Review");
   const eventReview = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
   const eventModal = document.body.textContent ?? "";
-  const eventCancel = [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Cancel");
-  eventCancel?.click();
+  const eventKeyboard = await exerciseReviewKeyboard(eventReviewOpener);
   const effectCalls = requests.filter((request) => /\/(send|create-event|update-event|cancel-event)$/.test(request.path));
   const eventTriggerLabel = [...document.querySelectorAll<HTMLLabelElement>("label.capability-item")].find((label) => label.textContent?.includes("Run around a calendar event"));
   const eventTriggerCheckbox = eventTriggerLabel?.querySelector<HTMLInputElement>("input[type=checkbox]");
@@ -196,10 +217,12 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
     check(mailSaved?.source_refs?.[0]?.item_id === "message-41" && mailSaved?.action?.draft?.reply_to_message_id === "message-41" && mailSaved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
     check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
     check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),
+    check(mailKeyboard.forwardWraps && mailKeyboard.reverseWraps && mailKeyboard.escapeRestoresFocus, "Email Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
     check(requests.some((request) => request.path.endsWith("/calendar-preview") && request.method === "POST") && document.body.textContent?.includes("Friday launch review"), "Calendar preview reads the selected account's bounded event range"),
     check(saved?.action?.kind === "create_event" && saved?.action?.draft?.title === "Synthetic project follow-up" && saved?.action?.draft?.location === "Project room", "The work area saves the reviewed event fields"),
     check(eventReview.includes("Only this saved revision will be created") && eventReview.includes("AttendeesNone") && eventReview.includes("ReminderNone") && eventModal.includes("will not invite attendees or set a reminder"), "Calendar Review shows the exact saved revision and effect limits"),
+    check(eventKeyboard.forwardWraps && eventKeyboard.reverseWraps && eventKeyboard.escapeRestoresFocus, "Calendar Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
     check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing event Review leaves the draft in the work area without creating an event"),
     check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
     check(task?.enabled === true && task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine previews while paused, then resumes with a bounded one-minute cadence"),

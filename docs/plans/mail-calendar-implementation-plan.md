@@ -630,6 +630,14 @@ protection still depends on the persisted provider cursor. This stress check
 does not simulate 24 hours of scheduler uptime or real network/provider
 outages.
 
+**Implemented increment (2026-10-01):** the rendered connected-account
+acceptance fixture now exercises both email-send and calendar-create Review
+dialogs with keyboard navigation. It checks that focus enters the dialog, Tab
+and Shift+Tab wrap within it, Escape closes it, focus returns to the opener,
+the draft remains available, and no provider effect request occurs. The
+same-origin synthetic browser run passes 19 checks; screen-reader testing and
+phone/light/dark viewport acceptance remain open.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -2020,3 +2028,9 @@ remains open.
   interrupted batch/requeue, and recent-window deduplication. The focused test
   passes. This exercises data volume and local recovery without claiming a
   24-hour host-availability or live-provider test.
+- 2026-10-01: Expanded the rendered same-origin connected-account fixture to
+  check keyboard focus entry, forward/reverse Tab wrapping, Escape dismissal,
+  focus restoration, and no provider effect for both email and event Review.
+  The browser fixture passes 19 checks with synthetic account data and no
+  provider/credential requests; screen-reader and responsive theme coverage
+  remain open.
