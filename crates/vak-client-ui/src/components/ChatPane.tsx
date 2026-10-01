@@ -47,6 +47,11 @@ const STARTERS: readonly { label: string; example: string; prompt: string }[] = 
   { label: "Write or rewrite", example: "Make this email warmer and shorter", prompt: "Make this email warmer and shorter: " },
   { label: "Analyze data", example: "What changed in this spreadsheet?", prompt: "What changed in this spreadsheet? " },
   { label: "Plan something", example: "A relaxed Saturday with the kids", prompt: "Plan a relaxed Saturday with the kids." },
+  {
+    label: "Plan my day",
+    example: "Check today's events and important email",
+    prompt: "Give me a brief plan for today using my connected calendar, recent email that may need attention, and open commitments if they are available to this Agent. Use only sources this Agent is allowed to read, cite each event or message you rely on, and say what you could not access. Keep this read-only: do not send email or change calendar events.",
+  },
 ];
 
 function EmptyChat(props: { hasSession: boolean }) {

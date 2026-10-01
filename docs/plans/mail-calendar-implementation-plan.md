@@ -1838,3 +1838,10 @@ remains open.
   connected. This confirms local draft persistence and preview in the current
   build, not connected-account source-to-Review behavior or the required saved
   viewport/theme screenshot set.
+- 2026-10-01: Added a `Plan my day` starter to an Agent's empty conversation.
+  It invokes the ordinary Agent conversation with a read-only request for
+  authorized calendar, recent mail, and available commitments, requires event
+  and message citations, and asks the Agent to disclose unavailable sources.
+  This creates a day-to-day chat entry point without exposing provider
+  credentials or adding a data-fetch path to the client. A dedicated daily
+  Canvas remains open.

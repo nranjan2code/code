@@ -321,6 +321,14 @@ setting is later disabled. This is the first cross-activity integration; files,
 other services, writing commitments, and automatic provider effects remain
 separately gated or deferred.
 
+The Agent's empty conversation now offers a **Plan my day** starter. It asks
+the Agent to use only its available, authorized calendar, recent mail, and
+open commitments, cite the events and messages it uses, disclose unavailable
+sources, and keep the response read-only. This is an on-demand conversation
+entry point; a dedicated daily mail/calendar Canvas and connected-account
+source-to-Review browser workflow are still open. Account and routine
+administration remain in Settings.
+
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and
 notification destination. It uses `TaskDef` for scheduled work and the
