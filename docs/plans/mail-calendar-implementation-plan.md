@@ -672,6 +672,13 @@ remains open.
 
 ## Progress log
 
+- 2026-10-01: The conversation workspace now collapses repeated provider message
+  IDs when a person loads another page, matching the bounded citation-navigation
+  path. The connected-account browser fixture returns a duplicate from the next
+  page and verifies the visible thread has one copy while retaining the older
+  message. Verification: 12 browser checks pass in the rendered same-origin
+  fixture; client typecheck, web build, and thread-navigation unit tests pass.
+  This remains fake-account UI evidence, not live provider conformance.
 - 2026-10-01: Added a browser acceptance fixture that mounts the actual
   connected-account Settings workspace with a same-origin fake Google account.
   It exercises Agent-scoped account inventory, bounded inbox preview,

@@ -40,7 +40,7 @@ import type { ConfigSnapshot, SessionSummary, TaskDef } from "../types";
 import * as api from "../api";
 import { overlappingMailCalendarEventIds } from "../mailCalendarConflicts.mjs";
 import { mailCalendarWatchFreshness } from "../mailCalendarRoutineStatus.mjs";
-import { loadConversationCitation } from "../mailCalendarThreadNavigation.mjs";
+import { appendUniqueConversationMessages, loadConversationCitation } from "../mailCalendarThreadNavigation.mjs";
 import { MailCalendarAgenda } from "./MailCalendarAgenda";
 import { MailCalendarThreadWorkspace } from "./MailCalendarThreadWorkspace";
 import { interfaceFonts, contentFonts, codeFonts } from "../typography";
@@ -1698,7 +1698,7 @@ export default function Settings() {
       setMailThreadPreview({
         ...latest,
         loading: false,
-        messages: [...(latest.messages ?? []), ...result.messages],
+        messages: appendUniqueConversationMessages(latest.messages ?? [], result.messages),
         nextCursor: result.next_cursor,
       });
     } catch (error) {

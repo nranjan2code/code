@@ -43,7 +43,13 @@ window.fetch = async (input, init) => {
   if (url.pathname.endsWith("/mail-folders")) return json({ folders: [{ provider_id: "INBOX", name: "Inbox" }] });
   if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "primary-calendar", name: "Personal", primary: true }] });
   if (url.pathname.endsWith("/mail-preview")) return json({ messages: [sourceMessage] });
-  if (url.pathname.endsWith("/thread-preview")) return json({ messages: [sourceMessage], next_cursor: null });
+  if (url.pathname.endsWith("/thread-preview")) {
+    if (body.cursor === "older-page") return json({ messages: [sourceMessage, {
+      ...sourceMessage, provider_id: "message-40", subject: "Earlier launch note",
+      received_at: "2026-09-30T09:00:00Z", body_text: "Earlier discussion context.",
+    }], next_cursor: null });
+    return json({ messages: [sourceMessage], next_cursor: "older-page" });
+  }
   if (url.pathname === "/tasks" && method === "GET") return json({ tasks: task ? [task] : [] });
   if (url.pathname === "/tasks" && method === "POST") {
     task = {
@@ -111,6 +117,9 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
   await waitFor(() => document.body.textContent?.includes("Planning the launch review") === true, "the bounded source preview");
   await click("Open conversation");
   await waitFor(() => document.body.textContent?.includes("Draft a reply in this conversation") === true, "the source conversation");
+  await click("Load more messages");
+  await waitFor(() => document.querySelectorAll(".mail-calendar-thread-message").length === 2, "the next conversation page without duplicate messages");
+  const paginatedMessages = [...document.querySelectorAll<HTMLElement>(".mail-calendar-thread-message")];
   await click("Draft a reply in this conversation");
   await waitFor(() => !!document.querySelector(".mail-calendar-editor"), "the reply work area");
   setField("To", "maya@example.test");
@@ -145,6 +154,7 @@ const check = (ok: unknown, label: string) => { if (!ok) throw new Error(label);
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
     check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
+    check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),
     check(saved?.source_refs?.[0]?.item_id === "message-41" && saved?.action?.draft?.reply_to_message_id === "message-41" && saved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
     check(saved?.action?.draft?.to?.[0]?.address === "maya@example.test" && saved?.action?.draft?.body_text.includes("Friday works"), "The work area saves the edited recipient and body"),
     check(review.includes("Only this saved revision will be sent") && review.includes("Thanks, Friday works"), "Review shows the exact saved payload and revision semantics"),

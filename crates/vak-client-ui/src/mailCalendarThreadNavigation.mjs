@@ -1,6 +1,19 @@
 /** Maximum extra pages fetched automatically for a conversation citation. */
 export const MAX_CITATION_PAGES = 20;
 
+/** Append one provider page without duplicating messages already in the view. */
+export function appendUniqueConversationMessages(existing, incoming) {
+  const messages = [...existing];
+  const knownIds = new Set(messages.map((message) => message.provider_id));
+  for (const message of incoming) {
+    if (!knownIds.has(message.provider_id)) {
+      messages.push(message);
+      knownIds.add(message.provider_id);
+    }
+  }
+  return messages;
+}
+
 /**
  * Load bounded pages from one already-selected conversation until its cited
  * message is present, the provider cursor ends, or the automatic page budget
@@ -13,7 +26,7 @@ export const MAX_CITATION_PAGES = 20;
  * @param {number} [maxAdditionalPages]
  */
 export async function loadConversationCitation(firstPage, targetMessageId, loadNext, maxAdditionalPages = MAX_CITATION_PAGES) {
-  const messages = [...firstPage.messages];
+  let messages = [...firstPage.messages];
   let nextCursor = firstPage.next_cursor ?? null;
   let additionalPages = 0;
   const seenCursors = new Set();
@@ -25,13 +38,7 @@ export async function loadConversationCitation(firstPage, targetMessageId, loadN
   ) {
     seenCursors.add(nextCursor);
     const page = await loadNext(nextCursor);
-    const knownIds = new Set(messages.map((message) => message.provider_id));
-    for (const message of page.messages) {
-      if (!knownIds.has(message.provider_id)) {
-        messages.push(message);
-        knownIds.add(message.provider_id);
-      }
-    }
+    messages = appendUniqueConversationMessages(messages, page.messages);
     additionalPages += 1;
     nextCursor = page.next_cursor ?? null;
   }

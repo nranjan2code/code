@@ -1,5 +1,10 @@
 export const MAX_CITATION_PAGES: number;
 
+export function appendUniqueConversationMessages<T extends { provider_id: string }>(
+  existing: T[],
+  incoming: T[],
+): T[];
+
 export function loadConversationCitation<T extends { provider_id: string }>(
   firstPage: { messages: T[]; next_cursor?: string | null },
   targetMessageId: string,

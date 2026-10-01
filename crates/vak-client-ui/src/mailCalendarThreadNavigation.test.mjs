@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadConversationCitation, MAX_CITATION_PAGES } from "./mailCalendarThreadNavigation.mjs";
+import { appendUniqueConversationMessages, loadConversationCitation, MAX_CITATION_PAGES } from "./mailCalendarThreadNavigation.mjs";
 
 const page = (ids, next_cursor = null) => ({
   messages: ids.map((provider_id) => ({ provider_id })),
@@ -17,6 +17,16 @@ test("citation already on the first page does not fetch more conversation data",
   assert.equal(result.additionalPages, 0);
   assert.equal(calls, 0);
   assert.equal(result.nextCursor, "next");
+});
+
+test("provider page overlap does not duplicate messages in the conversation workspace", () => {
+  const existing = [{ provider_id: "new", body_text: "current version" }];
+  const appended = appendUniqueConversationMessages(existing, [
+    { provider_id: "new", body_text: "duplicate page copy" },
+    { provider_id: "old", body_text: "older message" },
+  ]);
+  assert.deepEqual(appended.map((message) => message.provider_id), ["new", "old"]);
+  assert.equal(appended[0].body_text, "current version");
 });
 
 test("citation navigation follows only pages from the selected conversation", async () => {
