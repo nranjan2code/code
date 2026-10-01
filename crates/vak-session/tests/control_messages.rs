@@ -13,6 +13,9 @@ fn log(dir: &tempfile::TempDir) -> SessionLog {
     SessionLog::create(
         dir.path().join("s.jsonl"),
         SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: None,
             session_id: "s".into(),
             created_at: chrono::Utc::now(),

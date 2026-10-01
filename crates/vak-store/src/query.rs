@@ -299,6 +299,9 @@ mod tests {
 
     fn test_header(id: &str) -> SessionHeader {
         SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: None,
             session_id: id.to_string(),
             created_at: chrono::Utc::now(),

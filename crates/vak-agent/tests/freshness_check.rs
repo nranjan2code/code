@@ -140,6 +140,9 @@ async fn build_agent(
     live_data: bool,
 ) -> Agent {
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),

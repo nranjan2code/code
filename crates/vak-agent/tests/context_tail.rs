@@ -100,6 +100,9 @@ fn text_msg(t: &str) -> AssistantMessage {
 
 fn header(cwd: &std::path::Path) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "tail-test".into(),
         created_at: chrono::Utc::now(),

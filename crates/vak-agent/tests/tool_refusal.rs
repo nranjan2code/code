@@ -81,6 +81,9 @@ async fn a_text_edit_of_a_word_file_is_refused_without_asking_anyone() {
     )
     .unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "refusal".into(),
         created_at: chrono::Utc::now(),
@@ -191,6 +194,9 @@ async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() 
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(dir.path().join("notes.txt"), "plain").unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "directive".into(),
         created_at: chrono::Utc::now(),
@@ -365,6 +371,9 @@ async fn requests_after_a_draft(delivers: bool, final_text: &str) -> usize {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "deliver".into(),
         created_at: chrono::Utc::now(),
@@ -479,6 +488,9 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "repeat".into(),
         created_at: chrono::Utc::now(),

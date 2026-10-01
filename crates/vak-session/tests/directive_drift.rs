@@ -29,6 +29,9 @@ fn packet_only(log: &mut SessionLog, turn_id: &str, summary: &str) -> WorkingSet
 
 fn header() -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "s-drift".into(),
         created_at: chrono::Utc::now(),

@@ -96,6 +96,9 @@ fn setup(
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "general-flow".into(),
         created_at: chrono::Utc::now(),
@@ -366,6 +369,9 @@ async fn compaction_during_long_research_session() {
     let dir = tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "general-flow".into(),
         created_at: chrono::Utc::now(),

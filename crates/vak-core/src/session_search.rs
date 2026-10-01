@@ -407,6 +407,9 @@ mod tests {
         ] {
             let path = vak_session::SessionPath::new_session_file(&home, &cwd, id);
             let header = vak_session::SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: Some(vak_session::types::AgentIdentity {
                     id: agent.into(),
                     revision: 1,

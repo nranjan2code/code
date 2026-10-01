@@ -1194,6 +1194,9 @@ mod tests {
 
     fn header(cwd: &std::path::Path) -> SessionHeader {
         SessionHeader {
+            space: None,
+            run: None,
+            cause: None,
             agent: None,
             session_id: "s1".into(),
             created_at: chrono::Utc::now(),

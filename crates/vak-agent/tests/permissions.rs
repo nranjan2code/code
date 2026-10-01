@@ -78,6 +78,9 @@ fn multi_setup(
 ) -> Agent {
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "s".into(),
         created_at: chrono::Utc::now(),

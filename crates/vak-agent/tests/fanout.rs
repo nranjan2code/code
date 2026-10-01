@@ -184,6 +184,9 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "fanout-parent".into(),
         created_at: chrono::Utc::now(),

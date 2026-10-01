@@ -71,6 +71,9 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
 
 fn header_for(id: &str, cwd: &Path) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: Some(vak_session::types::AgentIdentity {
             id: "vak".into(),
             revision: 1,

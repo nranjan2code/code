@@ -80,6 +80,9 @@ async fn a_slow_listener_does_not_pace_a_long_reply() {
     let home = dir.path().join("home");
     std::fs::create_dir_all(&home).unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "stalled".into(),
         created_at: chrono::Utc::now(),

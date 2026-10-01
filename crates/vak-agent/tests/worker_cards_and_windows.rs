@@ -152,6 +152,9 @@ fn fake_rebuild() -> vak_agent::PresentationRebuild {
 
 fn header(dir: &tempfile::TempDir, session_id: &str) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),

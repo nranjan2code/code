@@ -12,6 +12,10 @@ vak-llm = { path = "../vak-llm" }
 ring = { workspace = true }
 keyring = { workspace = true, features = ["sync-secret-service", "vendored"] }
 
+[features]
+# TestScope: an isolated home and workspace for tests of dependent crates.
+test-support = []
+
 [lints]
 workspace = true
 

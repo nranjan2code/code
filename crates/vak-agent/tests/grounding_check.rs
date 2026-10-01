@@ -137,6 +137,9 @@ async fn build_agent_with_check(
     retrieval_check: Option<vak_agent::RetrievalCheck>,
 ) -> Agent {
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: session_id.into(),
         created_at: chrono::Utc::now(),
@@ -400,6 +403,9 @@ async fn session_search_of_the_users_own_notes_is_not_flagged() {
 
     let dir = tempdir().unwrap();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "grounding-session-search".into(),
         created_at: chrono::Utc::now(),

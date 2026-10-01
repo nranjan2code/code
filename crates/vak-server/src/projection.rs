@@ -2485,6 +2485,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("bookkeeping.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "bookkeeping".into(),
                 created_at: chrono::Utc::now(),
@@ -2580,6 +2583,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("delegated.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "delegated".into(),
                 created_at: chrono::Utc::now(),
@@ -3168,6 +3174,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "session-1".into(),
                 created_at: chrono::Utc::now(),
@@ -3318,6 +3327,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "session-2".into(),
                 created_at: chrono::Utc::now(),
@@ -3441,6 +3453,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "session-domains".into(),
                 created_at: chrono::Utc::now(),
@@ -3538,6 +3553,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "session-3".into(),
                 created_at: chrono::Utc::now(),
@@ -3618,6 +3636,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("presentation.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "session-personas".into(),
                 created_at: chrono::Utc::now(),
@@ -3756,6 +3777,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("synthetic-turns.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "synthetic-turns".into(),
                 created_at: chrono::Utc::now(),
@@ -3872,6 +3896,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("duplicate-card.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "duplicate-card".into(),
                 created_at: chrono::Utc::now(),
@@ -4025,6 +4052,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("two-charts.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "two-charts".into(),
                 created_at: chrono::Utc::now(),
@@ -4134,6 +4164,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("big-card.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "big-card".into(),
                 created_at: chrono::Utc::now(),
@@ -4215,6 +4248,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("card-id.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "card-id".into(),
                 created_at: chrono::Utc::now(),
@@ -4304,6 +4340,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("nudge.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "nudge".into(),
                 created_at: chrono::Utc::now(),
@@ -4372,6 +4411,9 @@ mod tests {
         let mut log = SessionLog::create(
             dir.path().join("ident.jsonl"),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: "ident".into(),
                 created_at: chrono::Utc::now(),
@@ -4454,6 +4496,9 @@ mod tests {
                 let mut log = SessionLog::create(
                     dir.path().join("t.jsonl"),
                     SessionHeader {
+                        space: None,
+                        run: None,
+                        cause: None,
                         agent: None,
                         session_id: "conformance".into(),
                         created_at: chrono::Utc::now(),
@@ -4663,6 +4708,9 @@ mod tests {
         SessionLog::create(
             dir.path().join(format!("{name}.jsonl")),
             SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: None,
                 session_id: name.into(),
                 created_at: chrono::Utc::now(),

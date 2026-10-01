@@ -135,6 +135,9 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
     std::fs::create_dir_all(&home).unwrap();
     let parent_id = "parent-bg".to_string();
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: parent_id.clone(),
         created_at: chrono::Utc::now(),

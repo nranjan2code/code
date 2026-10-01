@@ -252,6 +252,9 @@ async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
         HEARTBEAT_SESSION_ID,
     );
     let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: Some(vak_core::vak_agent_identity()),
         session_id: HEARTBEAT_SESSION_ID.to_string(),
         created_at: chrono::Utc::now(),

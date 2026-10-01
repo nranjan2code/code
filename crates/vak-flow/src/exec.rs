@@ -531,6 +531,9 @@ async fn execute_node(
                 |compose| compose(&tool_names),
             );
             let header = vak_session::types::SessionHeader {
+                space: None,
+                run: None,
+                cause: None,
                 agent: deps.agent_identity.clone().or_else(|| {
                     Some(vak_session::types::AgentIdentity {
                         id: "vak".into(),

@@ -10,6 +10,9 @@ use vak_session::{ActivityKind, ActivityRecord, ActivityStatus, SessionLog};
 
 fn header() -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: "s-chain".into(),
         created_at: chrono::Utc::now(),

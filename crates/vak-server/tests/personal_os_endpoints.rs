@@ -104,6 +104,9 @@ async fn spawn_server(config_toml: &str) -> Server {
 
 fn header_for(id: &str, cwd: &Path) -> SessionHeader {
     SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
         agent: None,
         session_id: id.to_string(),
         created_at: chrono::Utc::now(),
