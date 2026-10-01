@@ -122,6 +122,7 @@ async fn agent_home_subpaths_are_declared() {
             attributes: Default::default(),
             relations: Vec::new(),
             updated_at: chrono::Utc::now(),
+            derived_from: None,
         },
     )
     .expect("entity");

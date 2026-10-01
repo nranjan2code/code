@@ -650,6 +650,8 @@ async fn digest_reports_window_math_and_clamps_days() {
             usd: Some(0.25),
             source: "estimated".into(),
             session_id: "s-digest".into(),
+            trace: None,
+            actor: None,
         })
         .unwrap();
 
@@ -702,6 +704,8 @@ async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_co
         usd: None,
         source: "estimated".into(),
         session_id: "s-finops".into(),
+        trace: None,
+        actor: None,
     })
     .unwrap();
     let activity = vak_core::finops::ActivityLedger::new(&srv.home);
@@ -714,6 +718,8 @@ async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_co
             duration_ms: Some(19),
             session_id: Some("s-finops".into()),
             plugin: Some("demo".into()),
+            trace: None,
+            actor: None,
         })
         .unwrap();
 
@@ -749,6 +755,8 @@ async fn finops_platform_scope_uses_shared_home_and_agent_scope_adds_private_hom
         usd: Some(usd),
         source: "estimated".into(),
         session_id: session_id.into(),
+        trace: None,
+        actor: None,
     };
     vak_core::finops::FinOpsLedger::new(&srv.home)
         .append(&row("shared", 1.25))

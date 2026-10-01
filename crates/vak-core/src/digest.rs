@@ -268,6 +268,8 @@ mod tests {
             usd,
             source: "estimated".into(),
             session_id: sid.into(),
+            trace: None,
+            actor: None,
         }
     }
 

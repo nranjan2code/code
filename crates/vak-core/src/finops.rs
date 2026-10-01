@@ -49,7 +49,13 @@ pub struct CostRow {
     /// settlement data.
     pub source: String,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(CostRow, "cost_row");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityRow {
@@ -63,7 +69,13 @@ pub struct ActivityRow {
     pub session_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plugin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(ActivityRow, "activity_row");
 
 pub struct ActivityLedger {
     path: PathBuf,
@@ -481,6 +493,8 @@ impl SpendGate for CoreSpendGate {
             usd,
             source: "estimated".to_string(),
             session_id: session_id.to_string(),
+            trace: None,
+            actor: None,
         };
         if let Err(e) = self.ledger.append(&row) {
             // The ledger write itself is still best-effort — the receipt
@@ -503,6 +517,8 @@ impl SpendGate for CoreSpendGate {
             duration_ms: (latency_ms > 0).then_some(latency_ms),
             session_id: Some(session_id.to_string()),
             plugin: None,
+            trace: None,
+            actor: None,
         });
     }
 }
@@ -557,7 +573,13 @@ pub struct BudgetAlertRow {
     /// Day spend as observed when the alert fired.
     pub day_total_usd: f64,
     pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(BudgetAlertRow, "budget_alert_row");
 
 fn alerts_path(home: &std::path::Path) -> PathBuf {
     home.join("budget-alerts.jsonl")
@@ -578,6 +600,8 @@ pub fn record_alert(
         level,
         day_total_usd: FinOpsLedger::new(home).day_total_usd(chrono::Utc::now()),
         session_id: session_id.to_string(),
+        trace: None,
+        actor: None,
     };
     let line = serde_json::to_string(&row)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
@@ -725,6 +749,8 @@ mod tests {
                 usd: Some(2.0),
                 source: "estimated".into(),
                 session_id: "seed".into(),
+                trace: None,
+                actor: None,
             })
             .unwrap();
         // est 4.50 + day 2.00 > 6.00 → denied with day wording.
@@ -748,6 +774,8 @@ mod tests {
                 usd: Some(99.0),
                 source: "estimated".into(),
                 session_id: "old".into(),
+                trace: None,
+                actor: None,
             })
             .unwrap();
         assert_eq!(ledger.day_total_usd(chrono::Utc::now()), 0.0);
@@ -764,6 +792,8 @@ mod tests {
             usd,
             source: "estimated".into(),
             session_id: "s".into(),
+            trace: None,
+            actor: None,
         }
     }
 
@@ -976,6 +1006,8 @@ mod tests {
                 duration_ms: Some(42),
                 session_id: Some("s1".into()),
                 plugin: Some("demo".into()),
+                trace: None,
+                actor: None,
             })
             .unwrap();
         let rows = ledger.all_rows();

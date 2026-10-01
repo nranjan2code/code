@@ -6670,6 +6670,8 @@ impl Core {
                         duration_ms: Some(duration_ms),
                         session_id: activity_session.clone(),
                         plugin,
+                        trace: None,
+                        actor: None,
                     });
                     for (store, plugin, trace_id) in &context {
                         if server.starts_with(&format!("plugin.{plugin}.")) {
@@ -6970,6 +6972,8 @@ impl Core {
                     duration_ms: Some(duration_ms),
                     session_id: activity_session.clone(),
                     plugin: plugin_name,
+                    trace: None,
+                    actor: None,
                 });
                 if let Some((plugin, _)) = plugin_hooks
                     .iter()
@@ -7014,6 +7018,8 @@ impl Core {
                     duration_ms: Some(duration_ms),
                     session_id: tool_activity_session.clone(),
                     plugin,
+                    trace: None,
+                    actor: None,
                 });
             },
         ));
@@ -7070,7 +7076,7 @@ impl Core {
                     &self.sessions_home(),
                     &h.session_id,
                     seq,
-                    &format!("turn: {}", prompt.text_content()),
+                    &format!("turn: {turn_id}"),
                 ) {
                     let _ = checkpoints::store(&self.sessions_home(), &cp);
                 }
@@ -9302,7 +9308,7 @@ impl Core {
         if !self.channel_tool_allowed("propose_skill") {
             proposals.skill = None;
         }
-        match reflection::apply(home.as_path(), self.cwd(), &sid, &proposals) {
+        match reflection::apply(home.as_path(), self.cwd(), &sid, None, &proposals) {
             Ok((notes_added, skills_proposed)) => reflection::ReflectionOutcome::Reflected {
                 notes_added,
                 skills_proposed,

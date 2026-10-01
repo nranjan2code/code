@@ -21,13 +21,19 @@ pub struct AudienceGrant {
     pub token_hash: String,
     pub created_at: String,
     pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
+
+vak_session::impl_traced!(AudienceGrant, "audience_grant");
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "event", rename_all = "snake_case")]
 enum GrantEvent {
     Invited {
-        grant: AudienceGrant,
+        grant: Box<AudienceGrant>,
     },
     Revoked {
         grant_id: String,
@@ -133,7 +139,12 @@ pub fn invite(path: &Path, grant: AudienceGrant) -> Result<(), Error> {
     ) {
         return Err(Error::Invalid("grant id already exists".into()));
     }
-    append(path, &GrantEvent::Invited { grant })
+    append(
+        path,
+        &GrantEvent::Invited {
+            grant: Box::new(grant),
+        },
+    )
 }
 
 pub fn revoke(path: &Path, grant_id: &str, actor_id: &str) -> Result<(), Error> {
@@ -264,6 +275,8 @@ mod tests {
             token_hash: token_hash(token),
             created_at: "2026-09-20T00:00:00Z".into(),
             expires_at: expires_at.into(),
+            trace: None,
+            actor: None,
         }
     }
 

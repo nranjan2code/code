@@ -6987,6 +6987,7 @@ dependencies = [
  "toml 0.8.2",
  "vak-intent",
  "vak-presentation",
+ "vak-session",
 ]
 
 [[package]]
