@@ -1792,3 +1792,13 @@ remains open.
   browser smoke check; connected-account source-to-Review acceptance, saved
   viewport screenshots, live-provider behavior, and 24-hour recovery remain
   open.
+- 2026-10-01: Extended that isolated browser check with a local-only email
+  draft containing synthetic To/Cc/Bcc fields and 20 sample rows representing
+  a 1,000-message, 30-day fixture. The exact preview showed the full payload,
+  save produced revision 1, and close/reopen preserved all fields and content.
+  Deleting the draft returned the work area to empty and explicitly reported
+  that no provider data was sent or changed. The provider test suite also
+  passed its 1,000-message Gmail/Graph fixtures, 2,000-message Apple mailbox,
+  1,000-event Google/Graph fixtures, and 1,910-event trigger fixture. No real
+  account data or credentials were used; the connected-account and long-run
+  acceptance gates remain open.
