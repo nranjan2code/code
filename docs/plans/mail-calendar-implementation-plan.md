@@ -2124,3 +2124,9 @@ remains open.
   refresh status; source changes still receive the initial loading state.
   Browser coverage is synthetic and does not establish live provider or
   assistive-technology acceptance.
+- 2026-10-01: Added previous/next pagination to the owner inbox preview, with
+  10 messages visible from each bounded response of at most 20. The connected
+  review fixture uses 20 distinct synthetic messages and passes 26 checks,
+  including navigating to the final item and back to the source conversation
+  before creating its local reply. UI paging does not fetch additional inbox
+  cursors; provider-level inbox continuation remains an open requirement.

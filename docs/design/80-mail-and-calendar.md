@@ -889,6 +889,14 @@ confirms it belongs to the account. Scheduled routines are pinned to one
 owner-selected folder/label and recheck membership; continuous new-mail
 watches remain Inbox-only because provider watch cursors are Inbox-scoped.
 
+The Today view displays 12 recent messages at a time across linked accounts.
+The owner inbox preview displays 10 messages at a time from its bounded
+provider response of up to 20. These controls paginate the loaded preview in
+the UI; they do not yet fetch subsequent inbox pages from a provider. Google
+and Microsoft thread previews do use provider cursors. Same-source Canvas
+refreshes retain the current preview while loading; changing its Agent or
+source shows the initial loading state.
+
 Preview is derived from the immutable normalized payload actually submitted
 by the adapter, not from model-written explanatory prose. Render sanitized
 structured content with remote resources blocked; do not mount mail HTML in

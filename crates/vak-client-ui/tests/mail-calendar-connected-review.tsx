@@ -70,7 +70,13 @@ window.fetch = async (input, init) => {
   }
   if (url.pathname.endsWith("/mail-folders")) return json({ folders: [{ provider_id: "INBOX", name: "Inbox" }] });
   if (url.pathname.endsWith("/calendar-sources")) return json({ sources: [{ provider_id: "primary-calendar", name: "Personal", primary: true }] });
-  if (url.pathname.endsWith("/mail-preview")) return json({ messages: [sourceMessage] });
+  if (url.pathname.endsWith("/mail-preview")) return json({ messages: Array.from({ length: 20 }, (_, index) => index === 0 ? sourceMessage : {
+    ...sourceMessage,
+    provider_id: `message-${41 - index}`,
+    thread_id: null,
+    subject: `Synthetic inbox message ${index + 1}`,
+    preview: `Synthetic bounded preview ${index + 1}`,
+  }) });
   if (url.pathname.endsWith("/calendar-preview")) return json({ events: [sourceEvent] });
   if (url.pathname.endsWith("/thread-preview")) {
     if (body.cursor === "older-page") return json({ messages: [sourceMessage, {
@@ -176,6 +182,15 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   await waitFor(() => document.body.textContent?.includes("background scheduler has not checked in recently") === true, "stale scheduler health disclosure");
   await click("Preview inbox");
   await waitFor(() => document.body.textContent?.includes("Planning the launch review") === true, "the bounded source preview");
+  const inboxPager = document.querySelector<HTMLElement>(".mail-calendar-inbox-pagination");
+  const inboxFirstPageWorks = inboxPager?.textContent?.includes("Page 1 of 2") === true
+    && document.querySelectorAll(".mail-calendar-preview-item").length === 10;
+  await click("Next");
+  const inboxSecondPageWorks = inboxPager?.textContent?.includes("Page 2 of 2") === true
+    && document.body.textContent?.includes("Synthetic inbox message 20") === true;
+  await click("Previous");
+  const inboxReturnsToSource = inboxPager?.textContent?.includes("Page 1 of 2") === true
+    && document.body.textContent?.includes("Planning the launch review") === true;
   await click("Open conversation");
   await waitFor(() => document.body.textContent?.includes("Draft a reply in this conversation") === true, "the source conversation");
   await click("Load more messages");
@@ -270,6 +285,7 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
     check(document.body.textContent?.includes("service API answers, but its background scheduler has not checked in recently") === true, "The owner UI distinguishes API reachability from a stale background scheduler heartbeat"),
     check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
+    check(inboxFirstPageWorks && inboxSecondPageWorks && inboxReturnsToSource, "The owner inbox shows a stable 10-message page and returns to the selected source message"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
     check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),
     check(mailSaved?.source_refs?.[0]?.item_id === "message-41" && mailSaved?.action?.draft?.reply_to_message_id === "message-41" && mailSaved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
