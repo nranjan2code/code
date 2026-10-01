@@ -2048,3 +2048,8 @@ remains open.
   body remain intact before opening exact Review. The full fixture passes 20
   checks against synthetic same-origin endpoints; this does not prove reload
   persistence from the encrypted vault or mobile/theme acceptance.
+- 2026-10-01: Added an Agent-vault close/reopen assertion to the candidate
+  regression. After revision 2 is saved, a newly constructed vault reads back
+  the revision and edited body before account-scoped cleanup. The focused test
+  passes. This proves candidate persistence through the encrypted vault
+  adapter, not app-process restart or platform keychain recovery.

@@ -1935,6 +1935,19 @@ mod tests {
             Err(VaultError::Conflict)
         ));
         vault.save_candidate(revision, Some(1)).unwrap();
+        drop(vault);
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        let reopened = vault.list_candidates().unwrap();
+        let reopened_first = reopened
+            .iter()
+            .find(|candidate| candidate.id == first.id)
+            .expect("the saved draft should survive reopening its Agent vault");
+        assert_eq!(reopened_first.revision, 2);
+        assert!(matches!(
+            &reopened_first.action,
+            ProposedAction::SendMail { draft } if draft.body_text == "Revised locally"
+        ));
+        assert!(other.list_candidates().unwrap().is_empty());
         vault.remove(&account_id).unwrap();
         let remaining = vault.list_candidates().unwrap();
         assert_eq!(remaining.len(), 1);
