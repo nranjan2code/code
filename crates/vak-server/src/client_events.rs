@@ -114,6 +114,17 @@ pub enum ClientEvent {
         is_error: bool,
         elapsed_ms: u64,
     },
+    /// A worker is waiting on an answer; answer it at
+    /// `POST /sessions/{id}/questions/{id}`.
+    WorkerQuestion {
+        id: String,
+        label: String,
+        question: String,
+        options: Vec<String>,
+    },
+    WorkerQuestionAnswered {
+        id: String,
+    },
     /// A long provider-side backoff is happening. No attempt count, delay or
     /// raw reason: the header shows a neutral "Retrying" state and nothing
     /// more (docs/audits Finding 1 — the previous wire sent the raw provider
@@ -205,6 +216,20 @@ pub(crate) fn project(event: AgentEvent) -> Option<ClientEvent> {
         // Per-call worker token counts are debug detail, not something the
         // Workbench worker card renders.
         AgentEvent::WorkerUsage { .. } => None,
+        AgentEvent::WorkerQuestion {
+            id,
+            label,
+            question,
+            options,
+        } => Some(ClientEvent::WorkerQuestion {
+            id,
+            label,
+            question,
+            options,
+        }),
+        AgentEvent::WorkerQuestionAnswered { id, .. } => {
+            Some(ClientEvent::WorkerQuestionAnswered { id })
+        }
         AgentEvent::WorkerFinished {
             label,
             is_error,

@@ -258,11 +258,17 @@ pub struct ActiveWorker {
 #[derive(Debug, Default)]
 pub struct WorkerRegistry {
     inner: Mutex<BTreeMap<String, WorkerHandle>>,
+    questions: crate::questions::QuestionBoard,
 }
 
 impl WorkerRegistry {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Questions the workers of this registry are waiting on.
+    pub fn questions(&self) -> &crate::questions::QuestionBoard {
+        &self.questions
     }
 
     fn register(&self, id: String, handle: WorkerHandle) {
@@ -664,6 +670,29 @@ impl TaskTool {
             Err(e) => return ToolOutput::error(format!("cannot create child session: {e}")),
         };
 
+        let label = args
+            .get("label")
+            .and_then(|l| l.as_str())
+            .map(String::from)
+            .or_else(|| profile.as_ref().map(|profile| profile.name.clone()))
+            .unwrap_or_else(|| prompt.chars().take(48).collect());
+        // A worker can always ask its parent one question
+        // (docs/design/84-worker-questions-and-control.md). It is added here
+        // and never to the parent's own tool set, so no turn that cannot use
+        // it is told about it. Without a registry (deterministic fixtures)
+        // there is no board to ask on.
+        let mut child_tools = child_tools;
+        if let Some(registry) = &self.deps.registry {
+            child_tools.push(Arc::new(crate::questions::AskParentTool::new(
+                registry.clone(),
+                session_id.clone(),
+                label.clone(),
+                self.deps.parent_session_id.clone(),
+                self.deps.approver.as_ref().is_some_and(|a| a.answerable()),
+                self.deps.events.clone(),
+            )));
+        }
+
         let mut cfg = AgentConfig::new(child_system_prompt.clone());
         cfg.model = self.deps.model.clone();
         cfg.tail = self.deps.tail.clone();
@@ -694,12 +723,6 @@ impl TaskTool {
         let mut agent = Agent::new(self.deps.provider.clone(), log, cfg);
         let steering = Arc::new(SteeringQueues::new());
         let cancel = ctx.cancel.child_token();
-        let label = args
-            .get("label")
-            .and_then(|l| l.as_str())
-            .map(String::from)
-            .or_else(|| profile.as_ref().map(|profile| profile.name.clone()))
-            .unwrap_or_else(|| prompt.chars().take(48).collect());
         let _registry_guard = if let Some(registry) = &self.deps.registry {
             registry.register(
                 session_id.clone(),

@@ -8,6 +8,7 @@ mod fences;
 use fences::{find_duplicate_card_fence, find_malformed_vak_fence, vak_fence_bodies};
 pub mod circuit;
 pub mod goal;
+pub mod questions;
 pub mod spend;
 pub mod steering;
 pub mod stop_policy;
@@ -19,6 +20,7 @@ pub mod workspace;
 // write back.
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
+pub use questions::{AskParentTool, PendingQuestion, QuestionBoard};
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
 pub use task::{ActiveWorker, ChildPrompt, TaskDeps, TaskTool, WorkerHandle, WorkerRegistry};
@@ -258,6 +260,20 @@ pub enum AgentEvent {
         label: String,
         is_error: bool,
         elapsed_ms: u64,
+    },
+    /// A worker is waiting on an answer to one question
+    /// (docs/design/84-worker-questions-and-control.md).
+    WorkerQuestion {
+        id: String,
+        label: String,
+        question: String,
+        options: Vec<String>,
+    },
+    /// The question was answered; `source` is who answered it.
+    WorkerQuestionAnswered {
+        id: String,
+        label: String,
+        source: String,
     },
     /// Latest durable managed-work projection. This is a live projection only;
     /// the session ledger remains the source of truth and can rebuild it.

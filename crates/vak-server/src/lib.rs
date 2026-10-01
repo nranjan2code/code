@@ -835,6 +835,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/workers", get(list_workers))
         .route("/sessions/{id}/workers/{child}/steer", post(steer_worker))
         .route("/sessions/{id}/workers/{child}/stop", post(stop_worker))
+        .route("/sessions/{id}/questions", get(list_worker_questions))
+        .route("/sessions/{id}/questions/{qid}", post(answer_worker_question))
         // Backward-compatible aliases for the old `subagents` route names.
         .route("/sessions/{id}/subagents", get(list_workers))
         .route("/sessions/{id}/subagents/{child}/steer", post(steer_worker))
@@ -4088,6 +4090,31 @@ pub(crate) fn register_handle(
                                 detail: Some(format!("Completed in {elapsed_ms} ms")),
                                 data: std::collections::BTreeMap::new(),
                             }),
+                            AgentEvent::WorkerQuestion {
+                                id,
+                                label,
+                                question,
+                                ..
+                            } => Some(vak_session::ActivityRecord {
+                                activity_id: format!("worker-question-{id}"),
+                                turn: None,
+                                kind: vak_session::ActivityKind::Worker,
+                                status: vak_session::ActivityStatus::Pending,
+                                label: format!("{label} is asking a question"),
+                                detail: Some(question),
+                                data: [("question_id".to_string(), id)].into(),
+                            }),
+                            AgentEvent::WorkerQuestionAnswered { id, label, source } => {
+                                Some(vak_session::ActivityRecord {
+                                    activity_id: format!("worker-question-{id}"),
+                                    turn: None,
+                                    kind: vak_session::ActivityKind::Worker,
+                                    status: vak_session::ActivityStatus::Succeeded,
+                                    label: format!("{label}'s question was answered"),
+                                    detail: Some(format!("Answered by {source}")),
+                                    data: [("question_id".to_string(), id)].into(),
+                                })
+                            }
                             _ => None,
                         };
                         if let Some(activity) = activity {
@@ -6322,6 +6349,53 @@ async fn steer_worker(
         StatusCode::ACCEPTED
     } else {
         StatusCode::CONFLICT
+    }
+}
+
+/// The questions this session's workers are waiting on. Read from the
+/// session's own `Core`, whose registry the workers it spawned report to.
+async fn list_worker_questions(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let questions = handle.core.workers().questions().pending(&id);
+    Json(serde_json::json!({ "questions": questions })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct WorkerAnswerBody {
+    text: String,
+}
+
+/// Answer a worker's question. Scoped to this session's own workers, so a
+/// question is never answerable across sessions; a question that was already
+/// answered, expired or withdrawn is 404 (docs/design/84 §4.4).
+async fn answer_worker_question(
+    State(state): State<AppState>,
+    Path((id, qid)): Path<(String, String)>,
+    Json(body): Json<WorkerAnswerBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    match handle
+        .core
+        .workers()
+        .questions()
+        .answer(&id, &qid, &body.text, "the person")
+    {
+        Ok(_) => StatusCode::ACCEPTED.into_response(),
+        Err(vak_agent::questions::AnswerError::Unknown) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": error.to_string() })),
+        )
+            .into_response(),
     }
 }
 
@@ -13954,6 +14028,7 @@ fn stop_agent_runs(state: &AppState, agent_id: &str) -> usize {
             .cancel();
         deny_pending_approvals(&handle);
         let _ = state.gateway.deny_pending_for_session(&handle.id);
+        handle.core.workers().questions().deny_all(&handle.id);
         if running {
             stopped += 1;
             handle

@@ -47,6 +47,14 @@ const READ_TOOLS: [&str; 9] = [
     "skill",
     "commitments",
 ];
+/// Tools that only coordinate agents inside this run and touch no file,
+/// process or network: a worker asking its parent a question, and a parent
+/// looking at or talking to its own workers
+/// (docs/design/84-worker-questions-and-control.md). Allowed in every mode,
+/// after any `deny`/`ask` rule, because gating a question on an approval
+/// would make the question impossible to ask. An answer or a message is
+/// information, never permission.
+const COORDINATION_TOOLS: [&str; 2] = ["ask_parent", "workers"];
 const PATH_SCOPED_READ_TOOLS: [&str; 5] = ["read", "doc_read", "glob", "grep", "ls"];
 const WRITE_TOOLS: [&str; 3] = ["write", "edit", "office_apply"];
 /// Learning-loop journaling into vak's own per-workspace store
@@ -197,6 +205,7 @@ impl PermissionEngine {
         }
         if crate::rules::allow_covers(&self.rules, tool, args)
             || self.presenting.iter().any(|name| name == tool)
+            || COORDINATION_TOOLS.contains(&tool)
         {
             return Decision::Allow;
         }
@@ -388,6 +397,7 @@ fn normalize_scope_path(path: &Path, cwd: &Path) -> PathBuf {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -397,5 +407,25 @@ mod tests {
             "label": "build project"
         });
         assert_eq!(describe("task", &task_args), "task 'build project'");
+    }
+
+    #[test]
+    fn coordination_tools_are_allowed_in_every_mode_but_a_deny_rule_still_wins() {
+        let cwd = std::path::Path::new(".");
+        let args = serde_json::json!({"question": "Which year?"});
+        let open = PermissionEngine::new(Vec::new());
+        for mode in [Mode::ReadOnly, Mode::WorkspaceWrite, Mode::FullAccess] {
+            for tool in ["ask_parent", "workers"] {
+                assert!(
+                    matches!(open.evaluate(tool, &args, mode, cwd), Decision::Allow),
+                    "{tool} in {mode:?}"
+                );
+            }
+        }
+        let denied = PermissionEngine::new(vec![Rule::parse("-ask_parent").unwrap()]);
+        assert!(matches!(
+            denied.evaluate("ask_parent", &args, Mode::FullAccess, cwd),
+            Decision::Deny { .. }
+        ));
     }
 }
