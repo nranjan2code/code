@@ -1,6 +1,7 @@
 import { host } from "./host";
 import type { PreviewSource } from "./canvasSubject";
 import { restartStream, setStreamOpener } from "./streamHub";
+import { syntheticMailCalendarEnabled, syntheticMailCalendarRequest } from "./mailCalendarDemo";
 import type {
   ClientEvent,
   BackendInfo,
@@ -105,6 +106,16 @@ function refusal(res: Response, parsed: unknown): ApiError {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  if (syntheticMailCalendarEnabled() && path.startsWith("/mail-calendar/")) {
+    try {
+      const result = syntheticMailCalendarRequest(path, init);
+      if (result !== undefined) return result as T;
+      throw new ApiError("This mail and calendar request is not available in Synthetic demo mode", 403, "synthetic_demo_read_only");
+    } catch (error) {
+      const refusal = error as { message?: string; status?: number; kind?: string };
+      throw new ApiError(refusal.message ?? "Synthetic demo request refused", refusal.status ?? 403, refusal.kind ?? "synthetic_demo_read_only");
+    }
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...((init?.headers as Record<string, string>) ?? {}),

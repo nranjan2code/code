@@ -48,6 +48,12 @@ shows no event titles, and provider requests stay within a two-account
 concurrency limit. It has no provider credentials, provider traffic, or session
 writes.
 
+`/app/tests/mail-calendar-demo.html?run` exercises the product's explicit
+**Use synthetic demo data** mode. It checks sample accounts and previews,
+browser-local draft save/reopen, hard refusal of OAuth/provider effects, and
+that no mail/calendar API request reaches `fetch`. It is loopback-only and
+uses no credentials or session data.
+
 # Result card
 
 `result-card.html` renders the real timeline over file results shaped like

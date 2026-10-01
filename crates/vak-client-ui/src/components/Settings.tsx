@@ -1,6 +1,7 @@
 import { trapFocus } from "../focusTrap";
 import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { host } from "../host";
+import { canOfferSyntheticMailCalendar, setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../mailCalendarDemo";
 import {
   technicalDetails,
   openConnect,
@@ -200,6 +201,7 @@ function supportsCalendarUpdate(candidate: api.MailCalendarCandidate | null | un
 const DEFAULT_MAIL_CALENDAR_CAPABILITIES: api.MailCalendarCapability[] = ["mail_read", "calendar_free_busy"];
 
 export default function Settings() {
+  const [syntheticMailDemo, setSyntheticMailDemo] = createSignal(syntheticMailCalendarEnabled());
   // Presentation memos can run during component setup and read this signal.
   const [config, setConfig] = createSignal<ConfigSnapshot | null>(null);
   const [privacyLayer, setPrivacyLayer] = createSignal<Awaited<ReturnType<typeof api.getPrivacyConfigLayer>> | null>(null);
@@ -1126,15 +1128,15 @@ export default function Settings() {
   initialRangeEnd.setDate(initialRangeEnd.getDate() + 13);
   const [mailCalendarRangeTo, setMailCalendarRangeTo] = createSignal(toLocalDateInput(initialRangeEnd));
   const [mailCalendarAccounts, { refetch: refreshMailCalendarAccounts }] = createResource(
-    () => page() === "mail-calendar" ? activeAgentId() : null,
-    (agentId) => agentId ? api.listMailCalendarAccounts(agentId) : Promise.resolve({ accounts: [] }),
+    () => page() === "mail-calendar" ? `${activeAgentId()}:${syntheticMailDemo()}` : null,
+    (source) => source ? api.listMailCalendarAccounts(source.split(":")[0]) : Promise.resolve({ accounts: [] }),
   );
   const [mailCalendarCandidates, { refetch: refreshMailCalendarCandidates }] = createResource(
-    () => page() === "mail-calendar" ? activeAgentId() : null,
-    (agentId) => agentId ? api.listMailCalendarCandidates(agentId) : Promise.resolve({ candidates: [] }),
+    () => page() === "mail-calendar" ? `${activeAgentId()}:${syntheticMailDemo()}` : null,
+    (source) => source ? api.listMailCalendarCandidates(source.split(":")[0]) : Promise.resolve({ candidates: [] }),
   );
   const [mailCalendarTasks, { refetch: refreshMailCalendarTasks }] = createResource(
-    () => page() === "mail-calendar" ? activeAgentId() : null,
+    () => page() === "mail-calendar" && !syntheticMailDemo() ? activeAgentId() : null,
     async () => (await api.listTasks()).tasks.filter((task) => !!task.mail_calendar_scope),
   );
   const [mailCalendarRunHistory, setMailCalendarRunHistory] = createSignal<Record<string, api.MailCalendarRoutineRun[]>>({});
@@ -3001,7 +3003,14 @@ export default function Settings() {
                   </Show>
                 </p>
               </header>
+              <Show when={canOfferSyntheticMailCalendar()}>
+                <Group title="Safe practice mode">
+                  <label class="capability-item"><input type="checkbox" checked={syntheticMailDemo()} onChange={(event) => { const enabled = event.currentTarget.checked; setSyntheticMailCalendarEnabled(enabled); setSyntheticMailDemo(enabled); setMailCalendarPreview(null); setMailCalendarFolderState(null); setMailCalendarRunHistory({}); }} /><span>Use synthetic demo data</span></label>
+                  <p class="settings-hint" role="status">{syntheticMailDemo() ? "Synthetic mode is on. Sample Google, Microsoft and iCloud accounts, messages and events are generated in this browser. Nothing is read from or written to a provider; provider actions and real routines are disabled. Local drafts stay in this browser." : "Try the email and calendar screens with sample accounts. This never needs credentials."}</p>
+                </Group>
+              </Show>
               <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
+              <Show when={!syntheticMailDemo()}>
               <Group title="Choose access">
                 <p class="settings-hint">Read access is selected by default. Email sending and calendar changes are optional and request separate provider permissions. Every effect requires exact review and your confirmation. Event creation supports one timed event without attendees, invitations, recurrence, or reminders. Google event updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Provider calendar-write consent is broader than these actions; Vakyartha exposes only the reviewed operations.</p>
                 <div class="capability-list">
@@ -3033,6 +3042,7 @@ export default function Settings() {
                 </Show>
                 <p class="settings-hint">Google and Microsoft sign-in currently requires Vakyartha and your browser on the same device. The callback uses a loopback address; hosted or public-server callbacks are not enabled.</p>
               </Group>
+              </Show>
               <Group title={`Accounts for ${agentName()}`}>
                 <Show when={!mailCalendarAccounts.loading} fallback={<div class="settings-hint">Loading connected accounts…</div>}>
                   <Show when={(mailCalendarAccounts()?.accounts.length ?? 0) > 0} fallback={<p class="settings-hint">No accounts are connected to this Agent.</p>}>
@@ -3057,7 +3067,7 @@ export default function Settings() {
                                 ? "Sign-in cannot be renewed · disconnect this entry, then connect again"
                               : "Connected";
                       const canPreview = account.status === "connected" && account.credential_available && !account.revoked_at;
-                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><span class="settings-actions"><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span></Row>;
+                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><Show when={syntheticMailDemo()} fallback={<span class="settings-actions"><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span>}><span class="settings-actions"><Show when={account.capabilities.includes("mail_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={account.capabilities.includes("calendar_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={account.capabilities.includes("calendar_free_busy")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show></span></Show></Row>;
                     }}</For>
                   </Show>
                 </Show>
@@ -3203,7 +3213,7 @@ export default function Settings() {
                   </div>
                 </Show>
               </Group>
-              <Group title="Scheduled routines">
+              <Show when={!syntheticMailDemo()}><Group title="Scheduled routines">
                 <p class="settings-hint">A new routine is saved paused. Run a read-only preview and inspect its result before choosing Resume; preview runs cannot change provider data. Each run stores its result only in this Agent's history. It can access only the selected account and reads below; a selected-conversation read must use a thread returned by its recent-email read. You can separately allow read-only access to this Agent's open commitments. The service must stay running and connected for schedules and continuous checks; closing the app window alone does not stop the service. Watching routines show the time of their last successful provider check, separately from run status. Account disconnect pauses matching routines.</p>
                 <Show when={(mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at).length ?? 0) > 0} fallback={<p class="settings-hint">Connect a verified account with read access to schedule a routine.</p>}>
                   <div class="mail-calendar-editor">
@@ -3296,7 +3306,7 @@ export default function Settings() {
                 </Show></div>}>
                   <p class="settings-hint">Loading scheduled routines…</p>
                 </Show>
-              </Group>
+              </Group></Show>
             </Show>
 
             <Show when={page() === "connections"}>

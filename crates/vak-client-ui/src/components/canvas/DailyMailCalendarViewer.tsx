@@ -1,5 +1,6 @@
 import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import * as api from "../../api";
+import { syntheticMailCalendarEnabled } from "../../mailCalendarDemo";
 import { openMailCalendarCitation, setPendingSettingsPage, setSettingsOpen } from "../../store";
 import { MailCalendarAgenda } from "../MailCalendarAgenda";
 import { createLoader } from "./createLoader";
@@ -7,6 +8,7 @@ import LoadState from "./LoadState";
 import type { ViewerProps } from "./types";
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+const prettyDay = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
 const tomorrow = (date: Date) => { const next = new Date(date); next.setDate(next.getDate() + 1); return dateKey(next); };
 
 type DailyAccount = {
@@ -74,6 +76,8 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
   const [eventAction, setEventAction] = createSignal("");
   const [eventActionError, setEventActionError] = createSignal<string | null>(null);
+  const [syntheticDemo, setSyntheticDemo] = createSignal(syntheticMailCalendarEnabled());
+  const freshnessLabel = () => `${syntheticDemo() ? "Synthetic demo data · no provider connected" : "From connected accounts"} · updated ${loader.data()?.refreshedAt ?? ""}`;
   let lastRefresh = Date.now();
   const refreshIfStale = () => {
     if (document.visibilityState !== "visible" || loader.loading() || Date.now() - lastRefresh < 60_000) return;
@@ -82,6 +86,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     loader.reload();
   };
   const refreshAfterAccountChange = () => {
+    setSyntheticDemo(syntheticMailCalendarEnabled());
     if (document.visibilityState !== "visible" || loader.loading()) return;
     lastRefresh = Date.now();
     setSelectedEvent(null);
@@ -134,7 +139,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
         }
       };
       return <main class="daily-mail-calendar-body">
-        <header class="daily-mail-calendar-heading"><div><h2>{new Date(`${data.day}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" })}</h2><p>From connected accounts · updated {data.refreshedAt}</p></div><button type="button" class="artifact-canvas-btn" onClick={manualRefresh}>Refresh</button></header>
+        <header class="daily-mail-calendar-heading"><div><h2>{prettyDay(data.day)}</h2><p>{freshnessLabel()}</p></div><button type="button" class="artifact-canvas-btn" onClick={manualRefresh}>Refresh</button></header>
         <Show when={data.accounts.length === 0}>
           <section class="daily-mail-calendar-empty"><h3>No connected accounts</h3><p>Connect mail or a calendar to see today’s agenda and recent messages here.</p><button type="button" class="artifact-canvas-btn" onClick={openSettings}>Open email and calendar settings</button></section>
         </Show>

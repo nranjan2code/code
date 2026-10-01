@@ -1895,3 +1895,10 @@ remains open.
   for the owning Agent, opens the mail/calendar workspace, and sends no provider
   write request. All 16 fixture assertions pass; this proves the local next
   step only, not connected-account exact Review or provider effect acceptance.
+- 2026-10-01: Added a loopback-only **Use synthetic demo data** switch in
+  Email and calendar Settings. It substitutes generated sample accounts,
+  mail, events and availability inside the client, keeps demo drafts in a
+  separate browser-local store, hides credential and routine controls, and
+  refuses provider connection/effect requests before any server fetch. Added an
+  isolated browser regression page for the mode; connected-account and
+  provider acceptance remain open.

@@ -13,6 +13,15 @@ closed without an explicit share grant.
 Opening an Agent citation loads further pages of that same conversation, up to
 420 messages, to locate the cited item. Remaining pages can be loaded manually.
 
+On loopback development origins, Settings offers **Use synthetic demo data**.
+It substitutes generated `example.test` accounts, mail, calendar and free/busy
+responses at the client API boundary, without making a server request. Demo
+drafts are stored separately in that browser's local storage; credentials,
+provider connections, real account drafts and routine operations are not used.
+The sample accounts have read-only capabilities, and every provider connection
+or effect request is refused while demo mode is enabled. This is a local UI and
+regression aid, not a production data mode or a substitute for provider tests.
+
 The Agent-vault work area stores revisioned local drafts and shows exact-payload
 previews. Google and Microsoft support reviewed plain-text email sends and a
 limited timed-event create profile; Google also supports conditional update and
