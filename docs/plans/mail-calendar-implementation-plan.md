@@ -1809,3 +1809,15 @@ remains open.
   short Unix-socket path warning, but the four selected tests passed. The
   isolated preview service remains on loopback port 8923 with no linked
   account; no credential or provider data was accessed.
+- 2026-10-01: Merged the current `main` line into `codex/mail-calendar`
+  (`4e52e678`) and revalidated formatting, the 122 mail/calendar unit tests
+  plus state-registry test, 15 Core mail/calendar tests, the routine
+  commitment boundary test, and the gateway Core-pool test. Rebuilt the
+  feature binary as 5.3.2 and verified its account setup screen in a fresh
+  loopback session on port 8924, using an isolated local data home and
+  workspace. The older 8923 process reports a 5.2.9 build and is excluded from
+  live acceptance. No provider credential has been entered; the owner-only
+  Google App Password handoff, connected-account browser flow, live provider
+  behavior, and sustained recovery test remain open. Corrected the connection
+  handler's stale security comment to match its actual fixed-host verification
+  and the documented M7 session-history erasure limit.
