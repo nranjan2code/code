@@ -2173,6 +2173,15 @@ remains open.
   watcher-restart test, and all five isolated parser/worker tests pass. The
   production Vite build succeeds (with existing dynamic-import and large-chunk
   warnings); no live provider or account data was used.
+- 2026-10-01: Reworked the `mail_calendar` model-facing tool instructions into
+  a cross-model operating guide: operation selection, exact IDs/cursors, owner
+  versus routine scope, account ambiguity, private-event and free/busy limits,
+  provider-content injection handling, citations, partial-result reporting,
+  append-only retention, and the separate reviewed-effect boundary. Expanded
+  the prompt contract test to require these instruction categories; the focused
+  Core test passes. These instructions guide the model and complement the
+  broker's enforced scope and permission checks; they are not themselves an
+  authorization mechanism.
 - 2026-10-01: Completed the Settings-to-Canvas split for daily work. Connected
   accounts now link to Today Canvas; Settings no longer renders a second
   inbox/calendar preview or draft workspace, and its account-deletion copy now
