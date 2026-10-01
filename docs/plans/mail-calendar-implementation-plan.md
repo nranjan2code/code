@@ -1829,3 +1829,12 @@ remains open.
   behavior, and sustained recovery test remain open. Corrected the connection
   handler's stale security comment to match its actual fixed-host verification
   and the documented M7 session-history erasure limit.
+- 2026-10-01: On the feature build at `127.0.0.1:8924`, repeated the working
+  area browser flow with only generated content: fake To/Cc/Bcc addresses, a
+  synthetic subject, and 20 sample rows. Exact preview preserved recipient
+  separation and the full body; save created revision 1; close/reopen restored
+  every field; deleting the disposable draft left the work area empty and the
+  UI confirmed nothing was sent or changed at a provider. No account was
+  connected. This confirms local draft persistence and preview in the current
+  build, not connected-account source-to-Review behavior or the required saved
+  viewport/theme screenshot set.
