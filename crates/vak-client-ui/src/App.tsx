@@ -196,6 +196,12 @@ export async function refreshSessions() {
       for (const s of res.sessions) {
         if (s.running) {
           if (!isRunning(s.session_id)) markRunning(s.session_id, true);
+          if (visible.has(s.session_id)) {
+            // A re-opened client still needs the committed history prefix
+            // while the runner owns the ledger. The transcript endpoint
+            // serves a read-only snapshot for active sessions.
+            await hydrate(s.session_id, true);
+          }
           continue;
         }
         if (!s.running && isRunning(s.session_id)) {
@@ -256,7 +262,7 @@ async function hydrate(id: string, background = false) {
   if (!background) setHydratingId(id);
   try {
     const [t, presentation, sandbox] = await Promise.all([
-      isRunning(id) ? Promise.resolve(undefined) : settledTranscript(id),
+      settledTranscript(id),
       // A presentation snapshot is an optional projection. If it cannot be
       // read, preserve the last known projection rather than treating a
       // transient/permission error as an authoritative empty result.
@@ -270,7 +276,10 @@ async function hydrate(id: string, background = false) {
     const unchanged = lastHydrated.get(id) === read && itemsOf(id).length > 0 && (!presentation || presentationOf(id) !== null);
     if (unchanged) return;
     lastHydrated.set(id, read);
-    if (!isRunning(id) && t) {
+    // A freshly reopened running conversation has no in-memory items yet, so
+    // paint its committed history prefix. On an already-live conversation,
+    // keep the stream's current turn intact while refreshing sidecar state.
+    if (t && (!isRunning(id) || itemsOf(id).length === 0)) {
       hydrateFromTranscript(id, t.messages, t.entries);
       if (presentation) hydrateFromPresentation(id, presentation);
       setUsageFor(id, t.usage);
@@ -325,16 +334,14 @@ function openStream(id: string) {
       // durable transcript, which is the only complete record.
       resyncingSessions.add(id);
       setConnection("resyncing");
-      // A running turn cannot be hydrated safely: its durable transcript is
-      // intentionally incomplete until RunFinished. Keep the explicit
-      // resync state until that terminal event, then hydrate the durable
-      // record and only afterward report live again.
-      if (!isRunning(id)) {
-        void hydrate(id, true).finally(() => {
+      // Active transcript reads are read-only committed-prefix snapshots.
+      // Hydrate now; the stream continues to supply the current turn.
+      void hydrate(id, true).finally(() => {
+        if (!isRunning(id)) {
           resyncingSessions.delete(id);
           setConnection("live");
-        });
-      }
+        }
+      });
     },
   }));
 }

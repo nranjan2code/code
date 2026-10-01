@@ -101,6 +101,12 @@ gap permanently. `App.tsx` already documents this and papers over it with
 a 10-second reconciliation poll. On a laptop lid-close over Wi-Fi that
 gap is the common case, not the rare one.
 
+The transcript endpoint can read the append-only committed prefix while a
+runner owns the session's writer lock. On reopen, the client paints that
+history and the current user message, then follows the live stream for the
+active turn. This restores durable history; it does not replay transient
+stream deltas lost during the disconnect.
+
 ### 2.4 The desktop client's Tauri coupling is small
 
 This is the good news, and it is what makes the whole plan cheap. The

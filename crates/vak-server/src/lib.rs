@@ -7602,14 +7602,21 @@ async fn transcript(
             .session
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let Some(s) = guard.as_ref() else {
-            return (
+        if let Some(s) = guard.as_ref() {
+            return Json(transcript_json(s)).into_response();
+        }
+        // The runner owns the exclusive SessionLog while a turn is active.
+        // Serve the append-only committed prefix through the read-only parser;
+        // it tolerates an incomplete final append and does not contend for the
+        // writer lock. This lets a reconnected client repaint prior turns.
+        return match open_historical_session(&state, &id) {
+            Some(s) => Json(transcript_json(&s)).into_response(),
+            None => (
                 StatusCode::CONFLICT,
                 Json(serde_json::json!({ "error": "run in progress" })),
             )
-                .into_response();
+                .into_response(),
         };
-        return Json(transcript_json(s)).into_response();
     }
     match open_historical_session(&state, &id) {
         Some(s) => Json(transcript_json(&s)).into_response(),
@@ -7618,6 +7625,98 @@ async fn transcript(
             Json(serde_json::json!({ "error": "unknown session" })),
         )
             .into_response(),
+    }
+}
+
+#[cfg(test)]
+mod active_transcript_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn transcript_returns_committed_history_while_runner_owns_log() {
+        use tower::ServiceExt;
+
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let sessions_home = dir.path().join("home");
+        core.set_sessions_home(sessions_home.clone());
+        let state = AppState::new(core.clone());
+        let id = "active-transcript";
+        let path = sessions_home
+            .join("sessions")
+            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(format!("{id}.jsonl"));
+        let mut log = vak_session::SessionLog::create(
+            path,
+            vak_session::types::SessionHeader {
+                agent: Some(vak_core::vak_agent_identity()),
+                session_id: id.into(),
+                created_at: chrono::Utc::now(),
+                cwd: core.cwd().to_path_buf(),
+                parent_session_id: None,
+                contract_id: None,
+                work_item_id: None,
+                conversation: Some(vak_session::types::ConversationContext::local(id, "test")),
+                contract: vak_session::types::FrozenContract {
+                    app_version: "test".into(),
+                    provider: "test".into(),
+                    model: "test".into(),
+                    route_ladder: Vec::new(),
+                    route_objective: String::new(),
+                    route_annotations: Vec::new(),
+                    system_prompt: String::new(),
+                    permission_mode: "workspace-write".into(),
+                    capabilities: Vec::new(),
+                    prompt_layers: Vec::new(),
+                },
+            },
+        )
+        .unwrap();
+        for (question, answer) in [
+            ("Earlier question", "Earlier answer"),
+            ("Current question", ""),
+        ] {
+            log.append_message(vak_session::types::MessageRecord {
+                message: vak_llm::Message::user_text(question),
+                meta: None,
+            })
+            .unwrap();
+            if !answer.is_empty() {
+                log.append_message(vak_session::types::MessageRecord {
+                    message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(answer)]),
+                    meta: None,
+                })
+                .unwrap();
+            }
+        }
+        let handle = register_handle(&state, id.into(), log, core.cwd().to_path_buf(), core);
+        // Model the runner's ownership window: the handle has no writer log,
+        // while the runner still holds the exclusive append lock.
+        let _writer = handle.session.lock().unwrap().take();
+
+        let app = Router::new()
+            .route("/sessions/{id}/transcript", get(transcript))
+            .with_state(state);
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri(format!("/sessions/{id}/transcript"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert!(messages[0].to_string().contains("Earlier question"));
+        assert!(messages[1].to_string().contains("Earlier answer"));
+        assert!(messages[2].to_string().contains("Current question"));
     }
 }
 
