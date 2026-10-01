@@ -234,8 +234,9 @@ behaviour, responsibilities or instructions reaches the next turn of every
 conversation it owns. The session header keeps the identity as admitted, for
 display and audit, and the Agent's revision, which rises when any of those
 fields changes, appears in the layer's source (`agent:<id>@<revision>`). A
-definition that is paused, archived, deleted or unreadable is not re-read:
-lifecycle is enforced at admission, and the admitted identity stays in place.
+definition that is deleted or unreadable is not re-read, and the admitted
+identity stays in place. A paused or archived one refuses the turn
+(doc 64, *Lifecycle is enforced on every turn*).
 
 `vak exec --session` no longer gates a resume on layer changes; the
 `--accept-drift` flag was removed from `exec` (it remains on

@@ -94,3 +94,43 @@ pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
     };
     serde_json::from_str(&raw).map_err(|e| format!("invalid agents: {e}"))
 }
+
+/// The workspace whose project layer defines `agent_id` for a turn running in
+/// `cwd`. A custom Agent's `Core` runs in its own workspace
+/// (`<base>/.vak/agents/<id>/workspace`, `vak_config::paths::agent_workspace`)
+/// but is defined in the project layer of `<base>`, so the base is where its
+/// definition is. Any other `cwd` is its own base.
+fn definition_base(cwd: &Path, agent_id: &str) -> PathBuf {
+    let tail = Path::new(".vak")
+        .join("agents")
+        .join(agent_id)
+        .join("workspace");
+    if cwd.ends_with(&tail) {
+        cwd.ancestors().nth(4).unwrap_or(cwd).to_path_buf()
+    } else {
+        cwd.to_path_buf()
+    }
+}
+
+/// The saved definition of one Agent as a turn running in `core` sees it:
+/// the Shared layer, then the project layer of the Agent's base workspace
+/// when that project is trusted, the project layer winning like
+/// [`effective`]. `None` means no layer this `Core` can read defines it,
+/// which is not proof the Agent was deleted.
+pub fn definition(core: &crate::Core, agent_id: &str) -> Result<Option<AgentDefinition>, String> {
+    let shared = vak_config::paths::default_workspace();
+    let mut found = load(&shared)?.into_iter().find(|d| d.id == agent_id);
+    let base = definition_base(core.cwd(), agent_id);
+    let trusted = if &base == core.cwd() {
+        core.project_config_trusted()
+    } else {
+        crate::trust::is_trusted(&base)
+    };
+    if base != shared
+        && trusted
+        && let Some(project) = load(&base)?.into_iter().find(|d| d.id == agent_id)
+    {
+        found = Some(project);
+    }
+    Ok(found)
+}

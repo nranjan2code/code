@@ -158,3 +158,104 @@ async fn editing_an_agent_changes_the_next_turn_of_its_open_conversation() {
         "the header keeps the identity as admitted"
     );
 }
+
+fn write_lifecycle(path: &std::path::Path, lifecycle: &str) {
+    let definition = serde_json::json!([{
+        "id": "auditor", "revision": 3, "lifecycle": lifecycle,
+        "name": "Auditor", "character": "vak", "personality": "Focused",
+        "behaviour": "Analytical", "responsibilities": "Auditing",
+        "instructions": "Audit carefully", "animation": "subtle", "voice": "default"
+    }]);
+    std::fs::create_dir_all(path.join(".vak")).unwrap();
+    std::fs::write(path.join(".vak/agents.json"), definition.to_string()).unwrap();
+}
+
+/// A custom Agent's `Core` runs in its own workspace under the base, and its
+/// definition lives in the base's project layer. Pausing it refuses the next
+/// turn before any model call, and setting it active again resumes the same
+/// conversation.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_paused_agent_refuses_its_next_turn_and_resumes_when_active() {
+    let dir = tempfile::tempdir().unwrap();
+    let base = dir.path().to_path_buf();
+    std::fs::create_dir_all(base.join(".vak")).unwrap();
+    std::fs::write(
+        base.join(".vak/config.toml"),
+        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+    )
+    .unwrap();
+    vak_config::paths::isolate_home_for_tests();
+    vak_core::trust::mark_trusted(&base).unwrap();
+    write_lifecycle(&base, "active");
+    let workspace = vak_config::paths::agent_workspace(&base, "auditor");
+    std::fs::create_dir_all(workspace.join(".vak")).unwrap();
+
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from([text("one"), text("two")])),
+        requests: Mutex::new(Vec::new()),
+    });
+    let core = Core::new_with_trust(workspace.clone(), true)
+        .unwrap()
+        .with_agent_identity(Some(identity("Audit carefully", 3)));
+    core.set_sessions_home(dir.path().join("home"));
+    core.set_provider_instance(provider.clone());
+
+    let session = core.start_session().await.unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let (_, session) = core
+        .run_turn_with(
+            session,
+            "one",
+            CancellationToken::new(),
+            None,
+            None,
+            None,
+            tx,
+        )
+        .await
+        .unwrap();
+    let sent = provider.requests.lock().unwrap().len();
+    let session_id = session.header().unwrap().session_id.clone();
+
+    write_lifecycle(&base, "paused");
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    let refused = core
+        .run_turn_with(
+            session,
+            "two",
+            CancellationToken::new(),
+            None,
+            None,
+            None,
+            tx,
+        )
+        .await;
+    let error = refused
+        .err()
+        .expect("a paused Agent must refuse the turn")
+        .to_string();
+    assert!(
+        error.contains("paused") && error.contains("settings"),
+        "{error}"
+    );
+    assert_eq!(
+        provider.requests.lock().unwrap().len(),
+        sent,
+        "a refused turn makes no model call"
+    );
+
+    write_lifecycle(&base, "active");
+    let session = core.open_session(&session_id).await.unwrap();
+    let (tx, _rx) = tokio::sync::mpsc::channel(64);
+    core.run_turn_with(
+        session,
+        "two",
+        CancellationToken::new(),
+        None,
+        None,
+        None,
+        tx,
+    )
+    .await
+    .expect("an active Agent takes the turn again");
+}

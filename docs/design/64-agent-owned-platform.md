@@ -260,10 +260,26 @@ Identity and instructions are read every turn, so an edit to a saved Agent
 reaches the next turn of every conversation it owns, with no rotation and no
 re-admission; a turn already running keeps what it started with. The session
 header keeps the identity as admitted, for display and audit, and each turn's
-`TurnCapabilitiesBound` records the prompt that turn sent. A definition that
-is paused, archived or gone is not re-read: lifecycle is enforced at
-admission, and the admitted identity stays in place. The revision rises when
-any prompt-bearing field changes, instructions included.
+`TurnCapabilitiesBound` records the prompt that turn sent. The revision rises
+when any prompt-bearing field changes, instructions included.
+
+Lifecycle is enforced on every turn as well as at admission. A turn for an
+Agent whose saved definition is paused or archived is refused before it
+does anything (`Core::refuse_inactive_agent`, error `AgentUnavailable`),
+and the message says to set the Agent active again; doing so resumes the same
+conversation. Enforcement is at the turn boundary only: a turn already
+running is never cancelled, edited or re-identified by a change that arrives
+while it runs, and the next turn sees it. Reasons: a turn's request is
+append-only and byte-stable so the provider cache and replayed thinking stay
+valid (invariant 36); checking the definition on every step of every running
+turn would put a disk read on the hot path of each; and a pause is a
+decision about the next piece of work, not a reason to discard half-done
+work. A deleted Agent, or one defined in a layer the turn's `Core` cannot
+read, is not refused, since that cannot be told from a deletion. An
+immediate, push-based "stop what this Agent is doing" (cancel the Agent's
+live handles when it is paused) would fit the server's session map without
+polling; it is not built, and would be an explicit pause option, not a side
+effect of saving.
 
 Policy is live. Effective authority intersects workspace, Agent, Bot/endpoint,
 audience, and run/delegation ceilings; no layer restores authority another

@@ -846,10 +846,12 @@ in progress, and the rest of V4 follows it.
     gateway allowlist, bots, operations incidents, actions receipts, FinOps
     ledger, scheduled tasks, the archive and the trash) remains shared at the
     top of the data home via `Core::shared_data_home()`. Agent identity is resolved
-    at admission and cannot be supplied by untrusted client text. Bots
+    at admission and cannot be supplied by untrusted client text; a saved
+    Agent's definition and lifecycle are re-read every turn. Bots
     identify transport credentials; channels identify endpoints; neither is an
-    Agent. Paused, archived, or revoked Agents and endpoints fail closed,
-    cancel affected work, and never fall back to Vak. Internal tasks, tools,
+    Agent. Paused, archived, or revoked Agents and endpoints fail closed at the
+    next turn boundary (a turn already running is never cancelled or edited
+    mid-way) and never fall back to Vak. Internal tasks, tools,
     flows, and workers inherit or explicitly freeze Agent ownership and are
     projected back only through authorized Agent conversations
     (docs/design/64-agent-owned-platform.md). On the client presentation

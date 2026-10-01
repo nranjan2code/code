@@ -263,7 +263,8 @@ flowchart TB
   budget."
   The identity comes from the Agent's saved definition, looked up every
   turn (`Core::live_agent_identity`), so an edit reaches the next turn of
-  its open conversations; the session header keeps the admitted copy.
+  its open conversations; the session header keeps the admitted copy. A
+  paused or archived Agent refuses its next turn (doc 64).
 
 ### 5.3 Provenance
 

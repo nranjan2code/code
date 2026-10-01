@@ -347,6 +347,10 @@ pub enum CoreError {
     #[error("internal: permission engine missing")]
     MissingEngine,
     #[error(
+        "agent '{agent}' is {lifecycle} and cannot take new turns; set it back to active in the Agent's settings to continue this conversation"
+    )]
+    AgentUnavailable { agent: String, lifecycle: String },
+    #[error(
         "this request needs a model that can serve {modalities}, and no leg on the route (primary: {model}) is declared able to; set [route] modality_hints or choose a capable model"
     )]
     UnsupportedModality { modalities: String, model: String },
@@ -3088,31 +3092,53 @@ impl Core {
         self.conversation_context.as_ref()
     }
 
+    /// The Agent's saved definition as this turn reads it
+    /// (`agent_definitions::definition`), or `None` for the built-in `vak`
+    /// and for an Agent no readable layer defines.
+    fn saved_agent_definition(&self, agent_id: &str) -> Option<agent_definitions::AgentDefinition> {
+        if agent_id == "vak" {
+            return None;
+        }
+        agent_definitions::definition(self, agent_id).ok().flatten()
+    }
+
     /// The Agent's identity as its saved definition reads now.
     ///
     /// A session header records the identity as admitted, for display and
     /// audit; the prompt is resolved per turn, so the model is told the
-    /// current definition (docs/design/45-prompt-layers.md). A definition
-    /// that is gone, no longer active, or unreadable leaves the admitted
-    /// identity in place: lifecycle is enforced at admission, and a read
-    /// failure must not change who the Agent is mid-conversation. The
-    /// built-in `vak` has no definition.
+    /// current definition (docs/design/45-prompt-layers.md). An Agent with
+    /// no readable definition keeps the admitted identity, since a read
+    /// failure must not change who it is mid-conversation. Lifecycle is
+    /// enforced by [`Core::refuse_inactive_agent`].
     fn live_agent_identity(
         &self,
         admitted: vak_session::types::AgentIdentity,
     ) -> vak_session::types::AgentIdentity {
-        if admitted.id == "vak" {
-            return admitted;
+        match self.saved_agent_definition(&admitted.id) {
+            Some(definition) if definition.is_admissible() => definition.identity(),
+            _ => admitted,
         }
-        agent_definitions::effective(self)
-            .ok()
-            .and_then(|definitions| {
-                definitions
-                    .into_iter()
-                    .find(|definition| definition.id == admitted.id && definition.is_admissible())
-            })
-            .map(|definition| definition.identity())
-            .unwrap_or(admitted)
+    }
+
+    /// Refuse a turn for an Agent whose saved definition is paused or
+    /// archived (invariant 37). Checked once, before the turn does anything:
+    /// a turn already running is never stopped, and the next one is refused.
+    /// No definition found means no refusal, because that cannot tell a
+    /// deleted Agent from one defined in a layer this `Core` cannot see.
+    fn refuse_inactive_agent(
+        &self,
+        admitted: Option<&vak_session::types::AgentIdentity>,
+    ) -> Result<(), CoreError> {
+        let Some(admitted) = admitted else {
+            return Ok(());
+        };
+        match self.saved_agent_definition(&admitted.id) {
+            Some(definition) if !definition.is_admissible() => Err(CoreError::AgentUnavailable {
+                agent: admitted.name.clone(),
+                lifecycle: format!("{:?}", definition.lifecycle).to_lowercase(),
+            }),
+            _ => Ok(()),
+        }
     }
 
     pub fn agent_identity(&self) -> Option<&vak_session::types::AgentIdentity> {
@@ -6076,10 +6102,9 @@ impl Core {
             meta: prompt_meta,
         } = prompt;
         let prompt_text = prompt.text_content();
-        self.agent_identity = session
-            .header()
-            .and_then(|header| header.agent.clone())
-            .map(|admitted| self.live_agent_identity(admitted));
+        let admitted_agent = session.header().and_then(|header| header.agent.clone());
+        self.refuse_inactive_agent(admitted_agent.as_ref())?;
+        self.agent_identity = admitted_agent.map(|admitted| self.live_agent_identity(admitted));
         // The approver that will actually serve this run is the authority on
         // whether its gates reach anyone. Whatever the host stamped earlier
         // loses to it, and a disagreement is recorded rather than believed.
