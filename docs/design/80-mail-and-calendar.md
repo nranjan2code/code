@@ -13,7 +13,8 @@ closed without an explicit share grant.
 Opening an Agent citation loads further pages of that same conversation, up to
 420 messages, to locate the cited item. Remaining pages can be loaded manually.
 
-On loopback development origins, Settings offers **Use synthetic demo data**.
+On loopback development origins, Settings and the Today view offer **Use
+synthetic demo data** as a one-click way to try the mail and calendar screens.
 It substitutes generated `example.test` accounts, mail, calendar and free/busy
 responses at the client API boundary, without making a server request. Demo
 drafts are stored separately in that browser's local storage; credentials,

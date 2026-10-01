@@ -1929,3 +1929,9 @@ remains open.
   a nested folder uses its own encoded Graph path. The full mock pack passes;
   the synthetic browser fixture now lists and previews a generated nested
   Microsoft folder, with all 13 checks passing.
+- 2026-10-01: Added the same local-only demo switch directly to the Today
+  calendar view. A focused browser fixture starts with no connected accounts,
+  clicks the Today switch, verifies synthetic mail and calendar render without
+  an extra server request, and then verifies Exit returns to connected-account
+  mode. The shared synthetic-mode regression passes 14 assertions; browser
+  acceptance of the full connected-account source-to-Review flow remains open.
