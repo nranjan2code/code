@@ -32,6 +32,7 @@ const OAUTH_CALLBACK_COOKIE_MAX_AGE_SECONDS: u64 = 10 * 60;
 pub(crate) async fn validate_routine_scope(
     agent_id: &str,
     scope: &RoutineScope,
+    worker_exe: &std::path::Path,
 ) -> Result<(), String> {
     scope.validate().map_err(|error| error.to_string())?;
     let ledger = ConnectionLedger::for_agent(agent_id)
@@ -82,7 +83,22 @@ pub(crate) async fn validate_routine_scope(
             return Err("the selected mail folder does not belong to this account".into());
         }
     }
-    // Folder discovery can take a provider round-trip. Do not persist a
+    if let Some(source_id) = scope.calendar_source_id.as_deref() {
+        let sources = vak_core::mail_calendar::calendar_sources_with_worker(
+            &ProviderReadClient::new(),
+            &account,
+            &vault,
+            agent_id,
+            &audience,
+            worker_exe,
+        )
+        .await
+        .map_err(|_| "the selected calendar could not be verified".to_string())?;
+        if !sources.iter().any(|source| source.provider_id == source_id) {
+            return Err("the selected calendar does not belong to this account".into());
+        }
+    }
+    // Folder or calendar discovery can take a provider round-trip. Do not persist a
     // routine against an account that was revoked or narrowed during it.
     let still_admitted = ledger.read_all().ok().is_some_and(|latest| {
         latest.iter().any(|current| {
@@ -244,16 +260,18 @@ pub(crate) async fn calendar_event_has_due(
     if range.from >= range.to {
         return Ok(Some(false));
     }
-    let page = vak_core::mail_calendar::calendar_event_page_with_worker(
-        &ProviderReadClient::new(),
-        &account,
-        &vault,
-        agent_id,
-        &audience,
-        range,
-        worker_exe,
-    )
-    .await
+    let client = ProviderReadClient::new();
+    let page = if let Some(source_id) = scope.calendar_source_id.as_deref() {
+        vak_core::mail_calendar::calendar_event_page_in_source_with_worker(
+            &client, &account, &vault, agent_id, &audience, source_id, range, worker_exe,
+        )
+        .await
+    } else {
+        vak_core::mail_calendar::calendar_event_page_with_worker(
+            &client, &account, &vault, agent_id, &audience, range, worker_exe,
+        )
+        .await
+    }
     .map_err(|_| {
         "the calendar event trigger could not check its bounded provider window".to_string()
     })?;

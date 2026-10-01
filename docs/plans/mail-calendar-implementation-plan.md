@@ -505,6 +505,10 @@ automation history. Multi-host watchers remain off until fencing is present.
 calendar event start/end boundary, signed offset, bounded catch-up window, and
 opaque occurrence key. Event triggers are wired to bounded TaskDef polling,
 the Agent-vault occurrence queue, brokered matching reads, and owner settings.
+Calendar-reading routines now also pin one owner-selected calendar source;
+creation validates it against a fresh provider inventory, and each event poll
+and read revalidates the same source before fetching events. Old saved routines
+without this field retain their previous provider-default behavior.
 Google and Microsoft event reads follow bounded continuation pages up to the
 requested result limit, deduplicate repeated event IDs, reject cursor loops,
 and reject Microsoft continuation URLs outside the configured Graph origin
@@ -1759,3 +1763,19 @@ remains open.
   format check, and diff check pass. The local install's data home is distinct from
   `~/vak-home` (the workspace); no local account credentials were read or
   changed. Browser acceptance and live-provider behavior remain open.
+- 2026-10-01: Pinned unattended calendar reads and event triggers to one
+  owner-selected calendar source. The existing TaskDef scope stores only the
+  provider-scoped SHA-256 source ID (never the raw provider calendar ID, which
+  may contain an email address), remains backward-compatible for older routines,
+  and rejects invalid IDs or a source without CalendarEvents permission.
+  Routine creation verifies the source against the account's current inventory;
+  each polling and model-read call repeats that inventory-bound check. The
+  Settings form discovers sources, defaults to the provider's default calendar
+  when available, and lets the owner select another source. Provider calendar
+  IDs are exposed and persisted only as provider-scoped SHA-256 identifiers so
+  address-shaped IDs cannot leak into client state or routine records. The
+  source inventory is resolved again before every fetch. Verification: 122
+  `vak-mail-calendar` unit tests plus its state-registry test, 13 Core
+  mail/calendar tests, 14 Server mail/calendar tests, formatting, TypeScript
+  check, and production web build pass; the build retains existing Vite
+  chunk-size and mixed-import warnings. No live account data was accessed.

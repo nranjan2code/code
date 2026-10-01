@@ -79,6 +79,10 @@ pub struct RoutineScope {
     /// preserves the provider Inbox default for older saved routines.
     #[serde(default)]
     pub mail_folder_id: Option<String>,
+    /// One owner-selected calendar for unattended event reads. `None`
+    /// preserves the provider's legacy default behavior for saved routines.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub calendar_source_id: Option<String>,
     pub operations: BTreeSet<RoutineOperation>,
     pub max_items: u8,
     #[serde(default)]
@@ -200,6 +204,13 @@ impl RoutineScope {
             })
             || (self.mail_folder_id.is_some()
                 && !self.operations.contains(&RoutineOperation::RecentMail))
+            || self.calendar_source_id.as_ref().is_some_and(|source| {
+                source.trim().is_empty()
+                    || source.len() > 2048
+                    || source.chars().any(char::is_control)
+            })
+            || (self.calendar_source_id.is_some()
+                && !self.operations.contains(&RoutineOperation::CalendarEvents))
             || (self.watch_new_mail
                 && self
                     .mail_folder_id
@@ -942,6 +953,31 @@ mod contract_tests {
             invalid_folder.validate(),
             Err(ContractError::InvalidRoutineScope)
         );
+    }
+
+    #[test]
+    fn routine_calendar_source_defaults_for_legacy_and_requires_calendar_read_scope() {
+        let account_id = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let mut scope: RoutineScope = serde_json::from_value(serde_json::json!({
+            "routine_id": routine_id,
+            "account_id": account_id,
+            "operations": ["calendar_events"],
+            "max_items": 5,
+            "watch_new_mail": false
+        }))
+        .unwrap();
+        assert_eq!(scope.calendar_source_id, None);
+        assert!(scope.validate().is_ok());
+        scope.calendar_source_id = Some("calendar-id".into());
+        assert!(scope.validate().is_ok());
+        scope.operations = [RoutineOperation::RecentMail].into_iter().collect();
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
+        scope.operations = [RoutineOperation::CalendarEvents].into_iter().collect();
+        scope.calendar_source_id = Some("bad\nsource".into());
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
+        scope.calendar_source_id = Some("x".repeat(2049));
+        assert_eq!(scope.validate(), Err(ContractError::InvalidRoutineScope));
     }
 
     #[test]

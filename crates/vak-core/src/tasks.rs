@@ -801,6 +801,7 @@ mod tests {
             routine_id: task_id.clone(),
             account_id,
             mail_folder_id: None,
+            calendar_source_id: None,
             operations: [vak_mail_calendar::RoutineOperation::RecentMail]
                 .into_iter()
                 .collect(),

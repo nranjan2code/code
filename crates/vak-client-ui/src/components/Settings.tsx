@@ -1,5 +1,5 @@
 import { trapFocus } from "../focusTrap";
-import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, type JSX } from "solid-js";
+import { createEffect, createMemo, createResource, createSignal, For, onCleanup, onMount, Show, untrack, type JSX } from "solid-js";
 import { host } from "../host";
 import {
   technicalDetails,
@@ -1232,6 +1232,9 @@ export default function Settings() {
   const [mailCalendarRoutineOperations, setMailCalendarRoutineOperations] = createSignal<Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">>(["recent_mail", "calendar_events"]);
   const [mailCalendarRoutineFolders, setMailCalendarRoutineFolders] = createSignal<api.MailCalendarFolder[]>([]);
   const [mailCalendarRoutineFolderId, setMailCalendarRoutineFolderId] = createSignal("");
+  const [mailCalendarRoutineSources, setMailCalendarRoutineSources] = createSignal<api.MailCalendarSource[]>([]);
+  const [mailCalendarRoutineSourceId, setMailCalendarRoutineSourceId] = createSignal("");
+  const [mailCalendarRoutineSourcesLoading, setMailCalendarRoutineSourcesLoading] = createSignal(false);
   const [mailCalendarWatchNewMail, setMailCalendarWatchNewMail] = createSignal(false);
   const [mailCalendarRoutineSaving, setMailCalendarRoutineSaving] = createSignal(false);
   let mailCalendarDraftTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1240,6 +1243,7 @@ export default function Settings() {
     mailCalendarDraftTimer = undefined;
   };
   let mailCalendarRoutineFolderGeneration = 0;
+  let mailCalendarRoutineSourceGeneration = 0;
   createEffect(() => {
     const accountId = mailCalendarEditorAccount();
     const agentId = activeAgentId();
@@ -1261,6 +1265,34 @@ export default function Settings() {
       if (generation === mailCalendarRoutineFolderGeneration) {
         setMailCalendarRoutineFolders([]);
         setMailCalendarRoutineFolderId("");
+      }
+    });
+  });
+  createEffect(() => {
+    const accountId = mailCalendarEditorAccount();
+    const agentId = activeAgentId();
+    const wantsCalendar = mailCalendarRoutineOperations().includes("calendar_events");
+    const previousSourceId = untrack(mailCalendarRoutineSourceId);
+    const account = mailCalendarAccounts()?.accounts.find((item) => item.id === accountId);
+    const generation = ++mailCalendarRoutineSourceGeneration;
+    setMailCalendarRoutineSources([]);
+    setMailCalendarRoutineSourceId("");
+    setMailCalendarRoutineSourcesLoading(false);
+    if (!accountId || !agentId || page() !== "mail-calendar" || !wantsCalendar || !account?.capabilities.includes("calendar_read")) return;
+    setMailCalendarRoutineSourcesLoading(true);
+    void api.listMailCalendarSources(agentId, accountId).then(({ sources }) => {
+      if (generation !== mailCalendarRoutineSourceGeneration || agentId !== activeAgentId()) return;
+      setMailCalendarRoutineSourcesLoading(false);
+      setMailCalendarRoutineSources(sources);
+      const selected = sources.find((source) => source.provider_id === previousSourceId)
+        ?? sources.find((source) => source.primary)
+        ?? sources[0];
+      setMailCalendarRoutineSourceId(selected?.provider_id ?? "");
+    }).catch(() => {
+      if (generation === mailCalendarRoutineSourceGeneration) {
+        setMailCalendarRoutineSourcesLoading(false);
+        setMailCalendarRoutineSources([]);
+        setNotice({ kind: "error", text: "Could not load calendars for this routine. Refresh the account sign-in and try again." });
       }
     });
   });
@@ -2098,6 +2130,11 @@ export default function Settings() {
       setNotice({ kind: "error", text: "Allow calendar event reads before adding an event trigger." });
       return;
     }
+    if (mailCalendarRoutineOperations().includes("calendar_events")
+      && !mailCalendarRoutineSources().some((source) => source.provider_id === mailCalendarRoutineSourceId())) {
+      setNotice({ kind: "error", text: "Choose a verified calendar source for this routine." });
+      return;
+    }
     if (mailCalendarEventTriggerEnabled() && mailCalendarWatchNewMail()) {
       setNotice({ kind: "error", text: "Choose either an email watch or a calendar event trigger for each routine." });
       return;
@@ -2122,6 +2159,7 @@ export default function Settings() {
         mail_calendar_scope: {
           account_id: account.id,
           ...(mailCalendarRoutineOperations().includes("recent_mail") ? { mail_folder_id: mailCalendarRoutineFolderId() } : {}),
+          ...(mailCalendarRoutineOperations().includes("calendar_events") ? { calendar_source_id: mailCalendarRoutineSourceId() } : {}),
           operations: [...mailCalendarRoutineOperations()],
           max_items: 10,
           watch_new_mail: mailCalendarWatchNewMail(),
@@ -3180,6 +3218,11 @@ export default function Settings() {
                         return <label class="capability-item"><input type="checkbox" disabled={!granted()} checked={mailCalendarRoutineOperations().includes(operation)} onChange={(event) => { setMailCalendarRoutineOperations((current) => event.currentTarget.checked ? [...new Set([...current, operation])] : current.filter((item) => item !== operation)); if (operation === "recent_mail" && !event.currentTarget.checked) setMailCalendarWatchNewMail(false); if (operation === "calendar_events" && !event.currentTarget.checked) setMailCalendarEventTriggerEnabled(false); }} /><span>{label}{unavailableReason()}</span></label>;
                       }}</For>
                     </fieldset>
+                    <Show when={mailCalendarRoutineOperations().includes("calendar_events")}>
+                      <label>Calendar source<select aria-label="Routine calendar source" value={mailCalendarRoutineSourceId()} disabled={mailCalendarRoutineSourcesLoading() || mailCalendarRoutineSources().length === 0} onChange={(event) => setMailCalendarRoutineSourceId(event.currentTarget.value)}><Show when={mailCalendarRoutineSourcesLoading()}><option value="">Loading calendars…</option></Show><For each={mailCalendarRoutineSources()}>{(source) => <option value={source.provider_id}>{source.name}{source.primary ? " (default)" : ""}</option>}</For></select></label>
+                      <Show when={!mailCalendarRoutineSourcesLoading() && mailCalendarRoutineSources().length === 0}><p class="settings-hint">No calendars are available for this account yet. Confirm its CalendarRead access.</p></Show>
+                      <p class="settings-hint">This routine reads only the selected calendar. Its source is checked again before every event-trigger poll and read.</p>
+                    </Show>
                     <label class="capability-item"><input type="checkbox" disabled={!mailCalendarRoutineOperations().includes("recent_mail") || mailCalendarEventTriggerEnabled()} checked={mailCalendarWatchNewMail()} onChange={(event) => setMailCalendarWatchNewMail(event.currentTarget.checked)} /><span>Watch for new email on this schedule</span></label>
                     <label class="capability-item"><input type="checkbox" disabled={!mailCalendarRoutineOperations().includes("calendar_events") || mailCalendarWatchNewMail()} checked={mailCalendarEventTriggerEnabled()} onChange={(event) => { setMailCalendarEventTriggerEnabled(event.currentTarget.checked); if (event.currentTarget.checked) setMailCalendarWatchMode("continuous"); }} /><span>Run around a calendar event</span></label>
                     <Show when={mailCalendarEventTriggerEnabled()}>

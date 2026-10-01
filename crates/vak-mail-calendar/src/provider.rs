@@ -11,6 +11,7 @@ use chrono::{DateTime, Duration, Utc};
 use reqwest::{Response, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::time::Duration as StdDuration;
 use std::{
     io,
@@ -188,10 +189,26 @@ pub struct MailFolder {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CalendarSource {
-    /// Opaque provider calendar ID; treat as data, never as a URL.
+    /// Stable hash of the provider and calendar ID. Raw provider IDs can
+    /// contain mailbox addresses, so never persist or return them to clients.
     pub provider_id: String,
     pub name: String,
     pub primary: bool,
+}
+
+pub fn opaque_calendar_source_id(provider: Provider, provider_id: &str) -> String {
+    let provider = match provider {
+        Provider::Google => b"google".as_slice(),
+        Provider::Microsoft => b"microsoft".as_slice(),
+        Provider::AppleIcloud => b"apple_icloud".as_slice(),
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"vak-calendar-source-v1");
+    hasher.update((provider.len() as u64).to_be_bytes());
+    hasher.update(provider);
+    hasher.update((provider_id.len() as u64).to_be_bytes());
+    hasher.update(provider_id.as_bytes());
+    format!("cal:{}", hex::encode(hasher.finalize()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -437,6 +454,18 @@ impl ProviderReadClient {
         agent_id: &str,
         audience: &str,
     ) -> Result<Vec<CalendarSource>, ProviderReadError> {
+        self.list_calendar_source_records(account, vault, agent_id, audience)
+            .await
+            .map(|records| records.into_iter().map(|(source, _)| source).collect())
+    }
+
+    async fn list_calendar_source_records(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+    ) -> Result<Vec<(CalendarSource, String)>, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
         if account.provider == Provider::AppleIcloud {
             return Err(ProviderReadError::Unsupported);
@@ -501,11 +530,14 @@ impl ProviderReadClient {
             {
                 continue;
             }
-            sources.push(CalendarSource {
-                provider_id: id.to_owned(),
-                name: bounded_label_name(name),
-                primary: item.get(primary_key).and_then(Value::as_bool) == Some(true),
-            });
+            sources.push((
+                CalendarSource {
+                    provider_id: opaque_calendar_source_id(account.provider, id),
+                    name: bounded_label_name(name),
+                    primary: item.get(primary_key).and_then(Value::as_bool) == Some(true),
+                },
+                id.to_owned(),
+            ));
         }
         if sources.is_empty() {
             return Err(ProviderReadError::InvalidResponse);
@@ -1387,11 +1419,13 @@ impl ProviderReadClient {
         range: CalendarRange,
     ) -> Result<CalendarEventPage, ProviderReadError> {
         let sources = self
-            .list_calendar_sources(account, vault, agent_id, audience)
+            .list_calendar_source_records(account, vault, agent_id, audience)
             .await?;
-        if !sources.iter().any(|source| source.provider_id == source_id) {
-            return Err(ProviderReadError::InvalidSearch);
-        }
+        let provider_calendar_id = sources
+            .iter()
+            .find(|(source, _)| source.provider_id == source_id)
+            .map(|(_, provider_id)| provider_id.as_str())
+            .ok_or(ProviderReadError::InvalidSearch)?;
         validate_range(range.from, range.to)?;
         let limit = range.limit.clamp(1, MAX_EVENT_ITEMS);
         let token = vault
@@ -1399,12 +1433,24 @@ impl ProviderReadClient {
             .map_err(|_| ProviderReadError::Vault)?;
         match account.provider {
             Provider::Google => {
-                self.google_events(token.as_str(), source_id, range.from, range.to, limit)
-                    .await
+                self.google_events(
+                    token.as_str(),
+                    provider_calendar_id,
+                    range.from,
+                    range.to,
+                    limit,
+                )
+                .await
             }
             Provider::Microsoft => {
-                self.microsoft_events(token.as_str(), Some(source_id), range.from, range.to, limit)
-                    .await
+                self.microsoft_events(
+                    token.as_str(),
+                    Some(provider_calendar_id),
+                    range.from,
+                    range.to,
+                    limit,
+                )
+                .await
             }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
@@ -6150,6 +6196,9 @@ mod tests {
         assert_eq!(google_sources.len(), 2);
         assert!(google_sources[0].primary);
         assert_eq!(google_sources[1].name, "Work");
+        assert!(google_sources[0].provider_id.starts_with("cal:"));
+        assert_ne!(google_sources[0].provider_id, "primary");
+        assert!(!google_sources[0].provider_id.contains('@'));
         let graph_sources = client
             .list_calendar_sources(&graph, &graph_vault, &graph_agent, &graph_audience)
             .await
@@ -6168,7 +6217,7 @@ mod tests {
                 &google_vault,
                 &google_agent,
                 &google_audience,
-                "work-calendar",
+                &google_sources[1].provider_id,
                 range,
             )
             .await
@@ -6180,7 +6229,7 @@ mod tests {
                 &graph_vault,
                 &graph_agent,
                 &graph_audience,
-                "work-calendar",
+                &graph_sources[1].provider_id,
                 range,
             )
             .await

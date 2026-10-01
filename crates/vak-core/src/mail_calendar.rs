@@ -6,7 +6,6 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
-use sha2::Digest;
 use std::{
     path::Path,
     sync::{
@@ -420,10 +419,7 @@ struct IcloudCalendarSource {
 }
 
 fn icloud_calendar_source_id(path: &vak_mail_calendar::provider::IcloudCalDavPath) -> String {
-    format!(
-        "caldav:{}",
-        hex::encode(sha2::Sha256::digest(path.as_str().as_bytes()))
-    )
+    vak_mail_calendar::provider::opaque_calendar_source_id(Provider::AppleIcloud, path.as_str())
 }
 
 fn bounded_calendar_source_name(value: &str) -> String {
@@ -863,20 +859,39 @@ impl vak_tools::Tool for MailCalendarTool {
                         } else {
                             limit
                         };
-                        let page = calendar_event_page_with_worker(
-                            &client,
-                            account,
-                            &vault,
-                            agent_id,
-                            &account_audience,
-                            CalendarRange {
-                                from,
-                                to,
-                                limit: query_limit,
-                            },
-                            &self.worker_exe,
-                        )
-                        .await
+                        let range = CalendarRange {
+                            from,
+                            to,
+                            limit: query_limit,
+                        };
+                        let page = if let Some(source_id) = self
+                            .routine_scope
+                            .as_ref()
+                            .and_then(|scope| scope.calendar_source_id.as_deref())
+                        {
+                            calendar_event_page_in_source_with_worker(
+                                &client,
+                                account,
+                                &vault,
+                                agent_id,
+                                &account_audience,
+                                source_id,
+                                range,
+                                &self.worker_exe,
+                            )
+                            .await
+                        } else {
+                            calendar_event_page_with_worker(
+                                &client,
+                                account,
+                                &vault,
+                                agent_id,
+                                &account_audience,
+                                range,
+                                &self.worker_exe,
+                            )
+                            .await
+                        }
                         .map_err(|error| error.to_string())?;
                         if trigger_scan && page.has_more {
                             return Err("the routine's calendar window exceeds its bounded scan; narrow the catch-up window".into());
@@ -1185,6 +1200,7 @@ mod tests {
             routine_id: uuid::Uuid::now_v7().to_string(),
             account_id: uuid::Uuid::now_v7().to_string(),
             mail_folder_id: Some("SENT".into()),
+            calendar_source_id: None,
             operations: [RoutineOperation::RecentMail].into_iter().collect(),
             max_items: 5,
             watch_new_mail: false,
@@ -1401,6 +1417,7 @@ mod tests {
                 routine_id: uuid::Uuid::now_v7().to_string(),
                 account_id,
                 mail_folder_id: None,
+                calendar_source_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
@@ -1428,6 +1445,7 @@ mod tests {
                 routine_id: uuid::Uuid::now_v7().to_string(),
                 account_id: uuid::Uuid::now_v7().to_string(),
                 mail_folder_id: None,
+                calendar_source_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 10,
                 watch_new_mail: false,
@@ -1531,7 +1549,7 @@ mod tests {
         .unwrap();
         let source_id = icloud_calendar_source_id(&path);
         assert_eq!(source_id, icloud_calendar_source_id(&path));
-        assert!(source_id.starts_with("caldav:"));
+        assert!(source_id.starts_with("cal:"));
         assert!(!source_id.contains("work"));
         assert_eq!(
             bounded_calendar_source_name(" Work\nCalendar "),
@@ -1551,6 +1569,7 @@ mod tests {
                 routine_id: uuid::Uuid::now_v7().to_string(),
                 account_id,
                 mail_folder_id: None,
+                calendar_source_id: None,
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
