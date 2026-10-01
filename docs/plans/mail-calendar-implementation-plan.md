@@ -673,6 +673,12 @@ remains open.
 
 ## Progress log
 
+- 2026-10-01: Added the server-side calendar-trigger counterpart to mail-watch
+  restart recovery. It marks an in-progress TaskDef run interrupted, reopens the
+  owning Agent vault, resolves its staged event occurrence as unsuccessful, and
+  verifies the exact opaque key is pending again. The focused scheduler suite
+  passes all 9 tests. This proves durable retry state across restart, not full
+  scheduler dispatch or the sustained 24-hour service acceptance.
 - 2026-10-01: Added a volatile TaskDef scheduler heartbeat to the authenticated
   and local `/health` projection. Email and calendar Settings now distinguish
   API reachability from a scheduler that is starting or has missed three

@@ -20821,6 +20821,90 @@ mod scheduler_pure_tests {
     }
 
     #[test]
+    fn restart_requeues_inflight_calendar_occurrences_from_the_agent_vault() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("calendar-event-restart-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let routine_id = uuid::Uuid::now_v7().to_string();
+        let occurrence = format!("calendar:{}", "a5".repeat(32));
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .queue_calendar_occurrences(
+                &routine_id,
+                &account_id,
+                std::slice::from_ref(&occurrence),
+            )
+            .unwrap();
+        vault
+            .stage_delivered_calendar_occurrences(
+                &routine_id,
+                &account_id,
+                std::slice::from_ref(&occurrence),
+            )
+            .unwrap();
+
+        let task = TaskDef {
+            id: routine_id.clone(),
+            name: "calendar event preparation".into(),
+            prompt: "Prepare for this event".into(),
+            interval_secs: 60,
+            enabled: true,
+            cwd: std::path::PathBuf::from("/tmp"),
+            created_at: Utc::now(),
+            last_run_at: Some(Utc::now()),
+            last_session_id: Some("interrupted-event-session".into()),
+            last_summary: None,
+            last_result_id: None,
+            last_run_status: Some("working".into()),
+            mail_calendar_last_check_at: None,
+            last_delivery_state: Some("pending".into()),
+            last_wt: None,
+            deliver_to: None,
+            schedule: None,
+            timezone: None,
+            due_at: None,
+            script: None,
+            model_pin: None,
+            agent_id: Some(agent_id.clone()),
+            agent_revision: Some(1),
+            mail_calendar_scope: Some(RoutineScope {
+                routine_id: routine_id.clone(),
+                account_id: account_id.clone(),
+                mail_folder_id: None,
+                calendar_source_id: Some("calendar-primary".into()),
+                operations: [RoutineOperation::CalendarEvents].into_iter().collect(),
+                max_items: 1,
+                watch_new_mail: false,
+                read_commitments: false,
+                calendar_event_trigger: Some(vak_mail_calendar::CalendarEventTrigger {
+                    boundary: vak_mail_calendar::CalendarEventBoundary::Start,
+                    offset_minutes: 0,
+                    max_lateness_minutes: 15,
+                }),
+            }),
+        };
+        let mut tasks = HashMap::from([(routine_id.clone(), task)]);
+        assert!(recover_interrupted_tasks(&mut tasks));
+        assert_eq!(
+            tasks[&routine_id].last_run_status.as_deref(),
+            Some("interrupted")
+        );
+
+        // Calendar occurrences use the same at-least-once rule as mail IDs:
+        // only a completed run consumes staged work after a restart.
+        let restarted_vault = AccountVault::for_agent(&agent_id).unwrap();
+        restarted_vault
+            .resolve_delivered_calendar_occurrences(&routine_id, &account_id, false)
+            .unwrap();
+        assert_eq!(
+            restarted_vault
+                .pending_calendar_occurrences(&routine_id, &account_id, 10)
+                .unwrap(),
+            [occurrence]
+        );
+    }
+
+    #[test]
     fn missed_slot_matrix() {
         let every_min = "* * * * *";
         // Ran at the current slot → its next slot is in the future.
