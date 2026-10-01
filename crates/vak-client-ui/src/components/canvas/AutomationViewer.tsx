@@ -50,6 +50,7 @@ export default function AutomationViewer(props: ViewerProps) {
     setNote(null);
     try {
       setNote((await work()) ?? null);
+      if (latest()?.mail_calendar_scope) window.dispatchEvent(new Event("vak:mail-calendar-changed"));
     } catch (cause) {
       setNote(cause instanceof Error ? cause.message : String(cause));
     } finally {

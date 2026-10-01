@@ -897,15 +897,24 @@ and Microsoft thread previews do use provider cursors. Same-source Canvas
 refreshes retain the current preview while loading; changing its Agent or
 source shows the initial loading state.
 
+Today also lists this Agent's mail/calendar routines, eight per page. The
+routine list is filtered by both the current Agent id and the typed
+mail/calendar scope; other Agents' tasks and unrelated schedules are omitted.
+Opening a routine uses the existing Canvas routine viewer for status, next
+run, last result, pause/resume, run-once, and delivery retry. Routine changes
+notify an open Today view to refresh. Routine creation, trigger editing,
+history, and budgets have not yet moved out of Settings.
+
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
 Canvas work area described above. The current implementation still mixes
 account configuration with previews, drafts, Reviews, and routines on the
 Settings page. Settings now links directly to the Today Canvas, which contains
-the read-only agenda and recent-mail view, but this is only a partial
-separation: draft and Review handoffs, date-range and folder previews, and
-routine management still return to Settings. Do not treat the Settings page as
-the finished working area. Move those workflows into Canvas while preserving
+the read-only agenda and recent-mail view plus per-Agent routine links into
+Canvas controls. This is only a partial separation: draft and Review
+handoffs, date-range and folder previews, routine creation and trigger
+configuration, history, and budgets remain in Settings. Do not treat the
+Settings page as the finished working area. Move those workflows into Canvas while preserving
 the existing Agent ownership, permission checks, exact Review payloads, and
 vault-backed local draft behavior; Settings should retain connection, access,
 and account-lifecycle controls.

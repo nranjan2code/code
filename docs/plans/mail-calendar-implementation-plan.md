@@ -2137,3 +2137,10 @@ remains open.
   migration. This is navigation and disclosure progress, not completion of the
   shared working-area requirement: the full draft, Review, range/folder preview,
   and routine workflows still need to move into Canvas.
+- 2026-10-01: Added an Agent-filtered mail/calendar routine list to Today Canvas
+  (eight per page) and handoff to the existing Canvas routine detail view for
+  status, schedule, run-once, pause/resume, and delivery retry. The list filters
+  by both `agent_id` and typed `mail_calendar_scope`; a large synthetic fixture
+  with 19 in-scope routines plus unrelated tasks verifies three-page navigation
+  and task handoff. Routine mutations notify Today to refresh. Creation,
+  trigger configuration, history, and budget controls remain in Settings.

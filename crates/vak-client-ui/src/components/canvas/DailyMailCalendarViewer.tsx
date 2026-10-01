@@ -1,12 +1,13 @@
 import { createEffect, For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import * as api from "../../api";
 import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../../mailCalendarDemo";
-import { openMailCalendarCitation, setPendingSettingsPage, setSettingsOpen } from "../../store";
+import { openArtifactCanvas, openMailCalendarCitation, setPendingSettingsPage, setSettingsOpen } from "../../store";
 import { MailCalendarAgenda } from "../MailCalendarAgenda";
 import { SyntheticMailCalendarDemoButton } from "../SyntheticMailCalendarDemoControl";
 import { createLoader } from "./createLoader";
 import LoadState from "./LoadState";
 import type { ViewerProps } from "./types";
+import type { TaskDef } from "../../types";
 
 const dateKey = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const prettyDay = (day: string) => new Date(`${day}T12:00:00`).toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
@@ -33,7 +34,22 @@ function providerName(account: api.MailCalendarAccount) {
   return account.identity_masked ? `${name} · ${account.identity_masked}` : name;
 }
 
-async function readToday(agentId: string): Promise<{ day: string; accounts: DailyAccount[]; refreshedAt: string }> {
+function routineMode(task: TaskDef) {
+  if (!task.enabled) return "Paused";
+  const modes = ["Scheduled"];
+  if (task.mail_calendar_scope?.watch_new_mail) modes.push("Watching for new email");
+  if (task.mail_calendar_scope?.calendar_event_trigger) modes.push("Event-triggered");
+  return modes.join(" · ");
+}
+
+function routineFreshness(task: TaskDef) {
+  const checkedAt = task.mail_calendar_last_check_at ?? task.last_run_at;
+  if (!checkedAt) return "";
+  const label = task.mail_calendar_last_check_at ? "Last checked" : "Last run";
+  return ` · ${label} ${new Date(checkedAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}`;
+}
+
+async function readToday(agentId: string): Promise<{ day: string; accounts: DailyAccount[]; routines: TaskDef[]; routinesUnavailable: boolean; refreshedAt: string }> {
   const startDate = new Date();
   const day = dateKey(startDate);
   const end = tomorrow(startDate);
@@ -72,7 +88,14 @@ async function readToday(agentId: string): Promise<{ day: string; accounts: Dail
     }));
     results.push(...batchResults);
   }
-  return { day, accounts: results, refreshedAt: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) };
+  let routines: TaskDef[] = [];
+  let routinesUnavailable = false;
+  try {
+    routines = (await api.listTasks()).tasks.filter((task) => task.agent_id === agentId && !!task.mail_calendar_scope);
+  } catch {
+    routinesUnavailable = true;
+  }
+  return { day, accounts: results, routines, routinesUnavailable, refreshedAt: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) };
 }
 
 export default function DailyMailCalendarViewer(props: ViewerProps) {
@@ -87,6 +110,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [conversationRequest, setConversationRequest] = createSignal(0);
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
   const [mailPage, setMailPage] = createSignal(0);
+  const [routinePage, setRoutinePage] = createSignal(0);
   const [eventAction, setEventAction] = createSignal("");
   const [eventActionError, setEventActionError] = createSignal<string | null>(null);
   const [accountRefreshPending, setAccountRefreshPending] = createSignal(false);
@@ -191,6 +215,9 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
         const messages = visibleMailRows().filter((row) => row.account.account.id === account.account.id).map((row) => row.message);
         return messages.length ? [{ ...account, messages }] : [];
       });
+      const routinePageSize = 8;
+      const routinePageCount = () => Math.max(1, Math.ceil(data.routines.length / routinePageSize));
+      const visibleRoutines = () => data.routines.slice(routinePage() * routinePageSize, (routinePage() + 1) * routinePageSize);
       const calendarFailedAccounts = () => data.accounts.filter((account) => account.calendarError);
       const openSettings = () => { setPendingSettingsPage("mail-calendar"); setSettingsOpen(true); };
       const prepareEventAction = async (kind: "update" | "cancel") => {
@@ -252,6 +279,13 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             }}</Show>
           </section>
         </Show>
+        <section class="daily-mail-calendar-section" aria-label="Mail and calendar routines">
+          <div class="daily-mail-calendar-calendar-heading"><h3>Your routines</h3><span>Scheduled work for this Agent</span></div>
+          <Show when={data.routinesUnavailable}><p class="daily-mail-calendar-warning" role="status">Routine status is unavailable right now. Try refreshing.</p></Show>
+          <Show when={!data.routinesUnavailable && data.routines.length === 0}><p class="settings-hint">No mail or calendar routines are set up for this Agent.</p></Show>
+          <For each={visibleRoutines()}>{(task) => <article class="daily-mail-calendar-routine"><div><strong>{task.name}</strong><span>{routineMode(task)}{task.next_run_at && task.enabled ? ` · Next ${new Date(task.next_run_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}` : task.enabled && task.mail_calendar_scope?.watch_new_mail ? " · Waiting for provider changes" : ""}{routineFreshness(task)}</span></div><button type="button" class="settings-button" onClick={() => openArtifactCanvas({ kind: "automation", title: task.name || "Mail and calendar routine", taskId: task.id })}>Open routine</button></article>}</For>
+          <Show when={data.routines.length > routinePageSize}><nav class="daily-mail-calendar-pagination" aria-label="Routine pages"><button type="button" class="settings-button" disabled={routinePage() === 0} onClick={() => setRoutinePage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {routinePage() + 1} of {routinePageCount()} · {data.routines.length} routines</span><button type="button" class="settings-button" disabled={routinePage() + 1 >= routinePageCount()} onClick={() => setRoutinePage((page) => Math.min(routinePageCount() - 1, page + 1))}>Next</button></nav></Show>
+        </section>
         <footer class="daily-mail-calendar-privacy">Read-only preview for this Agent and your local owner session. Refresh runs every five minutes while visible and when you return after a minute away. Provider content is not added to the conversation by opening this view.</footer>
       </main>;
     }}</LoadState>

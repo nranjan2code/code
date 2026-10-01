@@ -1,7 +1,8 @@
 import { render } from "solid-js/web";
 import DailyMailCalendarViewer from "../src/components/canvas/DailyMailCalendarViewer";
 import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../src/mailCalendarDemo";
-import { pendingSettingsPage, settingsOpen } from "../src/store";
+import { canvasSubject, pendingSettingsPage, settingsOpen } from "../src/store";
+import type { TaskDef } from "../src/types";
 import "../src/styles.css";
 
 const restoreSyntheticDemo = syntheticMailCalendarEnabled();
@@ -25,6 +26,14 @@ const accounts = providerTypes.flatMap((provider) => Array.from({ length: 3 }, (
   refresh_token_available: false,
   revoked_at: null,
 })));
+const routines: TaskDef[] = Array.from({ length: 19 }, (_, index) => ({
+  id: `fixture-routine-${index}`, name: `Synthetic daily brief ${index + 1}`, prompt: "Synthetic routine",
+  interval_secs: 0, enabled: index % 4 !== 0, cwd: "/tmp/fixture", created_at: "2026-10-01T00:00:00Z",
+  agent_id: "fixture-owner", next_run_at: "2026-10-02T08:00:00Z", last_run_at: null,
+  mail_calendar_scope: { routine_id: `fixture-routine-${index}`, account_id: "g-account-0", operations: ["recent_mail"], max_items: 10, watch_new_mail: false },
+}));
+routines.push({ ...routines[0], id: "other-agent-routine", name: "Must not appear", agent_id: "different-agent" });
+routines.push({ ...routines[0], id: "non-mail-routine", name: "Must also not appear", mail_calendar_scope: null });
 const requests: string[] = [];
 const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const fixtureErrors: string[] = [];
@@ -42,6 +51,7 @@ window.fetch = async (input, init) => {
   try {
     const url = new URL(String(input), location.origin);
     requests.push(`${url.pathname}${url.search}`);
+    if (url.pathname === "/tasks") return json({ tasks: routines });
     if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
       localDraftWrites.push({ path: url.pathname, body });
@@ -148,6 +158,17 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     throw new Error(`Expected 12 visible mail rows after the initial read; found ${mailRows}. Loader ${JSON.stringify((window as any).__mailCalendarLoaderTrace ?? null)}. Captured ${requests.length} routes and ${fixtureResponses} responses (${requests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
   }
   const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
+  const routineRows = document.querySelectorAll(".daily-mail-calendar-routine");
+  const routinePagingStartsCorrectly = routineRows.length === 8
+    && document.querySelector("nav[aria-label='Routine pages']")?.textContent?.includes("Page 1 of 3") === true
+    && !document.body.textContent?.includes("Must not appear");
+  document.querySelector<HTMLButtonElement>("nav[aria-label='Routine pages'] button:last-child")?.click();
+  const routineNextPageWorks = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-routine").length === 8
+    && document.querySelector("nav[aria-label='Routine pages']")?.textContent?.includes("Page 2 of 3") === true);
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-routine button")?.click();
+  const openedRoutine = canvasSubject();
+  const routineCanvasHandoffWorks = openedRoutine?.kind === "automation" && openedRoutine.taskId === "fixture-routine-8";
+  document.querySelector<HTMLButtonElement>("nav[aria-label='Routine pages'] button:first-child")?.click();
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
@@ -229,6 +250,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
     check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
+    check(routinePagingStartsCorrectly && routineNextPageWorks, "Canvas routine list paginates mail/calendar routines and excludes other Agents and non-mail tasks"),
+    check(routineCanvasHandoffWorks, "Opening a listed routine hands off to its existing Canvas routine workspace"),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(conversationHandoffWorks, "The conversation can hand off to the Agent mail workspace to prepare a reply"),

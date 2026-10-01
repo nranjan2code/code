@@ -5581,11 +5581,14 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .daily-mail-calendar-conversation-message > p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-soft); font-size: var(--fs-control); }
 .daily-mail-calendar-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding-top: var(--space-3); }
 .daily-mail-calendar-pagination > span { color: var(--muted); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
+.daily-mail-calendar-routine { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.daily-mail-calendar-routine > div { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.daily-mail-calendar-routine span { color: var(--muted); }
 .mail-calendar-inbox-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding: var(--space-3) 0; }
 .mail-calendar-inbox-pagination > span { color: var(--muted); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
 .artifact-canvas-refreshing { position: sticky; top: 0; z-index: 1; display: block; width: fit-content; margin: 0 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); color: var(--muted); font-size: var(--fs-meta); }
 .daily-mail-calendar-privacy { padding-top: var(--space-3); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--fs-meta); }
-@media (max-width: 600px) { .daily-mail-calendar-body { padding: var(--space-3); } .daily-mail-calendar-message { align-items: flex-start; flex-direction: column; } .chat-daily-canvas-link { top: 6px; right: 8px; } }
+@media (max-width: 600px) { .daily-mail-calendar-body { padding: var(--space-3); } .daily-mail-calendar-message { align-items: flex-start; flex-direction: column; } .daily-mail-calendar-routine { align-items: flex-start; flex-direction: column; } .chat-daily-canvas-link { top: 6px; right: 8px; } }
 .artifact-canvas-tabs {
   display: flex;
   gap: var(--space-1);
