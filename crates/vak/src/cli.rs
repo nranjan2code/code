@@ -64,10 +64,6 @@ pub(crate) enum Command {
         /// Resume an existing session instead of starting a new one
         #[arg(long)]
         session: Option<String>,
-        /// Acknowledge that prompt layers changed since the resumed session
-        /// was created, and run its frozen prompt anyway
-        #[arg(long)]
-        accept_drift: bool,
         /// Track this run as a durable managed work contract
         #[arg(long)]
         managed: bool,

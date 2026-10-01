@@ -403,7 +403,6 @@ async fn main() {
         Some(Command::Exec {
             prompt,
             agent,
-            accept_drift,
             model,
             provider,
             max_turns,
@@ -435,7 +434,6 @@ async fn main() {
                 write_paths,
                 worktree,
                 session,
-                accept_drift,
                 managed,
                 goal,
                 criteria,
@@ -1185,7 +1183,6 @@ async fn run_exec(
     write_paths: Vec<PathBuf>,
     worktree: bool,
     resume_session: Option<String>,
-    accept_drift: bool,
     managed: bool,
     goal: Option<String>,
     criteria: Vec<String>,
@@ -1269,26 +1266,6 @@ async fn run_exec(
     let session = match resume_session {
         Some(sid) => match core.open_session(&sid).await {
             Ok(s) => {
-                // A named session resumes its FROZEN prompt. Unlike a chat
-                // binding — which the operator never named, so the gateway
-                // rotates it — the user asked for this session by id, so
-                // silently running a different prompt would be the wrong
-                // surprise. Fail closed and make them acknowledge, the same
-                // shape `flow run --resume` already uses for a drifted
-                // definition (docs/design/45-prompt-layers.md).
-                if let Some(drift) = s.header().and_then(|h| core.prompt_drift(&h.contract))
-                    && !accept_drift
-                {
-                    eprintln!("error: prompt layers changed since session '{sid}' was created:");
-                    for line in drift.lines() {
-                        eprintln!("  {line}");
-                    }
-                    eprintln!(
-                        "  resume executes the FROZEN prompt; pass --accept-drift to \
-                         acknowledge, or start a new session to pick up the change."
-                    );
-                    return 2;
-                }
                 if let Some(agent_id) = &agent
                     && let Some(h_agent) = s.header().and_then(|h| h.agent.as_ref())
                     && h_agent.id != *agent_id

@@ -611,7 +611,6 @@ pub async fn run_terminal(cwd: PathBuf, non_interactive: bool) -> i32 {
             false,
             None,
             false,
-            false,
             None,
             Vec::new(),
             trusted,
