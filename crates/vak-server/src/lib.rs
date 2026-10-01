@@ -548,12 +548,24 @@ struct HttpApprover {
     /// capability from the turn instead of letting the model discover it by
     /// blocking on a question nobody will read.
     answerable: bool,
+    /// The client that started this run said it can show a worker's question
+    /// (`RunBody::can_show_questions`). A terminal or raw API client cannot, so
+    /// a worker is told at once that nobody can answer instead of waiting for
+    /// a question nobody will see.
+    shows_questions: bool,
 }
 
 #[async_trait::async_trait]
 impl Approver for HttpApprover {
     fn answerable(&self) -> bool {
         self.answerable
+    }
+
+    /// Questions are listed at `GET /sessions/{id}/questions` and announced as
+    /// a `WorkerQuestion` event, the same way a gate is announced, for a
+    /// client that declared it can show them.
+    fn answers_questions(&self) -> bool {
+        self.answerable && self.shows_questions
     }
 
     async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
@@ -4600,6 +4612,10 @@ struct RoutingEnvelope {
 #[derive(serde::Deserialize)]
 struct RunBody {
     prompt: String,
+    /// The client can show a worker's question and take an answer
+    /// (`GET /sessions/{id}/questions`). Off unless the client says so.
+    #[serde(default)]
+    can_show_questions: bool,
     /// Stable client identity used to make network retries idempotent.
     #[serde(default)]
     request_id: Option<String>,
@@ -5152,6 +5168,7 @@ fn spawn_http_turn_chain(
     taken: SessionLog,
     start: TurnStart,
     request_id: Option<String>,
+    shows_questions: bool,
 ) {
     let hub = state.hub.clone();
     let admin_store = state.store.clone();
@@ -5174,6 +5191,7 @@ fn spawn_http_turn_chain(
                     session_id: approver_handle.id.clone(),
                     activity_buffer: approver_handle.activity_buffer.clone(),
                     answerable: true,
+                    shows_questions,
                 })
             },
             move |leg_session_id: &str, outcome| {
@@ -5229,6 +5247,7 @@ async fn run_prompt(
         )
             .into_response();
     }
+    let shows_questions = body.can_show_questions;
     let request_id = body.request_id.clone();
     if let Some(request_id) = request_id.as_deref()
         && handle
@@ -5487,7 +5506,15 @@ async fn run_prompt(
     wait_for_external_subscriber(&handle).await;
 
     let response_request_id = request_id.clone();
-    spawn_http_turn_chain(&state, handle, core, taken, start, request_id);
+    spawn_http_turn_chain(
+        &state,
+        handle,
+        core,
+        taken,
+        start,
+        request_id,
+        shows_questions,
+    );
 
     (
         StatusCode::ACCEPTED,
@@ -5867,6 +5894,7 @@ async fn send_steering(
                 taken,
                 TurnStart::message(message),
                 None,
+                false,
             );
             (
                 StatusCode::ACCEPTED,
@@ -17378,6 +17406,7 @@ async fn side_chat(
         session_id: handle.id.clone(),
         activity_buffer: side_activity.clone(),
         answerable: true,
+        shows_questions: false,
     });
     let events = mpsc_to_broadcast(side_tx.clone());
     let cancel = handle
@@ -17672,6 +17701,7 @@ fn begin_turn(handle: &Arc<SessionHandle>, core: &Core, prompt: &str, attended: 
         session_id: handle.id.clone(),
         activity_buffer: handle.activity_buffer.clone(),
         answerable: attended,
+        shows_questions: false,
     });
     let core = core.clone().with_approver(approver.as_ref());
     let events = mpsc_to_broadcast(handle.events_tx.clone());
@@ -20524,6 +20554,7 @@ mod configuration_control_tests {
             session_id: "s".into(),
             activity_buffer: Arc::new(Mutex::new(Vec::new())),
             answerable: false,
+            shows_questions: false,
         };
         assert!(!Approver::answerable(&approver));
         // Returns immediately; without the guard this would block until the
@@ -20541,6 +20572,7 @@ mod configuration_control_tests {
             session_id: "session-approval".into(),
             activity_buffer: activity_buffer.clone(),
             answerable: true,
+            shows_questions: false,
         };
         let task = tokio::spawn(async move { approver.approve("write", "{}", "save draft").await });
         let request = loop {

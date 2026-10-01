@@ -632,6 +632,8 @@ export function runPrompt(
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`),
       routing,
+      // This client draws a worker's question and sends the answer back.
+      can_show_questions: true,
       goal: goal?.objective,
       criteria: goal?.criteria,
       attachments: attachments?.images ?? [],
@@ -792,6 +794,29 @@ export function answerApproval(
   return req(`/sessions/${id}/approvals/${requestId}`, {
     method: "POST",
     body: JSON.stringify({ approve, remember }),
+  });
+}
+
+export interface PendingQuestion {
+  id: string;
+  worker_id: string;
+  label: string;
+  question: string;
+  options: string[];
+  asked_at: string;
+}
+
+/** The questions this session's workers are waiting on. */
+export function pendingQuestions(id: string): Promise<{ questions: PendingQuestion[] }> {
+  return req(`/sessions/${encodeURIComponent(id)}/questions`);
+}
+
+/** Answer a worker's question; the first answer wins, so a question already
+ *  answered or expired is a 404. */
+export function answerQuestion(id: string, questionId: string, text: string): Promise<void> {
+  return req(`/sessions/${encodeURIComponent(id)}/questions/${encodeURIComponent(questionId)}`, {
+    method: "POST",
+    body: JSON.stringify({ text }),
   });
 }
 

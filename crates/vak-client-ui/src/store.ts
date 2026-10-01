@@ -46,6 +46,14 @@ export type Item =
       reason: string;
       resolved: null | "allowed" | "denied" | "gone";
     }
+  | {
+      kind: "question";
+      id: string;
+      label: string;
+      question: string;
+      options: string[];
+      resolved: null | "answered" | "gone";
+    }
   | { kind: "worker"; label: string; lines: string[]; open: boolean; isError: boolean }
   | { kind: "system"; text: string; needs?: "ai-service" };
 
@@ -829,6 +837,30 @@ export function itemsOf(id: string | null, bucket: Bucket = "main"): Item[] {
   return itemsBySession[K(bucket, id)] ?? [];
 }
 
+/** Restore live question cards after reconnecting to a session. */
+export function restorePendingQuestions(id: string, questions: api.PendingQuestion[]) {
+  const listed = new Set(questions.map((question) => question.id));
+  setItemsBySession(id, (items) => {
+    const existing = new Set(items.filter((item) => item.kind === "question").map((item) => item.id));
+    // The server's list is authoritative: a card it no longer lists was
+    // answered in another window or expired.
+    const stale = items.some((item) => item.kind === "question" && !item.resolved && !listed.has(item.id));
+    const missing = questions.filter((question) => !existing.has(question.id));
+    if (!stale && !missing.length) return items;
+    const cleared: Item[] = items.map((item) =>
+      item.kind === "question" && !item.resolved && !listed.has(item.id) ? { ...item, resolved: "gone" } : item);
+    const restored: Item[] = missing.map((question) => ({
+      kind: "question",
+      id: question.id,
+      label: question.label,
+      question: question.question,
+      options: question.options,
+      resolved: null,
+    }));
+    return [...cleared, ...restored];
+  });
+}
+
 /** Restore live approval cards after reconnecting to a session. */
 export function restorePendingApprovals(id: string, approvals: api.PendingApproval[]) {
   if (!approvals.length) return;
@@ -1216,6 +1248,20 @@ export function applyEvent(
           resolved: null,
         }]);
     opts.onApproval?.(ev.ApprovalRequested.id, ev.ApprovalRequested.tool);
+  } else if ("WorkerQuestion" in ev) {
+    updateList("main", id, (items) => items.some((item) => item.kind === "question" && item.id === ev.WorkerQuestion.id)
+      ? items
+      : [...items, {
+          kind: "question",
+          id: ev.WorkerQuestion.id,
+          label: ev.WorkerQuestion.label,
+          question: ev.WorkerQuestion.question,
+          options: ev.WorkerQuestion.options,
+          resolved: null,
+        }]);
+  } else if ("WorkerQuestionAnswered" in ev) {
+    updateList("main", id, (items) => items.map((item) =>
+      item.kind === "question" && item.id === ev.WorkerQuestionAnswered.id ? { ...item, resolved: "answered" } : item));
   } else if ("WorkerStarted" in ev) {
     pushItem(b, id, {
       kind: "worker",

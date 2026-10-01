@@ -2,8 +2,10 @@
 Status: in progress. Built: M3 (pause and stop now, §7), M1 (a worker's
 question: the board, `ask_parent`, the HTTP list and answer endpoints and the
 events, §4) and M2 (read-only background tasks, the `workers` tool and the
-stop-gate join, §5). Proposed: M4 (the client card, gateway forward and CLI
-prompt), in the order of §9. It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
+stop-gate join, §5). M4 is partly built: the web and desktop client's
+question card. The gateway forward and the CLI prompt are proposed, and until
+they exist a worker on those surfaces is told at once that nobody can answer
+(§4.5). It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
 `docs/design/47-commitment-kernel.md` (the control plane), and the `task`
 tool of `docs/design/03-agent-loop.md`. Where this document and AGENTS.md
 disagree, AGENTS.md wins until the change is made to both.
@@ -163,6 +165,14 @@ sequenceDiagram
 
 ### 4.5 Surfaces
 
+A surface must say it can show questions, or a worker is told at once that
+nobody can answer. `Approver::answers_questions()` is `false` by default, so a
+gateway chat, a scheduled run and the CLI (which can answer a yes/no gate but
+cannot show a question) never leave a worker waiting. The server's approver
+returns `true` only for a run whose client sent `can_show_questions: true` in
+`POST /sessions/{id}/run`; the web and desktop client send it, `vak term` and
+a plain API caller do not.
+
 | Surface | Mechanism |
 |---|---|
 | HTTP and clients | `AgentEvent::WorkerQuestion { id, label, question, options }` on the parent's event stream; `GET /sessions/{id}/questions`; `POST /sessions/{id}/questions/{qid}` `{ text }`; the client renders a card beside the approvals card |
@@ -307,7 +317,7 @@ the person sees lists what each stopped run had already done, from the ledger.
 | M1 (built, surfaces in M4) | `QuestionBoard`, `ask_parent` for foreground workers, HTTP list and answer endpoints, event, fail-closed rules, ledger records | a worker's question is answered by the person and appears in the child's ledger; unanswerable returns at once; timeout leaves a late answer resolving nothing; the 4th question is refused; an answer never approves a gated call |
 | M2 (built) | `task { background }`, progress tracking, the `workers` tool, `WorkersRunning` stop-gate reason, parent-model `reply` | an Agent lists and messages its own worker mid-run; another session's worker is unknown; a parent cannot finish with a running worker until it waits or the budget is spent; cap enforced |
 | M3 (built) | `POST /agents/{id}/pause` with `stop_running`, `resume`, the activity and security event | pausing with stop_running cancels live runs of that Agent only, keeps partial output, rejects pending gates and questions; without it, a running turn finishes and the next is refused |
-| M4 | client question card, gateway forward, CLI prompt, admin read-only view | each surface answers a question; a non-approver chat cannot; silence means no |
+| M4 (client card built; gateway, CLI and admin proposed) | client question card, gateway forward, CLI prompt, admin read-only view | each surface answers a question; a non-approver chat cannot; silence means no |
 
 Each phase ships whole: code, tests, this document's status line, and the
 AGENTS.md changes it makes (the Layout entry for the new tools, and invariant

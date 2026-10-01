@@ -132,7 +132,7 @@ async fn a_worker_question_is_listed_answered_once_and_reaches_the_worker() {
         &app,
         "POST",
         &format!("/sessions/{sid}/run"),
-        json!({"prompt": "delegate", "request_id": uuid::Uuid::now_v7().to_string()}),
+        json!({"prompt": "delegate", "can_show_questions": true, "request_id": uuid::Uuid::now_v7().to_string()}),
     )
     .await;
     assert_eq!(status, StatusCode::ACCEPTED);
@@ -223,4 +223,73 @@ async fn a_worker_question_is_listed_answered_once_and_reaches_the_worker() {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
     panic!("the answer never reached the worker");
+}
+
+/// A client that does not say it can show a question (a terminal, a script)
+/// must not leave a worker waiting for one nobody will see.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_client_that_cannot_show_questions_ends_the_question_at_once() {
+    vak_config::paths::isolate_home_for_tests();
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("workspace");
+    std::fs::create_dir_all(cwd.join(".vak")).unwrap();
+    std::fs::write(
+        cwd.join(".vak/config.toml"),
+        "[memory]\nreflection = false\n\n[stop_policy]\nenabled = false\n",
+    )
+    .unwrap();
+    let core = vak_core::Core::new_with_trust(cwd, true).unwrap();
+    core.set_sessions_home(temp.path().join("sessions-home"));
+    core.set_permission_mode(vak_config::PermissionMode::FullAccess);
+    let provider = Arc::new(Scripted {
+        responses: Mutex::new(VecDeque::from(vec![
+            call("t1", "task", json!({"prompt": "total", "label": "totals"})),
+            call("a1", "ask_parent", json!({"question": "Which year?"})),
+            message(
+                vec![ContentBlock::text("child went on")],
+                StopReason::EndTurn,
+            ),
+            message(vec![ContentBlock::text("all done")], StopReason::EndTurn),
+        ])),
+        requests: Mutex::new(Vec::new()),
+    });
+    core.set_provider_instance(provider.clone());
+    let app = vak_server::router(core);
+    let (_, created) = call_api(&app, "POST", "/sessions", json!({})).await;
+    let sid = created["session_id"].as_str().unwrap().to_owned();
+    // No `can_show_questions`: the default.
+    call_api(
+        &app,
+        "POST",
+        &format!("/sessions/{sid}/run"),
+        json!({"prompt": "delegate", "request_id": uuid::Uuid::now_v7().to_string()}),
+    )
+    .await;
+    for _ in 0..200 {
+        let seen: String = provider
+            .requests
+            .lock()
+            .unwrap()
+            .iter()
+            .flat_map(|r| r.messages.iter())
+            .flat_map(|m| m.content.iter())
+            .filter_map(|b| match b {
+                ContentBlock::ToolResult { content, .. } => Some(content.clone()),
+                _ => None,
+            })
+            .collect();
+        if seen.contains("Nobody is available to answer") {
+            let (_, listed) = call_api(
+                &app,
+                "GET",
+                &format!("/sessions/{sid}/questions"),
+                json!({}),
+            )
+            .await;
+            assert_eq!(listed["questions"], json!([]), "nothing was left waiting");
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("the worker was left waiting on a client that cannot show a question");
 }

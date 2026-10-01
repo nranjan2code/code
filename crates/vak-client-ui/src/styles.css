@@ -1910,6 +1910,12 @@ html[data-compact-sidebar="true"] .sb-item-meta { display: none; }
 
 .ap-head { margin-bottom: var(--space-1); color: var(--yellow); font-weight: 600; }
 .ap-reason { color: var(--muted); font-size: var(--fs-meta); }
+.q-text { margin: var(--space-1) 0 var(--space-2); color: var(--text); line-height: 1.5; overflow-wrap: anywhere; }
+.q-options { margin-bottom: var(--space-2); }
+.q-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+.q-label { flex-basis: 100%; color: var(--muted); font-size: var(--fs-meta); }
+.q-input { flex: 1 1 200px; min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-raised); color: var(--text); font: inherit; }
+.q-error { margin-top: var(--space-2); color: var(--red); font-size: var(--fs-meta); }
 .ap-args { max-height: 180px; margin: 9px 0; padding: 9px 10px; overflow: auto; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); background: var(--bg); font-size: var(--fs-caption); }
 .ap-actions { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
 .ap-rule-hint { flex-basis: 100%; color: var(--muted); font-size: var(--fs-caption); line-height: 1.4; }

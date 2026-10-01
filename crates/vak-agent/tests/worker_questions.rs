@@ -82,6 +82,29 @@ fn call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
     )
 }
 
+/// An approver whose surface can show a question and take an answer.
+struct Watched;
+
+#[async_trait::async_trait]
+impl Approver for Watched {
+    async fn approve(&self, _: &str, _: &str, _: &str) -> bool {
+        true
+    }
+    fn answers_questions(&self) -> bool {
+        true
+    }
+}
+
+/// An approver that can answer a yes/no gate but cannot show a question.
+struct GateOnly;
+
+#[async_trait::async_trait]
+impl Approver for GateOnly {
+    async fn approve(&self, _: &str, _: &str, _: &str) -> bool {
+        true
+    }
+}
+
 /// An approver that says nobody is watching.
 struct Unattended;
 
@@ -255,7 +278,7 @@ fn every_text(requests: &[ChatRequest]) -> String {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_workers_question_is_answered_and_the_answer_reaches_it() {
-    let run = run_with_worker_question(Arc::new(vak_agent::AutoApprove), Some("2026")).await;
+    let run = run_with_worker_question(Arc::new(Watched), Some("2026")).await;
     assert!(
         matches!(run.outcome, TurnOutcome::Completed { .. }),
         "{:?}",
@@ -304,4 +327,19 @@ async fn an_unwatched_surface_ends_the_question_at_once() {
     );
     let seen = every_text(&run.requests);
     assert!(seen.contains("Nobody is available to answer"), "{seen}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_surface_that_cannot_show_a_question_ends_it_at_once() {
+    let run = run_with_worker_question(Arc::new(GateOnly), None).await;
+    assert!(
+        matches!(run.outcome, TurnOutcome::Completed { .. }),
+        "{:?}",
+        run.outcome
+    );
+    let seen = every_text(&run.requests);
+    assert!(
+        seen.contains("Nobody is available to answer"),
+        "a surface that answers gates but not questions must not leave the worker blocked: {seen}"
+    );
 }

@@ -849,7 +849,10 @@ impl TaskTool {
                 session_id.clone(),
                 label.clone(),
                 self.deps.parent_session_id.clone(),
-                self.deps.approver.as_ref().is_some_and(|a| a.answerable()),
+                self.deps
+                    .approver
+                    .as_ref()
+                    .is_some_and(|a| a.answerable() && a.answers_questions()),
                 self.deps.events.clone(),
             )));
         }

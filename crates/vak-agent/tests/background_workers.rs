@@ -110,6 +110,18 @@ fn call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage {
     )
 }
 
+struct Watched;
+
+#[async_trait::async_trait]
+impl vak_agent::Approver for Watched {
+    async fn approve(&self, _: &str, _: &str, _: &str) -> bool {
+        true
+    }
+    fn answers_questions(&self) -> bool {
+        true
+    }
+}
+
 struct Harness {
     task: Arc<TaskTool>,
     agent: Agent,
@@ -187,7 +199,7 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
         permission: Some(Arc::new(PermissionEngine::default())),
         mode: vak_permission::Mode::WorkspaceWrite,
         approval_mode: vak_agent::ApprovalMode::Ask,
-        approver: Some(Arc::new(vak_agent::AutoApprove)),
+        approver: Some(Arc::new(Watched)),
         sandbox: None,
         cwd: dir.path().to_path_buf(),
         sessions_home: home.clone(),

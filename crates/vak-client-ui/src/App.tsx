@@ -88,6 +88,7 @@ import {
   isScratchDirectory,
   isDirectoryPath,
   restorePendingApprovals,
+  restorePendingQuestions,
   canvasOpen,
   canvasMode,
   type ReplyTarget,
@@ -193,6 +194,7 @@ export async function refreshSessions() {
           /* presence is optional and never replaces the last observed state */
         }
       }));
+      await Promise.all([...visible].filter((sessionId) => isRunning(sessionId)).map(restoreLiveGates));
       for (const s of res.sessions) {
         if (s.running) {
           if (!isRunning(s.session_id)) markRunning(s.session_id, true);
@@ -218,14 +220,38 @@ export async function refreshSessions() {
   }
 }
 
-export async function retryHydrate(id: string) {
-  await hydrate(id);
+/**
+ * Bring back the gates a running session is waiting on: an approval or a
+ * worker's question raised before this page was open (or while the event
+ * stream was down) has no event left to replay, so ask the server. Cards the
+ * server no longer lists were answered elsewhere and are cleared.
+ */
+/** The last time each session's gates were asked for, so the many callers of
+ *  `refreshSessions` do not turn into a request per call. */
+const gateChecks = new Map<string, number>();
+const GATE_CHECK_INTERVAL_MS = 5_000;
+
+async function restoreLiveGates(id: string) {
+  const now = Date.now();
+  if (now - (gateChecks.get(id) ?? 0) < GATE_CHECK_INTERVAL_MS) return;
+  gateChecks.set(id, now);
   try {
     const { approvals } = await api.pendingApprovals(id);
     restorePendingApprovals(id, approvals);
   } catch (error) {
     console.warn("vak: could not restore pending approvals", error);
   }
+  try {
+    const { questions } = await api.pendingQuestions(id);
+    restorePendingQuestions(id, questions);
+  } catch (error) {
+    console.warn("vak: could not restore pending questions", error);
+  }
+}
+
+export async function retryHydrate(id: string) {
+  await hydrate(id);
+  await restoreLiveGates(id);
 }
 
 async function readableTranscript(id: string): ReturnType<typeof api.transcript> {

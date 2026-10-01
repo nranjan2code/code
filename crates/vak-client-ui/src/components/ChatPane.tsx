@@ -159,7 +159,7 @@ function activeWorkingState(id: string | null): { executionId?: string } | null 
   if (!isRunning(id)) return null;
   const list = itemsOf(id);
   const last = list[list.length - 1];
-  if (last?.kind === "approval" && !last.resolved) return null;
+  if ((last?.kind === "approval" || last?.kind === "question") && !last.resolved) return null;
   const execution = [...list].reverse().find((item) => item.kind === "tool" && !item.done);
   return { executionId: execution?.kind === "tool" ? execution.id : undefined };
 }
@@ -210,7 +210,7 @@ function visibleItems(list: Item[], liveTurn = false): Item[] {
       // before it becomes a `ClientEvent`, so every "system" item here is
       // already something meant for the reader.
       if (it.kind === "system") return true;
-      if (it.kind === "approval" && !it.resolved) return true;
+      if ((it.kind === "approval" || it.kind === "question") && !it.resolved) return true;
       if (it.kind === "assistant") {
         const scrubbed = cleanAssistantText(it.text);
         if (!scrubbed.trim()) return false;
@@ -361,6 +361,65 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
 
 /** Arg keys that name the subject of a webfetch-style tool call. */
 const APPROVAL_PRIMARY_KEYS = ["url", "path", "file_path", "command", "file", "dir"] as const;
+
+/** A worker waiting on one question. The answer is information for the worker,
+ *  never permission: a gated action it then takes still asks separately. */
+const QuestionCard = (props: { item: Extract<Item, { kind: "question" }>; sessionId?: string | null }) => {
+  const [text, setText] = createSignal("");
+  const [sending, setSending] = createSignal(false);
+  const [error, setError] = createSignal("");
+  const send = async (answer: string) => {
+    const sessionId = props.sessionId ?? activeId();
+    const value = answer.trim();
+    if (!sessionId || !value || sending()) return;
+    setSending(true);
+    setError("");
+    try {
+      await api.answerQuestion(sessionId, props.item.id, value);
+    } catch (failure) {
+      const status = (failure as { status?: number })?.status;
+      setError(status === 404
+        ? "This question was already answered or has expired."
+        : "Your answer could not be sent. Try again.");
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <Show when={!props.item.resolved}>
+      <div class="approval question" data-question={props.item.id} role="alert" aria-live="assertive" aria-label={`${props.item.label} has a question`}>
+        <div class="ap-head">{props.item.label} has a question</div>
+        <div class="q-text">{props.item.question}</div>
+        <Show when={props.item.options.length > 0}>
+          <div class="ap-actions q-options">
+            <For each={props.item.options}>
+              {(option) => (
+                <button type="button" class="btn" disabled={sending()} onClick={() => void send(option)}>{option}</button>
+              )}
+            </For>
+          </div>
+        </Show>
+        <form class="q-form" onSubmit={(event) => { event.preventDefault(); void send(text()); }}>
+          <label class="q-label" for={`question-${props.item.id}`}>Your answer</label>
+          <input
+            id={`question-${props.item.id}`}
+            class="q-input"
+            type="text"
+            value={text()}
+            maxLength={2000}
+            disabled={sending()}
+            onInput={(event) => setText(event.currentTarget.value)}
+          />
+          <button type="submit" class="btn primary" disabled={sending() || !text().trim()}>
+            {sending() ? "Sending…" : "Send answer"}
+          </button>
+        </form>
+        <div class="ap-reason">Your answer helps it continue. It does not approve any action.</div>
+        <Show when={error()}><div class="q-error" role="alert">{error()}</div></Show>
+      </div>
+    </Show>
+  );
+};
 
 const ApprovalCard = (props: { item: Extract<Item, { kind: "approval" }>; sessionId?: string | null }) => {
   const [showRulePreview, setShowRulePreview] = createSignal(false);
@@ -593,6 +652,9 @@ function itemBody(item: Item, sessionId?: string | null): JSX.Element {
   }
   if (item.kind === "approval") {
     return <ApprovalCard item={item} sessionId={sessionId} />;
+  }
+  if (item.kind === "question") {
+    return <QuestionCard item={item} sessionId={sessionId} />;
   }
   if (item.kind === "worker") {
     return (
