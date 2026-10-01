@@ -710,6 +710,19 @@ pub trait Approver: Send + Sync {
     fn answers_questions(&self) -> bool {
         false
     }
+
+    /// How long this surface keeps a question open, when that is shorter than
+    /// the default (a chat's approval window). `None` keeps the default.
+    fn question_window(&self) -> Option<std::time::Duration> {
+        None
+    }
+
+    /// Called once, right after a worker's question is put on `board`, so a
+    /// surface that has to be told (a chat, which has no event stream to
+    /// watch) can carry it to whoever answers. The answer comes back through
+    /// the board, not through this call. A surface that already learns of
+    /// questions from the run's event stream has nothing to do.
+    async fn announce_question(&self, _question: &PendingQuestion, _board: &Arc<WorkerRegistry>) {}
 }
 
 /// Errors worth surviving at run level: sustained fault windows, hung or

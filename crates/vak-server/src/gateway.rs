@@ -427,6 +427,7 @@ pub struct GatewayState {
     /// Forwarded gates awaiting a yes/no from the approver surface,
     /// oldest first (uuidv7 keys sort by insertion time).
     pending_approvals: Mutex<std::collections::BTreeMap<String, PendingGate>>,
+    pending_questions: Mutex<std::collections::BTreeMap<String, ForwardedQuestion>>,
     chat_allowlist_open: bool,
     /// Live, schema-versioned allowlist store (docs/design/34). Authoritative
     /// once it exists on disk; seeded once from `chat_allowlist` otherwise.
@@ -471,6 +472,39 @@ enum StoredBindings {
 struct PendingGate {
     session_id: String,
     tx: oneshot::Sender<bool>,
+}
+
+/// A worker's question that was carried to the approver chat, kept until it is
+/// answered, expires, or its session is revoked. The board is the source of
+/// truth; this only lets a chat reply find it.
+struct ForwardedQuestion {
+    parent_session_id: String,
+    label: String,
+    board: Arc<vak_agent::WorkerRegistry>,
+}
+
+/// What an `answer …` reply did.
+pub(crate) enum QuestionReply {
+    Answered {
+        code: String,
+        label: String,
+        session_id: String,
+    },
+    /// Nothing is waiting.
+    NoneOpen,
+    /// More than one is waiting and the reply did not name one.
+    Ambiguous(Vec<String>),
+    /// The named question is no longer open (answered elsewhere, expired).
+    Closed,
+    Refused(String),
+}
+
+/// The short code a chat uses to name a forwarded question: the tail of its
+/// id, which is the random part (the head of a v7 id is a timestamp that
+/// repeats across questions asked a minute apart).
+pub(crate) fn question_code(id: &str) -> String {
+    let start = id.len().saturating_sub(6);
+    id.get(start..).unwrap_or(id).to_lowercase()
 }
 
 /// What a resolved gate was, so a bare yes/no is never silent about which
@@ -579,6 +613,7 @@ impl GatewayState {
                 Duration::from_secs(gw.approval_timeout_secs),
             )),
             pending_approvals: Mutex::new(std::collections::BTreeMap::new()),
+            pending_questions: Mutex::new(std::collections::BTreeMap::new()),
             chat_allowlist_open: gw.chat_allowlist_open,
             allowlist: Mutex::new(allowlist),
             core_pool: crate::core_pool::CorePool::new(
@@ -901,6 +936,16 @@ impl GatewayState {
         self.chat_allowlist_open
     }
 
+    /// The codes of the questions waiting on the approver chat.
+    fn forwarded_question_codes(&self) -> Vec<String> {
+        let mut map = self
+            .pending_questions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::prune_questions(&mut map);
+        map.keys().map(|id| question_code(id)).collect()
+    }
+
     pub(crate) fn pending_approval_count(&self) -> usize {
         self.pending_approvals
             .lock()
@@ -955,9 +1000,118 @@ impl GatewayState {
         })
     }
 
+    /// Remember a question carried to the approver chat, so a reply can find
+    /// it. Stored before the question is announced, so an instant reply
+    /// cannot race a missing entry.
+    fn register_question(
+        &self,
+        id: &str,
+        parent_session_id: &str,
+        label: &str,
+        board: Arc<vak_agent::WorkerRegistry>,
+    ) {
+        self.pending_questions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                id.to_string(),
+                ForwardedQuestion {
+                    parent_session_id: parent_session_id.to_string(),
+                    label: label.to_string(),
+                    board,
+                },
+            );
+    }
+
+    /// Drop forwarded questions the board no longer has open (expired,
+    /// cancelled, answered elsewhere), so a stale one is never counted or
+    /// offered as "the only question waiting".
+    fn prune_questions(map: &mut std::collections::BTreeMap<String, ForwardedQuestion>) {
+        map.retain(|id, forwarded| forwarded.board.questions().is_open(id));
+    }
+
+    fn forget_question(&self, id: &str) {
+        self.pending_questions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(id);
+    }
+
+    /// Answer a forwarded question from the approver chat. With a code, only
+    /// that question; without one, the only one waiting, never "the oldest"
+    /// of several, because a worker acts on what it is told and a reply meant
+    /// for one must not land on another.
+    pub(crate) fn answer_forwarded(&self, code: Option<&str>, text: &str) -> QuestionReply {
+        let mut map = self
+            .pending_questions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        Self::prune_questions(&mut map);
+        let id = match code {
+            Some(code) => {
+                let code = code.to_lowercase();
+                match map.keys().find(|id| question_code(id) == code).cloned() {
+                    Some(id) => id,
+                    None => return QuestionReply::Closed,
+                }
+            }
+            None => match map.len() {
+                0 => return QuestionReply::NoneOpen,
+                1 => map.keys().next().cloned().unwrap_or_default(),
+                _ => {
+                    return QuestionReply::Ambiguous(
+                        map.keys().map(|id| question_code(id)).collect(),
+                    );
+                }
+            },
+        };
+        let Some(forwarded) = map.get(&id) else {
+            return QuestionReply::Closed;
+        };
+        match forwarded.board.questions().answer(
+            &forwarded.parent_session_id,
+            &id,
+            text,
+            "the approver chat",
+        ) {
+            Ok(_) => {
+                let forwarded = map.remove(&id);
+                match forwarded {
+                    Some(f) => QuestionReply::Answered {
+                        code: question_code(&id),
+                        label: f.label,
+                        session_id: f.parent_session_id,
+                    },
+                    None => QuestionReply::Closed,
+                }
+            }
+            Err(vak_agent::questions::AnswerError::Unknown) => {
+                map.remove(&id);
+                QuestionReply::Closed
+            }
+            Err(error) => QuestionReply::Refused(error.to_string()),
+        }
+    }
+
     /// Reject forwarded approval gates belonging to a revoked session. A
     /// late reply then finds no gate and cannot authorize stale work.
     pub(crate) fn deny_pending_for_session(&self, session_id: &str) -> usize {
+        {
+            let mut questions = self
+                .pending_questions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let ids: Vec<String> = questions
+                .iter()
+                .filter(|(_, q)| q.parent_session_id == session_id)
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in ids {
+                if let Some(q) = questions.remove(&id) {
+                    q.board.questions().deny_all(session_id);
+                }
+            }
+        }
         let mut pending = self
             .pending_approvals
             .lock()
@@ -2180,6 +2334,72 @@ impl vak_agent::Approver for GatewayApprover {
         self.state.forward_mode()
     }
 
+    /// A worker's question is carried to the same approver chat as a gate
+    /// and answered by a typed `answer` reply, so the same condition holds.
+    fn answers_questions(&self) -> bool {
+        self.state.forward_mode()
+    }
+
+    fn question_window(&self) -> Option<Duration> {
+        Some(self.state.approval_timeout())
+    }
+
+    async fn announce_question(
+        &self,
+        question: &vak_agent::PendingQuestion,
+        board: &Arc<vak_agent::WorkerRegistry>,
+    ) {
+        if !self.state.forward_mode() {
+            board.questions().close(&question.id);
+            return;
+        }
+        self.state.register_question(
+            &question.id,
+            &question.parent_session_id,
+            &question.label,
+            board.clone(),
+        );
+        let code = question_code(&question.id);
+        let mut detail = format!(
+            "Question from {} [{code}]\n{}",
+            question.label, question.question
+        );
+        if !question.options.is_empty() {
+            detail.push_str(&format!("\nOptions: {}", question.options.join(" | ")));
+        }
+        detail.push_str(&format!(
+            "\nReply 'answer {code} <your answer>'. Your answer helps it continue; it does not approve any action."
+        ));
+        let delivered = deliver_approval_and_record(
+            &self.core,
+            self.state.approver_target().unwrap_or_default().as_str(),
+            ApprovalPayload {
+                request_id: question.id.clone(),
+                title: format!("Question from {} [{code}]", question.label),
+                detail,
+                expires_at: Some(
+                    (chrono::Utc::now()
+                        + chrono::Duration::from_std(self.state.approval_timeout())
+                            .unwrap_or_default())
+                    .to_rfc3339(),
+                ),
+                actions: Vec::new(),
+            },
+            vak_core::inbox::Kind::ApprovalPending,
+            format!("Question from {} [{code}]", question.label),
+            Some(&self.session_id),
+            None,
+        )
+        .await;
+        if let Err(error) = delivered {
+            // Nobody was told, so nobody will answer: end the worker's wait
+            // now rather than leaving it blocked on a question no one saw.
+            eprintln!("[gateway] question announcement failed: {error}");
+            self.state.forget_question(&question.id);
+            board.questions().close(&question.id);
+        }
+    }
+
     async fn approve(&self, tool: &str, args_json: &str, reason: &str) -> bool {
         if !self.state.forward_mode() {
             return false;
@@ -2268,6 +2488,31 @@ fn parse_verdict(text: &str) -> Option<(bool, Option<String>)> {
         _ => None,
     };
     Some((verdict, id))
+}
+
+/// An `answer` reply from the approver chat: `answer <code> <text>`,
+/// `answer <code>: <text>`, or `answer <text>` when only one question is
+/// waiting. Returns the text and the code when one was given. Strict on the
+/// leading word, so ordinary chatter from that chat is not read as an answer.
+/// `known` is the codes of the questions now waiting, because a first word
+/// is only a code when it names one.
+fn parse_answer(text: &str, known: &[String]) -> Option<(Option<String>, String)> {
+    let text = text.trim();
+    let (head, rest) = text.split_once(char::is_whitespace)?;
+    if !head.trim_end_matches(':').eq_ignore_ascii_case("answer") {
+        return None;
+    }
+    let rest = rest.trim();
+    if rest.is_empty() {
+        return None;
+    }
+    if let Some((first, after)) = rest.split_once(char::is_whitespace) {
+        let candidate = first.trim_end_matches(':').to_lowercase();
+        if known.contains(&candidate) && !after.trim().is_empty() {
+            return Some((Some(candidate), after.trim().to_string()));
+        }
+    }
+    Some((None, rest.to_string()))
 }
 
 async fn gateway_inbound(
@@ -2426,6 +2671,52 @@ async fn gateway_inbound(
             )
                 .into_response(),
         };
+    }
+
+    // A worker's question was carried to the approver chat; its `answer`
+    // reply resolves it instead of becoming conversation input, and only the
+    // designated approver chat can (invariant 15). Anything else from that
+    // chat falls through to normal routing.
+    if state.gateway.forward_mode()
+        && state.gateway.approver_target().as_deref() == Some(key.as_str())
+        && let Some((code, answer)) = parse_answer(&text, &state.gateway.forwarded_question_codes())
+    {
+        let (status, reply) = match state.gateway.answer_forwarded(code.as_deref(), &answer) {
+            QuestionReply::Answered {
+                code,
+                label,
+                session_id,
+            } => (
+                StatusCode::OK,
+                serde_json::json!({
+                    "state": "question_answered",
+                    "question": code,
+                    "worker": label,
+                    "session_id": session_id,
+                }),
+            ),
+            QuestionReply::NoneOpen => (
+                StatusCode::OK,
+                serde_json::json!({ "state": "no_pending_questions" }),
+            ),
+            QuestionReply::Ambiguous(codes) => (
+                StatusCode::OK,
+                serde_json::json!({
+                    "state": "question_ambiguous",
+                    "error": "more than one question is waiting; say which: answer <code> <text>",
+                    "codes": codes,
+                }),
+            ),
+            QuestionReply::Closed => (
+                StatusCode::OK,
+                serde_json::json!({ "state": "question_closed" }),
+            ),
+            QuestionReply::Refused(why) => (
+                StatusCode::BAD_REQUEST,
+                serde_json::json!({ "state": "question_refused", "error": why }),
+            ),
+        };
+        return (status, Json(reply)).into_response();
     }
 
     // docs/design/34 Phase 2: run this key's entry through its own
@@ -2933,6 +3224,7 @@ async fn gateway_status(State(state): State<AppState>) -> Json<serde_json::Value
             "approver": state.gateway.approver_target(),
             "pending": state.gateway.pending_approval_count(),
         },
+        "questions": { "pending": state.gateway.forwarded_question_codes().len() },
     }))
 }
 
@@ -3619,6 +3911,51 @@ fn log_gateway_reflection(outcome: vak_core::reflection::ReflectionOutcome) {
 mod tests {
     use super::*;
     use crate::inbox::{INBOX_DIR, sanitize_filename};
+
+    #[test]
+    fn an_answer_reply_is_strict_about_its_leading_word() {
+        let codes = vec!["a1b2c3".to_string()];
+        assert_eq!(
+            parse_answer("answer a1b2c3 fiscal 2026", &codes),
+            Some((Some("a1b2c3".into()), "fiscal 2026".into()))
+        );
+        assert_eq!(
+            parse_answer("Answer A1B2C3: fiscal 2026", &codes),
+            Some((Some("a1b2c3".into()), "fiscal 2026".into()))
+        );
+        assert_eq!(
+            parse_answer("answer: fiscal 2026", &codes),
+            Some((None, "fiscal 2026".into())),
+            "no code: the only waiting question"
+        );
+        assert_eq!(
+            parse_answer("answer zzzzzz hello", &codes),
+            Some((None, "zzzzzz hello".into())),
+            "a first word that names no waiting question is part of the answer"
+        );
+        for chatter in [
+            "yes",
+            "2026",
+            "answering machine",
+            "please answer a1b2c3 x",
+            "answer",
+        ] {
+            assert_eq!(parse_answer(chatter, &codes), None, "{chatter:?}");
+        }
+    }
+
+    #[test]
+    fn a_question_code_is_the_random_tail_of_its_id() {
+        assert_eq!(
+            question_code("01a0f786-16dc-78f0-872c-8c4225034817"),
+            "034817"
+        );
+        // Two questions asked a minute apart share an id head, never a tail.
+        assert_ne!(
+            question_code("01a0f786-16dc-78f0-872c-8c4225034817"),
+            question_code("01a0f786-9a11-7123-9b2d-5e0000aa11bb")
+        );
+    }
 
     /// The path a note names, quoted after "at path".
     fn saved_path(note: &str) -> Option<&str> {

@@ -854,6 +854,7 @@ impl TaskTool {
                     .as_ref()
                     .is_some_and(|a| a.answerable() && a.answers_questions()),
                 self.deps.events.clone(),
+                self.deps.approver.clone(),
             )));
         }
 

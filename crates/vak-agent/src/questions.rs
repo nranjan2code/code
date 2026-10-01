@@ -168,6 +168,11 @@ impl QuestionBoard {
         out
     }
 
+    /// Whether this question is still waiting for an answer.
+    pub fn is_open(&self, question_id: &str) -> bool {
+        self.lock().contains_key(question_id)
+    }
+
     /// The pending question for one worker, if any.
     pub fn for_worker(&self, worker_id: &str) -> Option<PendingQuestion> {
         self.lock()
@@ -204,6 +209,9 @@ pub struct AskParentTool {
     answerable: bool,
     asked: AtomicU32,
     events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
+    /// Told about each question so a surface without an event stream can
+    /// carry it ([`crate::Approver::announce_question`]).
+    approver: Option<Arc<dyn crate::Approver>>,
     timeout: Duration,
 }
 
@@ -217,6 +225,7 @@ impl AskParentTool {
         parent_session_id: String,
         answerable: bool,
         events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
+        approver: Option<Arc<dyn crate::Approver>>,
     ) -> Self {
         AskParentTool {
             board,
@@ -226,6 +235,7 @@ impl AskParentTool {
             answerable,
             asked: AtomicU32::new(0),
             events,
+            approver,
             timeout: QUESTION_TIMEOUT,
         }
     }
@@ -333,6 +343,9 @@ impl Tool for AskParentTool {
             );
         };
         self.asked.fetch_add(1, Ordering::SeqCst);
+        if let Some(approver) = &self.approver {
+            approver.announce_question(&info, &self.board).await;
+        }
         if let Some(events) = &self.events {
             let _ = events
                 .send(crate::AgentEvent::WorkerQuestion {
@@ -343,9 +356,14 @@ impl Tool for AskParentTool {
                 })
                 .await;
         }
+        let window = self
+            .approver
+            .as_ref()
+            .and_then(|approver| approver.question_window())
+            .map_or(self.timeout, |window| window.min(self.timeout));
         let outcome = tokio::select! {
             answer = rx => answer.ok(),
-            _ = tokio::time::sleep(self.timeout) => None,
+            _ = tokio::time::sleep(window) => None,
             _ = ctx.cancel.cancelled() => {
                 self.board.questions().close(&info.id);
                 return ToolOutput::error("cancelled while waiting for an answer");
@@ -466,6 +484,7 @@ mod tests {
             "Researcher".into(),
             "p1".into(),
             answerable,
+            None,
             None,
         )
         .with_timeout(timeout);
