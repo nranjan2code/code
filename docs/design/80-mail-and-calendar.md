@@ -129,6 +129,10 @@ re-reads the source event and sends a conditional ETag update; stale versions
 conflict and require a fresh preview and candidate. Microsoft update,
 cancellation outside the single-event Google profile above, RSVP operations,
 Agent-initiated effects, and provider reconciliation are not implemented.
+The server checks provider/action compatibility both when saving a candidate
+and before writing its single-use effect claim. Microsoft event update remains
+disabled because the Graph v1.0 event update documentation does not establish
+a conditional-write contract for stale-review protection ([update event](https://learn.microsoft.com/graph/api/event-update?view=graph-rest-1.0), [delete event](https://learn.microsoft.com/graph/api/event-delete?view=graph-rest-1.0)).
 Google and Microsoft calendar-write consent is broader than this limited
 create operation; the credential stays in the Agent vault and effects remain
 broker-only. OAuth authorization attempts are bounded and single-use;

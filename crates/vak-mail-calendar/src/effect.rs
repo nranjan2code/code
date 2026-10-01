@@ -4,7 +4,7 @@
 //! after an ambiguous result. This client never follows redirects or retries.
 
 use crate::{
-    CalendarDraft, Capability, ConnectedAccount, MailAddress, MailDraft, Provider,
+    CalendarDraft, Capability, ConnectedAccount, MailAddress, MailDraft, ProposedAction, Provider,
     provider::ProviderReadError, vault::AccountVault,
 };
 use base64::Engine;
@@ -13,6 +13,23 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 const MAX_RESPONSE_BYTES: usize = 64 * 1024;
+
+/// Provider/action support is checked before candidates are persisted or a
+/// single-use effect claim is written. Keep this matrix aligned with the
+/// adapters below: Microsoft Graph event mutation stays disabled until a
+/// conditional-write contract suitable for stale-review protection is
+/// verified.
+pub fn supports_action(provider: Provider, action: &ProposedAction) -> bool {
+    match action {
+        ProposedAction::SendMail { .. } | ProposedAction::CreateEvent { .. } => {
+            matches!(provider, Provider::Google | Provider::Microsoft)
+        }
+        ProposedAction::UpdateEvent { .. } | ProposedAction::CancelEvent { .. } => {
+            provider == Provider::Google
+        }
+        ProposedAction::RespondToEvent { .. } => false,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProviderAcceptance {
@@ -960,6 +977,39 @@ mod tests {
     };
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn provider_action_matrix_disables_unverified_mutations() {
+        let create = ProposedAction::CreateEvent {
+            draft: timed_event(),
+        };
+        let update = ProposedAction::UpdateEvent {
+            event_id: "event-1".into(),
+            source_version: "etag-1".into(),
+            draft: timed_event(),
+        };
+        let cancel = ProposedAction::CancelEvent {
+            event_id: "event-1".into(),
+            source_version: "etag-1".into(),
+            occurrence_id: None,
+            whole_series: false,
+        };
+        let respond = ProposedAction::RespondToEvent {
+            event_id: "event-1".into(),
+            source_version: "etag-1".into(),
+            response: crate::AttendeeResponse::Accept,
+        };
+
+        assert!(supports_action(Provider::Google, &create));
+        assert!(supports_action(Provider::Microsoft, &create));
+        assert!(supports_action(Provider::Google, &update));
+        assert!(supports_action(Provider::Google, &cancel));
+        assert!(!supports_action(Provider::Microsoft, &update));
+        assert!(!supports_action(Provider::Microsoft, &cancel));
+        assert!(!supports_action(Provider::AppleIcloud, &create));
+        assert!(!supports_action(Provider::Google, &respond));
+        assert!(!supports_action(Provider::Microsoft, &respond));
+    }
 
     fn timed_event() -> CalendarDraft {
         CalendarDraft {

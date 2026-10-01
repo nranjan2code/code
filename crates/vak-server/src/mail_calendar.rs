@@ -553,14 +553,12 @@ pub(super) async fn save_candidate(
         )
             .into_response();
     }
-    if matches!(&request.action, ProposedAction::CancelEvent { .. })
-        && account
-            .as_ref()
-            .is_some_and(|account| account.provider != Provider::Google)
-    {
+    if account.as_ref().is_some_and(|account| {
+        !vak_mail_calendar::effect::supports_action(account.provider, &request.action)
+    }) {
         return (
             StatusCode::BAD_REQUEST,
-            "Provider event cancellation is currently limited to Google Calendar.",
+            "This provider does not support that reviewed action.",
         )
             .into_response();
     }
@@ -817,12 +815,10 @@ pub(super) async fn send_mail_candidate(
         )
             .into_response();
     };
-    if matches!(candidate.action, ProposedAction::CancelEvent { .. })
-        && account.provider != Provider::Google
-    {
+    if !vak_mail_calendar::effect::supports_action(account.provider, &candidate.action) {
         return (
             StatusCode::BAD_REQUEST,
-            "Provider event cancellation is currently limited to Google Calendar.",
+            "This provider does not support that reviewed action.",
         )
             .into_response();
     }

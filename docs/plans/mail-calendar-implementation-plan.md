@@ -1727,3 +1727,11 @@ remains open.
   cannot replace the outer handling metadata. This is a model-facing trust
   marker, not prompt-injection containment; broker authorization remains the
   enforcement boundary. All 12 Core mail/calendar tests pass.
+- 2026-10-01: Added one provider/action support matrix shared by candidate
+  saving and effect dispatch. Unsupported Microsoft update/cancel and RSVP
+  candidates are rejected before storage or a single-use dispatch claim;
+  Google update/cancel and Google/Microsoft create/send remain admitted for
+  their existing profiles. Graph event update stays disabled because the
+  published v1.0 update contract has not established conditional-write
+  semantics. The adapter matrix test and existing owner-authenticated
+  candidate/disconnect HTTP test pass.
