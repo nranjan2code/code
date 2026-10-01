@@ -2428,11 +2428,32 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-time-day h3 { height: 34px; margin: 0; padding: 8px 5px; text-align: center; white-space: nowrap; }
 .mail-calendar-all-day-lane { min-height: 42px; max-height: 76px; overflow: auto; padding: 4px; border-top: 1px solid var(--border-soft); border-bottom: 1px solid var(--border-soft); }
 .mail-calendar-all-day-event { overflow: hidden; margin: 2px 0; padding: 3px 5px; border-radius: 4px; background: var(--accent-wash); color: var(--text-primary); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.mail-calendar-hour-lanes { position: relative; display: grid; grid-template-rows: repeat(24, 52px); min-height: 1248px; }
+.mail-calendar-hour-lanes { position: relative; display: grid; grid-template-rows: repeat(var(--mail-calendar-hours, 24), 52px); }
 .mail-calendar-hour-lanes > div { border-bottom: 1px solid var(--border-soft); }
 .mail-calendar-grid-event { position: absolute; right: 2px; left: 2px; z-index: 1; display: flex; flex-direction: column; gap: 2px; overflow: auto; padding: 3px 5px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 5px; background: var(--surface-raised); color: var(--text-primary); font-size: 12px; }
 .mail-calendar-grid-event strong { overflow: hidden; text-overflow: ellipsis; }
 .mail-calendar-grid-event span { color: var(--text-secondary); }
+.mail-calendar-event.is-selectable, .mail-calendar-grid-event.is-selectable { cursor: pointer; }
+.mail-calendar-event.is-selectable:hover, .mail-calendar-grid-event.is-selectable:hover, .mail-calendar-event.is-selectable:focus-visible, .mail-calendar-grid-event.is-selectable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; z-index: 3; }
+.mail-calendar-grid-event.is-selectable { font-size: 12px; }
+.mail-calendar-grid-event.is-selectable span { font-size: 12px; }
+.mail-calendar-all-day-event { width: 100%; border: 0; text-align: left; cursor: pointer; }
+.daily-mail-calendar-calendar-heading { display: flex; align-items: baseline; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+.daily-mail-calendar-calendar-heading h3 { margin: 0; }
+.daily-mail-calendar-calendar-heading span { color: var(--muted); font-size: var(--fs-meta); }
+.daily-mail-calendar-calendar-tools { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-3); }
+.daily-mail-calendar-calendar-tools label { display: flex; align-items: center; gap: var(--space-2); color: var(--muted); font-size: var(--fs-meta); }
+.daily-mail-calendar-calendar-tools select { max-width: min(360px, 52vw); min-height: 36px; padding: 4px 30px 4px 9px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-raised); color: var(--text); font-size: var(--fs-control); }
+.daily-mail-calendar-event-detail { position: sticky; top: 0; z-index: 4; display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
+.daily-mail-calendar-event-detail-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.daily-mail-calendar-event-detail-heading span { color: var(--muted); font-size: var(--fs-meta); }
+.daily-mail-calendar-event-detail h4 { margin: 3px 0 0; color: var(--text); font-size: var(--fs-ui); overflow-wrap: anywhere; }
+.daily-mail-calendar-event-detail dl { display: grid; gap: var(--space-2); margin: 0; }
+.daily-mail-calendar-event-detail dl > div { display: grid; grid-template-columns: minmax(76px, 100px) minmax(0, 1fr); gap: var(--space-2); }
+.daily-mail-calendar-event-detail dt { color: var(--muted); font-size: var(--fs-meta); }
+.daily-mail-calendar-event-detail dd { margin: 0; color: var(--text); font-size: var(--fs-control); overflow-wrap: anywhere; }
+.daily-mail-calendar-event-detail > p { margin: 0; color: var(--text-secondary); font-size: var(--fs-meta); }
+.daily-mail-calendar-event-detail .settings-actions { flex-wrap: wrap; }
 .mail-calendar-grid-event .settings-button { align-self: flex-start; min-height: 26px; padding: 3px 6px; font-size: 12px; }
 .mail-calendar-attachment { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); padding: 7px 0; border-top: 1px solid var(--border-soft); }
 .mail-calendar-attachment-preview { flex: 1 1 100%; min-width: 0; padding: 10px; border-radius: 8px; background: var(--surface); }

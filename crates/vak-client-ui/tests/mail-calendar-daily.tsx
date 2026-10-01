@@ -55,7 +55,7 @@ window.fetch = async (input) => {
       return {
         provider_id: `${accountId}-event-${index}`, title: `${account.provider} sample event ${index + 1}`,
         starts_at: start.toISOString(), ends_at: end.toISOString(), starts_on: null, ends_on: null,
-        all_day: false, location: null, description: null, attendee_count: 0, recurring: false, private: false, version: null,
+        all_day: false, location: null, description: null, attendee_count: 0, recurring: false, private: false, version: account.provider === "google" ? "fixture-etag" : null,
       };
       }) });
     }
@@ -83,14 +83,37 @@ render(() => <DailyMailCalendarViewer
 />, document.getElementById("root")!);
 
 const check = (ok: unknown, message: string) => { if (!ok) throw new Error(message); return message; };
+const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 50));
+  return predicate();
+};
 (window as any).runChecks = async () => {
-  await new Promise((resolve) => setTimeout(resolve, 500));
+  await waitFor(() => document.querySelectorAll(".daily-mail-calendar-message").length === 72);
+  const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
+  const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
+  const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
+  const allCalendarEventsRendered = document.querySelectorAll(".mail-calendar-grid-event").length === 300;
+  const calendarSelector = document.querySelector<HTMLSelectElement>("select[aria-label='Show calendars']");
+  if (calendarSelector) {
+    calendarSelector.value = "g-account-0";
+    calendarSelector.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  const focusedCalendarWorks = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 50);
+  document.querySelector<HTMLElement>(".mail-calendar-grid-event")?.click();
+  const eventSelectionWorks = !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("google sample event 1") && !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("Draft an update");
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button")?.click();
+  const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 72);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
-    check(requests.filter((path) => path.endsWith("/mail-preview")).length === 9, "Recent mail is read once for each connected account"),
-    check(requests.filter((path) => path.endsWith("/calendar-preview")).length === 6 && requests.filter((path) => path.endsWith("/free-busy-preview")).length === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
+    check(initialMailReads === 9, "Recent mail is read once for each connected account"),
+    check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
     check(document.querySelectorAll(".daily-mail-calendar-message").length === 72, "The daily view renders eight recent rows for each of nine connected accounts"),
-    check(document.querySelectorAll(".mail-calendar-event").length === 300, "The daily view renders bounded 50-event batches across six calendar-read accounts"),
+    check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
+    check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
+    check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
+    check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), "Manual refresh reloads the bounded sources and the view explains its refresh cadence"),
+    check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("microsoft sample mail 8") && document.body.textContent.includes("apple_icloud-2@example.test"), "Provider rows retain their visible source identity"),
     check(!document.body.textContent?.includes("apple_icloud sample event"), "Free/busy rows do not disclose event titles"),

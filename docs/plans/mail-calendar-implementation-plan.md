@@ -1862,3 +1862,14 @@ remains open.
   72 mail rows, 300 events, and 24 free/busy intervals. All nine checks passed,
   including the maximum two-account concurrency assertion; the UI production
   build and typecheck pass.
+- 2026-10-01: Replaced the Today Canvas's long calendar list with a selectable
+  day timeline. Events open a detail panel with the next safe actions: prepare a
+  local update/cancellation draft where supported, or open the calendar
+  workspace to review it. Added a calendar filter, fitted hour range, and
+  visible last-updated time. The canvas refreshes every five minutes while
+  visible, and on focus/visibility return after a minute away; reads stay
+  bounded to two accounts at once. The synthetic fixture now exercises 72
+  messages, 300 timed events, calendar filtering, event selection, draft action
+  visibility and explicit refresh. Production UI build/typecheck and the
+  mail/calendar mock regression pack pass. Provider push notifications and
+  full connected-account browser acceptance remain open.
