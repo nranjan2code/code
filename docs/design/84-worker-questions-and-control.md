@@ -1,9 +1,9 @@
 # 84 — Worker questions, live worker control, and pause-now
-Status: in progress. Built: M3 (pause and stop now, §7) and M1 (a worker's
+Status: in progress. Built: M3 (pause and stop now, §7), M1 (a worker's
 question: the board, `ask_parent`, the HTTP list and answer endpoints and the
-events, §4). Proposed: M2 (background tasks and the `workers` tool) and M4
-(the client card, gateway forward and CLI prompt), in the order of §9. It
-extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
+events, §4) and M2 (read-only background tasks, the `workers` tool and the
+stop-gate join, §5). Proposed: M4 (the client card, gateway forward and CLI
+prompt), in the order of §9. It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
 `docs/design/47-commitment-kernel.md` (the control plane), and the `task`
 tool of `docs/design/03-agent-loop.md`. Where this document and AGENTS.md
 disagree, AGENTS.md wins until the change is made to both.
@@ -188,6 +188,13 @@ change that gives one is `task({ background: true })`: it returns the worker's
 id at once and the child keeps running on its own tokio task. Foreground stays
 the default and is unchanged.
 
+**Background workers are read-only.** A background writer would change files
+outside the resource claims that keep a parent's own work and its other
+workers apart, because the claims last only for the duration of the `task`
+call. Read-only workers (research, exploration, review) are the main use, so
+the first version allows only those and refuses `background` without
+`readonly: true`. Lifting this needs claims that live as long as the worker.
+
 ### 5.2 Lifetime: a background worker never outlives its parent turn
 
 A worker whose parent turn has ended would run unattended with nobody to
@@ -298,7 +305,7 @@ the person sees lists what each stopped run had already done, from the ledger.
 | Phase | Scope | Exit tests |
 |---|---|---|
 | M1 (built, surfaces in M4) | `QuestionBoard`, `ask_parent` for foreground workers, HTTP list and answer endpoints, event, fail-closed rules, ledger records | a worker's question is answered by the person and appears in the child's ledger; unanswerable returns at once; timeout leaves a late answer resolving nothing; the 4th question is refused; an answer never approves a gated call |
-| M2 | `task { background }`, progress tracking, the `workers` tool, `WorkersRunning` stop-gate reason, parent-model `reply` | an Agent lists and messages its own worker mid-run; another session's worker is unknown; a parent cannot finish with a running worker until it waits or the budget is spent; cap enforced |
+| M2 (built) | `task { background }`, progress tracking, the `workers` tool, `WorkersRunning` stop-gate reason, parent-model `reply` | an Agent lists and messages its own worker mid-run; another session's worker is unknown; a parent cannot finish with a running worker until it waits or the budget is spent; cap enforced |
 | M3 (built) | `POST /agents/{id}/pause` with `stop_running`, `resume`, the activity and security event | pausing with stop_running cancels live runs of that Agent only, keeps partial output, rejects pending gates and questions; without it, a running turn finishes and the next is refused |
 | M4 | client question card, gateway forward, CLI prompt, admin read-only view | each surface answers a question; a non-approver chat cannot; silence means no |
 
@@ -308,11 +315,12 @@ text for the answer-is-not-permission rule once M1 lands).
 
 ## 10. Open questions for the maintainer
 
-1. Is a person-only answer enough for foreground workers, or should the
+1. Background writers: allow them once claims can outlive the `task` call?
+2. Is a person-only answer enough for foreground workers, or should the
    parent model also be woken to answer mid-task (which would mean the
    parent must run while its own tool call is blocked)? This design says no.
-2. The per-parent cap on live background workers: 8, or lower for small
-   local models?
-3. Should a stopped-by-pause worker's partial result be handed to the
+3. The per-parent cap on live background workers: 8 (built), or lower for
+   small local models?
+4. Should a stopped-by-pause worker's partial result be handed to the
    parent's ledger as a typed activity (proposed), or left in the child's
    ledger only?

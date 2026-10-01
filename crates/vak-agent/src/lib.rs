@@ -13,6 +13,7 @@ pub mod spend;
 pub mod steering;
 pub mod stop_policy;
 pub mod task;
+pub mod workers_tool;
 pub mod workspace;
 
 // The context engine (docs/design/68-context-engine.md) is its own crate;
@@ -23,13 +24,17 @@ pub use goal::GoalState;
 pub use questions::{AskParentTool, PendingQuestion, QuestionBoard};
 pub use spend::{SpendCheck, SpendGate};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
-pub use task::{ActiveWorker, ChildPrompt, TaskDeps, TaskTool, WorkerHandle, WorkerRegistry};
+pub use task::{
+    ActiveWorker, ChildPrompt, FinishedWorker, MAX_BACKGROUND_WORKERS, TaskDeps, TaskTool,
+    WorkerHandle, WorkerRegistry,
+};
 use vak_context::assemble::{
     attach_tail, cache_breakpoints, capacity_feedback_delta, chat_request_chars, compose_tail,
     messages_chars, prefix_chars,
 };
 pub use vak_context::{CapacityProfile, TailInput};
 use vak_context::{assemble, capacity, planner};
+pub use workers_tool::WorkersTool;
 pub use workspace::WorkspaceDelta;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -317,6 +322,10 @@ pub struct AgentConfig {
     /// capability packet, so a provider's prefix cache can key on it
     /// (docs/design/68-context-engine.md §4/§6). Per-turn content never
     /// belongs here — see `tail`.
+    /// The registry this run's background workers report to. A run that
+    /// finishes with live background workers is sent back once per budget
+    /// and then cancels them (docs/design/84 §5.2).
+    pub workers: Option<Arc<WorkerRegistry>>,
     pub system_prefix: String,
     /// Per-turn content rendered into the moving tail instead of the
     /// prefix: the clock instant and the epistemic stance. Session-derived
@@ -518,6 +527,7 @@ impl AgentConfig {
             work_enabled: true,
             max_work_items: 20,
             max_work_revisions: 8,
+            workers: None,
             system_prefix: system_prefix.into(),
             tail: TailInput::default(),
             model: String::new(),
@@ -638,6 +648,10 @@ fn same_workspace_path(a: &str, b: &str) -> bool {
 /// card as its answer. Three: one repeat is a slip the ack corrects, two is
 /// a model that did not read it, three is one that will not.
 const CARD_REPEAT_EXHAUSTION_THRESHOLD: u32 = 3;
+
+/// How many times a run that tries to finish with background workers still
+/// running is sent back to wait for them, before they are cancelled.
+const WORKERS_GATE_BLOCKS: u32 = 2;
 
 /// The most recent Execute-purpose receipt's prefix digest recorded in this
 /// session, or `None` when no receipt has recorded one yet.
@@ -1526,6 +1540,18 @@ impl Agent {
             .deliveries
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = RunDeliveries::default();
+        let mut worker_blocks_left: u32 = WORKERS_GATE_BLOCKS;
+        if let Some(registry) = &self.config.workers
+            && let Some(parent) = self
+                .session
+                .lock()
+                .await
+                .header()
+                .map(|header| header.session_id.clone())
+        {
+            // Results kept for the previous turn are not this turn's.
+            registry.forget_finished_for(&parent);
+        }
         let mut stop_blocks_left = self
             .config
             .stop_policy
@@ -2539,6 +2565,16 @@ impl Agent {
                         };
                     }
                     match self.guard_continue(reason, &events, turn).await {
+                        Ok(true) => {
+                            turn += 1;
+                            continue;
+                        }
+                        Ok(false) => return TurnOutcome::MaxTurnsReached,
+                        Err(error) => return nudge_write_failed(error),
+                    }
+                }
+                if let Some(rejection) = self.workers_gate(&mut worker_blocks_left).await {
+                    match self.guard_continue(rejection, &events, turn).await {
                         Ok(true) => {
                             turn += 1;
                             continue;
@@ -4313,6 +4349,55 @@ impl Agent {
         }
         *blocks_left -= 1;
         Some((reason.message(), false))
+    }
+
+    /// Refuse to finish while background workers are still running: send the
+    /// model back to wait for them, up to `blocks_left` times, then cancel
+    /// them and let the turn end (docs/design/84 §5.2). The one place a
+    /// worker is stopped without a person asking, and it is the end of its
+    /// parent's turn.
+    async fn workers_gate(&self, blocks_left: &mut u32) -> Option<String> {
+        let registry = self.config.workers.as_ref()?;
+        let parent = self
+            .session
+            .lock()
+            .await
+            .header()
+            .map(|header| header.session_id.clone())?;
+        let live: Vec<ActiveWorker> = registry
+            .active_for(&parent)
+            .into_iter()
+            .filter(|worker| worker.background)
+            .collect();
+        if live.is_empty() {
+            return None;
+        }
+        if *blocks_left > 0 {
+            *blocks_left -= 1;
+            let names = live
+                .iter()
+                .map(|worker| format!("{} ({})", worker.label, worker.id))
+                .collect::<Vec<_>>()
+                .join(", ");
+            return Some(format!(
+                "workers you started are still running: {names}. Wait for them with the workers tool (action wait) and use their results, or stop them. They are cancelled if you finish now."
+            ));
+        }
+        let stopped = registry.stop_all_for(&parent);
+        let _ = self
+            .session
+            .lock()
+            .await
+            .append_activity(vak_session::ActivityRecord {
+                activity_id: format!("workers-cancelled-{}", uuid::Uuid::now_v7()),
+                turn: None,
+                kind: vak_session::ActivityKind::Worker,
+                status: vak_session::ActivityStatus::Cancelled,
+                label: "Background workers cancelled at the end of the turn".into(),
+                detail: Some(format!("{stopped} still running")),
+                data: std::collections::BTreeMap::new(),
+            });
+        None
     }
 
     /// Records this turn's host-supplied tail (`<turn_context>`, `<stance>`)

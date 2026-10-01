@@ -3295,6 +3295,9 @@ impl Core {
         if admitted.contains("task") {
             entries.push(("task", vak_agent::TaskTool::DESCRIPTION));
         }
+        if admitted.contains("workers") {
+            entries.push(("workers", vak_agent::WorkersTool::DESCRIPTION));
+        }
         capability::tool_catalogue(entries)
     }
 
@@ -3792,6 +3795,8 @@ impl Core {
             (!self.effective_mcp().servers.is_empty()).then_some(("mcp", vak_mcp::McpTool::SERVES)),
             self.effective_workers()
                 .then_some(("task", vak_agent::TaskTool::SERVES)),
+            self.effective_workers()
+                .then_some(("workers", vak_agent::WorkersTool::SERVES)),
         ];
         for (name, serves) in bound.into_iter().flatten() {
             if self.channel_tool_allowed(name) {
@@ -6778,13 +6783,22 @@ impl Core {
                 sandbox: cfg.sandbox.clone(),
                 cwd: self.inner.cwd.clone(),
                 sessions_home: self.inner.sessions_home.clone(),
-                parent_session_id: parent_id,
+                parent_session_id: parent_id.clone(),
                 contract_id: managed_contract_id,
                 work_item_id: None,
                 work_item_ids: managed_work_item_ids,
                 events: Some(events.clone()),
                 registry: Some(self.inner.workers.clone()),
             })));
+            // Pushed after the task tool took its copy of `tools`, so a
+            // worker never inherits the means to control workers.
+            if turn_capabilities.tool_names.contains("workers") {
+                tools.push(Arc::new(vak_agent::WorkersTool::new(
+                    self.inner.workers.clone(),
+                    parent_id,
+                )));
+            }
+            cfg.workers = Some(self.inner.workers.clone());
         }
         let turn_standings = self.capability_standings();
         for detail in reach::audit_details(&turn_standings) {

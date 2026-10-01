@@ -241,6 +241,41 @@ pub struct WorkerHandle {
     /// Session that spawned this child; routes registry lookups to the
     /// owning surface's endpoint scope.
     pub parent_session_id: String,
+    /// Started with `task { background: true }`: the parent did not wait.
+    pub background: bool,
+    pub progress: Arc<Mutex<WorkerProgress>>,
+}
+
+/// What a live worker has done so far, for `workers status`
+/// (docs/design/84-worker-questions-and-control.md §5.3). Updated by the
+/// pump that already drains the child's event stream.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkerProgress {
+    pub steps: u32,
+    /// The last few tool names, oldest first.
+    pub last_tools: std::collections::VecDeque<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+/// The most background workers one parent may have running at once.
+pub const MAX_BACKGROUND_WORKERS: usize = 8;
+
+const PROGRESS_TOOLS_KEPT: usize = 5;
+
+impl WorkerProgress {
+    fn tool_finished(&mut self, name: &str) {
+        self.last_tools.push_back(name.to_string());
+        while self.last_tools.len() > PROGRESS_TOOLS_KEPT {
+            self.last_tools.pop_front();
+        }
+    }
+
+    fn step_finished(&mut self, input_tokens: u64, output_tokens: u64) {
+        self.steps += 1;
+        self.input_tokens += input_tokens;
+        self.output_tokens += output_tokens;
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -251,6 +286,45 @@ pub struct ActiveWorker {
     pub agent_revision: Option<u64>,
     pub elapsed_secs: u64,
     pub parent_session_id: String,
+    pub background: bool,
+    pub steps: u32,
+    pub last_tools: Vec<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl ActiveWorker {
+    fn of(id: &str, handle: &WorkerHandle) -> Self {
+        let progress = handle
+            .progress
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        ActiveWorker {
+            id: id.to_string(),
+            label: handle.label.clone(),
+            agent_id: handle.agent_id.clone(),
+            agent_revision: handle.agent_revision,
+            elapsed_secs: handle.started_at.elapsed().as_secs(),
+            parent_session_id: handle.parent_session_id.clone(),
+            background: handle.background,
+            steps: progress.steps,
+            last_tools: progress.last_tools.into_iter().collect(),
+            input_tokens: progress.input_tokens,
+            output_tokens: progress.output_tokens,
+        }
+    }
+}
+
+/// How a background worker ended, kept for its parent turn to read.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FinishedWorker {
+    pub id: String,
+    pub label: String,
+    pub parent_session_id: String,
+    pub is_error: bool,
+    pub text: String,
+    pub elapsed_secs: u64,
 }
 
 /// Registry of currently-running workers, keyed by unique child session
@@ -258,6 +332,9 @@ pub struct ActiveWorker {
 #[derive(Debug, Default)]
 pub struct WorkerRegistry {
     inner: Mutex<BTreeMap<String, WorkerHandle>>,
+    /// Background workers that have ended, until their parent turn does.
+    finished: Mutex<BTreeMap<String, FinishedWorker>>,
+    changed: tokio::sync::Notify,
     questions: crate::questions::QuestionBoard,
 }
 
@@ -271,7 +348,7 @@ impl WorkerRegistry {
         &self.questions
     }
 
-    fn register(&self, id: String, handle: WorkerHandle) {
+    pub(crate) fn register(&self, id: String, handle: WorkerHandle) {
         if let Ok(mut map) = self.inner.lock() {
             map.insert(id, handle);
         }
@@ -281,22 +358,14 @@ impl WorkerRegistry {
         if let Ok(mut map) = self.inner.lock() {
             map.remove(id);
         }
+        self.changed.notify_waiters();
     }
 
     pub fn active(&self) -> Vec<ActiveWorker> {
         let Ok(map) = self.inner.lock() else {
             return Vec::new();
         };
-        map.iter()
-            .map(|(id, h)| ActiveWorker {
-                id: id.clone(),
-                label: h.label.clone(),
-                agent_id: h.agent_id.clone(),
-                agent_revision: h.agent_revision,
-                elapsed_secs: h.started_at.elapsed().as_secs(),
-                parent_session_id: h.parent_session_id.clone(),
-            })
-            .collect()
+        map.iter().map(|(id, h)| ActiveWorker::of(id, h)).collect()
     }
 
     /// Live children spawned by `parent`, oldest first.
@@ -306,15 +375,81 @@ impl WorkerRegistry {
         };
         map.iter()
             .filter(|(_, h)| h.parent_session_id == parent)
-            .map(|(id, h)| ActiveWorker {
-                id: id.clone(),
-                label: h.label.clone(),
-                agent_id: h.agent_id.clone(),
-                agent_revision: h.agent_revision,
-                elapsed_secs: h.started_at.elapsed().as_secs(),
-                parent_session_id: h.parent_session_id.clone(),
-            })
+            .map(|(id, h)| ActiveWorker::of(id, h))
             .collect()
+    }
+
+    /// One live child of `parent`; `None` for an id that is not live or
+    /// belongs to another session, which are indistinguishable by design.
+    pub fn live_child(&self, parent: &str, id: &str) -> Option<ActiveWorker> {
+        let map = self.inner.lock().ok()?;
+        map.get(id)
+            .filter(|h| h.parent_session_id == parent)
+            .map(|h| ActiveWorker::of(id, h))
+    }
+
+    /// Live background children of `parent`.
+    pub fn background_live(&self, parent: &str) -> usize {
+        self.inner.lock().map_or(0, |map| {
+            map.values()
+                .filter(|h| h.parent_session_id == parent && h.background)
+                .count()
+        })
+    }
+
+    /// Record how a background worker ended and wake anyone waiting.
+    fn finish(&self, worker: FinishedWorker) {
+        if let Ok(mut map) = self.finished.lock() {
+            map.insert(worker.id.clone(), worker);
+        }
+        self.changed.notify_waiters();
+    }
+
+    /// A finished background worker of `parent`.
+    pub fn finished_child(&self, parent: &str, id: &str) -> Option<FinishedWorker> {
+        let map = self.finished.lock().ok()?;
+        map.get(id)
+            .filter(|w| w.parent_session_id == parent)
+            .cloned()
+    }
+
+    /// Finished background workers of `parent`, in the order they were given.
+    pub fn finished_for(&self, parent: &str) -> Vec<FinishedWorker> {
+        let Ok(map) = self.finished.lock() else {
+            return Vec::new();
+        };
+        let mut out: Vec<FinishedWorker> = map
+            .values()
+            .filter(|w| w.parent_session_id == parent)
+            .cloned()
+            .collect();
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        out
+    }
+
+    /// Forget a parent's finished workers once its turn has ended.
+    pub fn forget_finished_for(&self, parent: &str) {
+        if let Ok(mut map) = self.finished.lock() {
+            map.retain(|_, w| w.parent_session_id != parent);
+        }
+    }
+
+    /// Resolves when any worker finishes or leaves, for `workers wait`.
+    pub async fn changed(&self) {
+        self.changed.notified().await;
+    }
+
+    /// Cancel every live child of `parent`; returns how many were live.
+    pub fn stop_all_for(&self, parent: &str) -> usize {
+        let Ok(map) = self.inner.lock() else {
+            return 0;
+        };
+        let mut stopped = 0;
+        for handle in map.values().filter(|h| h.parent_session_id == parent) {
+            handle.cancel.cancel();
+            stopped += 1;
+        }
+        stopped
     }
 
     /// Owning session of a live child, for endpoint-scope checks.
@@ -418,6 +553,7 @@ impl Tool for TaskTool {
                 "agent": {"type": "string", "description": "Optional saved Agent name or id. Applies its identity and working style without changing permissions."},
                 "label": {"type": "string", "description": "Short label shown in the UI"},
                 "readonly": {"type": "boolean", "description": "If true, the worker gets only read/glob/grep and may run concurrently with other tasks", "default": false},
+                "background": {"type": "boolean", "description": "Read-only workers only. Return at once with the worker's id and keep it running while you continue; use the workers tool to check, message, wait for or stop it. It is cancelled if you finish your turn without waiting for it.", "default": false},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"},
                 "contract_id": {"type": "string", "description": "Managed contract this child is executing"},
                 "work_item_id": {"type": "string", "description": "Managed work item assigned to this child"}
@@ -431,6 +567,7 @@ impl Tool for TaskTool {
             .get("readonly")
             .and_then(|r| r.as_bool())
             .unwrap_or(false);
+        // A background task only starts the worker, and it must be read-only.
         if readonly {
             return vak_tools::ResourceClaims {
                 exclusive: false,
@@ -493,6 +630,30 @@ impl TaskTool {
             .get("readonly")
             .and_then(|r| r.as_bool())
             .unwrap_or(false);
+        if args
+            .get("background")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false)
+        {
+            // A background writer would change files outside the claims that
+            // keep the parent's own work and its other workers apart.
+            if !readonly {
+                return ToolOutput::error(
+                    "background workers must be read-only: set readonly to true, or run this task without background",
+                );
+            }
+            let live = self.deps.registry.as_ref().map_or(0, |registry| {
+                registry.background_live(&self.deps.parent_session_id)
+            });
+            if live >= MAX_BACKGROUND_WORKERS {
+                return ToolOutput::error(format!(
+                    "{MAX_BACKGROUND_WORKERS} background workers are already running; wait for one with the workers tool first"
+                ));
+            }
+            if self.deps.registry.is_none() {
+                return ToolOutput::error("background workers are not available here");
+            }
+        }
         let child_outcome = child_outcome(prompt, readonly, self.deps.outcome.as_ref());
         let child_tools: Vec<Arc<dyn Tool>> = if readonly {
             self.deps.read_only_tools.clone()
@@ -720,10 +881,15 @@ impl TaskTool {
         cfg.approver = self.deps.approver.clone();
         cfg.sandbox = self.deps.sandbox.clone();
 
-        let mut agent = Agent::new(self.deps.provider.clone(), log, cfg);
+        let agent = Agent::new(self.deps.provider.clone(), log, cfg);
         let steering = Arc::new(SteeringQueues::new());
         let cancel = ctx.cancel.child_token();
-        let _registry_guard = if let Some(registry) = &self.deps.registry {
+        let background = args
+            .get("background")
+            .and_then(|b| b.as_bool())
+            .unwrap_or(false);
+        let progress = Arc::new(Mutex::new(WorkerProgress::default()));
+        let registry_guard = if let Some(registry) = &self.deps.registry {
             registry.register(
                 session_id.clone(),
                 WorkerHandle {
@@ -734,6 +900,8 @@ impl TaskTool {
                     steering: steering.clone(),
                     cancel: cancel.clone(),
                     parent_session_id: self.deps.parent_session_id.clone(),
+                    background,
+                    progress: progress.clone(),
                 },
             );
             Some(RegistryGuard {
@@ -743,16 +911,82 @@ impl TaskTool {
         } else {
             None
         };
+        let drive = DriveChild {
+            agent,
+            steering,
+            cancel,
+            prompt: prompt.to_string(),
+            label: label.clone(),
+            session_id: session_id.clone(),
+            contracted: requested_contract.is_some(),
+            child_outcome,
+            parent_events: self.deps.events.clone(),
+            progress,
+            registry_guard,
+            finish_into: background
+                .then(|| self.deps.registry.clone())
+                .flatten()
+                .map(|registry| (registry, self.deps.parent_session_id.clone())),
+        };
+        if !background {
+            return drive.run().await;
+        }
+        tokio::spawn(drive.run());
+        ToolOutput::ok(format!(
+            "worker '{session_id}' ({label}) started in the background. Use the workers tool to list it, check its status, message it, wait for it, or stop it. It is cancelled if you finish your turn without waiting for it."
+        ))
+    }
+}
+
+/// One child run, owned so it can be awaited inline or run on its own task
+/// (`task { background: true }`).
+struct DriveChild {
+    agent: Agent,
+    steering: Arc<SteeringQueues>,
+    cancel: CancellationToken,
+    prompt: String,
+    label: String,
+    session_id: String,
+    contracted: bool,
+    child_outcome: Option<vak_intent::OutcomeSpec>,
+    parent_events: Option<tokio::sync::mpsc::Sender<crate::AgentEvent>>,
+    progress: Arc<Mutex<WorkerProgress>>,
+    registry_guard: Option<RegistryGuard>,
+    /// Where a background worker records how it ended, with its parent.
+    finish_into: Option<(Arc<WorkerRegistry>, String)>,
+}
+
+impl DriveChild {
+    async fn run(self) -> ToolOutput {
+        let DriveChild {
+            mut agent,
+            steering,
+            cancel,
+            prompt,
+            label,
+            session_id,
+            contracted,
+            child_outcome,
+            parent_events,
+            progress,
+            registry_guard,
+            finish_into,
+        } = self;
+        let _registry_guard = registry_guard;
         let (ev_tx, mut ev_rx) = tokio::sync::mpsc::channel::<crate::AgentEvent>(256);
         // Always drain the child stream (a full channel would deadlock the
         // child loop); tool calls are additionally forwarded to the parent
         // event stream so parallel workers are visible in the UI.
-        let parent = self.deps.events.clone();
+        let parent = parent_events.clone();
         let fwd_label = label.clone();
         let pump = tokio::spawn(async move {
             while let Some(ev) = ev_rx.recv().await {
                 match ev {
                     crate::AgentEvent::ToolCallEnd { name, is_error, .. } => {
+                        progress
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .tool_finished(&name);
                         if let Some(parent) = &parent {
                             let _ = parent
                                 .send(crate::AgentEvent::WorkerToolCall {
@@ -764,6 +998,10 @@ impl TaskTool {
                         }
                     }
                     crate::AgentEvent::TurnEnd { usage } => {
+                        progress
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .step_finished(usage.input_tokens, usage.output_tokens);
                         if let Some(parent) = &parent {
                             let _ = parent
                                 .send(crate::AgentEvent::WorkerUsage {
@@ -787,7 +1025,7 @@ impl TaskTool {
                 }
             }
         });
-        if let Some(events) = &self.deps.events {
+        if let Some(events) = &parent_events {
             let _ = events
                 .send(crate::AgentEvent::WorkerStarted {
                     label: label.clone(),
@@ -795,7 +1033,7 @@ impl TaskTool {
                 .await;
         }
         let started = std::time::Instant::now();
-        let outcome = agent.run(prompt, &steering, cancel, ev_tx).await;
+        let outcome = agent.run(&prompt, &steering, cancel, ev_tx).await;
         let child_status = match &outcome {
             crate::TurnOutcome::Completed { .. } => vak_session::types::ChildRunStatus::Completed,
             crate::TurnOutcome::Failed { .. } => vak_session::types::ChildRunStatus::Failed,
@@ -809,7 +1047,7 @@ impl TaskTool {
             .lock()
             .await
             .append_child_run_result(child_status, child_outcome);
-        if let Some(events) = &self.deps.events {
+        if let Some(events) = &parent_events {
             let _ = events
                 .send(crate::AgentEvent::WorkerFinished {
                     label: label.clone(),
@@ -835,11 +1073,24 @@ impl TaskTool {
                 identity_digest: record.identity_digest.clone(),
             })
             .collect();
-        let mut output = worker_output(&session_id, outcome, requested_contract.is_some());
+        let mut output = worker_output(&session_id, outcome, contracted);
         if !cards.is_empty() {
             output.delegated = Some(vak_tools::DelegatedCards {
                 session_id: session_id.clone(),
                 cards,
+            });
+        }
+        // A background worker has no `task` call to return its result to, so
+        // it is kept for the parent's `workers` tool, recorded before the
+        // registry guard drops so a waiter never sees neither.
+        if let Some((registry, parent_session_id)) = finish_into {
+            registry.finish(FinishedWorker {
+                id: session_id,
+                label,
+                parent_session_id,
+                is_error: output.is_error,
+                text: output.content.clone(),
+                elapsed_secs: started.elapsed().as_secs(),
             });
         }
         output
@@ -1044,6 +1295,8 @@ mod registry_tests {
                 steering: Arc::new(SteeringQueues::new()),
                 cancel: cancel.clone(),
                 parent_session_id: "parent-a".into(),
+                background: false,
+                progress: Default::default(),
             },
         );
         assert!(reg.steer("child-1", "look left"));
@@ -1077,6 +1330,8 @@ mod registry_tests {
                     steering: Arc::new(SteeringQueues::new()),
                     cancel: CancellationToken::new(),
                     parent_session_id: parent.into(),
+                    background: false,
+                    progress: Default::default(),
                 },
             );
         }

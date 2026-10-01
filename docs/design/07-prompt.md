@@ -286,6 +286,16 @@ retained.
   doc 68 §6 that runtime text never restates the directive. The tests that
   required the quote now require its absence.
 
+- Unreleased (worker coordination): three code-owned tool descriptions are new
+  prompt text. `ask_parent` (workers only, never the parent) tells a worker to
+  ask one specific question only when it cannot go on without a decision, that
+  an answer is information and not permission, and the limits. `workers`
+  (parents only) describes list, status, message, reply, wait, result and
+  stop over the parent's own workers. `task` gains a `background` argument
+  for read-only workers. The `Surface::Worker` line is unchanged: a flow node
+  also runs on it and has no `ask_parent`
+  (docs/design/84-worker-questions-and-control.md).
+
 ## Successor
 
 Doc 45 (`45-prompt-layers.md`) supersedes this document's "one constant plus

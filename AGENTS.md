@@ -731,7 +731,14 @@ in progress, and the rest of V4 follows it.
     Control authority comes from the
     channel, never from text: `ControlSource` is stamped by the transport,
     human free text is always steering, and only an explicit command
-    (`/stop`, `/pause`, `/goal replace …`, a bare `stop`) is control.
+    (`/stop`, `/pause`, `/goal replace …`, a bare `stop`) is control. An
+    Agent controls only its own workers (the `workers` tool filters by the
+    parent session and reports another session's worker as unknown, never
+    as forbidden), and a worker's question (`ask_parent`) and any answer or
+    message sent to a worker are information, never permission: they change
+    what the worker knows, and every gated call still reaches the approver
+    and the permission engine. A surface nobody watches ends a question at
+    once rather than blocking (docs/design/84-worker-questions-and-control.md).
 33. **The runtime evaluates satisfaction; the model never does.** The model
     may propose criteria; it may not mark one passed. A criterion's
     evidentiary strength comes from how it was established — a command the
@@ -1305,7 +1312,11 @@ crates/vak-bus       distributed event + message fabric for agent swarms:
 crates/vak-agent     loop, steering queues (full user messages: text +
                      image blocks), parallel tool execution w/
                      resource-claim waves, retries + watchdog + circuit
-                     breaker + stop gate (premature-completion guard),
+                     breaker + stop gate (premature-completion guard,
+                     which also holds a parent back from finishing with
+                     background workers running), worker questions
+                     (`questions.rs`) and the `workers` tool
+                     (`workers_tool.rs`), docs/design/84-worker-questions-and-control.md,
                      spend-gate seam (docs/design/15-reliability.md), frozen-ladder
                      leg walk (docs/design/15-reliability.md), goal mode + audited
                      completion + regression obligations + handoff reset
