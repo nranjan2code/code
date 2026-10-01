@@ -2352,3 +2352,10 @@ remains open.
   Corrected the design status to describe the focused reply composer as
   implemented. Browser behavior, live-provider acceptance, and service recovery
   remain open.
+- 2026-10-01: Ran `scripts/test-mail-calendar-mock-pack.sh` on this feature
+  branch. The production web build and the synthetic-only regression pack pass:
+  128 provider/vault tests plus state registry, 19 Core tests, 17 Server tests,
+  four owner-authenticated HTTP tests, restart/requeue, and five isolated-worker
+  tests. The new reply-panel browser assertion is type-checked but its rendered
+  behavior still needs browser acceptance. Live-provider behavior and 24-hour
+  service recovery remain open.
