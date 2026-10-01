@@ -1,7 +1,8 @@
 import { createEffect, For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import * as api from "../../api";
 import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../../mailCalendarDemo";
-import { openArtifactCanvas, setPendingSettingsPage, setSettingsOpen } from "../../store";
+import { openArtifactCanvas, pendingMailCalendarCitation, setPendingMailCalendarCitation, setPendingSettingsPage, setSettingsOpen } from "../../store";
+import { loadConversationCitation } from "../../mailCalendarThreadNavigation.mjs";
 import { MailCalendarAgenda } from "../MailCalendarAgenda";
 import { SyntheticMailCalendarDemoButton } from "../SyntheticMailCalendarDemoControl";
 import MailCalendarDraftWorkspace from "./MailCalendarDraftWorkspace";
@@ -203,7 +204,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     setConversationError(null);
     setConversationLoading(false);
   };
-  const readConversation = async (accountId: string, threadId: string, cursor?: string, append = false) => {
+  const readConversation = async (accountId: string, threadId: string, cursor?: string, append = false, targetMessageId?: string) => {
     const request = conversationRequest() + 1;
     setConversationRequest(request);
     if (!append) setSelectedConversation({ accountId, threadId, messages: [] });
@@ -217,17 +218,34 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
         cursor,
       );
       if (conversationRequest() !== request) return;
+      const located = targetMessageId
+        ? await loadConversationCitation(page, targetMessageId, (nextCursor) => api.previewMailCalendarThread(
+          props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "",
+          accountId,
+          threadId,
+          nextCursor,
+        ))
+        : { messages: page.messages, nextCursor: page.next_cursor, found: true };
+      if (conversationRequest() !== request) return;
       setSelectedConversation((current) => {
         if (!current || current.accountId !== accountId || current.threadId !== threadId) return current;
         const messages = append ? [...current.messages] : [];
         const seen = new Set(messages.map((message) => message.provider_id));
-        for (const message of page.messages) {
+        for (const message of located.messages) {
           if (!seen.has(message.provider_id)) {
             seen.add(message.provider_id);
             messages.push(message);
           }
         }
-        return { accountId, threadId, messages, nextCursor: page.next_cursor };
+        return { accountId, threadId, messages, nextCursor: located.nextCursor };
+      });
+      if (targetMessageId && !located.found) setConversationError(located.nextCursor
+        ? "This cited message is beyond the automatic preview limit. Load more messages to continue."
+        : "This cited message was not found in the available conversation pages.");
+      if (targetMessageId && located.found) window.requestAnimationFrame(() => {
+        const message = document.querySelector<HTMLElement>(`[data-mail-message-id="${CSS.escape(targetMessageId)}"]`);
+        message?.scrollIntoView({ behavior: "smooth", block: "center" });
+        message?.focus({ preventScroll: true });
       });
     } catch (cause) {
       if (conversationRequest() === request) {
@@ -237,6 +255,18 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
       if (conversationRequest() === request) setConversationLoading(false);
     }
   };
+  createEffect(() => {
+    const citation = pendingMailCalendarCitation();
+    const data = loader.data();
+    if (!citation || !data) return;
+    const account = data.accounts.find((item) => item.account.id === citation.accountId)?.account;
+    setPendingMailCalendarCitation(null);
+    if (!account || account.provider === "apple_icloud" || !account.capabilities.includes("mail_read")) {
+      setConversationError("This conversation citation is not available in this Agent’s connected mail accounts.");
+      return;
+    }
+    void readConversation(account.id, citation.threadId, undefined, false, citation.messageId);
+  });
   onMount(() => {
     const timer = window.setInterval(() => {
       if (Date.now() - lastRefresh >= 5 * 60_000) refreshIfStale();

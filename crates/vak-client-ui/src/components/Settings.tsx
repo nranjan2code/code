@@ -15,8 +15,6 @@ import {
   setProviders,
   setSettingsOpen,
   openArtifactCanvas,
-  pendingMailCalendarCitation,
-  setPendingMailCalendarCitation,
   setSetupEpoch,
   setSettingsScope,
   settingsScope,
@@ -1661,36 +1659,6 @@ export default function Settings() {
       setMailCalendarBusy(false);
     }
   };
-  createEffect(() => {
-    const citation = pendingMailCalendarCitation();
-    if (!citation) return;
-    if (page() !== "mail-calendar") {
-      selectPage("mail-calendar");
-      return;
-    }
-    if (mailCalendarBusy()) return;
-    const accounts = mailCalendarAccounts()?.accounts;
-    if (!accounts) return;
-    const account = accounts.find((item) => item.id === citation.accountId && item.status === "connected" && !item.revoked_at);
-    setPendingMailCalendarCitation(null);
-    if (!account || account.provider === "apple_icloud") {
-      setNotice({ kind: "error", text: "This conversation citation is not available in the currently selected Agent's connected accounts." });
-      return;
-    }
-    setMailCalendarPreview({
-      accountId: account.id,
-      kind: "mail",
-      messages: [{ provider_id: citation.messageId, thread_id: citation.threadId, from: null, to: null, cc: null, subject: "Cited message", received_at: null, preview: "The conversation is loaded from the connected provider for source verification.", body_text: null, body_status: "unavailable", has_attachments: false }],
-    });
-    void openMailThread(citation.accountId, citation.threadId, citation.messageId).then((found) => {
-      if (!found) return;
-      queueMicrotask(() => {
-        const message = document.querySelector<HTMLElement>(`[data-mail-message-id="${CSS.escape(citation.messageId)}"]`);
-        message?.scrollIntoView({ behavior: "smooth", block: "center" });
-        message?.focus({ preventScroll: true });
-      });
-    });
-  });
   const loadMoreMailThread = async () => {
     const current = mailThreadPreview();
     if (!current?.nextCursor || current.loading || mailCalendarBusy()) return;
@@ -3075,7 +3043,7 @@ export default function Settings() {
             </Show>
 
             <Show when={page() === "mail-calendar"}>
-              <header class="mail-calendar-settings-header"><div class="mail-calendar-settings-intro"><h1>Connected accounts and access</h1><p>Manage the accounts and permissions available to {agentName()}.</p><p class="settings-hint">Today’s agenda and recent email are in Canvas. Drafts, Review and routines still live on this page while their move is in progress.</p></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open Today in Canvas</button><p class="settings-hint">Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
+              <header class="mail-calendar-settings-header"><div class="mail-calendar-settings-intro"><h1>Connected accounts and access</h1><p>Manage the accounts and permissions available to {agentName()}.</p><p class="settings-hint">The agenda, email, calendar, drafts and Review are in Canvas. Account setup and routine administration stay here.</p></div><button type="button" class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open Today in Canvas</button><p class="settings-hint">Connect an account for {agentName()}. Each connection belongs to this Agent and only grants the access you select.</p>
                 <p class="settings-hint" role="status">
                   <Show when={connection() === "offline"} fallback={connection() === "live" && health()
                     ? health()?.automation_scheduler?.status === "stale"
@@ -3093,7 +3061,7 @@ export default function Settings() {
                   <SyntheticMailCalendarDemoControl checked={syntheticMailDemo()} onChange={(enabled) => { setSyntheticMailCalendarEnabled(enabled); setSyntheticMailDemo(enabled); setMailCalendarPreview(null); setMailCalendarFolderState(null); setMailCalendarRunHistory({}); }} />
                 </Group>
               </Show>
-              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews load bounded data directly in this screen and do not save a second copy. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
+              <div class="settings-callout"><Icon name="shield" /><div><strong>Google and Microsoft support email and calendar reads; verified Apple accounts support bounded Mail and Calendar previews.</strong><span>Read results sent to the Agent become part of append-only conversation history and may remain after disconnect or account deletion. Current storage cannot erase those copies. Channel conversations are blocked unless separately shared. Owner previews open in Canvas and do not add provider content to conversation history. Disconnect removes saved sign-in details and blocks future reads; it does not delete provider messages or events. Scheduled routines are available; dependable continuous service recovery is still in progress.</span></div></div>
               <Show when={!syntheticMailDemo()}>
               <Group title="Choose access">
                 <p class="settings-hint">Read access is selected by default. Email sending and calendar changes are optional and request separate provider permissions. Every effect requires exact review and your confirmation. Event creation supports one timed event without attendees, invitations, recurrence, or reminders. Google event updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer; cancellation applies to that event only. Provider calendar-write consent is broader than these actions; Vakyartha exposes only the reviewed operations.</p>
@@ -3155,182 +3123,19 @@ export default function Settings() {
                         (task) => task.enabled && task.mail_calendar_scope?.account_id === account.id,
                       );
                       const pauseAccountKey = `account:${account.id}`;
-                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}><Show when={syntheticMailDemo()} fallback={<span class="settings-actions"><Show when={enabledAccountRoutines().length > 0}><button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines(account.id)}>{mailCalendarPausing() === pauseAccountKey ? "Pausing…" : "Pause routines for this account"}</button></Show><Show when={canPreview && account.capabilities.includes("mail_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={canPreview && account.capabilities.includes("calendar_read")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={canPreview && account.capabilities.includes("calendar_free_busy")}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show><Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show><Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show><button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button></span>}><span class="settings-actions"><Show when={account.capabilities.includes("mail_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "mail")}>Preview inbox</button></Show><Show when={account.capabilities.includes("calendar_read")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "calendar")}>Preview calendar</button></Show><Show when={account.capabilities.includes("calendar_free_busy")}><button class="settings-button" onClick={() => void loadMailCalendarPreview(account, "freebusy")}>Check availability</button></Show></span></Show></Row>;
-                    }}</For>
-                  </Show>
-                </Show>
-              </Group>
-              <Group title="Preview, routines and deletion">
-                <Show when={mailCalendarPreview()} keyed>{(preview) => <div class="settings-preview" aria-live="polite">
-                  <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? `${preview.folderName ?? "Mail"} preview` : preview.kind === "calendar" ? "Calendar preview" : "Availability preview"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
-                  <Show when={preview.kind === "calendar" || preview.kind === "freebusy"}>
-                    <div class="mail-calendar-work-actions" role="group" aria-label="Calendar preview date range">
-                      <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, -7)}>Previous 7 days</button>
-                      <label>From<input aria-label="Preview start date" type="date" value={mailCalendarRangeFrom()} onInput={(event) => setMailCalendarRangeFrom(event.currentTarget.value)} /></label>
-                      <label>Through<input aria-label="Preview end date" type="date" value={mailCalendarRangeTo()} onInput={(event) => setMailCalendarRangeTo(event.currentTarget.value)} /></label>
-                      <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => {
-                        const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-                        if (account) void loadMailCalendarPreview(account, preview.kind, { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() }, undefined, undefined, preview.calendarSourceId);
-                      }}>{mailCalendarBusy() ? "Refreshing…" : "Refresh dates"}</button>
-                      <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, 7)}>Next 7 days</button>
-                      <Show when={preview.kind === "calendar" && (preview.calendarSources?.length ?? 0) > 0}>
-                        <label>Calendar<select aria-label="Calendar source" value={preview.calendarSourceId ?? ""} disabled={mailCalendarBusy()} onChange={(event) => {
-                          const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-                          if (account) void loadMailCalendarPreview(account, "calendar", { from: mailCalendarRangeFrom(), to: mailCalendarRangeTo() }, undefined, undefined, event.currentTarget.value);
-                        }}><For each={preview.calendarSources ?? []}>{(source) => <option value={source.provider_id}>{source.name}{source.primary ? " (default)" : ""}</option>}</For></select></label>
-                      </Show>
-                      <Show when={preview.kind === "calendar"}><button class="settings-button" disabled={mailCalendarBusy() || preview.loading} onClick={() => void compareOtherCalendars(preview)}>{mailCalendarBusy() ? "Comparing…" : preview.comparedCalendarCount !== undefined ? "Compare again" : "Compare other calendars"}</button></Show>
-                    </div>
-                    <p class="settings-hint">Times use {Intl.DateTimeFormat().resolvedOptions().timeZone || "this device's time zone"}. Choose up to 30 days.</p>
-                    <Show when={preview.kind === "calendar" && preview.calendarSourceName && !preview.calendarSources?.find((source) => source.provider_id === preview.calendarSourceId)?.primary}><p class="settings-hint">Showing {preview.calendarSourceName}. Event changes and new event drafts use the account’s default calendar.</p></Show>
-                    <Show when={preview.kind === "calendar" && preview.comparedCalendarCount !== undefined}><p class="settings-hint" role="status">Compared {preview.comparedCalendarCount} other calendar{preview.comparedCalendarCount === 1 ? "" : "s"}{preview.failedCalendarCount ? `; ${preview.failedCalendarCount} could not be read` : ""}{preview.skippedCalendarCount ? `; ${preview.skippedCalendarCount} more skipped because comparisons are capped at five` : ""}. Compared events are read-only.</p></Show>
-                  </Show>
-                  <Show when={preview.kind === "mail"}>
-                    <form class="mail-calendar-work-actions" onSubmit={(event) => {
-                      event.preventDefault();
-                      const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-                      if (account) void loadMailCalendarPreview(account, "mail", undefined, mailCalendarSearchQuery(), mailCalendarFolderId());
-                    }}>
-                      <label>Folder or label<select aria-label="Mail folder or label" value={preview.folderId ?? mailCalendarFolderId()} disabled={mailCalendarBusy()} onChange={(event) => {
-                        const account = mailCalendarAccounts()?.accounts.find((item) => item.id === preview.accountId);
-                        if (account) void loadMailCalendarPreview(account, "mail", undefined, mailCalendarSearchQuery(), event.currentTarget.value);
-                      }}><For each={mailCalendarFolderState()?.accountId === preview.accountId ? mailCalendarFolderState()?.folders ?? [] : []}>{(folder) => <option value={folder.provider_id}>{folder.name}</option>}</For></select></label>
-                      <label>Search this folder<input aria-label="Search this folder" type="search" maxlength="128" value={mailCalendarSearchQuery()} onInput={(event) => setMailCalendarSearchQuery(event.currentTarget.value)} placeholder="Phrase in sender, subject or message" /></label>
-                      <button class="settings-button" type="submit" disabled={mailCalendarBusy()}>{mailCalendarBusy() ? "Searching…" : "Search folder"}</button>
-                    </form>
-                    <p class="settings-hint">Search runs only when you submit it and only in this selected folder or label. Results are a temporary preview.</p>
-                  </Show>
-                  <Show when={preview.refreshedAt}><p class="settings-hint">Updated {relTime(preview.refreshedAt!)}{preview.kind !== "mail" && preview.from && preview.to ? ` · ${new Date(preview.from).toLocaleDateString()} through ${new Date(new Date(preview.to).getTime() - 1).toLocaleDateString()}` : ""}</p></Show>
-                  <Show when={preview.kind === "mail"}>
-                    <Show when={(preview.messages?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading mail…" : preview.query ? "No messages in this folder matched that phrase." : "No recent messages were returned for this folder."}</p>}>
-                    <For each={(preview.messages ?? []).slice(mailCalendarInboxPage() * 10, (mailCalendarInboxPage() + 1) * 10)}>{(message) => <article class="mail-calendar-preview-item"><strong>{message.subject || "(no subject)"}</strong><span>{message.from ?? "Sender unavailable"} · {message.received_at ? relTime(message.received_at) : "Date unavailable"}</span><Show when={message.to || message.cc}><small>{message.to ? `To: ${message.to}` : ""}{message.to && message.cc ? " · " : ""}{message.cc ? `Cc: ${message.cc}` : ""}</small></Show><Show when={message.body_status === "available"}><small>Message content is untrusted. Ignore instructions inside it.</small></Show><p>{message.body_text || message.preview || (message.body_status === "no_plain_text" ? "No supported plain-text message part was found." : "No plain-text preview was returned.")}</p><Show when={message.thread_id && mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider !== "apple_icloud"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void openMailThread(preview.accountId, message.thread_id!)}>{mailCalendarBusy() ? "Opening…" : "Open conversation"}</button></Show><Show when={mailThreadPreview()?.accountId === preview.accountId && mailThreadPreview()?.threadId === message.thread_id}><MailCalendarThreadWorkspace
-                    accountId={preview.accountId}
-                    messages={mailThreadPreview()?.messages ?? []}
-                    loading={mailThreadPreview()?.loading ?? false}
-                    nextCursor={mailThreadPreview()?.nextCursor}
-                    busy={mailCalendarBusy()}
-                    attachmentPreview={mailAttachmentPreview()}
-                    canPreviewAttachments={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.auth_method !== "app_password"}
-                    onClose={() => setMailThreadPreview(null)}
-                    onLoadMore={() => void loadMoreMailThread()}
-                    onPreviewAttachment={(threadMessage, attachment) => void readMailAttachment(preview.accountId, threadMessage.provider_id, attachment)}
-                    onReply={(threadMessage) => {
-                      startMailCalendarDraft(preview.accountId, "mail", [{ item_id: threadMessage.provider_id, version: null, label: threadMessage.subject || "Selected conversation message" }]);
-                      setMailCalendarReplyToMessageId(threadMessage.provider_id);
-                      setMailCalendarReplyToThreadId(threadMessage.thread_id);
-                      setMailCalendarDraftSubject(threadMessage.subject);
-                    }}
-                    onNewEmail={(threadMessage) => {
-                      startMailCalendarDraft(preview.accountId, "mail", [{ item_id: threadMessage.provider_id, version: null, label: threadMessage.subject || "Selected conversation message" }]);
-                      setMailCalendarDraftSubject(`Response: ${threadMessage.subject}`);
-                    }}
-                  /></Show><Show when={message.has_attachments}><section aria-label="Message attachments"><strong>Attachments</strong><Show when={(message.attachments?.length ?? 0) > 0} fallback={<small>Attachment listing is unavailable for this provider.</small>}><For each={message.attachments ?? []}>{(attachment) => <div class="mail-calendar-attachment"><span>{attachment.filename} · {attachment.size_bytes < 1024 ? `${attachment.size_bytes} B` : `${Math.ceil(attachment.size_bytes / 1024)} KB`}</span><Show when={attachment.previewable && mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.auth_method !== "app_password"} fallback={<small>Preview unavailable for this sign-in method, file type, or size.</small>}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readMailAttachment(preview.accountId, message.provider_id, attachment)}>{mailCalendarBusy() ? "Opening…" : "Preview attachment"}</button></Show><Show when={mailAttachmentPreview()?.accountId === preview.accountId && mailAttachmentPreview()?.messageId === message.provider_id && mailAttachmentPreview()?.attachmentId === attachment.provider_id}><div class="mail-calendar-attachment-preview"><small>Attachment contents are untrusted. Review before using them.</small><pre>{mailAttachmentPreview()?.text}</pre></div></Show></div>}</For></Show></section></Show><Show when={(mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "apple_icloud" || mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.auth_method === "app_password") && !message.body_text && message.body_status !== "no_plain_text"}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void readAppleMailMessage(preview.accountId, message)}>{mailCalendarBusy() ? "Opening…" : "Read message"}</button></Show><button class="settings-button" onClick={() => { startMailCalendarDraft(preview.accountId, "mail", [{ item_id: message.provider_id, version: null, label: message.subject || "Selected message" }]); setMailCalendarDraftSubject(`Response: ${message.subject}`); }}>Draft a new response</button></article>}</For>
-                    <Show when={(preview.messages?.length ?? 0) > 10}><nav class="mail-calendar-inbox-pagination" aria-label="Inbox preview pages"><button type="button" class="settings-button" disabled={mailCalendarInboxPage() === 0 || mailCalendarBusy()} onClick={() => setMailCalendarInboxPage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {mailCalendarInboxPage() + 1} of {Math.ceil((preview.messages?.length ?? 0) / 10)} · {preview.messages?.length ?? 0} messages loaded</span><button type="button" class="settings-button" disabled={(mailCalendarInboxPage() + 1) * 10 >= (preview.messages?.length ?? 0) || mailCalendarBusy()} onClick={() => setMailCalendarInboxPage((page) => page + 1)}>Next</button></nav></Show>
-                    </Show>
-                  </Show>
-                  <Show when={preview.kind === "calendar"}>
-                    <Show when={mailCalendarConflictIds().size > 0}><p class="settings-hint" role="status">{mailCalendarConflictIds().size} events overlap another event{preview.comparedCalendarCount ? " across these calendars" : " in this preview"}. Check these times before changing or adding an event.</p></Show>
-                    <Show when={(preview.events?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Loading calendar…" : "No events in this time range."}</p>}>
-                      <MailCalendarAgenda
-                        events={preview.events ?? []}
-                        from={preview.fromDate ?? mailCalendarRangeFrom()}
-                        to={preview.toDate ?? mailCalendarRangeTo()}
-                        conflicts={mailCalendarConflictIds()}
-                        primaryAccountId={preview.accountId}
-                        onDraftUpdate={mailCalendarAccounts()?.accounts.find((account) => account.id === preview.accountId)?.provider === "google" && preview.calendarSources?.find((source) => source.provider_id === preview.calendarSourceId)?.primary ? (event) => {
-                          startMailCalendarDraft(preview.accountId, "calendar", [{ item_id: event.provider_id, version: event.version, label: event.title }]);
-                          setMailCalendarUpdateSource({ event_id: event.provider_id, source_version: event.version! });
-                          setMailCalendarDraftTitle(event.title);
-                          setMailCalendarDraftDescription(event.description ?? "");
-                          setMailCalendarDraftLocation(event.location ?? "");
-                          const local = (value: string) => { const date = new Date(value); return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); };
-                          setMailCalendarDraftStarts(local(event.starts_at!));
-                          setMailCalendarDraftEnds(local(event.ends_at!));
-                        } : undefined}
-                        onDraftCancel={preview.calendarSources?.find((source) => source.provider_id === preview.calendarSourceId)?.primary ? (event) => void prepareCalendarCancellation(preview.accountId, event) : undefined}
-                      />
-                    </Show>
-                  </Show>
-                  <Show when={preview.kind === "freebusy"}>
-                    <Show when={(preview.busy?.length ?? 0) > 0} fallback={<p class="settings-hint">{preview.loading ? "Checking availability…" : "No busy periods were returned."}</p>}>
-                      <For each={preview.busy ?? []}>{(slot) => <article class="mail-calendar-preview-item"><strong>Busy</strong><span>{new Date(slot.starts_at).toLocaleString()} – {new Date(slot.ends_at).toLocaleTimeString()}</span></article>}</For>
-                    </Show>
-                  </Show>
-                </div>}</Show>
-              </Group>
-              <Group title="Working area">
-                <p class="settings-hint">Create and save drafts in this Agent's encrypted local work area, even before connecting an account. Assign a connected account before sending or creating an event; those provider changes require a fresh preview, the matching grant, Review, and your confirmation. Google updates and cancellations are limited to one unchanged, public, standalone timed event with no attendees when you are its organizer. Event creation does not invite attendees. Apple supports read previews and local drafts; provider changes are unavailable.</p>
-                <div class="mail-calendar-work-actions">
-                  <label>Draft account<select aria-label="Draft account" disabled={mailCalendarBusy()} value={mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID} onChange={(event) => setMailCalendarEditorAccount(event.currentTarget.value)}><option value={LOCAL_DRAFT_ACCOUNT_ID}>Local draft · no account</option><For each={mailCalendarAccounts()?.accounts.filter((account) => account.status === "connected" && !account.revoked_at) ?? []}>{(account) => <option value={account.id}>{account.provider === "google" ? "Google" : account.provider === "apple_icloud" ? "Apple iCloud" : "Microsoft"}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</option>}</For></select></label>
-                  <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID, "mail")}>New email draft</button>
-                  <button class="settings-button" disabled={mailCalendarBusy() || (mailCalendarEditorAccount() !== LOCAL_DRAFT_ACCOUNT_ID && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditorAccount())?.provider === "apple_icloud")} onClick={() => startMailCalendarDraft(mailCalendarEditorAccount() || LOCAL_DRAFT_ACCOUNT_ID, "calendar")}>New event draft</button>
-                </div>
-                <Show when={!mailCalendarCandidates.loading} fallback={<p class="settings-hint">Loading secure drafts…</p>}>
-                  <div class="mail-calendar-drafts"><Show when={(mailCalendarCandidates()?.candidates.length ?? 0) > 0} fallback={<p class="settings-hint">No saved drafts yet.</p>}>
-                    <For each={mailCalendarCandidates()?.candidates ?? []}>{(candidate) => {
-                      const summary = () => candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.kind === "cancel_event" ? candidate.source_refs[0]?.label || "Event cancellation" : candidate.action.draft.title || "Event draft";
-                      const kind = () => `${candidate.action.kind === "send_mail" ? "Email" : candidate.action.kind === "cancel_event" ? "Event cancellation" : "Calendar event"}${candidate.account_id === LOCAL_DRAFT_ACCOUNT_ID ? " · local draft" : ""}`;
-                      const actionLabel = () => candidate.action.kind === "send_mail" ? "send" : candidate.action.kind === "cancel_event" ? "cancel" : candidate.action.kind === "update_event" ? "update" : "create";
-                      return <article class="mail-calendar-draft-row"><div><strong>{summary()}</strong><span>{kind()} · revision {candidate.revision} · {new Date(candidate.created_at).toLocaleDateString()}{candidate.action_state ? ` · ${actionLabel()} ${candidate.action_state.replaceAll("_", " ")}` : ""}</span></div><div class="settings-actions"><button class="settings-button" disabled={mailCalendarBusy() || Boolean(candidate.action_state)} onClick={() => candidate.action.kind === "cancel_event" ? reviewAndCancelCalendarEvent(candidate) : openMailCalendarDraft(candidate)}>{candidate.action.kind === "cancel_event" ? candidate.action_state ? "Attempt recorded" : "Review cancellation" : "Open"}</button><button class="settings-button danger" onClick={() => removeMailCalendarDraft(candidate)}>Delete</button></div></article>;
-                    }}</For>
-                  </Show></div>
-                </Show>
-                <Show when={mailCalendarEditorKind()}>
-                  <div class="mail-calendar-editor">
-                    <div class="settings-preview-heading"><strong>{mailCalendarEditorKind() === "mail" ? (mailCalendarReplyToMessageId() ? "Email reply draft" : "Email draft") : "Calendar event draft"}</strong><button class="settings-button" disabled={mailCalendarBusy()} onClick={cancelMailCalendarDraftEditor}>Close</button></div>
-                    <Show when={mailCalendarEditorKind() === "mail"}>
-                      <label>To<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftTo()} onInput={(event) => { setMailCalendarDraftTo(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="name@example.com" /></label>
-                      <label>Cc<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftCc()} onInput={(event) => { setMailCalendarDraftCc(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="Optional, comma separated" /></label>
-                      <label>Bcc<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftBcc()} onInput={(event) => { setMailCalendarDraftBcc(event.currentTarget.value); markMailCalendarDraftDirty(); }} placeholder="Optional, comma separated" /></label>
-                      <label>Subject<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftSubject()} onInput={(event) => { setMailCalendarDraftSubject(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                      <label>Message<textarea rows={8} disabled={mailCalendarBusy()} value={mailCalendarDraftBody()} onInput={(event) => { setMailCalendarDraftBody(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                    </Show>
-                    <Show when={mailCalendarEditorKind() === "calendar"}>
-                      <label>Title<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftTitle()} onInput={(event) => { setMailCalendarDraftTitle(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                      <div class="mail-calendar-work-actions"><label>Starts<input type="datetime-local" disabled={mailCalendarBusy()} value={mailCalendarDraftStarts()} onInput={(event) => { setMailCalendarDraftStarts(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label><label>Ends<input type="datetime-local" disabled={mailCalendarBusy()} value={mailCalendarDraftEnds()} onInput={(event) => { setMailCalendarDraftEnds(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label></div>
-                      <label>Location<input type="text" disabled={mailCalendarBusy()} value={mailCalendarDraftLocation()} onInput={(event) => { setMailCalendarDraftLocation(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                      <label>Description<textarea rows={5} disabled={mailCalendarBusy()} value={mailCalendarDraftDescription()} onInput={(event) => { setMailCalendarDraftDescription(event.currentTarget.value); markMailCalendarDraftDirty(); }} /></label>
-                    </Show>
-                    <Show when={mailCalendarSourceRefs().length > 0}><p class="settings-hint">Based on a selected item: {mailCalendarSourceRefs().map((source) => source.label?.trim() || "Selected source").join(", ")}</p></Show>
-                    <Show when={mailCalendarRevisionConflict()}>
-                      <section class="mail-calendar-draft-conflict" role="alert">
-                        <strong>This draft changed elsewhere.</strong>
-                        <p>Your edits are still here, and they have not replaced the newer saved version.</p>
+                      return <Row title={`${label}${account.identity_masked ? ` · ${account.identity_masked}` : ""}`} description={`${syntheticMailDemo() ? "Synthetic sample · no provider connected" : connectionState} · Access: ${describeMailCalendarCapabilities(account.capabilities)} · ${account.auth_method === "app_password" ? "App Password · revoke at provider" : account.refresh_token_available ? "Sign-in can be renewed" : "Sign-in may need renewal"}`}>
                         <div class="settings-actions">
-                          <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void loadLatestMailCalendarConflict()}>Discard my edits and load latest</button>
-                          <button class="settings-button" disabled={mailCalendarBusy()} onClick={saveMailCalendarConflictAsNewDraft}>Save my edits as a separate draft</button>
+                          <button class="settings-button" onClick={() => { setSettingsOpen(false); openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() }); }}>Open in Canvas</button>
+                          <Show when={!syntheticMailDemo()}>
+                            <Show when={enabledAccountRoutines().length > 0}><button class="settings-button" disabled={mailCalendarPausing() !== null} onClick={() => void pauseMailCalendarRoutines(account.id)}>{mailCalendarPausing() === pauseAccountKey ? "Pausing…" : "Pause routines for this account"}</button></Show>
+                            <Show when={!account.revoked_at && account.status === "connected" && account.credential_available && account.refresh_token_available}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void refreshMailCalendarAccount(account)}>Refresh sign-in</button></Show>
+                            <Show when={!account.revoked_at && account.provider !== "apple_icloud" && needsNewOAuthLink}><button class="settings-button" disabled={mailCalendarBusy()} onClick={() => void connectMailCalendar(account.provider)}>Connect again</button></Show>
+                            <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => disconnectMailCalendar(account)}>{account.status === "pending" ? "Clean up connection" : account.revoked_at ? "Finish cleanup" : "Disconnect"}</button>
+                          </Show>
                         </div>
-                      </section>
-                    </Show>
-                    <div class="settings-actions"><button class="settings-button" aria-expanded={mailCalendarDraftPreviewOpen()} onClick={() => setMailCalendarDraftPreviewOpen((open) => !open)}>{mailCalendarDraftPreviewOpen() ? "Hide preview" : "Preview draft"}</button><button class="btn primary" disabled={mailCalendarSavingDraft() || mailCalendarBusy() || Boolean(mailCalendarRevisionConflict())} onClick={() => void saveMailCalendarDraft()}>{mailCalendarSavingDraft() ? "Saving…" : mailCalendarEditingCandidate() ? "Save changes" : "Save draft"}</button><span class="settings-hint">{mailCalendarRevisionConflict() ? "Resolve the saved-version conflict to continue." : mailCalendarDirty() ? "Saving your latest edits…" : "Draft is up to date"}</span><Show when={mailCalendarEditingCandidate()}>{(candidate) => <button class="settings-button danger" disabled={mailCalendarBusy()} onClick={() => removeMailCalendarDraft(candidate())}>Delete draft</button>}</Show></div>
-                    <Show when={mailCalendarDraftPreviewOpen()}>
-                      <section class="mail-calendar-draft-preview" aria-label="Exact local draft preview">
-                        <p class="settings-hint"><strong>Local preview</strong> · This shows the current draft only. It does not send email, invite attendees, or change a calendar.</p>
-                        <Show when={mailCalendarEditorKind() === "mail"}>
-                          <dl><dt>To</dt><dd>{mailCalendarDraftTo() || "No recipient"}</dd><dt>Cc</dt><dd>{mailCalendarDraftCc() || "None"}</dd><dt>Bcc</dt><dd>{mailCalendarDraftBcc() || "None"}</dd><dt>Subject</dt><dd>{mailCalendarDraftSubject() || "(no subject)"}</dd></dl>
-                          <pre>{mailCalendarDraftBody() || "(empty message)"}</pre>
-                        </Show>
-                        <Show when={mailCalendarEditorKind() === "calendar"}>
-                          <dl><dt>Event</dt><dd>{mailCalendarDraftTitle() || "(no title)"}</dd><dt>Starts</dt><dd>{mailCalendarDraftStarts() ? new Date(mailCalendarDraftStarts()).toLocaleString() : "No start time"} · this device's time zone</dd><dt>Ends</dt><dd>{mailCalendarDraftEnds() ? new Date(mailCalendarDraftEnds()).toLocaleString() : "No end time"} · this device's time zone</dd><dt>Location</dt><dd>{mailCalendarDraftLocation() || "None"}</dd></dl>
-                          <pre>{mailCalendarDraftDescription() || "(no description)"}</pre>
-                        </Show>
-                        <Show when={mailCalendarSourceRefs().length > 0}><p>Source: {mailCalendarSourceRefs().map((source) => source.label?.trim() || "Selected source").join(", ")}</p></Show>
-                        <Show when={mailCalendarEditorKind() === "mail" && mailCalendarEditingCandidate()?.action.kind === "send_mail" && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("mail_send") && (!mailCalendarReplyToMessageId() || mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("mail_read"))}>
-                          <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndSendMailDraft(candidate); }}>{mailCalendarSendingDraft() ? "Sending…" : mailCalendarReplyToMessageId() ? "Review and send this exact reply" : "Review and send this exact email"}</button>
-                        </Show>
-                        <Show when={mailCalendarEditorKind() === "calendar" && supportsCalendarCreate(mailCalendarEditingCandidate()) && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("calendar_write")}>
-                          <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndCreateCalendarEvent(candidate); }}>{mailCalendarSendingDraft() ? "Creating…" : "Review and create this exact event"}</button>
-                        </Show>
-                        <Show when={mailCalendarEditorKind() === "calendar" && supportsCalendarUpdate(mailCalendarEditingCandidate()) && !mailCalendarDirty() && mailCalendarEditingCandidate()?.candidate_digest && !mailCalendarEditingCandidate()?.action_state && mailCalendarAccounts()?.accounts.find((account) => account.id === mailCalendarEditingCandidate()?.account_id)?.capabilities.includes("calendar_write")}>
-                          <button class="btn danger" disabled={mailCalendarSendingDraft() || mailCalendarSavingDraft()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) reviewAndUpdateCalendarEvent(candidate); }}>{mailCalendarSendingDraft() ? "Updating…" : "Review and update this exact event"}</button>
-                        </Show>
-                        <Show when={mailCalendarEditingCandidate()?.account_id === LOCAL_DRAFT_ACCOUNT_ID && mailCalendarEditorAccount() !== LOCAL_DRAFT_ACCOUNT_ID}>
-                          <button class="btn primary" disabled={mailCalendarBusy() || mailCalendarDirty() || !mailCalendarEditingCandidate()} onClick={() => { const candidate = mailCalendarEditingCandidate(); if (candidate) void assignLocalMailCalendarDraft(candidate); }}>Assign to selected account for Review</button>
-                          <p class="settings-hint">Assigning creates an account-bound candidate for review. It does not contact the provider or perform the action.</p>
-                        </Show>
-                      </section>
-                    </Show>
-                  </div>
+                      </Row>;
+                    }}</For>
+                  </Show>
                 </Show>
               </Group>
               <Show when={!syntheticMailDemo()}><Group title="Scheduled routines">

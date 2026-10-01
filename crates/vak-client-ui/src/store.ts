@@ -462,11 +462,10 @@ export function openOfficeCitation(citation: { path: string; anchor: string }) {
   openArtifactFile(citation.path, { sessionId: activeId() ?? undefined, anchor: citation.anchor });
 }
 
-/** Opens an owner-only mail citation in the account conversation preview. */
+/** Opens an owner-only mail citation in the Agent's mail/calendar Canvas. */
 export function openMailCalendarCitation(citation: MailCalendarCitationTarget) {
   setPendingMailCalendarCitation(citation);
-  setPendingSettingsPage("mail-calendar");
-  setSettingsOpen(true);
+  openArtifactCanvas({ kind: "daily_mail_calendar", title: "Today", agentId: activeAgentId() });
 }
 
 /**

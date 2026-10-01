@@ -2173,3 +2173,13 @@ remains open.
   watcher-restart test, and all five isolated parser/worker tests pass. The
   production Vite build succeeds (with existing dynamic-import and large-chunk
   warnings); no live provider or account data was used.
+- 2026-10-01: Completed the Settings-to-Canvas split for daily work. Connected
+  accounts now link to Today Canvas; Settings no longer renders a second
+  inbox/calendar preview or draft workspace, and its account-deletion copy now
+  says owner previews stay in Canvas without entering conversation history.
+  Conversation citations also open in Canvas and load/locate the cited message
+  across bounded conversation pages. Routine creation, schedule/trigger setup,
+  history and budgets remain in Settings as administration; Today provides
+  paged routine status and handoff to their operational view. The connected
+  Settings fixture passes 10 checks, the daily synthetic Canvas fixture passes
+  27, `npm run typecheck` passes, and no provider request or real data is used.

@@ -180,82 +180,11 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
 (window as any).runChecks = async () => {
   await waitFor(() => !!document.querySelector("button") && document.body.textContent?.includes("owner@example.test") === true, "the fake connected account");
   await waitFor(() => document.body.textContent?.includes("background scheduler has not checked in recently") === true, "stale scheduler health disclosure");
-  await click("Preview inbox");
-  await waitFor(() => document.body.textContent?.includes("Planning the launch review") === true, "the bounded source preview");
-  const inboxPager = document.querySelector<HTMLElement>(".mail-calendar-inbox-pagination");
-  const inboxFirstPageWorks = inboxPager?.textContent?.includes("Page 1 of 2") === true
-    && document.querySelectorAll(".mail-calendar-preview-item").length === 10;
-  await click("Next");
-  const inboxSecondPageWorks = inboxPager?.textContent?.includes("Page 2 of 2") === true
-    && document.body.textContent?.includes("Synthetic inbox message 20") === true;
-  await click("Previous");
-  const inboxReturnsToSource = inboxPager?.textContent?.includes("Page 1 of 2") === true
-    && document.body.textContent?.includes("Planning the launch review") === true;
-  await click("Open conversation");
-  await waitFor(() => document.body.textContent?.includes("Draft a reply in this conversation") === true, "the source conversation");
-  await click("Load more messages");
-  await waitFor(() => document.querySelectorAll(".mail-calendar-thread-message").length === 2, "the next conversation page without duplicate messages");
-  const paginatedMessages = [...document.querySelectorAll<HTMLElement>(".mail-calendar-thread-message")];
-  await click("Draft a reply in this conversation");
-  await waitFor(() => !!document.querySelector(".mail-calendar-editor"), "the reply work area");
-  setField("To", "maya@example.test");
-  setField("Message", "Thanks, Friday works. I will bring the revised agenda.");
-  await click("Preview draft");
-  await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Friday works") === true, "the exact local draft preview");
-  await click("Save draft");
-  await waitFor(() => saved?.candidate_digest === "fixture-digest-1" && saved?.revision === 1, "the Agent-scoped saved candidate");
-  await click("Close");
-  await waitFor(() => [...document.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Open"), "the saved reply in the work-area list");
-  await click("Open");
-  await waitFor(() => document.querySelector<HTMLInputElement>(".mail-calendar-editor input")?.value === "maya@example.test", "the saved reply reopened with its recipient");
-  const reopenedReplyBody = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value;
-  setField("Message", "Local edits I want to keep after the conflict.");
-  forceCandidateConflict = true;
-  await click("Save changes");
-  await waitFor(() => document.querySelector(".mail-calendar-draft-conflict")?.textContent?.includes("This draft changed elsewhere") === true, "the explicit stale revision conflict state");
-  await click("Discard my edits and load latest");
-  await waitFor(() => [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value === "A concurrent edit from another browser.", "the latest remote draft after explicit reload");
-  const explicitReloadDiscardedLocalAsChosen = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value === "A concurrent edit from another browser.";
-  setField("Message", "Local edits I want to keep after the conflict.");
-  forceCandidateConflict = true;
-  await click("Save changes");
-  await waitFor(() => document.querySelector(".mail-calendar-draft-conflict")?.textContent?.includes("This draft changed elsewhere") === true, "the second independent revision conflict");
-  const localEditSurvivedConflict = [...document.querySelectorAll<HTMLTextAreaElement>(".mail-calendar-editor textarea")].find((field) => field.closest("label")?.textContent?.trim().startsWith("Message"))?.value;
-  await click("Save my edits as a separate draft");
-  await waitFor(() => saved?.id === "review-send_mail-candidate-copy" && saved?.action?.draft?.body_text === "Local edits I want to keep after the conflict.", "the forked draft with local edits");
-  const conflictResolutionPreservedBothVersions = latestConflictCandidate?.action?.draft?.body_text === "A concurrent edit from another browser."
-    && saved?.source_refs?.[0]?.item_id === "message-41";
-  await click("Preview draft");
-  const mailReviewOpener = await click("Review and send this exact reply");
-  await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("maya@example.test") === true, "the exact-effect Review");
-  const review = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
-  const mailKeyboard = await exerciseReviewKeyboard(mailReviewOpener);
-  const mailSaved = saved;
-  await click("Preview calendar");
-  await waitFor(() => document.body.textContent?.includes("Friday launch review") === true, "the bounded calendar source preview");
-  await click("New event draft");
-  await waitFor(() => document.querySelector(".mail-calendar-editor")?.textContent?.includes("Calendar event draft") === true, "the event work area");
-  setField("Title", "Synthetic project follow-up");
-  setField("Starts", "2026-10-03T10:00");
-  setField("Ends", "2026-10-03T10:30");
-  setField("Location", "Project room");
-  setField("Description", "Review the synthetic action plan.");
-  await click("Preview draft");
-  await waitFor(() => document.querySelector(".mail-calendar-draft-preview")?.textContent?.includes("Synthetic project follow-up") === true, "the exact local event draft preview");
-  await click("Save draft");
-  await waitFor(() => saved?.action?.kind === "create_event" && saved?.candidate_digest === "fixture-digest-1", "the saved event candidate");
-  const eventReviewOpener = await click("Review and create this exact event");
-  await waitFor(() => document.querySelector("[aria-label='Exact effect preview']")?.textContent?.includes("Synthetic project follow-up") === true, "the exact calendar-effect Review");
-  const eventReview = document.querySelector("[aria-label='Exact effect preview']")?.textContent ?? "";
-  const eventModal = document.body.textContent ?? "";
-  const eventKeyboard = await exerciseReviewKeyboard(eventReviewOpener);
-  const eventSaved = saved;
-  await click("Delete draft");
-  await waitFor(() => [...document.querySelectorAll<HTMLElement>(".sheet[role='dialog']")].at(-1)?.textContent?.includes("Delete this local draft?") === true, "the explicit local-draft deletion confirmation");
-  const deleteDialog = [...document.querySelectorAll<HTMLElement>(".sheet[role='dialog']")].at(-1)!;
-  [...deleteDialog.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Delete draft")?.click();
-  await waitFor(() => saved === null, "the confirmed local draft deletion");
-  const effectCalls = requests.filter((request) => /\/(send|create-event|update-event|cancel-event)$/.test(request.path));
+  const settingsHasNoDailyWorkspace = ![...document.querySelectorAll<HTMLButtonElement>("button")]
+    .some((button) => ["Preview inbox", "Preview calendar", "Check availability"].includes(button.textContent?.trim() ?? ""))
+    && !document.querySelector(".mail-calendar-draft-workspace, .daily-mail-calendar-viewer");
+  const canvasEntryPointWorks = [...document.querySelectorAll<HTMLButtonElement>("button")]
+    .some((button) => button.textContent?.trim() === "Open in Canvas");
   const eventTriggerLabel = [...document.querySelectorAll<HTMLLabelElement>("label.capability-item")].find((label) => label.textContent?.includes("Run around a calendar event"));
   const eventTriggerCheckbox = eventTriggerLabel?.querySelector<HTMLInputElement>("input[type=checkbox]");
   eventTriggerCheckbox?.click();
@@ -284,23 +213,7 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   const passed = [
     check(requests.some((request) => request.path === "/mail-calendar/accounts?agent_id=fixture-review-owner"), "Account inventory stays scoped to the owning Agent"),
     check(document.body.textContent?.includes("service API answers, but its background scheduler has not checked in recently") === true, "The owner UI distinguishes API reachability from a stale background scheduler heartbeat"),
-    check(requests.some((request) => request.path.endsWith("/mail-preview") && request.method === "POST"), "Preview reads only the selected provider inbox"),
-    check(inboxFirstPageWorks && inboxSecondPageWorks && inboxReturnsToSource, "The owner inbox shows a stable 10-message page and returns to the selected source message"),
-    check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.thread_id === "thread-41"), "The source opens its provider conversation"),
-    check(requests.some((request) => request.path.endsWith("/thread-preview") && request.body.cursor === "older-page") && paginatedMessages.length === 2 && paginatedMessages[0].dataset.mailMessageId === "message-41" && paginatedMessages[1].dataset.mailMessageId === "message-40", "Load more follows the conversation cursor and collapses message IDs repeated across provider pages"),
-    check(mailSaved?.source_refs?.[0]?.item_id === "message-41" && mailSaved?.action?.draft?.reply_to_message_id === "message-41" && mailSaved?.action?.draft?.reply_to_thread_id === "thread-41", "The saved reply retains exact message and conversation lineage"),
-    check(mailSaved?.action?.draft?.to?.[0]?.address === "maya@example.test" && mailSaved?.action?.draft?.body_text.includes("Local edits I want") && reopenedReplyBody?.includes("Friday works"), "The saved reply reopens with its edited recipient and body; later edits remain available"),
-    check(explicitReloadDiscardedLocalAsChosen, "The owner can discard conflicting local edits and explicitly load the newer saved version"),
-    check(localEditSurvivedConflict?.includes("Local edits I want") && conflictResolutionPreservedBothVersions && mailSaved?.revision === 1, "A stale revision keeps local edits and forks them without replacing the concurrent saved version"),
-    check(review.includes("Only this saved revision will be sent") && review.includes("Local edits I want to keep"), "Review shows the exact newly forked saved payload and revision semantics"),
-    check(mailKeyboard.forwardWraps && mailKeyboard.reverseWraps && mailKeyboard.escapeRestoresFocus, "Email Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
-    check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing Review leaves the draft in the work area and does not perform a provider effect"),
-    check(requests.some((request) => request.path.endsWith("/calendar-preview") && request.method === "POST") && document.body.textContent?.includes("Friday launch review"), "Calendar preview reads the selected account's bounded event range"),
-    check(eventSaved?.action?.kind === "create_event" && eventSaved?.action?.draft?.title === "Synthetic project follow-up" && eventSaved?.action?.draft?.location === "Project room", "The work area saves the reviewed event fields"),
-    check(eventReview.includes("Only this saved revision will be created") && eventReview.includes("AttendeesNone") && eventReview.includes("ReminderNone") && eventModal.includes("will not invite attendees or set a reminder"), "Calendar Review shows the exact saved revision and effect limits"),
-    check(eventKeyboard.forwardWraps && eventKeyboard.reverseWraps && eventKeyboard.escapeRestoresFocus, "Calendar Review traps Tab in both directions, Escape closes it, and focus returns to the opener"),
-    check(requests.some((request) => request.method === "DELETE" && request.path.endsWith("/candidates/review-create_event-candidate")) && effectCalls.length === 0, "Deleting a draft removes only the Agent work-area copy without contacting a provider effect"),
-    check(effectCalls.length === 0 && !!document.querySelector(".mail-calendar-editor"), "Closing event Review leaves the draft in the work area without creating an event"),
+    check(canvasEntryPointWorks && settingsHasNoDailyWorkspace, "Settings links to Canvas and keeps daily previews and draft editing out of the account panel"),
     check(eventTriggerCheckbox?.checked && task?.mail_calendar_scope?.calendar_event_trigger?.boundary === "start" && task?.mail_calendar_scope?.calendar_source_id === "primary-calendar", "Event-trigger setup pins its boundary and selected calendar source"),
     check(task?.interval_secs === 60 && task?.mail_calendar_scope?.max_items === 10, "The routine preview retains its bounded one-minute cadence"),
     check(foreignRoutineWasHidden, "Routine rows are limited to the selected Agent even when the workspace task list includes another Agent"),
@@ -308,8 +221,7 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
     check(requests.some((request) => request.path === "/sessions/fixture-active-session/cancel" && request.method === "POST"), "Pausing a working routine also asks its active Agent run to stop"),
     check(requests.some((request) => request.path.endsWith("/run-now") && request.method === "POST") && requests.some((request) => request.path.endsWith("/history")), "A one-off preview run appears in the routine's run history"),
     check(!requests.some((request) => new URL(request.path, location.origin).origin !== location.origin), "All fixture requests stay same-origin; no provider or credential endpoint is contacted"),
-  ];
-  const report = document.createElement("pre");
+  ];  const report = document.createElement("pre");
   report.id = "fixture-report";
   report.setAttribute("role", "region");
   report.setAttribute("aria-label", "Acceptance results");

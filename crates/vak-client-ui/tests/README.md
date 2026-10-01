@@ -55,16 +55,15 @@ that no mail/calendar API request reaches `fetch`. It is loopback-only and
 uses no credentials or session data.
 
 `/app/tests/mail-calendar-connected-review.html?run` mounts the real Settings
-workspace against a same-origin fake connected Google account. It exercises
-inbox and calendar previews, conversation opening, reply editing, saved
-message/thread lineage, timed event drafting, exact local previews, and exact
-email and calendar-effect Reviews. It closes both Reviews without confirming,
-reopens the saved reply with its edited fields intact, and confirms that
-deleting a saved candidate calls only the Agent-scoped candidate route. It
-configures an event-trigger routine, runs its paused preview, opens run history,
-and resumes it. It asserts that no provider effect route or external request
-was made. This validates the owner UI boundary with fabricated fixtures; it
-does not replace live provider conformance checks.
+panel against a same-origin fake connected Google account. It verifies that
+Settings offers a direct entry to the daily Canvas, contains no duplicate inbox,
+calendar, or draft workspace, and still supports Agent-scoped account and
+routine administration. Its synthetic event-trigger routine remains paused
+until explicitly resumed, exposes run history, and can be paused while running.
+It asserts that no provider effect route or external request was made. The daily
+Canvas fixture separately covers mail/calendar browsing, paging, draft editing,
+and local Review preparation. These fixtures use fabricated data and do not
+replace live provider conformance checks.
 
 # Result card
 
