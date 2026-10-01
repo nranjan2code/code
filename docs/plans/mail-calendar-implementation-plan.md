@@ -621,6 +621,15 @@ matching Agent-session ID in routine history. This proves scheduler admission
 and history linkage with synthetic credentials and a fake model; it does not
 exercise provider polling or establish sustained service availability.
 
+**Implemented increment (2026-10-01):** a synthetic endurance regression now
+drains 1,200 provider message IDs in 100-ID cursor pages and 20-ID run batches,
+reopening the encrypted Agent vault between pages and runs. It interrupts one
+batch, verifies exact requeue after reopen, drains the recovery, and checks
+deduplication within the vault's bounded 512-ID recent history. Older replay
+protection still depends on the persisted provider cursor. This stress check
+does not simulate 24 hours of scheduler uptime or real network/provider
+outages.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -2006,3 +2015,8 @@ remains open.
   scheduled trigger and matching session ID. No provider request is made. The
   targeted server test passes; provider polling and 24-hour recovery remain
   separate acceptance gates.
+- 2026-10-01: Added a large synthetic watch-backlog regression: 1,200 messages,
+  bounded cursor pages and run batches, vault reopen between steps, an
+  interrupted batch/requeue, and recent-window deduplication. The focused test
+  passes. This exercises data volume and local recovery without claiming a
+  24-hour host-availability or live-provider test.

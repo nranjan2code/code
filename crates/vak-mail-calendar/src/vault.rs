@@ -2185,6 +2185,102 @@ mod tests {
     }
 
     #[test]
+    fn routine_mail_watch_drains_large_synthetic_history_across_restarts() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-large-watch-{}", Uuid::now_v7());
+        let account_id = Uuid::now_v7().to_string();
+        let routine_id = Uuid::now_v7().to_string();
+        let all_ids = (0..1_200)
+            .map(|index| format!("synthetic-message-{index:05}"))
+            .collect::<Vec<_>>();
+
+        let mut recovered_one_failed_batch = false;
+        for (page_number, page) in all_ids.chunks(MAX_ROUTINE_PENDING_IDS).enumerate() {
+            let page_ids = page.to_vec();
+            let cursor = format!("synthetic-cursor-{}", page_number + 1);
+            let vault = AccountVault::for_agent(&agent_id).unwrap();
+            assert!(
+                vault
+                    .queue_mail_ids_with_cursor(&routine_id, &account_id, &page_ids, Some(&cursor))
+                    .unwrap()
+            );
+
+            // Reopen the encrypted vault between pages and bounded child runs,
+            // as if the service had restarted while the watch was draining.
+            let reopened = AccountVault::for_agent(&agent_id).unwrap();
+            assert_eq!(
+                reopened
+                    .routine_provider_cursor(&routine_id, &account_id)
+                    .unwrap()
+                    .as_deref(),
+                Some(cursor.as_str())
+            );
+            loop {
+                let vault = AccountVault::for_agent(&agent_id).unwrap();
+                let batch = vault
+                    .pending_mail_ids(&routine_id, &account_id, 20)
+                    .unwrap();
+                if batch.is_empty() {
+                    break;
+                }
+                vault
+                    .stage_delivered_mail_ids(&routine_id, &account_id, &batch)
+                    .unwrap();
+                let simulate_interruption = page_number == 4 && !recovered_one_failed_batch;
+                vault
+                    .resolve_delivered_mail_ids(&routine_id, &account_id, !simulate_interruption)
+                    .unwrap();
+                if simulate_interruption {
+                    recovered_one_failed_batch = true;
+                    let restarted = AccountVault::for_agent(&agent_id).unwrap();
+                    assert_eq!(
+                        restarted
+                            .pending_mail_ids(&routine_id, &account_id, 20)
+                            .unwrap(),
+                        batch,
+                        "an interrupted run must requeue its exact batch after restart"
+                    );
+                }
+            }
+        }
+
+        assert!(recovered_one_failed_batch);
+        let completed = AccountVault::for_agent(&agent_id).unwrap();
+        assert!(
+            !completed
+                .has_unresolved_mail_ids(&routine_id, &account_id)
+                .unwrap()
+        );
+        assert!(
+            completed
+                .pending_mail_ids(&routine_id, &account_id, MAX_ROUTINE_PENDING_IDS)
+                .unwrap()
+                .is_empty()
+        );
+
+        // Replaying recent provider IDs is harmless within the bounded
+        // deduplication window; older IDs rely on the persisted provider cursor.
+        let recent_ids = all_ids
+            .iter()
+            .skip(all_ids.len().saturating_sub(super::MAX_ROUTINE_SEEN_IDS))
+            .cloned()
+            .collect::<Vec<_>>();
+        for page in recent_ids.chunks(MAX_ROUTINE_PENDING_IDS) {
+            assert!(
+                !completed
+                    .queue_unseen_mail_ids(&routine_id, &account_id, &page.to_vec())
+                    .unwrap()
+            );
+        }
+        assert!(
+            completed
+                .pending_mail_ids(&routine_id, &account_id, MAX_ROUTINE_PENDING_IDS)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
     fn calendar_occurrence_backlog_is_encrypted_scoped_and_restart_recoverable() {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-calendar-backlog-{}", Uuid::now_v7());
