@@ -52,6 +52,12 @@ pub struct RoutineLease {
     _lock_file: File,
 }
 
+/// Cross-process exclusive claim for one Agent account's OAuth rotation.
+/// Keep it alive until the rotated secret and ledger metadata are committed.
+pub struct AccountRefreshLease {
+    _lock_file: File,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RoutineRunTrigger {
@@ -352,6 +358,40 @@ impl AccountVault {
         let file = options.open(lock_path).map_err(VaultError::Store)?;
         match file.try_lock_exclusive() {
             Ok(()) => Ok(Some(RoutineLease { _lock_file: file })),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            Err(error) => Err(VaultError::Store(error)),
+        }
+    }
+
+    /// Prevent separate local Vakyartha processes from refreshing one
+    /// provider account concurrently while its refresh token may rotate.
+    pub fn try_acquire_account_refresh_lease(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<AccountRefreshLease>, VaultError> {
+        validate_account_id(account_id)?;
+        let agent_home = self
+            .scope_hint
+            .parent()
+            .ok_or(VaultError::InvalidReference)?;
+        let work_dir = agent_home.join("mail-calendar");
+        ensure_agent_directory(&work_dir, true)?;
+        let lock_path = work_dir.join(format!(".account-refresh-{account_id}.lease"));
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (metadata.file_type().is_symlink() || !metadata.is_file())
+        {
+            return Err(VaultError::InvalidReference);
+        }
+        let mut options = OpenOptions::new();
+        options.create(true).truncate(false).read(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600).custom_flags(libc::O_NOFOLLOW);
+        }
+        let file = options.open(lock_path).map_err(VaultError::Store)?;
+        match file.try_lock_exclusive() {
+            Ok(()) => Ok(Some(AccountRefreshLease { _lock_file: file })),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
             Err(error) => Err(VaultError::Store(error)),
         }
@@ -2502,6 +2542,34 @@ mod tests {
         assert!(
             second_vault
                 .try_acquire_routine_lease(&routine_id)
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn account_refresh_lease_serializes_independent_server_vault_handles() {
+        let agent_id = format!("mailcal-refresh-lease-{}", Uuid::now_v7());
+        let first_vault = AccountVault::for_agent(&agent_id).unwrap();
+        let second_vault = AccountVault::for_agent(&agent_id).unwrap();
+        let account_id = Uuid::now_v7().to_string();
+
+        let lease = first_vault
+            .try_acquire_account_refresh_lease(&account_id)
+            .unwrap()
+            .expect("first process owns the refresh lease");
+        assert!(
+            second_vault
+                .try_acquire_account_refresh_lease(&account_id)
+                .unwrap()
+                .is_none(),
+            "a second process cannot rotate the same provider credential"
+        );
+
+        drop(lease);
+        assert!(
+            second_vault
+                .try_acquire_account_refresh_lease(&account_id)
                 .unwrap()
                 .is_some()
         );

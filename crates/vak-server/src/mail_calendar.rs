@@ -297,6 +297,144 @@ pub(crate) async fn calendar_event_has_due(
         .map_err(|_| "the private calendar occurrence queue is unavailable".to_string())
 }
 
+/// Keep OAuth-backed unattended routines usable across access-token expiry.
+/// The account lock is shared with explicit owner refresh and disconnect so a
+/// refresh-token rotation cannot race a second refresh or a credential purge.
+/// Apple app passwords have no access-token expiry and pass through untouched.
+async fn refresh_routine_account_if_needed(
+    state: &AppState,
+    agent_id: &str,
+    account_id: &str,
+) -> Result<ConnectedAccount, String> {
+    const REFRESH_AHEAD: chrono::Duration = chrono::Duration::seconds(300);
+
+    let lock = state.mail_calendar_account_lock(agent_id, account_id);
+    let _guard = lock.lock().await;
+    if !valid_agent(state, agent_id) {
+        return Err("the owning Agent is unavailable".into());
+    }
+    let ledger = ConnectionLedger::for_agent(agent_id)
+        .map_err(|_| "mail/calendar connection state is unavailable".to_string())?;
+    let vault = AccountVault::for_agent(agent_id)
+        .map_err(|_| "mail/calendar credentials are unavailable".to_string())?;
+    let Some(_refresh_lease) = vault
+        .try_acquire_account_refresh_lease(account_id)
+        .map_err(|_| "mail/calendar credentials are unavailable".to_string())?
+    else {
+        return Err("another local service is refreshing this account; retry shortly".into());
+    };
+    let account = ledger
+        .read_all()
+        .map_err(|_| "mail/calendar connection state is unavailable".to_string())?
+        .into_iter()
+        .find(|account| {
+            account.id == account_id
+                && account.owner_agent_id == agent_id
+                && account.status == AccountStatus::Connected
+                && account.revoked_at.is_none()
+        })
+        .ok_or_else(|| "the selected account is no longer connected".to_string())?;
+    let Some(expires_at) = account.access_token_expires_at else {
+        return Ok(account);
+    };
+    if expires_at > Utc::now() + REFRESH_AHEAD {
+        return Ok(account);
+    }
+
+    let require_reconnection = || {
+        if ledger
+            .append_reauthentication_required(account_id, Utc::now())
+            .is_ok()
+        {
+            pause_routines_for_account(state, agent_id, account_id);
+            record_account_event(
+                state,
+                "account_reauthentication_required",
+                agent_id,
+                account_id,
+                account.provider,
+                &account.capabilities,
+                "routine_token_refresh_rejected",
+            );
+        }
+    };
+    if !account.refresh_token_available || account.provider == Provider::AppleIcloud {
+        require_reconnection();
+        return Err("this account needs to be reconnected before its routine can continue".into());
+    }
+    let rotated = match vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await {
+        Ok(tokens) => tokens,
+        Err(vak_mail_calendar::oauth::OAuthRefreshError::ReconnectRequired) => {
+            require_reconnection();
+            return Err(
+                "this account needs to be reconnected before its routine can continue".into(),
+            );
+        }
+        Err(vak_mail_calendar::oauth::OAuthRefreshError::Vault(_)) => {
+            return Err("mail/calendar credentials are unavailable".into());
+        }
+        Err(_) => return Err("the provider could not refresh this routine's sign-in".into()),
+    };
+    if !valid_agent(state, agent_id) {
+        return Err("the owning Agent is unavailable".into());
+    }
+    let Some(revision) = account.revision.checked_add(1) else {
+        return Err("the account changed while its sign-in was refreshing".into());
+    };
+    let mut refreshed = account.clone();
+    refreshed.revision = revision;
+    refreshed.access_token_expires_at = Some(rotated.expires_at());
+    let commit = ledger.append_connected_if_current(refreshed.clone(), account.revision, || {
+        if !valid_agent(state, agent_id) {
+            return Err(RefreshCommitError::AgentInactive);
+        }
+        rotated
+            .persist(&vault, &account)
+            .map(|_| ())
+            .map_err(RefreshCommitError::Credential)
+    });
+    if commit.is_err() {
+        return Err("the account changed while its sign-in was refreshing".into());
+    }
+    record_account_event(
+        state,
+        "account_refreshed",
+        agent_id,
+        account_id,
+        refreshed.provider,
+        &refreshed.capabilities,
+        "routine_token_refresh",
+    );
+    Ok(refreshed)
+}
+
+pub(crate) async fn prepare_routine_account(
+    state: &AppState,
+    agent_id: &str,
+    scope: &RoutineScope,
+) -> Result<(), String> {
+    scope.validate().map_err(|error| error.to_string())?;
+    let account = refresh_routine_account_if_needed(state, agent_id, &scope.account_id).await?;
+    let audience = format!("agent:{agent_id}");
+    let authorized = scope.operations.iter().all(|operation| {
+        let capability = match operation {
+            RoutineOperation::RecentMail | RoutineOperation::MailThread => Capability::MailRead,
+            RoutineOperation::CalendarEvents => Capability::CalendarRead,
+            RoutineOperation::FreeBusy => Capability::CalendarFreeBusy,
+        };
+        account.admits(agent_id, &audience, capability)
+    });
+    if !authorized {
+        return Err("the account no longer grants every operation in this routine".into());
+    }
+    let vault = AccountVault::for_agent(agent_id)
+        .map_err(|_| "mail/calendar credentials are unavailable".to_string())?;
+    if !vault.credential_available(&scope.account_id) {
+        return Err("the linked account credential is unavailable".into());
+    }
+    Ok(())
+}
+
 fn due_calendar_occurrence_keys(
     events: &[vak_mail_calendar::provider::CalendarItem],
     trigger: vak_mail_calendar::CalendarEventTrigger,
@@ -2431,6 +2569,7 @@ fn mark_account_reauthentication_required(
             .append_reauthentication_required(&account.id, Utc::now())
             .is_ok()
         {
+            pause_routines_for_account(state, &account.owner_agent_id, &account.id);
             record_account_event(
                 state,
                 "account_reauthentication_required",
@@ -2442,6 +2581,21 @@ fn mark_account_reauthentication_required(
             );
         }
     }
+}
+
+fn pause_routines_for_account(state: &AppState, agent_id: &str, account_id: &str) {
+    crate::update_tasks(state, |tasks| {
+        for task in tasks.values_mut() {
+            let owns_account = task.agent_id.as_deref() == Some(agent_id)
+                && task
+                    .mail_calendar_scope
+                    .as_ref()
+                    .is_some_and(|scope| scope.account_id == account_id);
+            if owns_account {
+                task.enabled = false;
+            }
+        }
+    });
 }
 
 fn preview_account(
@@ -3195,13 +3349,20 @@ mod tests {
     use super::{
         OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
         oauth_callback_cookie, oauth_callback_page, oauth_callback_set_cookie, oauth_callback_uri,
-        registered_agent, same_provider_principal, valid_agent, valid_microsoft_personal_email,
+        pause_routines_for_account, refresh_routine_account_if_needed, registered_agent,
+        same_provider_principal, valid_agent, valid_microsoft_personal_email,
         valid_provider_app_password, valid_provider_email, verifiable_app_password_selection,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+    use chrono::Utc;
     use std::collections::BTreeSet;
-    use vak_mail_calendar::vault::AccountSecretMaterial;
-    use vak_mail_calendar::{CalendarEventBoundary, CalendarEventTrigger, Capability, Provider};
+    use uuid::Uuid;
+    use vak_mail_calendar::connection_ledger::ConnectionLedger;
+    use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
+    use vak_mail_calendar::{
+        AccountStatus, CalendarEventBoundary, CalendarEventTrigger, Capability, ConnectedAccount,
+        Provider,
+    };
 
     #[test]
     fn large_simulated_calendar_batch_filters_due_timed_occurrences_only() {
@@ -3576,6 +3737,148 @@ mod tests {
     }
 
     #[test]
+    fn reauthentication_pauses_only_routines_for_that_agent_account_pair() {
+        let state = crate::test_support::state();
+        let now = Utc::now();
+        let routine = |id: &str, agent_id: &str, account_id: &str| {
+            serde_json::from_value::<vak_core::tasks::TaskDef>(serde_json::json!({
+                "id": id,
+                "name": id,
+                "enabled": true,
+                "cwd": "/tmp/mail-calendar-test",
+                "created_at": now,
+                "last_run_at": null,
+                "last_session_id": null,
+                "last_summary": null,
+                "agent_id": agent_id,
+                "mail_calendar_scope": {
+                    "routine_id": id,
+                    "account_id": account_id,
+                    "operations": ["recent_mail"],
+                    "max_items": 5,
+                    "watch_new_mail": true
+                }
+            }))
+            .unwrap()
+        };
+        crate::update_tasks(&state, |tasks| {
+            tasks.insert(
+                "same-account".into(),
+                routine("same-account", "agent-a", "account-1"),
+            );
+            tasks.insert(
+                "other-account".into(),
+                routine("other-account", "agent-a", "account-2"),
+            );
+            tasks.insert(
+                "other-agent".into(),
+                routine("other-agent", "agent-b", "account-1"),
+            );
+        });
+
+        pause_routines_for_account(&state, "agent-a", "account-1");
+
+        let tasks = state
+            .tasks
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert!(!tasks["same-account"].enabled);
+        assert!(tasks["other-account"].enabled);
+        assert!(tasks["other-agent"].enabled);
+    }
+
+    #[tokio::test]
+    async fn expired_routine_token_without_refresh_credential_pauses_and_fences_routine() {
+        vak_config::paths::isolate_home_for_tests();
+        let state = crate::test_support::state();
+        let agent_id = "mail-refresh-owner";
+        let agent = crate::agents::find_template("writer")
+            .unwrap()
+            .to_agent_definition(agent_id, None);
+        crate::agents::save(state.core.cwd(), std::slice::from_ref(&agent), true).unwrap();
+
+        let account_id = Uuid::now_v7().to_string();
+        let credential_ref = AccountVault::credential_ref(&account_id).unwrap();
+        let vault = AccountVault::for_agent(agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                AccountSecretMaterial::new(
+                    "google:synthetic-subject".into(),
+                    Some("owner@example.test".into()),
+                    Some("synthetic-client".into()),
+                    Some("expired-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let ledger = ConnectionLedger::for_agent(agent_id).unwrap();
+        let audience = format!("agent:{agent_id}");
+        let mut account = ConnectedAccount {
+            id: account_id.clone(),
+            provider: Provider::Google,
+            status: AccountStatus::Pending,
+            owner_agent_id: agent_id.into(),
+            allowed_audiences: [audience].into_iter().collect(),
+            capabilities: [Capability::MailRead].into_iter().collect(),
+            provider_scopes: ["https://www.googleapis.com/auth/gmail.readonly".into()]
+                .into_iter()
+                .collect(),
+            credential_ref: credential_ref.clone(),
+            principal_ref: credential_ref,
+            revision: 1,
+            connected_at: Utc::now() - chrono::Duration::hours(1),
+            access_token_expires_at: Some(Utc::now() - chrono::Duration::seconds(1)),
+            refresh_token_available: false,
+            revoked_at: None,
+        };
+        ledger.append_pending(account.clone()).unwrap();
+        account.status = AccountStatus::Connected;
+        account.revision = 2;
+        ledger.append_connected(account).unwrap();
+
+        let routine = serde_json::from_value::<vak_core::tasks::TaskDef>(serde_json::json!({
+            "id": "expired-mail-watch",
+            "name": "expired mail watch",
+            "enabled": true,
+            "cwd": state.core.cwd(),
+            "created_at": Utc::now(),
+            "last_run_at": null,
+            "last_session_id": null,
+            "last_summary": null,
+            "agent_id": agent_id,
+            "mail_calendar_scope": {
+                "routine_id": "expired-mail-watch",
+                "account_id": account_id,
+                "operations": ["recent_mail"],
+                "max_items": 5,
+                "watch_new_mail": true
+            }
+        }))
+        .unwrap();
+        crate::update_tasks(&state, |tasks| {
+            tasks.insert(routine.id.clone(), routine);
+        });
+
+        let result = refresh_routine_account_if_needed(&state, agent_id, &account_id).await;
+        assert!(result.is_err());
+        assert_eq!(
+            ledger.read_all().unwrap()[0].status,
+            AccountStatus::ReauthenticationRequired
+        );
+        assert!(
+            !state
+                .tasks
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)["expired-mail-watch"]
+                .enabled
+        );
+    }
+
+    #[test]
     fn idle_account_operation_locks_are_reclaimed_after_account_churn() {
         let state = crate::test_support::state();
         for index in 0..128 {
@@ -3924,6 +4227,20 @@ pub(super) async fn refresh_account(
     let Ok(ledger) = ConnectionLedger::for_agent(&agent_id) else {
         return StatusCode::BAD_REQUEST.into_response();
     };
+    let Ok(vault) = AccountVault::for_agent(&agent_id) else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let _refresh_lease = match vault.try_acquire_account_refresh_lease(&account_id) {
+        Ok(Some(lease)) => lease,
+        Ok(None) => {
+            return (
+                StatusCode::CONFLICT,
+                "Another local service is refreshing this account. Retry shortly.",
+            )
+                .into_response();
+        }
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
     let account = match ledger.read_all() {
         Ok(accounts) => accounts.into_iter().find(|account| {
             account.id == account_id
@@ -3945,9 +4262,6 @@ pub(super) async fn refresh_account(
         )
             .into_response();
     }
-    let Ok(vault) = AccountVault::for_agent(&agent_id) else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
     let rotated_tokens =
         match vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await {
             Ok(tokens) => tokens,
@@ -3958,6 +4272,7 @@ pub(super) async fn refresh_account(
                 {
                     return StatusCode::SERVICE_UNAVAILABLE.into_response();
                 }
+                pause_routines_for_account(&state, &agent_id, &account_id);
                 record_account_event(
                     &state,
                     "account_reauthentication_required",

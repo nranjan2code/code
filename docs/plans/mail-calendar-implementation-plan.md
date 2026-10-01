@@ -661,6 +661,19 @@ or discard a run already in progress. This verifies the shared scheduler
 control path with a gated synthetic provider; full mail/calendar provider
 outage and sustained-service acceptance remain open.
 
+**Implemented increment (2026-10-02):** before every scheduled or owner-started
+mail/calendar routine run, the server now checks the linked credential and
+refreshes Google or Microsoft access tokens within five minutes of expiry.
+Refresh shares the in-process account lock and a vault-backed OS lease with
+owner refresh and disconnect. It persists rotated credentials in the Agent
+vault before appending new expiry metadata, then rechecks Agent/account state
+at commit. If refresh requires owner sign-in, the account is fenced and only
+routines for that Agent/account pair are paused. Synthetic tests verify
+cross-process lease exclusion, the reconnect fence, and scoped pause; OAuth
+adapter tests cover refresh-response validation and token rotation. A full
+scheduled-run token-rotation test through a provider test endpoint remains
+open, along with the sustained-service acceptance.
+
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
 run, and recovery. Every missed/expired trigger has an explicit state, and
@@ -725,6 +738,17 @@ remains open.
 
 ## Progress log
 
+- 2026-10-02: Scheduled and owner-started mail/calendar runs now refresh OAuth
+  access tokens shortly before expiry under an in-process lock and a
+  vault-backed OS lease shared with owner refresh and disconnect. Rotated
+  tokens stay in the Agent vault; expiry metadata is appended only after the
+  Agent and account are rechecked. A rejected refresh fences the account and
+  pauses routines scoped to that exact Agent/account pair. Verification:
+  server check, scheduled-run integration suite (6 tests), a synthetic
+  expired-token/reconnect test, and independent vault-handle refresh-lease
+  contention test pass. Successful
+  scheduler-path token rotation against a provider test endpoint and the
+  sustained 24-hour service acceptance remain open.
 - 2026-10-01: Audited the system guardrails, the model-visible mail/calendar
   tool description and argument schemas, the provider-output trust wrapper,
   and the scheduled-run prompt path. Made the model contract explicit across

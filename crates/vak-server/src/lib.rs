@@ -18894,6 +18894,23 @@ async fn fire_task_with_force(
     } else {
         None
     };
+    if let (Some(scope), Some(agent_id)) = (
+        snapshot.mail_calendar_scope.as_ref(),
+        snapshot.agent_id.as_deref(),
+    ) {
+        if let Err(error) = mail_calendar::prepare_routine_account(state, agent_id, scope).await {
+            if let (Some(vault), Some(run)) = (routine_vault.as_ref(), routine_run.as_ref()) {
+                let _ = vault.finish_routine_run(
+                    &scope.routine_id,
+                    &scope.account_id,
+                    &run.run_id,
+                    vak_mail_calendar::vault::RoutineRunStatus::Failed,
+                    chrono::Utc::now(),
+                );
+            }
+            return Err(refuse_task(state, &snapshot, error));
+        }
+    }
     if !force_mail_watch_run
         && let Some(scope) = snapshot
             .mail_calendar_scope
