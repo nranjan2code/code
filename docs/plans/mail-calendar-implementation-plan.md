@@ -1856,3 +1856,9 @@ remains open.
   no-connected-accounts empty state. No provider content or credentials were
   accessed in that profile check. Account-linked source-to-Review behavior
   still needs an Agent with connected accounts.
+- 2026-10-01: Bounded the Today Canvas to two accounts' provider reads at a
+  time, so a larger linked-account set does not fan out every request at once.
+  Expanded the synthetic browser fixture to nine accounts (three per provider),
+  72 mail rows, 300 events, and 24 free/busy intervals. All nine checks passed,
+  including the maximum two-account concurrency assertion; the UI production
+  build and typecheck pass.

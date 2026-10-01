@@ -2,23 +2,27 @@ import { render } from "solid-js/web";
 import DailyMailCalendarViewer from "../src/components/canvas/DailyMailCalendarViewer";
 import "../src/styles.css";
 
-const providers = [
-  { id: "g-account", provider: "google", capabilities: ["mail_read", "calendar_read"] },
-  { id: "m-account", provider: "microsoft", capabilities: ["mail_read", "calendar_read"] },
-  { id: "a-account", provider: "apple_icloud", capabilities: ["mail_read", "calendar_free_busy"] },
+const providerTypes = [
+  { prefix: "g-account", provider: "google", capabilities: ["mail_read", "calendar_read"] },
+  { prefix: "m-account", provider: "microsoft", capabilities: ["mail_read", "calendar_read"] },
+  { prefix: "a-account", provider: "apple_icloud", capabilities: ["mail_read", "calendar_free_busy"] },
 ] as const;
-const accounts = providers.map((provider) => ({
-  ...provider,
+const accounts = providerTypes.flatMap((provider) => Array.from({ length: 3 }, (_, index) => ({
+  id: `${provider.prefix}-${index}`,
+  provider: provider.provider,
+  capabilities: provider.capabilities,
   status: "connected",
-  identity_masked: `${provider.provider}@example.test`,
+  identity_masked: `${provider.provider}-${index}@example.test`,
   credential_available: true,
   superseded_by_active_link: false,
   connected_at: "2026-10-01T00:00:00Z",
   access_token_expires_at: null,
   refresh_token_available: false,
   revoked_at: null,
-}));
+})));
 const requests: string[] = [];
+const activeAccounts = new Map<string, number>();
+let maxConcurrentAccounts = 0;
 const now = new Date();
 const day = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const localDayStart = new Date(`${day(now)}T00:00:00`);
@@ -29,19 +33,23 @@ window.fetch = async (input) => {
   requests.push(`${url.pathname}${url.search}`);
   if (url.pathname === "/mail-calendar/accounts") return json({ accounts });
   const accountId = url.pathname.split("/")[4];
-  const account = providers.find((candidate) => candidate.id === accountId)!;
-  if (url.pathname.endsWith("/mail-preview")) {
-    return json({ messages: Array.from({ length: 8 }, (_, index) => ({
+  const account = accounts.find((candidate) => candidate.id === accountId)!;
+  activeAccounts.set(accountId, (activeAccounts.get(accountId) ?? 0) + 1);
+  maxConcurrentAccounts = Math.max(maxConcurrentAccounts, activeAccounts.size);
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  try {
+    if (url.pathname.endsWith("/mail-preview")) {
+      return json({ messages: Array.from({ length: 8 }, (_, index) => ({
       provider_id: `${accountId}-message-${index}`,
       thread_id: account.provider === "apple_icloud" ? null : `${accountId}-thread-${index}`,
       from: `sender-${index}@example.test`, to: "owner@example.test", cc: null,
       subject: `${account.provider} sample mail ${index + 1}`,
       received_at: new Date(Date.now() - index * 60_000).toISOString(),
       preview: `Synthetic preview row ${index + 1}`, body_text: null, body_status: "available", has_attachments: false,
-    })) });
-  }
-  if (url.pathname.endsWith("/calendar-preview")) {
-    return json({ events: Array.from({ length: 50 }, (_, index) => {
+      })) });
+    }
+    if (url.pathname.endsWith("/calendar-preview")) {
+      return json({ events: Array.from({ length: 50 }, (_, index) => {
       const start = new Date(localDayStart.getTime() + (8 * 60 + index * 7) * 60_000);
       const end = new Date(start.getTime() + 5 * 60_000);
       return {
@@ -49,15 +57,20 @@ window.fetch = async (input) => {
         starts_at: start.toISOString(), ends_at: end.toISOString(), starts_on: null, ends_on: null,
         all_day: false, location: null, description: null, attendee_count: 0, recurring: false, private: false, version: null,
       };
-    }) });
-  }
-  if (url.pathname.endsWith("/free-busy-preview")) {
-    return json({ busy: Array.from({ length: 8 }, (_, index) => ({
+      }) });
+    }
+    if (url.pathname.endsWith("/free-busy-preview")) {
+      return json({ busy: Array.from({ length: 8 }, (_, index) => ({
       starts_at: new Date(localDayStart.getTime() + (9 * 60 + index * 60) * 60_000).toISOString(),
       ends_at: new Date(localDayStart.getTime() + (9 * 60 + index * 60 + 30) * 60_000).toISOString(),
-    })) });
+      })) });
+    }
+    return json({ error: "Unexpected fixture route" });
+  } finally {
+    const active = (activeAccounts.get(accountId) ?? 1) - 1;
+    if (active === 0) activeAccounts.delete(accountId);
+    else activeAccounts.set(accountId, active);
   }
-  return json({ error: "Unexpected fixture route" });
 };
 
 render(() => <DailyMailCalendarViewer
@@ -74,13 +87,14 @@ const check = (ok: unknown, message: string) => { if (!ok) throw new Error(messa
   await new Promise((resolve) => setTimeout(resolve, 500));
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
-    check(requests.filter((path) => path.endsWith("/mail-preview")).length === 3, "Recent mail is read once for each connected provider"),
-    check(requests.filter((path) => path.endsWith("/calendar-preview")).length === 2 && requests.filter((path) => path.endsWith("/free-busy-preview")).length === 1, "Calendar details and free/busy use the exact provider grants"),
-    check(document.querySelectorAll(".daily-mail-calendar-message").length === 24, "The daily view renders eight recent rows from each of three providers"),
-    check(document.querySelectorAll(".mail-calendar-event").length === 100, "The daily view renders both bounded 50-event provider batches"),
-    check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 8, "The free/busy-only account renders intervals without event details"),
-    check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("microsoft sample mail 8") && document.body.textContent.includes("apple_icloud@example.test"), "Provider rows retain their visible source identity"),
+    check(requests.filter((path) => path.endsWith("/mail-preview")).length === 9, "Recent mail is read once for each connected account"),
+    check(requests.filter((path) => path.endsWith("/calendar-preview")).length === 6 && requests.filter((path) => path.endsWith("/free-busy-preview")).length === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
+    check(document.querySelectorAll(".daily-mail-calendar-message").length === 72, "The daily view renders eight recent rows for each of nine connected accounts"),
+    check(document.querySelectorAll(".mail-calendar-event").length === 300, "The daily view renders bounded 50-event batches across six calendar-read accounts"),
+    check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
+    check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("microsoft sample mail 8") && document.body.textContent.includes("apple_icloud-2@example.test"), "Provider rows retain their visible source identity"),
     check(!document.body.textContent?.includes("apple_icloud sample event"), "Free/busy rows do not disclose event titles"),
+    check(maxConcurrentAccounts <= 2 && maxConcurrentAccounts === 2, "Provider reads for many accounts run in batches of at most two accounts"),
   ];
   (window as any).__passed = passed;
   return passed;

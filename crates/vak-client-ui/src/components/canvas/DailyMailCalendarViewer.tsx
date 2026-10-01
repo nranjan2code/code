@@ -32,28 +32,35 @@ async function readToday(agentId: string): Promise<{ day: string; accounts: Dail
   const to = toInstant.toISOString();
   const inventory = await api.listMailCalendarAccounts(agentId);
   const accounts = inventory.accounts.filter((account) => account.status === "connected" && !account.revoked_at);
-  const results = await Promise.all(accounts.map(async (account): Promise<DailyAccount> => {
-    const [mail, calendar, freeBusy] = await Promise.all([
-      account.capabilities.includes("mail_read") && account.credential_available
-        ? api.previewMailCalendarMail(agentId, account.id, 8).then((value) => ({ value: value.messages, failed: false })).catch(() => ({ value: [] as api.MailCalendarMailPreview[], failed: true }))
-        : Promise.resolve({ value: [] as api.MailCalendarMailPreview[], failed: false }),
-      account.capabilities.includes("calendar_read") && account.credential_available
-        ? api.previewMailCalendarEvents(agentId, account.id, from, to, 50).then((value) => ({ value: value.events.map((event) => ({ ...event, account_id: account.id, account_name: providerName(account) })), failed: false })).catch(() => ({ value: [] as api.MailCalendarEventPreview[], failed: true }))
-        : Promise.resolve({ value: [] as api.MailCalendarEventPreview[], failed: false }),
-      account.capabilities.includes("calendar_free_busy") && !account.capabilities.includes("calendar_read") && account.credential_available
-        ? api.previewMailCalendarFreeBusy(agentId, account.id, from, to).then((value) => ({ value: value.busy, failed: false })).catch(() => ({ value: [] as api.MailCalendarBusySlot[], failed: true }))
-        : Promise.resolve({ value: [] as api.MailCalendarBusySlot[], failed: false }),
-    ]);
-    const needsCredential = !account.credential_available;
-    return {
-      account,
-      messages: mail.value,
-      events: calendar.value,
-      busy: freeBusy.value,
-      mailError: mail.failed || (needsCredential && account.capabilities.includes("mail_read")),
-      calendarError: calendar.failed || freeBusy.failed || (needsCredential && (account.capabilities.includes("calendar_read") || account.capabilities.includes("calendar_free_busy"))),
-    };
-  }));
+  const results: DailyAccount[] = [];
+  // A Today view can span several linked accounts. Keep provider fan-out
+  // bounded while retaining the combined agenda and inbox.
+  for (let offset = 0; offset < accounts.length; offset += 2) {
+    const batch = accounts.slice(offset, offset + 2);
+    const batchResults = await Promise.all(batch.map(async (account): Promise<DailyAccount> => {
+      const [mail, calendar, freeBusy] = await Promise.all([
+        account.capabilities.includes("mail_read") && account.credential_available
+          ? api.previewMailCalendarMail(agentId, account.id, 8).then((value) => ({ value: value.messages, failed: false })).catch(() => ({ value: [] as api.MailCalendarMailPreview[], failed: true }))
+          : Promise.resolve({ value: [] as api.MailCalendarMailPreview[], failed: false }),
+        account.capabilities.includes("calendar_read") && account.credential_available
+          ? api.previewMailCalendarEvents(agentId, account.id, from, to, 50).then((value) => ({ value: value.events.map((event) => ({ ...event, account_id: account.id, account_name: providerName(account) })), failed: false })).catch(() => ({ value: [] as api.MailCalendarEventPreview[], failed: true }))
+          : Promise.resolve({ value: [] as api.MailCalendarEventPreview[], failed: false }),
+        account.capabilities.includes("calendar_free_busy") && !account.capabilities.includes("calendar_read") && account.credential_available
+          ? api.previewMailCalendarFreeBusy(agentId, account.id, from, to).then((value) => ({ value: value.busy, failed: false })).catch(() => ({ value: [] as api.MailCalendarBusySlot[], failed: true }))
+          : Promise.resolve({ value: [] as api.MailCalendarBusySlot[], failed: false }),
+      ]);
+      const needsCredential = !account.credential_available;
+      return {
+        account,
+        messages: mail.value,
+        events: calendar.value,
+        busy: freeBusy.value,
+        mailError: mail.failed || (needsCredential && account.capabilities.includes("mail_read")),
+        calendarError: calendar.failed || freeBusy.failed || (needsCredential && (account.capabilities.includes("calendar_read") || account.capabilities.includes("calendar_free_busy"))),
+      };
+    }));
+    results.push(...batchResults);
+  }
   return { day, accounts: results, refreshedAt: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) };
 }
 

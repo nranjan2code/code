@@ -327,10 +327,11 @@ up to eight recent messages per linked account through the owner-authenticated
 preview routes. It loads only when opened or refreshed, shows source-specific
 read failures, and links supported messages to their provider-reverified
 conversation in Settings. Opening it does not add provider content to session
-history or send/change anything. The starter remains an on-demand Agent
-conversation for a cited, read-only day plan. Account and routine
-administration remain in Settings; connected-account source-to-Review browser
-acceptance is still open.
+history or send/change anything. It reads at most two accounts concurrently
+to bound provider request bursts while retaining the combined view. The
+starter remains an on-demand Agent conversation for a cited, read-only day
+plan. Account and routine administration remain in Settings; connected-account
+source-to-Review browser acceptance is still open.
 
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and
