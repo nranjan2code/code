@@ -1096,6 +1096,22 @@ pub async fn refresh_account_tokens(
     refresh_account_tokens_with_endpoint(vault, account, endpoints.token).await
 }
 
+/// Test-only adapter seam for a loopback OAuth provider double. Arbitrary
+/// hosts remain unavailable in normal builds, and even test builds can only
+/// call plain HTTP loopback endpoints.
+#[cfg(feature = "test-support")]
+pub async fn refresh_account_tokens_from_loopback_test_endpoint(
+    vault: &AccountVault,
+    account: &ConnectedAccount,
+    token_endpoint: &str,
+) -> Result<RefreshedOAuthTokens, OAuthRefreshError> {
+    let endpoint = Url::parse(token_endpoint).map_err(|_| OAuthRefreshError::InvalidResponse)?;
+    if !valid_redirect(&endpoint) {
+        return Err(OAuthRefreshError::ReconnectRequired);
+    }
+    refresh_account_tokens_with_endpoint(vault, account, endpoint.as_str()).await
+}
+
 async fn refresh_account_tokens_with_endpoint(
     vault: &AccountVault,
     account: &ConnectedAccount,

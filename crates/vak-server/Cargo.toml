@@ -61,6 +61,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 reqwest = { workspace = true }
+vak-mail-calendar = { workspace = true, features = ["test-support"] }
 vak-ooxml = { workspace = true, features = ["fixtures"] }
 vak-pdf = { workspace = true, features = ["fixtures"] }
 # A real WebSocket client for the /voice/session end-to-end test.

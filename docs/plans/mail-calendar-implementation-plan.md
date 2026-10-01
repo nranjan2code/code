@@ -669,10 +669,12 @@ owner refresh and disconnect. It persists rotated credentials in the Agent
 vault before appending new expiry metadata, then rechecks Agent/account state
 at commit. If refresh requires owner sign-in, the account is fenced and only
 routines for that Agent/account pair are paused. Synthetic tests verify
-cross-process lease exclusion, the reconnect fence, and scoped pause; OAuth
-adapter tests cover refresh-response validation and token rotation. A full
-scheduled-run token-rotation test through a provider test endpoint remains
-open, along with the sustained-service acceptance.
+cross-process lease exclusion, the reconnect fence, and scoped pause. A
+loopback provider test now drives the server refresh helper twice, proving the
+access token and rotated refresh token persist in the Agent vault and expiry
+metadata advances in the ledger. OAuth adapter tests cover response
+validation. Invoking this rotation through the complete scheduled-run path and
+the sustained-service acceptance remain open.
 
 **Exit:** 24-hour service test with restart, sleep/wake, network and provider
 outages, expired tokens/cursors, duplicate triggers, queue limits, pause during
@@ -745,10 +747,10 @@ remains open.
   Agent and account are rechecked. A rejected refresh fences the account and
   pauses routines scoped to that exact Agent/account pair. Verification:
   server check, scheduled-run integration suite (6 tests), a synthetic
-  expired-token/reconnect test, and independent vault-handle refresh-lease
-  contention test pass. Successful
-  scheduler-path token rotation against a provider test endpoint and the
-  sustained 24-hour service acceptance remain open.
+  expired-token/reconnect test, an end-to-end loopback test of server refresh
+  plus vault/ledger rotation, and independent vault-handle refresh-lease
+  contention test pass. Dispatching that rotation through a complete scheduled
+  run and the sustained 24-hour service acceptance remain open.
 - 2026-10-01: Audited the system guardrails, the model-visible mail/calendar
   tool description and argument schemas, the provider-output trust wrapper,
   and the scheduled-run prompt path. Made the model contract explicit across

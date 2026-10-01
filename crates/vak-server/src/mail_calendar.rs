@@ -362,7 +362,27 @@ async fn refresh_routine_account_if_needed(
         require_reconnection();
         return Err("this account needs to be reconnected before its routine can continue".into());
     }
-    let rotated = match vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await {
+    #[cfg(test)]
+    let refresh_result = {
+        let test_endpoint = state
+            .mail_calendar_test_refresh_endpoints
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&account.provider)
+            .cloned();
+        match test_endpoint {
+            Some(endpoint) => {
+                vak_mail_calendar::oauth::refresh_account_tokens_from_loopback_test_endpoint(
+                    &vault, &account, &endpoint,
+                )
+                .await
+            }
+            None => vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await,
+        }
+    };
+    #[cfg(not(test))]
+    let refresh_result = vak_mail_calendar::oauth::refresh_account_tokens(&vault, &account).await;
+    let rotated = match refresh_result {
         Ok(tokens) => tokens,
         Err(vak_mail_calendar::oauth::OAuthRefreshError::ReconnectRequired) => {
             require_reconnection();
@@ -3349,8 +3369,8 @@ mod tests {
     use super::{
         OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
         oauth_callback_cookie, oauth_callback_page, oauth_callback_set_cookie, oauth_callback_uri,
-        pause_routines_for_account, refresh_routine_account_if_needed, registered_agent,
-        same_provider_principal, valid_agent, valid_microsoft_personal_email,
+        pause_routines_for_account, prepare_routine_account, refresh_routine_account_if_needed,
+        registered_agent, same_provider_principal, valid_agent, valid_microsoft_personal_email,
         valid_provider_app_password, valid_provider_email, verifiable_app_password_selection,
     };
     use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -3361,7 +3381,7 @@ mod tests {
     use vak_mail_calendar::vault::{AccountSecretMaterial, AccountVault};
     use vak_mail_calendar::{
         AccountStatus, CalendarEventBoundary, CalendarEventTrigger, Capability, ConnectedAccount,
-        Provider,
+        Provider, RoutineOperation, RoutineScope,
     };
 
     #[test]
@@ -3788,7 +3808,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn expired_routine_token_without_refresh_credential_pauses_and_fences_routine() {
+    async fn expired_routine_tokens_refresh_or_pause_before_use() {
         vak_config::paths::isolate_home_for_tests();
         let state = crate::test_support::state();
         let agent_id = "mail-refresh-owner";
@@ -3838,7 +3858,135 @@ mod tests {
         ledger.append_pending(account.clone()).unwrap();
         account.status = AccountStatus::Connected;
         account.revision = 2;
-        ledger.append_connected(account).unwrap();
+        ledger.append_connected(account.clone()).unwrap();
+
+        let refresh_account_id = Uuid::now_v7().to_string();
+        let refresh_credential_ref = AccountVault::credential_ref(&refresh_account_id).unwrap();
+        vault
+            .store(
+                &refresh_account_id,
+                AccountSecretMaterial::new(
+                    "google:synthetic-refresh-subject".into(),
+                    Some("refresh@example.test".into()),
+                    Some("synthetic-client".into()),
+                    Some("old-access-token".into()),
+                    Some("old-refresh-token".into()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut refresh_account = account;
+        refresh_account.id = refresh_account_id.clone();
+        refresh_account.credential_ref = refresh_credential_ref.clone();
+        refresh_account.principal_ref = refresh_credential_ref;
+        refresh_account.revision = 1;
+        refresh_account.status = AccountStatus::Pending;
+        refresh_account.refresh_token_available = true;
+        ledger.append_pending(refresh_account.clone()).unwrap();
+        refresh_account.status = AccountStatus::Connected;
+        refresh_account.revision = 2;
+        ledger.append_connected(refresh_account).unwrap();
+
+        async fn refresh_endpoint(
+            axum::extract::State(calls): axum::extract::State<
+                std::sync::Arc<std::sync::atomic::AtomicUsize>,
+            >,
+            axum::Form(form): axum::Form<std::collections::HashMap<String, String>>,
+        ) -> axum::Json<serde_json::Value> {
+            assert_eq!(
+                form.get("client_id").map(String::as_str),
+                Some("synthetic-client")
+            );
+            let expected_refresh_token =
+                if calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    "old-refresh-token"
+                } else {
+                    "rotated-refresh-token"
+                };
+            assert_eq!(
+                form.get("refresh_token").map(String::as_str),
+                Some(expected_refresh_token)
+            );
+            assert_eq!(
+                form.get("grant_type").map(String::as_str),
+                Some("refresh_token")
+            );
+            axum::Json(serde_json::json!({
+                "access_token": "rotated-access-token",
+                "refresh_token": "rotated-refresh-token",
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "scope": "https://www.googleapis.com/auth/gmail.readonly"
+            }))
+        }
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let app = axum::Router::new()
+            .route("/token", axum::routing::post(refresh_endpoint))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let token_url = format!("http://{}/token", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        state
+            .mail_calendar_test_refresh_endpoints
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(Provider::Google, token_url);
+
+        let scope = RoutineScope {
+            routine_id: Uuid::now_v7().to_string(),
+            account_id: refresh_account_id.clone(),
+            mail_folder_id: None,
+            calendar_source_id: None,
+            operations: [RoutineOperation::RecentMail].into_iter().collect(),
+            max_items: 5,
+            watch_new_mail: true,
+            read_commitments: false,
+            calendar_event_trigger: None,
+        };
+        prepare_routine_account(&state, agent_id, &scope)
+            .await
+            .unwrap();
+        assert_eq!(
+            vault.access_token(&refresh_account_id).unwrap().as_str(),
+            "rotated-access-token"
+        );
+        let persisted_account = ledger
+            .read_all()
+            .unwrap()
+            .into_iter()
+            .find(|account| account.id == refresh_account_id)
+            .unwrap();
+        assert_eq!(persisted_account.revision, 3);
+        assert!(persisted_account.access_token_expires_at.unwrap() > Utc::now());
+
+        let mut expiring_again = persisted_account;
+        expiring_again.revision += 1;
+        expiring_again.access_token_expires_at = Some(Utc::now() + chrono::Duration::minutes(1));
+        ledger
+            .append_connected_if_current(expiring_again, 3, || {
+                Ok::<(), std::convert::Infallible>(())
+            })
+            .unwrap();
+        prepare_routine_account(&state, agent_id, &scope)
+            .await
+            .unwrap();
+        let refreshed_again = ledger
+            .read_all()
+            .unwrap()
+            .into_iter()
+            .find(|account| account.id == refresh_account_id)
+            .unwrap();
+        assert_eq!(refreshed_again.revision, 5);
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(
+            vault.access_token(&refresh_account_id).unwrap().as_str(),
+            "rotated-access-token"
+        );
+        server.abort();
 
         let routine = serde_json::from_value::<vak_core::tasks::TaskDef>(serde_json::json!({
             "id": "expired-mail-watch",
@@ -3866,7 +4014,13 @@ mod tests {
         let result = refresh_routine_account_if_needed(&state, agent_id, &account_id).await;
         assert!(result.is_err());
         assert_eq!(
-            ledger.read_all().unwrap()[0].status,
+            ledger
+                .read_all()
+                .unwrap()
+                .iter()
+                .find(|account| account.id == account_id)
+                .unwrap()
+                .status,
             AccountStatus::ReauthenticationRequired
         );
         assert!(

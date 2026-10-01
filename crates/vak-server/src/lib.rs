@@ -263,6 +263,9 @@ pub struct AppState {
     /// cannot persist rotated credentials after a concurrent disconnect.
     mail_calendar_account_locks:
         Arc<Mutex<HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>>,
+    /// Loopback OAuth token endpoints used only by the server's unit tests.
+    #[cfg(test)]
+    mail_calendar_test_refresh_endpoints: Arc<Mutex<HashMap<vak_mail_calendar::Provider, String>>>,
     /// Open preview origins (docs/design/66, §3.2).
     pub(crate) previews: preview::PreviewHub,
 }
@@ -325,6 +328,8 @@ impl AppState {
             voice_requests: Arc::new(voice::RequestWindow::new()),
             mail_calendar_oauth: Arc::new(vak_mail_calendar::oauth::AuthorizationStore::default()),
             mail_calendar_account_locks: Arc::new(Mutex::new(HashMap::new())),
+            #[cfg(test)]
+            mail_calendar_test_refresh_endpoints: Arc::new(Mutex::new(HashMap::new())),
             previews: preview::PreviewHub::default(),
         }
     }
