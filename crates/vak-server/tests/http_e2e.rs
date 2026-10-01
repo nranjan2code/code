@@ -1281,7 +1281,46 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
     ledger.append_pending(account.clone()).unwrap();
     account.status = vak_mail_calendar::AccountStatus::Connected;
     account.revision = 2;
-    ledger.append_connected(account).unwrap();
+    ledger.append_connected(account.clone()).unwrap();
+
+    let microsoft_account_id = uuid::Uuid::now_v7().to_string();
+    let microsoft_credential_ref =
+        vak_mail_calendar::vault::AccountVault::credential_ref(&microsoft_account_id).unwrap();
+    vault
+        .store(
+            &microsoft_account_id,
+            vak_mail_calendar::vault::AccountSecretMaterial::new(
+                "microsoft:opaque-subject".into(),
+                Some("drafts@example.com".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let mut microsoft_account = account;
+    microsoft_account.id = microsoft_account_id.clone();
+    microsoft_account.provider = vak_mail_calendar::Provider::Microsoft;
+    microsoft_account.status = vak_mail_calendar::AccountStatus::Pending;
+    microsoft_account.capabilities = [
+        vak_mail_calendar::Capability::CalendarRead,
+        vak_mail_calendar::Capability::CalendarWrite,
+    ]
+    .into_iter()
+    .collect();
+    microsoft_account.provider_scopes = ["Calendars.Read".into(), "Calendars.ReadWrite".into()]
+        .into_iter()
+        .collect();
+    microsoft_account.credential_ref = microsoft_credential_ref.clone();
+    microsoft_account.principal_ref = microsoft_credential_ref;
+    microsoft_account.revision = 1;
+    ledger.append_pending(microsoft_account.clone()).unwrap();
+    microsoft_account.status = vak_mail_calendar::AccountStatus::Connected;
+    microsoft_account.revision = 2;
+    ledger.append_connected(microsoft_account).unwrap();
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1301,6 +1340,37 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
         client.get(&candidates_url).send().await.unwrap().status(),
         reqwest::StatusCode::UNAUTHORIZED
     );
+
+    let unsupported_update = client
+        .post(&candidates_url)
+        .bearer_auth(&token)
+        .json(&serde_json::json!({
+            "account_id": microsoft_account_id,
+            "source_refs": [],
+            "action": {"kind": "update_event",
+                "event_id": "synthetic-event",
+                "source_version": "etag-1",
+                "draft": {
+                    "title": "Synthetic update",
+                    "description": "No provider call",
+                    "location": null,
+                    "starts_at": "2026-10-01T09:00:00Z",
+                    "ends_at": "2026-10-01T10:00:00Z",
+                    "time_zone": "Asia/Kolkata",
+                    "all_day": false,
+                    "attendee_addresses": []
+                }
+            }
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        unsupported_update.status(),
+        reqwest::StatusCode::BAD_REQUEST
+    );
+    assert!(vault.list_candidates().unwrap().is_empty());
+    assert!(vault.list_action_receipts().unwrap().is_empty());
 
     let local_mail_response = client
         .post(&candidates_url)

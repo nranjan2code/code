@@ -1733,5 +1733,6 @@ remains open.
   Google update/cancel and Google/Microsoft create/send remain admitted for
   their existing profiles. Graph event update stays disabled because the
   published v1.0 update contract has not established conditional-write
-  semantics. The adapter matrix test and existing owner-authenticated
-  candidate/disconnect HTTP test pass.
+  semantics. The adapter matrix test and owner-authenticated HTTP test pass;
+  the latter attempts a synthetic Microsoft update and verifies rejection
+  before candidate or receipt persistence.
