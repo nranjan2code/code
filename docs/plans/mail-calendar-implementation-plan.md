@@ -1890,3 +1890,8 @@ remains open.
   the web build and mail/calendar mock regression pack pass. Provider push
   subscriptions, their server-side lifecycle and event-to-fetch verification,
   and full connected-account browser acceptance remain open.
+- 2026-10-01: Exercised the clicked-event **Draft an update** action in the
+  synthetic browser fixture. It posts one revisioned Google event candidate
+  for the owning Agent, opens the mail/calendar workspace, and sends no provider
+  write request. All 16 fixture assertions pass; this proves the local next
+  step only, not connected-account exact Review or provider effect acceptance.

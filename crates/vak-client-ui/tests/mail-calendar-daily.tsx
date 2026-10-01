@@ -1,5 +1,6 @@
 import { render } from "solid-js/web";
 import DailyMailCalendarViewer from "../src/components/canvas/DailyMailCalendarViewer";
+import { pendingSettingsPage, settingsOpen } from "../src/store";
 import "../src/styles.css";
 
 const providerTypes = [
@@ -21,6 +22,7 @@ const accounts = providerTypes.flatMap((provider) => Array.from({ length: 3 }, (
   revoked_at: null,
 })));
 const requests: string[] = [];
+const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const fixtureErrors: string[] = [];
 let fixtureResponses = 0;
 const activeAccounts = new Map<string, number>();
@@ -30,10 +32,20 @@ const day = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1)
 const localDayStart = new Date(`${day(now)}T00:00:00`);
 const json = (value: unknown) => { fixtureResponses += 1; return new Response(JSON.stringify(value), { headers: { "Content-Type": "application/json" } }); };
 
-window.fetch = async (input) => {
+window.fetch = async (input, init) => {
   try {
-  const url = new URL(String(input), location.origin);
-  requests.push(`${url.pathname}${url.search}`);
+    const url = new URL(String(input), location.origin);
+    requests.push(`${url.pathname}${url.search}`);
+    if (url.pathname === "/mail-calendar/accounts/fixture-owner/candidates" && init?.method === "POST") {
+      const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
+      localDraftWrites.push({ path: url.pathname, body });
+      return json({ candidate: {
+        id: "fixture-local-event-draft", account_id: body.account_id, agent_id: "fixture-owner",
+        revision: 1, source_refs: body.source_refs ?? [], action: body.action,
+        candidate_digest: "synthetic-fixture-digest", created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(), action_state: null,
+      } });
+    }
   if (url.pathname === "/mail-calendar/accounts") return json({ accounts });
   const accountId = url.pathname.split("/")[4];
   const account = accounts.find((candidate) => candidate.id === accountId)!;
@@ -118,6 +130,16 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const eventTitleIsVisible = gridEvents[0]?.textContent?.includes("google sample event 1") ?? false;
   gridEvents[0]?.click();
   const eventSelectionWorks = !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("google sample event 1") && !!document.querySelector(".daily-mail-calendar-event-detail")?.textContent?.includes("Draft an update");
+  [...document.querySelectorAll<HTMLButtonElement>(".daily-mail-calendar-event-detail button")]
+    .find((button) => button.textContent?.includes("Draft an update"))?.click();
+  const localDraftActionWorks = await waitFor(() => localDraftWrites.length === 1 && settingsOpen());
+  const draft = localDraftWrites[0]?.body;
+  const clickedEventStaysLocal = localDraftActionWorks
+    && draft?.account_id === "g-account-0"
+    && draft?.source_refs?.[0]?.item_id === "g-account-0-event-0"
+    && draft?.action?.kind === "update_event"
+    && pendingSettingsPage() === "mail-calendar"
+    && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event)$/.test(path));
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button")?.click();
   const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 72);
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
@@ -131,6 +153,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
     check(overlapLanesWork && eventTitleIsVisible, "Concurrent events receive stable separate lanes with visible titles"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
+    check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens the mail/calendar workspace without a provider effect"),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), "Manual refresh reloads the bounded sources and the view explains its refresh cadence"),
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
