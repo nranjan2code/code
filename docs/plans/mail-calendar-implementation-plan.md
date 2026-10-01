@@ -2214,3 +2214,13 @@ remains open.
   account data were used. Calendar event continuation, complete conversation
   workspace, budget administration, lifecycle erasure, and 24/7 service
   acceptance remain open.
+- 2026-10-01: Added bounded provider calendar continuation to Today Canvas.
+  Google and Microsoft follow scoped provider cursors; iCloud refetches the
+  bounded date range and advances with an account/calendar/range-bound offset.
+  Calendar pages append with duplicate suppression, and the synthetic fixture
+  now covers a provider page. Same-source refreshes retain the Canvas subtree
+  and selected event details while the new snapshot arrives, so scheduled,
+  focus, reconnect, and manual refreshes do not flash back to a loading page.
+  Validation: 126 mail/calendar tests, 444 Core tests, UI typecheck, web
+  production build, and all 34 checks in the large synthetic browser fixture
+  pass. No real provider credentials or account data were used.

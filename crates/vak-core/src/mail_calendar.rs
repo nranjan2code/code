@@ -6,6 +6,7 @@
 
 use chrono::{DateTime, Utc};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::{
     path::Path,
     sync::{
@@ -178,7 +179,11 @@ pub async fn calendar_event_page_with_worker(
     events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
     let has_more = events.len() >= range.limit.clamp(1, 100);
     events.truncate(range.limit.clamp(1, 100));
-    Ok(vak_mail_calendar::provider::CalendarEventPage { events, has_more })
+    Ok(vak_mail_calendar::provider::CalendarEventPage {
+        events,
+        has_more,
+        next_cursor: None,
+    })
 }
 
 /// Return the bounded calendar inventory. Apple CalDAV collection discovery
@@ -282,7 +287,173 @@ pub async fn calendar_event_page_in_source_with_worker(
     events.sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
     let has_more = events.len() >= range.limit.clamp(1, 100);
     events.truncate(range.limit.clamp(1, 100));
-    Ok(vak_mail_calendar::provider::CalendarEventPage { events, has_more })
+    Ok(vak_mail_calendar::provider::CalendarEventPage {
+        events,
+        has_more,
+        next_cursor: None,
+    })
+}
+
+/// Owner-only paged calendar preview. Google and Graph continue with their
+/// validated provider cursor; Apple repeats the bounded worker-isolated
+/// CalDAV read and advances through its locally parsed, range-bound results.
+pub async fn calendar_preview_page_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    range: CalendarRange,
+    cursor: Option<&str>,
+    worker_exe: &Path,
+) -> Result<
+    vak_mail_calendar::provider::CalendarEventPage,
+    vak_mail_calendar::provider::ProviderReadError,
+> {
+    if account.provider != Provider::AppleIcloud {
+        let mut page = client
+            .calendar_event_page_with_cursor(account, vault, agent_id, audience, range, cursor)
+            .await?;
+        page.events
+            .retain(|event| event_overlaps_range(event, range));
+        page.events
+            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.truncate(range.limit.clamp(1, 100));
+        return Ok(page);
+    }
+
+    let offset = decode_apple_calendar_cursor(cursor, account, None, range)?;
+    let mut full_range = range;
+    full_range.limit = 100;
+    let mut page = calendar_event_page_with_worker(
+        client, account, vault, agent_id, audience, full_range, worker_exe,
+    )
+    .await?;
+    page.events
+        .retain(|event| event_overlaps_range(event, range));
+    page.events
+        .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    let total = page.events.len();
+    let limit = range.limit.clamp(1, 100);
+    let end = offset.saturating_add(limit).min(total);
+    page.events = page.events.into_iter().skip(offset).take(limit).collect();
+    page.has_more = end < total || (page.has_more && end == total);
+    page.next_cursor = if page.has_more && end > offset {
+        Some(encode_apple_calendar_cursor(account, None, range, end))
+    } else {
+        None
+    };
+    Ok(page)
+}
+
+pub async fn calendar_preview_page_in_source_with_worker(
+    client: &ProviderReadClient,
+    account: &vak_mail_calendar::ConnectedAccount,
+    vault: &AccountVault,
+    agent_id: &str,
+    audience: &str,
+    source_id: &str,
+    range: CalendarRange,
+    cursor: Option<&str>,
+    worker_exe: &Path,
+) -> Result<
+    vak_mail_calendar::provider::CalendarEventPage,
+    vak_mail_calendar::provider::ProviderReadError,
+> {
+    if account.provider != Provider::AppleIcloud {
+        let mut page = client
+            .calendar_event_page_in_source_with_cursor(
+                account, vault, agent_id, audience, source_id, range, cursor,
+            )
+            .await?;
+        page.events
+            .retain(|event| event_overlaps_range(event, range));
+        page.events
+            .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+        page.events.truncate(range.limit.clamp(1, 100));
+        return Ok(page);
+    }
+
+    let offset = decode_apple_calendar_cursor(cursor, account, Some(source_id), range)?;
+    let mut full_range = range;
+    full_range.limit = 100;
+    let mut page = calendar_event_page_in_source_with_worker(
+        client, account, vault, agent_id, audience, source_id, full_range, worker_exe,
+    )
+    .await?;
+    page.events
+        .retain(|event| event_overlaps_range(event, range));
+    page.events
+        .sort_by(|left, right| left.starts_at.cmp(&right.starts_at));
+    let total = page.events.len();
+    let limit = range.limit.clamp(1, 100);
+    let end = offset.saturating_add(limit).min(total);
+    page.events = page.events.into_iter().skip(offset).take(limit).collect();
+    page.has_more = end < total || (page.has_more && end == total);
+    page.next_cursor = if page.has_more && end > offset {
+        Some(encode_apple_calendar_cursor(
+            account,
+            Some(source_id),
+            range,
+            end,
+        ))
+    } else {
+        None
+    };
+    Ok(page)
+}
+
+fn apple_calendar_cursor_scope(
+    account: &vak_mail_calendar::ConnectedAccount,
+    source_id: Option<&str>,
+    range: CalendarRange,
+) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"vak-apple-calendar-preview-v1\\0");
+    hash.update(account.id.as_bytes());
+    hash.update([0]);
+    hash.update(source_id.unwrap_or("all").as_bytes());
+    hash.update(range.from.timestamp_millis().to_be_bytes());
+    hash.update(range.to.timestamp_millis().to_be_bytes());
+    hash.update((range.limit.clamp(1, 100) as u64).to_be_bytes());
+    format!("{:x}", hash.finalize())
+}
+
+fn encode_apple_calendar_cursor(
+    account: &vak_mail_calendar::ConnectedAccount,
+    source_id: Option<&str>,
+    range: CalendarRange,
+    offset: usize,
+) -> String {
+    format!(
+        "apple-calendar-v1:{offset}:{}",
+        apple_calendar_cursor_scope(account, source_id, range)
+    )
+}
+
+fn decode_apple_calendar_cursor(
+    cursor: Option<&str>,
+    account: &vak_mail_calendar::ConnectedAccount,
+    source_id: Option<&str>,
+    range: CalendarRange,
+) -> Result<usize, vak_mail_calendar::provider::ProviderReadError> {
+    let Some(cursor) = cursor else { return Ok(0) };
+    let Some((offset, scope)) = cursor
+        .strip_prefix("apple-calendar-v1:")
+        .and_then(|value| value.split_once(':'))
+    else {
+        return Err(vak_mail_calendar::provider::ProviderReadError::InvalidSearch);
+    };
+    let offset = offset
+        .parse::<usize>()
+        .map_err(|_| vak_mail_calendar::provider::ProviderReadError::InvalidSearch)?;
+    if offset == 0
+        || offset > 1000
+        || scope != apple_calendar_cursor_scope(account, source_id, range)
+    {
+        return Err(vak_mail_calendar::provider::ProviderReadError::InvalidSearch);
+    }
+    Ok(offset)
 }
 
 /// Read availability for an Apple account using CalDAV's VFREEBUSY response,

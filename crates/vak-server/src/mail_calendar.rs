@@ -1279,6 +1279,8 @@ pub(super) struct CalendarPreviewRequest {
     limit: Option<usize>,
     #[serde(default)]
     calendar_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
 }
 
 /// Owner-only interactive preview. The response is transient and is not
@@ -1658,7 +1660,7 @@ pub(super) async fn calendar_preview(
     };
     let worker_exe = state.core.tool_worker_exe();
     let result = if let Some(calendar_id) = request.calendar_id.as_deref() {
-        vak_core::mail_calendar::calendar_event_page_in_source_with_worker(
+        vak_core::mail_calendar::calendar_preview_page_in_source_with_worker(
             &client,
             &account,
             &vault,
@@ -1666,18 +1668,19 @@ pub(super) async fn calendar_preview(
             &audience,
             calendar_id,
             range,
+            request.cursor.as_deref(),
             &worker_exe,
         )
         .await
-        .map(|page| page.events)
     } else {
-        vak_core::mail_calendar::calendar_events_with_worker(
+        vak_core::mail_calendar::calendar_preview_page_with_worker(
             &client,
             &account,
             &vault,
             &agent_id,
             &audience,
             range,
+            request.cursor.as_deref(),
             &worker_exe,
         )
         .await
@@ -1693,7 +1696,8 @@ pub(super) async fn calendar_preview(
                 &account.capabilities,
                 "succeeded",
             );
-            Json(serde_json::json!({"events": events})).into_response()
+            Json(serde_json::json!({"events": events.events, "next_cursor": events.next_cursor}))
+                .into_response()
         }
         Err(error) => {
             mark_preview_reauthentication(&state, &account, &error);

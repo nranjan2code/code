@@ -40,7 +40,7 @@ const requests: string[] = [];
 const localDraftWrites: Array<{ path: string; body: Record<string, any> }> = [];
 const savedCandidates: Array<Record<string, any>> = [];
 let candidateId = 0;
-const calendarReadRanges: Array<{ from: string; to: string }> = [];
+const calendarReadRanges: Array<{ from: string; to: string; cursor?: string }> = [];
 const mailPreviewReads: Array<{ accountId: string; query?: string; folder_id?: string }> = [];
 const fixtureErrors: string[] = [];
 let fixtureResponses = 0;
@@ -145,9 +145,11 @@ window.fetch = async (input, init) => {
       return json({ provider_id: body.thread_id, messages, next_cursor: page === 1 ? "fixture-page-2" : null });
     }
     if (url.pathname.endsWith("/calendar-preview")) {
-      const range = JSON.parse(String(init?.body ?? "{}")) as { from: string; to: string };
+      const range = JSON.parse(String(init?.body ?? "{}")) as { from: string; to: string; cursor?: string };
       calendarReadRanges.push(range);
-      return json({ events: Array.from({ length: 50 }, (_, index) => {
+      const offset = range.cursor ? 50 : 0;
+      return json({ events: Array.from({ length: range.cursor ? 10 : 50 }, (_, pageIndex) => {
+      const index = offset + pageIndex;
       const start = new Date(localDayStart.getTime() + (7 * 60 + index * 18) * 60_000);
       const end = new Date(start.getTime() + 30 * 60_000);
       return {
@@ -155,7 +157,7 @@ window.fetch = async (input, init) => {
         starts_at: start.toISOString(), ends_at: end.toISOString(), starts_on: null, ends_on: null,
         all_day: false, location: null, description: null, attendee_count: 0, recurring: false, private: false, version: account.provider === "google" ? "fixture-etag" : null,
       };
-      }) });
+      }), next_cursor: range.cursor ? null : "fixture-calendar-page-2" });
     }
     if (url.pathname.endsWith("/free-busy-preview")) {
       return json({ busy: Array.from({ length: 8 }, (_, index) => ({
@@ -266,7 +268,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const conversationHandoffWorks = await waitFor(() => localDraftWrites.some(({ body }) => body.action?.kind === "send_mail"
     && body.action.draft.reply_to_message_id === "g-account-0-thread-message-1"));
   const renderedMailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
-  const mailPager = document.querySelector<HTMLElement>(".daily-mail-calendar-pagination");
+  const mailPager = document.querySelector<HTMLElement>("nav[aria-label='Recent email pages']");
   const mailPagingStartsCorrectly = mailPager?.textContent?.includes("Page 1 of 6") === true && renderedMailRows === 12;
   const nextMailPage = () => mailPager?.querySelector<HTMLButtonElement>("button:last-child")?.click();
   const previousMailPage = () => mailPager?.querySelector<HTMLButtonElement>("button:first-child")?.click();
@@ -316,8 +318,12 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && draft?.action?.kind === "update_event"
     && !settingsOpen()
     && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event)$/.test(path));
+  const viewerBeforeRefresh = document.querySelector(".daily-mail-calendar-view");
+  const selectedEventBeforeRefresh = document.querySelector(".daily-mail-calendar-event-detail");
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
   const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
+  const refreshKeepsMountedRows = !!viewerBeforeRefresh && document.querySelector(".daily-mail-calendar-view") === viewerBeforeRefresh;
+  const refreshKeepsSelectedEvent = !!selectedEventBeforeRefresh && document.querySelector(".daily-mail-calendar-event-detail") === selectedEventBeforeRefresh;
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
   const changeRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 27);
   const inventoriesBeforeGate = requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length;
@@ -380,6 +386,11 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const providerMailPagingWorks = await waitFor(() => mailPreviewReads.at(-1)?.cursor === "fixture-mail-page-2"
     && mailRowsLoaded
     && document.querySelector("nav[aria-label='Recent email pages']")?.textContent?.includes("16 messages loaded") === true);
+  [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Load more events")?.click();
+  const providerCalendarPageRequested = await waitFor(() => calendarReadRanges.some((range) => range.cursor === "fixture-calendar-page-2"));
+  const providerCalendarPagingWorks = await waitFor(() => requests.some((path) => path.endsWith("/calendar-preview"))
+    && document.querySelectorAll(".mail-calendar-grid-event").length >= 60
+    && document.body.textContent?.includes("google sample event 60") === true);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
@@ -401,13 +412,16 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens Canvas drafts without a provider effect"),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (requests=${requests.filter((path) => path.endsWith("/mail-preview")).length}, rows=${document.querySelectorAll(".daily-mail-calendar-message").length})`),
+    check(refreshKeepsMountedRows, "A settled refresh updates the existing viewer without remounting its page"),
+    check(refreshKeepsSelectedEvent, "A settled refresh preserves the open event details without remounting them"),
     check(backgroundRefreshKeepsContent, "A background refresh keeps the current page visible without replacing it with a loading screen"),
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
-    check(queuedAccountRefreshWorks, "An account change during an in-flight refresh queues one immediate follow-up refresh"),
-    check(dateRangeCalendarWorks && dateRangeBoundariesCorrect && calendarWeekPagingStartsCorrectly && calendarNextWeekWorks && calendarPreviousWeekWorks, "Canvas calendar reads inclusive date ranges and paginates longer selections by week without blanking the prior view"),
+    check(queuedAccountRefreshWorks, `An account change during an in-flight refresh queues one immediate follow-up refresh (first=${firstGatedInventoryStarted}, mail=${requests.filter((path) => path.endsWith("/mail-preview")).length}, account=${requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length})`),
+    check(dateRangeCalendarWorks && dateRangeBoundariesCorrect && calendarWeekPagingStartsCorrectly && calendarNextWeekWorks && calendarPreviousWeekWorks, `Canvas calendar reads inclusive date ranges and paginates longer selections by week without blanking the prior view (${[dateRangeCalendarWorks, dateRangeBoundariesCorrect, calendarWeekPagingStartsCorrectly, calendarNextWeekWorks, calendarPreviousWeekWorks].join(",")}; range=${document.querySelector(".daily-mail-calendar-calendar-heading h3")?.textContent}; nav=${calendarPageNav?.textContent}; reads=${calendarReadRanges.length})`),
     check(accountFoldersLoaded && selectedFolderSearchWorks, "Canvas inbox can browse an Agent-scoped provider folder or label and search only that selected mailbox"),
     check(providerMailPagingWorks, "Canvas fetches later inbox pages from the selected provider folder and appends them without duplicates"),
-    check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
+    check(providerCalendarPageRequested && providerCalendarPagingWorks, "Canvas fetches later provider calendar pages and appends them to the selected calendar without duplicates"),
+    check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div:not(.mail-calendar-all-day-label)").length <= 24, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),
     check(!document.body.textContent?.includes("apple_icloud sample event"), "Free/busy rows do not disclose event titles"),

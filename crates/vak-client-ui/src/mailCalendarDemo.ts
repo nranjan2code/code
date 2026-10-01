@@ -86,9 +86,13 @@ export function syntheticMailCalendarRequest(path: string, init?: RequestInit): 
   if (endpoint === "thread-preview") return { provider_id: body.thread_id, messages: [{ provider_id: `${body.thread_id}-1`, thread_id: body.thread_id, from: "Maya Chen <maya@example.test>", to: account.identity_masked, cc: null, subject: "Synthetic conversation", received_at: dateFor(-1), preview: "Synthetic reply", body_text: "This conversation is sample content for safe testing.", body_status: "available", has_attachments: true, attachments: [{ provider_id: "demo-attachment-1", filename: "sample-notes.txt", mime_type: "text/plain", size_bytes: 96, previewable: true }] }] };
   if (endpoint === "attachment-preview") return { filename: "sample-notes.txt", mime_type: "text/plain", size_bytes: 96, text: "Synthetic attachment preview. This file is generated locally for demonstration." };
   if (endpoint === "calendar-preview") {
-    const events = Array.from({ length: Math.max(1, Math.min(Number(body.limit ?? 50), 50)) }, (_, i) => ({ provider_id: `demo-event-${account.id}-${i}`, account_id: account.id, account_name: account.identity_masked, version: `demo-v${i + 1}`, title: ["Focus time", "Design review", "Lunch break", "Planning session"][i % 4], starts_at: dateFor(i % 10, 8 + (i * 2) % 10), ends_at: dateFor(i % 10, 9 + (i * 2) % 10), starts_on: null, ends_on: null, all_day: false, location: i % 2 ? "Video call" : null, description: "Synthetic calendar event for preview and regression testing.", attendee_count: 0, recurring: false, private: false, can_cancel: true }));
+    const offset = body.cursor ? 50 : 0;
+    const events = Array.from({ length: body.cursor ? 10 : Math.max(1, Math.min(Number(body.limit ?? 50), 50)) }, (_, pageIndex) => {
+      const i = offset + pageIndex;
+      return { provider_id: `demo-event-${account.id}-${i}`, account_id: account.id, account_name: account.identity_masked, version: `demo-v${i + 1}`, title: ["Focus time", "Design review", "Lunch break", "Planning session"][i % 4], starts_at: dateFor(i % 10, 8 + (i * 2) % 10), ends_at: dateFor(i % 10, 9 + (i * 2) % 10), starts_on: null, ends_on: null, all_day: false, location: i % 2 ? "Video call" : null, description: "Synthetic calendar event for preview and regression testing.", attendee_count: 0, recurring: false, private: false, can_cancel: true };
+    });
     const from = Date.parse(body.from ?? ""); const to = Date.parse(body.to ?? "");
-    return { events: events.filter((event) => (!Number.isFinite(from) || Date.parse(event.starts_at!) >= from) && (!Number.isFinite(to) || Date.parse(event.starts_at!) < to)) };
+    return { events: events.filter((event) => (!Number.isFinite(from) || Date.parse(event.starts_at!) >= from) && (!Number.isFinite(to) || Date.parse(event.starts_at!) < to)), next_cursor: body.cursor ? null : "demo-calendar-page-2" };
   }
   if (endpoint === "free-busy-preview") return { busy: Array.from({ length: 5 }, (_, i) => ({ starts_at: dateFor(i, 10 + i), ends_at: dateFor(i, 11 + i) })) };
   if (parts.at(-1) === "refresh") return { account };

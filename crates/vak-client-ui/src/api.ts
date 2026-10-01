@@ -286,9 +286,9 @@ export interface MailCalendarSource { provider_id: string; name: string; primary
 export function listMailCalendarSources(agentId: string, accountId: string): Promise<{ sources: MailCalendarSource[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-sources`);
 }
-export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50, calendarId?: string): Promise<{ events: MailCalendarEventPreview[] }> {
+export function previewMailCalendarEvents(agentId: string, accountId: string, from: string, to: string, limit = 50, calendarId?: string, cursor?: string): Promise<{ events: MailCalendarEventPreview[]; next_cursor?: string | null }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/calendar-preview`, {
-    method: "POST", body: JSON.stringify({ from, to, limit, ...(calendarId ? { calendar_id: calendarId } : {}) }),
+    method: "POST", body: JSON.stringify({ from, to, limit, ...(calendarId ? { calendar_id: calendarId } : {}), ...(cursor ? { cursor } : {}) }),
   });
 }
 export function previewMailCalendarFreeBusy(agentId: string, accountId: string, from: string, to: string): Promise<{ busy: MailCalendarBusySlot[] }> {

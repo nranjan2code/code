@@ -271,6 +271,9 @@ pub struct CalendarRange {
 pub struct CalendarEventPage {
     pub events: Vec<CalendarItem>,
     pub has_more: bool,
+    /// Opaque continuation for owner previews. Durable routine scans use
+    /// `has_more` and never persist this provider cursor.
+    pub next_cursor: Option<String>,
 }
 
 /// An Apple CalDAV URL validated to remain on the fixed HTTPS service host.
@@ -1677,20 +1680,50 @@ impl ProviderReadClient {
         audience: &str,
         range: CalendarRange,
     ) -> Result<CalendarEventPage, ProviderReadError> {
+        self.calendar_event_page_with_cursor(account, vault, agent_id, audience, range, None)
+            .await
+    }
+
+    pub async fn calendar_event_page_with_cursor(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        range: CalendarRange,
+        cursor: Option<&str>,
+    ) -> Result<CalendarEventPage, ProviderReadError> {
         admit(account, vault, agent_id, audience, Capability::CalendarRead)?;
         validate_range(range.from, range.to)?;
         let limit = range.limit.clamp(1, MAX_EVENT_ITEMS);
+        let scope = calendar_cursor_scope(account, None, range, limit);
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
         match account.provider {
             Provider::Google => {
-                self.google_events(token.as_str(), "primary", range.from, range.to, limit)
-                    .await
+                self.google_events(
+                    token.as_str(),
+                    "primary",
+                    range.from,
+                    range.to,
+                    limit,
+                    cursor,
+                    &scope,
+                )
+                .await
             }
             Provider::Microsoft => {
-                self.microsoft_events(token.as_str(), None, range.from, range.to, limit)
-                    .await
+                self.microsoft_events(
+                    token.as_str(),
+                    None,
+                    range.from,
+                    range.to,
+                    limit,
+                    cursor,
+                    &scope,
+                )
+                .await
             }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
@@ -1708,6 +1741,22 @@ impl ProviderReadClient {
         source_id: &str,
         range: CalendarRange,
     ) -> Result<CalendarEventPage, ProviderReadError> {
+        self.calendar_event_page_in_source_with_cursor(
+            account, vault, agent_id, audience, source_id, range, None,
+        )
+        .await
+    }
+
+    pub async fn calendar_event_page_in_source_with_cursor(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        source_id: &str,
+        range: CalendarRange,
+        cursor: Option<&str>,
+    ) -> Result<CalendarEventPage, ProviderReadError> {
         let sources = self
             .list_calendar_source_records(account, vault, agent_id, audience)
             .await?;
@@ -1718,6 +1767,7 @@ impl ProviderReadClient {
             .ok_or(ProviderReadError::InvalidSearch)?;
         validate_range(range.from, range.to)?;
         let limit = range.limit.clamp(1, MAX_EVENT_ITEMS);
+        let scope = calendar_cursor_scope(account, Some(provider_calendar_id), range, limit);
         let token = vault
             .access_token(&account.id)
             .map_err(|_| ProviderReadError::Vault)?;
@@ -1729,6 +1779,8 @@ impl ProviderReadClient {
                     range.from,
                     range.to,
                     limit,
+                    cursor,
+                    &scope,
                 )
                 .await
             }
@@ -1739,6 +1791,8 @@ impl ProviderReadClient {
                     range.from,
                     range.to,
                     limit,
+                    cursor,
+                    &scope,
                 )
                 .await
             }
@@ -2158,12 +2212,14 @@ impl ProviderReadClient {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
+        cursor: Option<&str>,
+        scope: &str,
     ) -> Result<CalendarEventPage, ProviderReadError> {
         let max_items = limit.min(MAX_EVENT_ITEMS);
         let mut output = Vec::with_capacity(max_items);
         let mut seen_ids = std::collections::HashSet::new();
         let mut seen_tokens = std::collections::HashSet::new();
-        let mut page_token: Option<String> = None;
+        let mut page_token = decode_google_calendar_cursor(cursor, scope)?;
         for page in 0..MAX_CALENDAR_PAGES {
             let mut request = self
                 .http
@@ -2219,12 +2275,17 @@ impl ProviderReadClient {
                 return Ok(CalendarEventPage {
                     events: output,
                     has_more: page_token.is_some(),
+                    next_cursor: page_token
+                        .as_deref()
+                        .map(|token| encode_calendar_cursor("google-calendar", token, scope))
+                        .transpose()?,
                 });
             }
             if page_token.is_none() {
                 return Ok(CalendarEventPage {
                     events: output,
                     has_more: false,
+                    next_cursor: None,
                 });
             }
             if page + 1 == MAX_CALENDAR_PAGES {
@@ -2234,6 +2295,7 @@ impl ProviderReadClient {
         Ok(CalendarEventPage {
             events: output,
             has_more: false,
+            next_cursor: None,
         })
     }
 
@@ -2244,10 +2306,13 @@ impl ProviderReadClient {
         from: DateTime<Utc>,
         to: DateTime<Utc>,
         limit: usize,
+        cursor: Option<&str>,
+        scope: &str,
     ) -> Result<CalendarEventPage, ProviderReadError> {
         let mut output = Vec::with_capacity(limit);
         let mut seen_ids = std::collections::HashSet::new();
-        let mut next_url: Option<url::Url> = None;
+        let mut next_url: Option<url::Url> =
+            decode_graph_calendar_cursor(cursor, scope, &self.microsoft_graph_base, calendar_id)?;
         let mut seen_urls = std::collections::HashSet::new();
         for page in 0..MAX_CALENDAR_PAGES {
             let url = if let Some(url) = next_url.take() {
@@ -2321,12 +2386,17 @@ impl ProviderReadClient {
                 return Ok(CalendarEventPage {
                     events: output,
                     has_more: next_url.is_some(),
+                    next_cursor: next_url
+                        .as_ref()
+                        .map(|url| encode_calendar_cursor("graph-calendar", url.as_str(), scope))
+                        .transpose()?,
                 });
             }
             if next_url.is_none() {
                 return Ok(CalendarEventPage {
                     events: output,
                     has_more: false,
+                    next_cursor: None,
                 });
             }
             if page + 1 == MAX_CALENDAR_PAGES {
@@ -2336,6 +2406,7 @@ impl ProviderReadClient {
         Ok(CalendarEventPage {
             events: output,
             has_more: false,
+            next_cursor: None,
         })
     }
 
@@ -3464,6 +3535,105 @@ fn validate_graph_calendar_url(
         return Err(ProviderReadError::InvalidResponse);
     }
     Ok(next)
+}
+
+#[derive(Serialize, Deserialize)]
+struct CalendarPreviewCursor {
+    scope: String,
+    value: String,
+}
+
+fn calendar_cursor_scope(
+    account: &ConnectedAccount,
+    calendar_id: Option<&str>,
+    range: CalendarRange,
+    limit: usize,
+) -> String {
+    let mut hash = Sha256::new();
+    hash.update(b"vak-calendar-preview-page-v1\0");
+    hash.update(account.id.as_bytes());
+    hash.update([0]);
+    hash.update(match account.provider {
+        Provider::Google => b"google".as_slice(),
+        Provider::Microsoft => b"microsoft".as_slice(),
+        Provider::AppleIcloud => b"apple_icloud".as_slice(),
+    });
+    hash.update([0]);
+    hash.update(calendar_id.unwrap_or("primary").as_bytes());
+    hash.update([0]);
+    hash.update(range.from.timestamp_millis().to_be_bytes());
+    hash.update(range.to.timestamp_millis().to_be_bytes());
+    hash.update((limit as u64).to_be_bytes());
+    hex::encode(hash.finalize())
+}
+
+fn encode_calendar_cursor(
+    kind: &str,
+    value: &str,
+    scope: &str,
+) -> Result<String, ProviderReadError> {
+    if value.is_empty()
+        || value.len() > MAX_GRAPH_WATCH_CURSOR_BYTES
+        || value.chars().any(char::is_control)
+    {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let payload = CalendarPreviewCursor {
+        scope: format!("{kind}:{scope}"),
+        value: value.to_owned(),
+    };
+    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .encode(serde_json::to_vec(&payload).map_err(|_| ProviderReadError::InvalidResponse)?);
+    let cursor = format!("calendar-page-v1:{encoded}");
+    if cursor.len() > MAX_GRAPH_WATCH_CURSOR_BYTES {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    Ok(cursor)
+}
+
+fn decode_calendar_cursor(
+    cursor: Option<&str>,
+    kind: &str,
+    scope: &str,
+) -> Result<Option<String>, ProviderReadError> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    let encoded = cursor
+        .strip_prefix("calendar-page-v1:")
+        .filter(|value| !value.is_empty() && value.len() <= MAX_GRAPH_WATCH_CURSOR_BYTES)
+        .ok_or(ProviderReadError::InvalidSearch)?;
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .map_err(|_| ProviderReadError::InvalidSearch)?;
+    let payload: CalendarPreviewCursor =
+        serde_json::from_slice(&bytes).map_err(|_| ProviderReadError::InvalidSearch)?;
+    if payload.scope != format!("{kind}:{scope}")
+        || payload.value.is_empty()
+        || payload.value.len() > MAX_GRAPH_WATCH_CURSOR_BYTES
+        || payload.value.chars().any(char::is_control)
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    Ok(Some(payload.value))
+}
+
+fn decode_google_calendar_cursor(
+    cursor: Option<&str>,
+    scope: &str,
+) -> Result<Option<String>, ProviderReadError> {
+    decode_calendar_cursor(cursor, "google-calendar", scope)
+}
+
+fn decode_graph_calendar_cursor(
+    cursor: Option<&str>,
+    scope: &str,
+    graph_base: &str,
+    calendar_id: Option<&str>,
+) -> Result<Option<url::Url>, ProviderReadError> {
+    decode_calendar_cursor(cursor, "graph-calendar", scope)?
+        .map(|value| validate_graph_calendar_url(&value, graph_base, calendar_id))
+        .transpose()
 }
 
 fn encode_google_thread_cursor(thread_id: &str, limit: usize, offset: usize) -> String {
@@ -6907,6 +7077,36 @@ mod tests {
             .unwrap();
         assert_eq!(google_page.events.len(), 1);
         assert!(google_page.has_more);
+        let google_followup = client
+            .calendar_event_page_with_cursor(
+                &google,
+                &vault,
+                &agent_id,
+                &audience,
+                CalendarRange { from, to, limit: 1 },
+                google_page.next_cursor.as_deref(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(google_followup.events[0].provider_id, "google-second");
+        assert!(!google_followup.has_more);
+        assert!(
+            client
+                .calendar_event_page_with_cursor(
+                    &google,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    CalendarRange {
+                        from,
+                        to: to + Duration::days(1),
+                        limit: 1
+                    },
+                    google_page.next_cursor.as_deref(),
+                )
+                .await
+                .is_err()
+        );
         let graph_events = client
             .calendar_events(
                 &graph,
@@ -6931,6 +7131,19 @@ mod tests {
             .unwrap();
         assert_eq!(graph_page.events.len(), 1);
         assert!(graph_page.has_more);
+        let graph_followup = client
+            .calendar_event_page_with_cursor(
+                &graph,
+                &graph_vault,
+                &graph_agent_id,
+                &graph_audience,
+                CalendarRange { from, to, limit: 1 },
+                graph_page.next_cursor.as_deref(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(graph_followup.events[0].provider_id, "graph-second");
+        assert!(!graph_followup.has_more);
         assert!(
             validate_graph_calendar_url(
                 "https://attacker.example/me/calendarView?$skiptoken=x",

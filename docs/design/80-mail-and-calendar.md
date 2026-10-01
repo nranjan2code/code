@@ -921,9 +921,15 @@ Canvas for routine work. Budget administration remains in Settings.
 
 The Canvas calendar lets the owner choose an inclusive date range of up to 30
 days and pages a longer range one week at a time. Refresh keeps the prior
-calendar visible while the new range loads. Provider reads remain bounded to
-50 events per connected calendar for the selected range; Canvas warns when an
-account reaches that limit. Provider cursor pagination remains open.
+calendar visible while the new range loads, and a same-source response updates
+the existing Canvas subtree without remounting visible rows. Provider reads
+remain bounded to 50 events per page per connected calendar. Google and
+Microsoft use provider continuation cursors; iCloud refetches the requested
+range through the isolated CalDAV worker and slices a bounded result set. The
+owner can load later event pages without losing the current agenda. Cursor
+scope is bound to the Agent account, selected calendar, date range and page
+size. Calendar continuation is implemented; the full conversation workspace
+and operator-visible routine budget controls remain open.
 
 Account configuration belongs in Agent Settings; reading and working with
 mail, events, drafts, Reviews, and routine activity belongs in the shared
