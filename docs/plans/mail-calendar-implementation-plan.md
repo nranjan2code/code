@@ -702,6 +702,15 @@ remains open.
 
 ## Progress log
 
+- 2026-10-01: Audited the system guardrails, the model-visible mail/calendar
+  tool description and argument schemas, the provider-output trust wrapper,
+  and the scheduled-run prompt path. Made the model contract explicit across
+  those surfaces: account ambiguity, exact IDs/cursors, narrow time windows,
+  untrusted provider text, append-only retention, evidence citations, bounded
+  reads, and the separate confirmed-effect boundary. Added a regression test
+  that checks the shared system prompt, tool guidance, and schema guidance for
+  these rules. Focused core test passes. This improves model guidance; broker
+  authorization remains the enforcement boundary.
 - 2026-10-01: Improved the Today calendar under a synthetic nine-account load.
   The time grid now preserves a minimum width per overlapping lane and scrolls
   inside the calendar frame, so 300 events remain readable on a 390px phone
