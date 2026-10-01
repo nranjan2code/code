@@ -124,6 +124,21 @@ impl TraceKey {
         }
     }
 
+    /// The W3C trace-id of this run: its UUID as 32 lowercase hex characters.
+    pub fn w3c_trace_id(&self) -> String {
+        self.run
+            .to_string()
+            .replace('-', "")
+            .chars()
+            .skip(4)
+            .collect()
+    }
+
+    /// The W3C `traceparent` header value naming this key's run and span.
+    pub fn traceparent(&self) -> String {
+        format!("00-{}-{}-01", self.w3c_trace_id(), self.span)
+    }
+
     /// The only span constructor: same run, a fresh span whose parent is this
     /// one. Callers narrow the returned key's optional scope fields.
     pub fn child(&self) -> Self {

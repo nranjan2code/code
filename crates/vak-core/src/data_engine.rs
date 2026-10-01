@@ -505,6 +505,7 @@ mod tests {
             sandbox: None,
             sandbox_sink: None,
             agent_id: None,
+            trace: None,
             new_documents: Vec::new(),
         };
 

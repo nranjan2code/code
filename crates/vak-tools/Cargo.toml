@@ -23,6 +23,7 @@ vak-llm = { workspace = true }
 vak-ooxml = { workspace = true }
 vak-pdf = { workspace = true }
 vak-sandbox = { workspace = true }
+vak-session = { workspace = true }
 walkdir = { workspace = true }
 
 [dev-dependencies]

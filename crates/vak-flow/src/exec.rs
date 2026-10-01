@@ -21,6 +21,7 @@ async fn verify_accept(
             sandbox: deps.sandbox.clone(),
             sandbox_sink: None,
             agent_id: None,
+            trace: None,
             new_documents: Vec::new(),
         };
         let args = serde_json::json!({"command": command});
@@ -492,6 +493,7 @@ async fn execute_node(
                 sandbox: deps.sandbox.clone(),
                 sandbox_sink: None,
                 agent_id: None,
+                trace: None,
                 new_documents: Vec::new(),
             };
             let tool = deps

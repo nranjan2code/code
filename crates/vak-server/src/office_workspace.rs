@@ -731,6 +731,8 @@ async fn create_revision(
         }
     };
     let saved = vak_sandbox::CandidateRecord {
+        trace: None,
+        actor: None,
         record_id: format!("candidate-{id}"),
         session_id: parent.session_id.clone(),
         turn_id: parent.turn_id.clone(),

@@ -7216,6 +7216,7 @@ dependencies = [
  "thiserror 2.0.20",
  "vak-ooxml",
  "vak-pdf",
+ "vak-session",
  "walkdir",
 ]
 
@@ -7364,6 +7365,7 @@ dependencies = [
  "vak-ooxml",
  "vak-pdf",
  "vak-sandbox",
+ "vak-session",
  "walkdir",
 ]
 

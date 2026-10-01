@@ -148,6 +148,7 @@ async fn trashed_session_absent_from_every_search() {
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,
+        trace: None,
         new_documents: Vec::new(),
     };
     let tool_search = || async {

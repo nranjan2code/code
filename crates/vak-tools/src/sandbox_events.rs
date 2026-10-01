@@ -83,6 +83,7 @@ pub struct SandboxEventSink {
     tx: mpsc::UnboundedSender<SandboxEvent>,
     execution_id: String,
     owner_session_id: Option<String>,
+    trace: Option<vak_session::trace::TraceKey>,
 }
 
 impl SandboxEventSink {
@@ -97,6 +98,7 @@ impl SandboxEventSink {
                 tx,
                 execution_id,
                 owner_session_id: None,
+                trace: None,
             },
             rx,
         )
@@ -105,6 +107,16 @@ impl SandboxEventSink {
     pub fn with_owner_session(mut self, session_id: impl Into<String>) -> Self {
         self.owner_session_id = Some(session_id.into());
         self
+    }
+
+    /// The run this execution belongs to, when there is one.
+    pub fn with_trace(mut self, trace: vak_session::trace::TraceKey) -> Self {
+        self.trace = Some(trace);
+        self
+    }
+
+    pub fn trace(&self) -> Option<&vak_session::trace::TraceKey> {
+        self.trace.as_ref()
     }
 
     /// Emit an event. Best-effort: dropped if the receiver is gone.

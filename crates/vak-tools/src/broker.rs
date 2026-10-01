@@ -14,7 +14,7 @@ use crate::{Tool, ToolContext, ToolOutput};
 pub const WORKER_SUBCOMMAND: &str = "__tool_worker";
 pub const PERSISTENT_WORKER_SUBCOMMAND: &str = "__persistent_tool_worker";
 pub(crate) const WORKER_ENV: &str = "VAK_INTERNAL_TOOL_WORKER";
-const PROTOCOL_VERSION: u8 = 2;
+const PROTOCOL_VERSION: u8 = 3;
 const MAX_PROTOCOL_BYTES: u64 = 2 * 1024 * 1024;
 /// Wall-clock bound on one verification worker. A hostile package that
 /// pins the CPU fails its checks instead of holding a candidate open.
@@ -39,6 +39,9 @@ enum WorkerTask {
         /// authorship depend on it.
         #[serde(default)]
         agent_id: Option<String>,
+        /// The run's trace key; absent when the call has no real run.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trace: Option<vak_session::trace::TraceKey>,
         /// See [`ToolContext::new_documents`].
         #[serde(default)]
         new_documents: Vec<String>,
@@ -380,6 +383,7 @@ async fn execute(
                 .map(|sink| sink.execution_id().to_string())
                 .unwrap_or_else(|| "unidentified".into()),
             agent_id: ctx.agent_id.clone(),
+            trace: ctx.trace.clone(),
             new_documents: new_documents.to_vec(),
         },
     };
@@ -526,14 +530,15 @@ pub async fn worker_main() -> i32 {
         Ok(request) if request.version == PROTOCOL_VERSION => request,
         _ => return 125,
     };
-    let (tool_name, args, execution_id, agent_id, new_documents) = match request.task {
+    let (tool_name, args, execution_id, agent_id, trace, new_documents) = match request.task {
         WorkerTask::Tool {
             tool,
             args,
             execution_id,
             agent_id,
+            trace,
             new_documents,
-        } => (tool, args, execution_id, agent_id, new_documents),
+        } => (tool, args, execution_id, agent_id, trace, new_documents),
         WorkerTask::OfficeReview {
             before,
             after,
@@ -614,12 +619,19 @@ pub async fn worker_main() -> i32 {
     let (output, events) = match tool {
         Some(tool) => {
             let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-            let (sink, mut rx) = crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
+            let (mut sink, mut rx) =
+                crate::sandbox_events::SandboxEventSink::new_with_id(execution_id);
+            if let Some(trace) = trace.clone() {
+                sink = sink.with_trace(trace);
+            }
             let mut ctx = ToolContext::new(cwd)
                 .with_sandbox_sink(sink)
                 .with_new_documents(new_documents);
             if let Some(agent_id) = agent_id {
                 ctx = ctx.with_agent_id(agent_id);
+            }
+            if let Some(trace) = trace {
+                ctx = ctx.with_trace(trace);
             }
             let event_forwarder = tokio::spawn(async move {
                 let mut stderr = tokio::io::stderr();
@@ -1274,6 +1286,43 @@ mod tests {
     use super::*;
     use crate::sandbox::{Sandbox, SandboxMode, Seatbelt};
     use serde_json::json;
+    use vak_session::ids::{AgentId, SpaceId, TenantId};
+    use vak_session::trace::{Cause, TraceKey};
+
+    #[test]
+    fn broker_protocol_carries_trace() {
+        let trace = TraceKey::root(
+            TenantId::new(),
+            SpaceId::new(),
+            AgentId::new(),
+            Cause::Heartbeat,
+        );
+        let request = WorkerRequest {
+            version: PROTOCOL_VERSION,
+            task: WorkerTask::Tool {
+                tool: "read".into(),
+                args: json!({}),
+                execution_id: "e".into(),
+                agent_id: None,
+                trace: Some(trace.clone()),
+                new_documents: Vec::new(),
+            },
+        };
+        let wire = serde_json::to_vec(&request).unwrap();
+        let back: WorkerRequest = serde_json::from_slice(&wire).unwrap();
+        assert_eq!(back.version, 3);
+        match back.task {
+            WorkerTask::Tool { trace: got, .. } => assert_eq!(got, Some(trace)),
+            _ => unreachable!(),
+        }
+        let absent =
+            br#"{"version":3,"task":{"kind":"tool","tool":"read","args":{},"execution_id":"e"}}"#;
+        let back: WorkerRequest = serde_json::from_slice(absent).unwrap();
+        match back.task {
+            WorkerTask::Tool { trace, .. } => assert!(trace.is_none()),
+            _ => unreachable!(),
+        }
+    }
 
     #[test]
     fn office_worker_projection_keeps_cross_sheet_images_bound_to_their_anchors() {

@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use vak_bus::BusMetricsSnapshot;
 use vak_bus::bus::{EventPublisher, EventSubscriber, InMemoryBus, NatsBus, NatsConfig};
-use vak_bus::envelope::MessageEnvelope;
+use vak_bus::envelope::{MessageEnvelope, TraceContext};
 use vak_bus::subjects::{AclPolicy, Subject};
 
 use crate::events::SystemEvent;
@@ -68,7 +68,9 @@ pub struct ServerBus {
     /// AES-256-GCM encrypted before publishing.
     workspace_secret: Option<Arc<[u8]>>,
     /// Monotonic sequence number for causal chaining on the event plane.
-    seq: Arc<Mutex<u64>>,
+    /// The last published sequence number and the hash of that envelope, so
+    /// each envelope's `prev_event_hash` is the real hash of its predecessor.
+    chain: Arc<Mutex<(u64, String)>>,
 }
 
 impl std::fmt::Debug for ServerBus {
@@ -87,7 +89,7 @@ impl ServerBus {
             backend: Backend::InMemory(InMemoryBus::new()),
             workspace_id: workspace_id.into(),
             workspace_secret: None,
-            seq: Arc::new(Mutex::new(0)),
+            chain: Arc::new(Mutex::new((0, MessageEnvelope::GENESIS_HASH.to_string()))),
         }
     }
 
@@ -111,7 +113,7 @@ impl ServerBus {
             backend: Backend::Distributed(bus),
             workspace_id: workspace_id.into(),
             workspace_secret: config.workspace_secret.as_deref().map(Arc::from),
-            seq: Arc::new(Mutex::new(0)),
+            chain: Arc::new(Mutex::new((0, MessageEnvelope::GENESIS_HASH.to_string()))),
         })
     }
 
@@ -153,31 +155,37 @@ impl ServerBus {
         event: &SystemEvent,
         session_id: Option<&str>,
     ) -> Result<(), vak_bus::BusError> {
-        let seq = {
-            let mut s = self.seq.lock().await;
-            *s += 1;
-            *s
-        };
+        self.emit_traced(event, session_id, None).await
+    }
 
+    /// As [`ServerBus::emit`], carrying the run's trace key: the envelope's
+    /// trace context is that run's W3C trace-id and span, never a fresh root.
+    pub async fn emit_traced(
+        &self,
+        event: &SystemEvent,
+        session_id: Option<&str>,
+        trace: Option<&vak_session::trace::TraceKey>,
+    ) -> Result<(), vak_bus::BusError> {
         let subject = self.subject_for(event, session_id);
-        let prev_hash = if seq == 1 {
-            MessageEnvelope::GENESIS_HASH.to_string()
-        } else {
-            format!("{}", seq - 1)
-        };
-
         let payload = serde_json::to_vec(event).unwrap_or_else(|_| b"{}".to_vec());
 
+        let mut chain = self.chain.lock().await;
+        let seq = chain.0 + 1;
         let mut envelope = MessageEnvelope::new(
             format!("vak://server/{}", self.workspace_id),
             subject_event_type(&subject),
             &self.workspace_id,
             "server",
             seq,
-            &prev_hash,
+            &chain.1,
             payload,
-            None,
+            trace.map(|t| TraceContext {
+                traceparent: t.traceparent(),
+                tracestate: None,
+            }),
         );
+        *chain = (seq, envelope.compute_hash());
+        drop(chain);
 
         if let Some(sid) = session_id {
             envelope = envelope.with_session(sid);
@@ -380,6 +388,55 @@ mod tests {
         let payload: serde_json::Value =
             serde_json::from_slice(&received.payload).expect("decode payload");
         assert_eq!(payload["type"], "Heartbeat");
+    }
+
+    #[tokio::test]
+    async fn bus_envelope_trace_is_run_trace() {
+        use vak_session::ids::{AgentId, SpaceId, TenantId};
+        use vak_session::trace::{Cause, TraceKey};
+        let bus = ServerBus::local("ws_trace");
+        let mut rx = bus.subscribe("vak.events.ws_trace.>").await.expect("sub");
+        tokio::task::yield_now().await;
+        let key = TraceKey::root(
+            TenantId::new(),
+            SpaceId::new(),
+            AgentId::new(),
+            Cause::Heartbeat,
+        );
+        bus.emit_traced(&SystemEvent::Heartbeat, None, Some(&key))
+            .await
+            .expect("emit");
+        let env = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+            .await
+            .expect("timeout")
+            .expect("recv");
+        assert_eq!(env.trace.trace_id(), key.w3c_trace_id());
+        assert_eq!(env.trace.traceparent, key.traceparent());
+    }
+
+    #[tokio::test]
+    async fn bus_prev_hash_is_hash() {
+        let bus = ServerBus::local("ws_hash");
+        let mut rx = bus.subscribe("vak.events.ws_hash.>").await.expect("sub");
+        tokio::task::yield_now().await;
+        for _ in 0..3 {
+            bus.emit(&SystemEvent::Heartbeat, None).await.expect("emit");
+        }
+        let mut prev: Option<MessageEnvelope> = None;
+        for _ in 0..3 {
+            let env = tokio::time::timeout(std::time::Duration::from_millis(500), rx.recv())
+                .await
+                .expect("timeout")
+                .expect("recv");
+            match &prev {
+                None => assert_eq!(env.lineage.prev_event_hash, MessageEnvelope::GENESIS_HASH),
+                Some(p) => {
+                    assert_eq!(env.lineage.prev_event_hash.len(), 64);
+                    assert!(MessageEnvelope::verify_merkle_link(p, &env));
+                }
+            }
+            prev = Some(env);
+        }
     }
 
     #[tokio::test]

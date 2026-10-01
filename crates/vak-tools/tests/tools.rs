@@ -16,6 +16,7 @@ async fn run(tool: &dyn Tool, dir: &Path, args: serde_json::Value) -> ToolOutput
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,
+        trace: None,
         new_documents: Vec::new(),
     };
     tool.execute(&args, &ctx).await

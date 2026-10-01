@@ -4230,6 +4230,7 @@ impl Agent {
             sandbox: Some(sandbox),
             sandbox_sink: None,
             agent_id: None,
+            trace: None,
             new_documents: Vec::new(),
         };
         let input = serde_json::json!({ "command": cmd });
@@ -6736,6 +6737,7 @@ async fn execute_one(
                 sandbox: sandbox.cloned(),
                 sandbox_sink: Some(sandbox_sink),
                 agent_id: agent_id.map(|s| s.to_string()),
+                trace: None,
                 new_documents: Vec::new(),
             };
             let tool = tool.clone();

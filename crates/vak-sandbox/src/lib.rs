@@ -591,6 +591,8 @@ pub struct EnvironmentRecord {
     pub updated_at: String,
     #[serde(default)]
     pub detail: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -605,6 +607,8 @@ pub struct PreviewPreparationRecord {
     pub command: String,
     pub evidence: String,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -633,6 +637,10 @@ pub struct CandidateRecord {
     /// version replays those, and `parent_candidate_id` is the full draft.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub narrowed: Option<NarrowedDraft>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
 
 /// Which of an Office draft's changes a narrowed version keeps
@@ -676,6 +684,8 @@ pub struct PromotionRecord {
     #[serde(default)]
     pub workspace_checks: Vec<WorkspaceCheckPlan>,
     pub updated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2480,6 +2490,7 @@ mod tests {
             setup_recipe: vec!["make".into()],
         };
         let record = DurableRecord::Environment(EnvironmentRecord {
+            trace: None,
             record_id: "r-1".into(),
             environment_id: "env-1".into(),
             state: EnvironmentState::Ready,
@@ -2489,6 +2500,7 @@ mod tests {
         });
         append_record(&path, &record).unwrap();
         let preparation = DurableRecord::PreviewPreparation(PreviewPreparationRecord {
+            trace: None,
             record_id: "preview-1".into(),
             session_id: "session-1".into(),
             result_id: "result-1".into(),

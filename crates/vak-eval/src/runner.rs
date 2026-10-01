@@ -446,6 +446,7 @@ async fn run_case_with_tools(
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,
+        trace: None,
         new_documents: Vec::new(),
     };
     let verify_out = BashTool

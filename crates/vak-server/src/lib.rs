@@ -11710,6 +11710,8 @@ async fn export_sandbox_candidate(
                 }
             };
             let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
+                trace: None,
+                actor: None,
                 record_id: format!("candidate-{id}"),
                 session_id,
                 turn_id,
@@ -12295,6 +12297,8 @@ async fn narrow_sandbox_candidate_office(
         }
     };
     let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
+        trace: None,
+        actor: None,
         record_id: format!("candidate-{id}"),
         session_id: saved.session_id.clone(),
         turn_id: saved.turn_id.clone(),
@@ -12957,6 +12961,8 @@ async fn dispatch_candidate_revision(
                         match vak_sandbox::candidate_digest(&candidate) {
                             Ok(candidate_digest) => {
                                 let record = vak_sandbox::CandidateRecord {
+                                    trace: None,
+                                    actor: None,
                                     record_id: format!("candidate-{id}"),
                                     session_id: saved.session_id.clone(),
                                     turn_id: saved.turn_id.clone(),
@@ -13266,6 +13272,7 @@ async fn promote_sandbox_candidate(
         receipt.integration.target_checks = checks;
     }
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
+        trace: None,
         record_id: format!("promotion-{}", receipt.candidate_id),
         session_id,
         result_id: saved.result_id,
@@ -18923,6 +18930,7 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
         sandbox: core.agent_sandbox(),
         sandbox_sink: None,
         agent_id: core.agent_identity().map(|a| a.id.clone()),
+        trace: None,
         new_documents: Vec::new(),
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
@@ -19763,6 +19771,7 @@ fn append_preview_preparation(
 ) -> Result<(), String> {
     let record =
         vak_sandbox::DurableRecord::PreviewPreparation(vak_sandbox::PreviewPreparationRecord {
+            trace: None,
             record_id: format!("preview-preparation-{}", uuid::Uuid::now_v7()),
             session_id: saved.session_id.clone(),
             result_id: saved.result_id.clone(),

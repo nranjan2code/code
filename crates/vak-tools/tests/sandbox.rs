@@ -17,6 +17,7 @@ fn ctx_with(cwd: &std::path::Path, mode: SandboxMode) -> ToolContext {
         sandbox: Some(Arc::new(Seatbelt::new(mode, cwd))),
         sandbox_sink: None,
         agent_id: None,
+        trace: None,
         new_documents: Vec::new(),
     }
 }
@@ -174,6 +175,7 @@ async fn deny_sandbox_returns_error_at_runtime() {
         ))),
         sandbox_sink: None,
         agent_id: None,
+        trace: None,
         new_documents: Vec::new(),
     };
 
@@ -202,6 +204,7 @@ async fn off_mode_allows_unrestricted_writes() {
         sandbox: None,
         sandbox_sink: None,
         agent_id: None,
+        trace: None,
         new_documents: Vec::new(),
     };
 
