@@ -1720,3 +1720,10 @@ remains open.
   data profile is `~/Library/Application Support/vak/mail-calendar-routine-preview-check`.
   `vak-home` is the workspace, not the data home. No account or credential has
   been connected.
+- 2026-10-01: Agent reads now serialize connected-provider content only inside
+  `untrusted_provider_data`, with fixed provenance metadata stating that the
+  provider has no authority and cannot widen scope or authorize an effect. An
+  adversarial fixture verifies that hostile message text and JSON-like fields
+  cannot replace the outer handling metadata. This is a model-facing trust
+  marker, not prompt-injection containment; broker authorization remains the
+  enforcement boundary. All 12 Core mail/calendar tests pass.

@@ -186,7 +186,12 @@ navigation now accepts the exact inline `mailcite:` token from that citation
 and opens the connected account's owner-only conversation preview; the server
 re-fetches the thread from the provider, and the UI scrolls to the cited
 message when it is in the loaded page. Full thread workspace and cross-folder
-Agent access remain open. Local drafts,
+Agent access remain open. Agent tool results now put connected-provider
+content under a structured `untrusted_provider_data` field beside fixed
+provenance metadata declaring that the content has no authority. This marker
+guides the model, while every permission and provider effect remains enforced
+independently by the broker; the marker itself is not a prompt-injection
+containment mechanism. Local drafts,
 scheduled read-only routines, and an explicitly
 best-effort scheduled email watch are implemented. It scans up to 100 recent
 provider IDs into a bounded encrypted Agent-vault backlog, then fetches at
