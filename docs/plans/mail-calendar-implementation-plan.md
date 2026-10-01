@@ -2248,3 +2248,11 @@ remains open.
   data. `npm run typecheck`, `git diff --check`, and the web production build
   pass. Full editable
   conversation workspace and provider connection acceptance remain open.
+- 2026-10-01: Removed the obsolete Settings-only mail/calendar preview,
+  conversation, and draft handlers left behind after those workflows moved to
+  Today Canvas. Settings now retains account linking, access grants, account
+  lifecycle, and account-level pause controls. The connected Settings browser
+  fixture passes all 5 checks, including its Canvas link and absence of work
+  surfaces; `npm run typecheck`, the web production build, and `git diff
+  --check` pass. The daily Canvas fixture remains at 38 passing synthetic
+  checks. Real-provider and full-service acceptance remain open.
