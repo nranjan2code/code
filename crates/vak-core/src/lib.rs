@@ -2,6 +2,7 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+pub mod agent_definitions;
 pub mod agent_network;
 pub mod backup;
 pub mod baseline;
@@ -3087,6 +3088,33 @@ impl Core {
         self.conversation_context.as_ref()
     }
 
+    /// The Agent's identity as its saved definition reads now.
+    ///
+    /// A session header records the identity as admitted, for display and
+    /// audit; the prompt is resolved per turn, so the model is told the
+    /// current definition (docs/design/45-prompt-layers.md). A definition
+    /// that is gone, no longer active, or unreadable leaves the admitted
+    /// identity in place: lifecycle is enforced at admission, and a read
+    /// failure must not change who the Agent is mid-conversation. The
+    /// built-in `vak` has no definition.
+    fn live_agent_identity(
+        &self,
+        admitted: vak_session::types::AgentIdentity,
+    ) -> vak_session::types::AgentIdentity {
+        if admitted.id == "vak" {
+            return admitted;
+        }
+        agent_definitions::effective(self)
+            .ok()
+            .and_then(|definitions| {
+                definitions
+                    .into_iter()
+                    .find(|definition| definition.id == admitted.id && definition.is_admissible())
+            })
+            .map(|definition| definition.identity())
+            .unwrap_or(admitted)
+    }
+
     pub fn agent_identity(&self) -> Option<&vak_session::types::AgentIdentity> {
         self.agent_identity.as_ref()
     }
@@ -6048,7 +6076,10 @@ impl Core {
             meta: prompt_meta,
         } = prompt;
         let prompt_text = prompt.text_content();
-        self.agent_identity = session.header().and_then(|header| header.agent.clone());
+        self.agent_identity = session
+            .header()
+            .and_then(|header| header.agent.clone())
+            .map(|admitted| self.live_agent_identity(admitted));
         // The approver that will actually serve this run is the authority on
         // whether its gates reach anyone. Whatever the host stamped earlier
         // loses to it, and a disagreement is recorded rather than believed.
@@ -10662,6 +10693,82 @@ mod spend_gate_persistence_tests {
         assert!(prompts.contains_key("writer"));
         assert!(prompts["analyst"].contains("Focus as the data analyst"));
         assert!(prompts["researcher"].contains("Focus as the researcher"));
+    }
+
+    fn admitted_agent(instructions: &str, revision: u64) -> vak_session::types::AgentIdentity {
+        vak_session::types::AgentIdentity {
+            id: "auditor".into(),
+            revision,
+            name: "Auditor".into(),
+            character: "vak".into(),
+            personality: "Focused".into(),
+            animation: "subtle".into(),
+            voice: "default".into(),
+            behaviour: "Analytical".into(),
+            responsibilities: "Auditing".into(),
+            instructions: instructions.into(),
+        }
+    }
+
+    fn write_definition(dir: &std::path::Path, instructions: &str, revision: u64, lifecycle: &str) {
+        std::fs::create_dir_all(dir.join(".vak")).unwrap();
+        let definition = serde_json::json!([{
+            "id": "auditor", "revision": revision, "lifecycle": lifecycle,
+            "name": "Auditor", "character": "vak", "personality": "Focused",
+            "behaviour": "Analytical", "responsibilities": "Auditing",
+            "instructions": instructions, "animation": "subtle", "voice": "default"
+        }]);
+        std::fs::write(dir.join(".vak").join("agents.json"), definition.to_string()).unwrap();
+    }
+
+    #[test]
+    fn an_edited_agent_definition_reaches_the_next_turn() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let admitted = admitted_agent("Audit carefully", 1);
+
+        write_definition(dir.path(), "Audit carefully", 1, "active");
+        let unchanged = core.live_agent_identity(admitted.clone());
+        assert_eq!(unchanged.instructions, "Audit carefully");
+
+        write_definition(dir.path(), "Answer in a table", 2, "active");
+        let live = core.live_agent_identity(admitted.clone());
+        assert_eq!(live.instructions, "Answer in a table");
+        assert_eq!(live.revision, 2);
+
+        let prompt = core.clone().with_agent_identity(Some(live)).system_prompt();
+        assert!(prompt.contains("Answer in a table"), "{prompt}");
+        assert!(!prompt.contains("Audit carefully"), "{prompt}");
+    }
+
+    #[test]
+    fn a_missing_or_inactive_definition_keeps_the_admitted_identity() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let admitted = admitted_agent("Audit carefully", 1);
+
+        assert_eq!(
+            core.live_agent_identity(admitted.clone()).instructions,
+            "Audit carefully",
+            "no definition on disk"
+        );
+        write_definition(dir.path(), "Changed", 2, "paused");
+        assert_eq!(
+            core.live_agent_identity(admitted).instructions,
+            "Audit carefully",
+            "a paused Agent is gated at admission, not re-identified"
+        );
+    }
+
+    #[test]
+    fn the_built_in_agent_has_no_definition_to_refresh() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let built_in = crate::vak_agent_identity();
+        assert_eq!(core.live_agent_identity(built_in.clone()), built_in);
     }
 
     #[test]

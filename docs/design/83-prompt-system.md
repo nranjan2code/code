@@ -152,7 +152,7 @@ flowchart TB
 | Lifetime | Examples | Where it lands | Recorded in |
 |---|---|---|---|
 | Static | seed, `Surface::prompt_section` texts, `EpistemicStance::guideline_prompt`, `ControlKind` nudge bodies, `COMPACTION_SYSTEM`, `AUDIT_SYSTEM`, `HANDOFF_SYSTEM`, `CONTRACT_AUTHOR_SYSTEM`, `PLANNER_SYSTEM`, reflection's `system_prompt()` | prefix, tail, nudges, side dispatches | the binary's version (`FrozenContract.app_version`) and every entry that carries the rendered text |
-| Configured | `.vak/prompts/*.md`, `Bot.prompt`, `AllowlistEntry.prompt`, Agent prompt files | prefix, read afresh every turn (a saved Agent's identity and instructions are the exception, §23) | `TurnCapabilitiesBound.system_prompt` (each turn, authoritative); `FrozenContract.prompt_layers` (admission snapshot) |
+| Configured | `.vak/prompts/*.md`, `Bot.prompt`, `AllowlistEntry.prompt`, Agent prompt files, the saved Agent definition | prefix, read afresh every turn | `TurnCapabilitiesBound.system_prompt` (each turn, authoritative); `FrozenContract.prompt_layers` (admission snapshot) |
 | Per-capability | contracts present or absent, skills, MCP names, "More tools", standing | prefix, tool array | `TurnCapabilitiesBound` |
 | Per-turn | `<turn_context>`, `<intent>`, `<stance>`, `<work_contract>`, `<workspace_delta>`, `<conversation_thread>` | tail | `turn_context` activity, `Intent` entry, work/goal entries, `workspace_delta` activity |
 | Per-step | tool results, nudges, `find_tools` additions | messages after the directive, tool array | message entries, receipts |
@@ -261,6 +261,9 @@ flowchart TB
   plus personality, working style and responsibilities, and always ends
   with "This identity does not grant tools, permissions, credentials or
   budget."
+  The identity comes from the Agent's saved definition, looked up every
+  turn (`Core::live_agent_identity`), so an edit reaches the next turn of
+  its open conversations; the session header keeps the admitted copy.
 
 ### 5.3 Provenance
 
@@ -988,25 +991,19 @@ current prompt.
 
 Found while writing this reference, against the tree at 5.3.2. Fixed since:
 the CLI resume gate and its "FROZEN prompt" message, the "applies to new
-sessions" UI copy, and the two nudges that quoted the request. Still open:
+sessions" UI copy, the two nudges that quoted the request, and a saved
+Agent's identity, which a turn now reads live. Still open:
 
-1. **Saved Agent identity is per session.** A saved Agent's identity and
-   instructions come from the session header's `AgentIdentity`, recorded
-   at admission; editing the Agent does not reach an open session's next
-   turn, unlike every other layer. The Agent's own prompt files are read
-   per turn.
-2. **Doc 68 §6's tail order** lists `<thread>` before `<work_contract>`;
+1. **Doc 68 §6's tail order** lists `<thread>` before `<work_contract>`;
    `compose_tail` emits `<turn_context>`, `<intent>`, `<stance>`,
    `<work_contract>`, `<workspace_delta>`, `<conversation_thread>`. Doc
    68 also names blake3 for the prefix digest; `assemble::prefix_digest`
    uses SHA-256. Doc 68 §6 now carries a note giving the code's order.
-3. **Layer push order vs enum order.** The role layer is pushed before the
+2. **Layer push order vs enum order.** The role layer is pushed before the
    bot and chat overlays, but `PromptLayer` orders `Bot, Chat` before
    `Agent`. Narrowest-wins follows push order, so a role's identity file
    is shadowed by a bot or chat identity, while descriptors are sorted by
    enum order.
-
-Item 1 is code that does not yet follow the per-turn model.
 
 ---
 

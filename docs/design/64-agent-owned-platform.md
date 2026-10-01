@@ -256,10 +256,14 @@ Resolve the Agent in the destination workspace, never the active UI workspace.
 Missing/paused explicit targets fail visibly without fallback to Vak. Preserve
 inheritance choices and resolution provenance rather than copying defaults.
 
-Identity/instructions are frozen for an admitted execution session; edits affect
-future admissions. Settings shows the revision in use and offers explicit
-application to the current conversation through drift/admission handling,
-retaining authorized history and immutable prior ledgers.
+Identity and instructions are read every turn, so an edit to a saved Agent
+reaches the next turn of every conversation it owns, with no rotation and no
+re-admission; a turn already running keeps what it started with. The session
+header keeps the identity as admitted, for display and audit, and each turn's
+`TurnCapabilitiesBound` records the prompt that turn sent. A definition that
+is paused, archived or gone is not re-read: lifecycle is enforced at
+admission, and the admitted identity stays in place. The revision rises when
+any prompt-bearing field changes, instructions included.
 
 Policy is live. Effective authority intersects workspace, Agent, Bot/endpoint,
 audience, and run/delegation ceilings; no layer restores authority another

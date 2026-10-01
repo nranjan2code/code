@@ -82,7 +82,7 @@ three different answers inside one document today.
 | `surface` | **code** | runtime-derived | Doc 07 v0.2.1. The generated line is the runtime's own observation. |
 | `surface_note` | user | **concatenate, never remove** | Appends to the `Surface:` line. Structurally cannot rewrite it: a separate block, so nothing can name the generated sentence. |
 | `skills` / `mcp` | **code** | runtime-derived | Live inventories with digests. |
-| Agent instructions | user | additive, authority-capped | Custom Agent guidance is appended within the universal foundation and is frozen with Agent identity provenance. |
+| Agent instructions | user | additive, authority-capped | Custom Agent guidance is appended within the universal foundation. It is read every turn and carried with Agent identity provenance. |
 
 Two more runtime-derived, never-user-editable pieces exist but are outside
 this table because they are per-*turn*, not per-*resolution*: the temporal
@@ -227,11 +227,19 @@ a different workspace, Agent or conversation), it writes a `ConfigChange`
 security event naming any prompt change, so "my bot started answering
 differently" is answerable from the audit trail.
 
-One piece is not yet per turn: a saved Agent's identity and instructions
-are read from the session header's `AgentIdentity`, recorded at admission
-(that Agent's own prompt files are read per turn). `vak exec --session` no
-longer gates a resume on layer changes; the `--accept-drift` flag was
-removed from `exec` (it remains on `flow run --resume`, a different check).
+A saved Agent follows the same rule. Its definition (`.vak/agents.json`,
+read by `vak_core::agent_definitions`) is looked up every turn
+(`Core::live_agent_identity`), so an edit to its name, personality,
+behaviour, responsibilities or instructions reaches the next turn of every
+conversation it owns. The session header keeps the identity as admitted, for
+display and audit, and the Agent's revision, which rises when any of those
+fields changes, appears in the layer's source (`agent:<id>@<revision>`). A
+definition that is paused, archived, deleted or unreadable is not re-read:
+lifecycle is enforced at admission, and the admitted identity stays in place.
+
+`vak exec --session` no longer gates a resume on layer changes; the
+`--accept-drift` flag was removed from `exec` (it remains on
+`flow run --resume`, a different check).
 
 ### Budget
 

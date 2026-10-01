@@ -1,70 +1,11 @@
-//! Durable user-facing Agent definitions.
-//!
-//! Definitions describe presentation and prompt preferences. They never grant
-//! tools, permissions, credentials, budget, or a wider execution scope.
+//! Durable user-facing Agent definitions: templates, validation and saving.
+//! The types and the reader live in `vak_core::agent_definitions`.
 
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-};
+use std::{collections::HashSet, path::Path};
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum AgentLifecycle {
-    Active,
-    Paused,
-    Archived,
-}
-
-fn default_lifecycle() -> AgentLifecycle {
-    AgentLifecycle::Active
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentDefinition {
-    pub id: String,
-    #[serde(default = "default_revision")]
-    pub revision: u64,
-    #[serde(default = "default_lifecycle")]
-    pub lifecycle: AgentLifecycle,
-    pub name: String,
-    pub character: String,
-    pub personality: String,
-    pub behaviour: String,
-    #[serde(default)]
-    pub responsibilities: String,
-    #[serde(default)]
-    pub instructions: String,
-    pub animation: String,
-    pub voice: String,
-}
-
-fn default_revision() -> u64 {
-    1
-}
-
-impl AgentDefinition {
-    pub fn is_admissible(&self) -> bool {
-        self.lifecycle == AgentLifecycle::Active
-    }
-
-    pub fn identity(&self) -> vak_session::types::AgentIdentity {
-        vak_session::types::AgentIdentity {
-            id: self.id.clone(),
-            revision: self.revision,
-            name: self.name.clone(),
-            character: self.character.clone(),
-            personality: self.personality.clone(),
-            animation: self.animation.clone(),
-            voice: self.voice.clone(),
-            behaviour: self.behaviour.clone(),
-            responsibilities: self.responsibilities.clone(),
-            instructions: self.instructions.clone(),
-        }
-    }
-}
+pub use vak_core::agent_definitions::{AgentDefinition, AgentLifecycle, effective, load, path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentTemplate {
@@ -164,32 +105,6 @@ pub fn find_template(id: &str) -> Option<AgentTemplate> {
     builtin_templates()
         .into_iter()
         .find(|t| t.template_id == id)
-}
-
-pub fn effective(core: &vak_core::Core) -> Result<Vec<AgentDefinition>, String> {
-    let shared = vak_config::paths::default_workspace();
-    let mut profiles = load(&shared)?;
-    if core.cwd() != &shared && core.project_config_trusted() {
-        for profile in load(core.cwd())? {
-            profiles.retain(|p| p.id != profile.id);
-            profiles.push(profile);
-        }
-    }
-    Ok(profiles)
-}
-
-fn path(cwd: &Path) -> PathBuf {
-    cwd.join(".vak").join("agents.json")
-}
-
-pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
-    let file = path(cwd);
-    let raw = match std::fs::read_to_string(&file) {
-        Ok(raw) => raw,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(format!("cannot read {}: {e}", file.display())),
-    };
-    serde_json::from_str(&raw).map_err(|e| format!("invalid agents: {e}"))
 }
 
 /// The companion set the clients ship (`vak-client-ui/src/agentGlyph.ts`).
@@ -293,6 +208,7 @@ pub fn save(
                 || profile.personality != old.personality
                 || profile.behaviour != old.behaviour
                 || profile.responsibilities != old.responsibilities
+                || profile.instructions != old.instructions
                 || profile.animation != old.animation
                 || profile.voice != old.voice
             {

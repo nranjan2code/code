@@ -460,9 +460,10 @@ pub(crate) async fn open(
         if let Err(e) = ensure_registered(&state, &core, &sid).await {
             return error(StatusCode::CONFLICT, e);
         }
-        // The identity frozen when the conversation was admitted, not the
-        // catalogue's current entry: editing an Agent never rewrites a
-        // conversation it already owns (AGENTS.md invariant 37).
+        // The identity as admitted, for display: a turn resolves the current
+        // definition itself (`Core::live_agent_identity`), so editing an
+        // Agent reaches its next turn, while this header snapshot records
+        // what the conversation was admitted with (AGENTS.md invariant 37).
         let admitted = h.agent.clone().unwrap_or_else(|| identity.clone());
         agent_session_cache()
             .lock()
