@@ -1,7 +1,10 @@
 //! Durable user-facing Agent definitions: templates, validation and saving.
 //! The types and the reader live in `vak_core::agent_definitions`.
 
-use std::{collections::HashSet, path::Path};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -105,6 +108,36 @@ pub fn find_template(id: &str) -> Option<AgentTemplate> {
     builtin_templates()
         .into_iter()
         .find(|t| t.template_id == id)
+}
+
+/// Set one Agent's lifecycle in the layer that defines it: the Shared layer,
+/// else the active workspace's project layer (trusted projects only). The
+/// definition's other fields are carried through unchanged, so this never
+/// bumps the revision. Returns the layer root it wrote.
+pub fn set_lifecycle(
+    core: &vak_core::Core,
+    id: &str,
+    lifecycle: AgentLifecycle,
+) -> Result<PathBuf, String> {
+    let shared = vak_config::paths::default_workspace();
+    let mut layers = vec![shared.clone()];
+    if core.cwd() != &shared && core.project_config_trusted() {
+        layers.push(core.cwd().clone());
+    }
+    // The project layer shadows Shared, so it is the one to change when both
+    // define the Agent.
+    for root in layers.into_iter().rev() {
+        let mut profiles = load(&root)?;
+        let Some(profile) = profiles.iter_mut().find(|p| p.id == id) else {
+            continue;
+        };
+        profile.lifecycle = lifecycle;
+        save(&root, &profiles, core.project_config_trusted())?;
+        return Ok(root);
+    }
+    Err(format!(
+        "agent '{id}' is not defined in a layer this workspace can read"
+    ))
 }
 
 /// The companion set the clients ship (`vak-client-ui/src/agentGlyph.ts`).

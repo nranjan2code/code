@@ -1095,6 +1095,8 @@ fn router_with_state(state: AppState) -> Router {
             "/entities/{id}",
             get(get_entity_route).delete(delete_entity_route),
         )
+        .route("/agents/{agent}/pause", post(pause_agent))
+        .route("/agents/{agent}/resume", post(resume_agent))
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
         .route("/previews", post(create_preview))
@@ -13826,6 +13828,150 @@ fn apply_permission_mode(
         deny_pending_approvals(&handle);
         let _ = state.gateway.deny_pending_for_session(&handle.id);
     }
+}
+
+#[derive(serde::Deserialize, Default)]
+struct PauseAgentBody {
+    /// Also cancel the Agent's running work now. Off by default: pausing
+    /// refuses the next turn and lets a running one finish (doc 64).
+    #[serde(default)]
+    stop_running: bool,
+    /// `paused` (default) or `archived`.
+    #[serde(default)]
+    state: Option<String>,
+}
+
+fn session_agent_id(handle: &SessionHandle) -> Option<String> {
+    handle.core.agent_identity().map(|agent| agent.id.clone())
+}
+
+/// Pause or archive a saved Agent (docs/design/84-worker-questions-and-control.md §7).
+///
+/// The lifecycle is written first, so a turn admitted from this moment is
+/// refused by the per-turn check; only then are the Agent's live runs
+/// cancelled. Cancelling is push-based: one pass over the live sessions, no
+/// polling, and only when the caller asked for it.
+async fn pause_agent(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+    body: Option<Json<PauseAgentBody>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let body = body.map(|Json(body)| body).unwrap_or_default();
+    if agent == "vak" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "the built-in Agent cannot be paused" })),
+        )
+            .into_response();
+    }
+    let lifecycle = match body.state.as_deref() {
+        None | Some("paused") => agents::AgentLifecycle::Paused,
+        Some("archived") => agents::AgentLifecycle::Archived,
+        Some(_) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "state must be paused or archived" })),
+            )
+                .into_response();
+        }
+    };
+    if let Err(error) = agents::set_lifecycle(&state.active_core(), &agent, lifecycle) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    let stopped = if body.stop_running {
+        stop_agent_runs(&state, &agent)
+    } else {
+        0
+    };
+    vak_core::security_events::record(
+        &state.core.sessions_home(),
+        vak_core::security_events::EventKind::ConfigChange,
+        "agent_lifecycle_changed",
+        &format!(
+            "agent={agent} lifecycle={lifecycle:?} stop_running={} stopped_runs={stopped}",
+            body.stop_running
+        )
+        .to_lowercase(),
+        None,
+    );
+    Json(serde_json::json!({
+        "agent": agent,
+        "lifecycle": lifecycle,
+        "stopped_runs": stopped,
+    }))
+    .into_response()
+}
+
+async fn resume_agent(
+    State(state): State<AppState>,
+    Path(agent): Path<String>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    match agents::set_lifecycle(&state.active_core(), &agent, agents::AgentLifecycle::Active) {
+        Ok(_) => Json(serde_json::json!({ "agent": agent, "lifecycle": "active" })).into_response(),
+        Err(error) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response(),
+    }
+}
+
+/// Cancel every live run that belongs to `agent_id`, deny its pending gates,
+/// and leave a note the person will see. Cancellation reaches the Agent's
+/// workers through their child tokens. Partial output is kept
+/// (AGENTS.md invariant 5). Returns how many sessions were running.
+fn stop_agent_runs(state: &AppState, agent_id: &str) -> usize {
+    let handles: Vec<Arc<SessionHandle>> = state
+        .sessions
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+        .filter(|handle| session_agent_id(handle).as_deref() == Some(agent_id))
+        .cloned()
+        .collect();
+    let mut stopped = 0;
+    for handle in handles {
+        let running = handle
+            .session
+            .lock()
+            .map(|session| session.is_none())
+            .unwrap_or(false);
+        handle
+            .cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cancel();
+        handle
+            .side_cancel
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .cancel();
+        deny_pending_approvals(&handle);
+        let _ = state.gateway.deny_pending_for_session(&handle.id);
+        if running {
+            stopped += 1;
+            handle
+                .activity_buffer
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .push(vak_session::ActivityRecord {
+                    activity_id: format!("agent-paused-{}", uuid::Uuid::now_v7()),
+                    turn: None,
+                    kind: vak_session::ActivityKind::Run,
+                    status: vak_session::ActivityStatus::Cancelled,
+                    label: "Run stopped: the Agent was paused".into(),
+                    detail: None,
+                    data: std::collections::BTreeMap::new(),
+                });
+        }
+    }
+    stopped
 }
 
 fn refresh_control_plane(state: &AppState) {

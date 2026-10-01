@@ -121,11 +121,12 @@ pub fn definition(core: &crate::Core, agent_id: &str) -> Result<Option<AgentDefi
     let shared = vak_config::paths::default_workspace();
     let mut found = load(&shared)?.into_iter().find(|d| d.id == agent_id);
     let base = definition_base(core.cwd(), agent_id);
-    let trusted = if &base == core.cwd() {
-        core.project_config_trusted()
-    } else {
-        crate::trust::is_trusted(&base)
-    };
+    // An Agent's own workspace is trusted only when the base it lives under
+    // was trusted when the Agent was opened (`pinned_core_for_workspace`), so
+    // a trusted Agent `Core` vouches for its base even where the base's trust
+    // lives in memory (`serve --trust`) rather than in the trust store.
+    let trusted =
+        core.project_config_trusted() || (&base != core.cwd() && crate::trust::is_trusted(&base));
     if base != shared
         && trusted
         && let Some(project) = load(&base)?.into_iter().find(|d| d.id == agent_id)

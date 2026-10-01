@@ -111,6 +111,9 @@ Read before changing behaviour in these areas:
   `81-pieces-and-home.md` (the proposed platform for kept, live and hosted
   work: pieces that run as code without a model, their gateways, storage and
   operations, and Home; it depends on data-architecture M6 and M8),
+  `84-worker-questions-and-control.md` (a worker asking a question, a
+  model-facing `workers` tool with background tasks, and pause-and-stop-now;
+  pause-and-stop-now is built, the rest is proposed),
   `82-library.md` (the proposed Library: one place for everything Vak makes,
   artifacts with their versions, parts and the conversations that made
   them; Continue working attaches an artifact to its Agent's own
