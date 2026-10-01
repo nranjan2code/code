@@ -26,3 +26,17 @@ the rendered fixture; the open exact-email Review dialog also audited with zero
 violations (40 passes, 49 inapplicable, no incomplete rules). These checks use
 synthetic same-origin responses and do not establish provider conformance or
 screen-reader testing.
+
+The `daily-calendar-*` captures show the actual Today canvas with a synthetic
+load of nine connected accounts, 72 recent messages, 300 timed events and 24
+free/busy intervals. The calendar retains a minimum width per overlapping
+event lane and scrolls inside its own frame. This keeps the phone page at 390px
+wide while preserving usable event labels; selecting one calendar makes its
+timeline roomier. The filter remounts the calendar layout so it recomputes
+overlap lanes for the selected account. `daily-calendar-focused-390-light.png`
+shows the focused view, and `daily-calendar-event-1440-light.png` shows the
+selected event details and its local-draft next action. The daily browser
+fixture passes 19 checks at both 1440 × 900 and 390 × 844. These captures
+contain only fabricated fixture data and no provider requests. The browser
+viewport was set to the named dimensions, and the fixture theme was set
+directly for each capture.

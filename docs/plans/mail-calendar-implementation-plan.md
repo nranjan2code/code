@@ -702,6 +702,16 @@ remains open.
 
 ## Progress log
 
+- 2026-10-01: Improved the Today calendar under a synthetic nine-account load.
+  The time grid now preserves a minimum width per overlapping lane and scrolls
+  inside the calendar frame, so 300 events remain readable on a 390px phone
+  without widening the page. Selecting one calendar remounts its layout and
+  recomputes overlap lanes, keeping the filtered timeline roomy; event cards
+  still open the accessible detail panel and local-draft action. The daily
+  browser fixture passes all 19 checks at both desktop and phone sizes. Saved actual
+  canvas and selected-event captures at desktop and light/dark phone sizes;
+  all data came from the same-origin synthetic fixture. This is responsive UI
+  evidence, not provider-backed acceptance.
 - 2026-10-01: Added the server-side calendar-trigger counterpart to mail-watch
   restart recovery. It marks an in-progress TaskDef run interrupted, reopens the
   owning Agent vault, resolves its staged event occurrence as unsuccessful, and

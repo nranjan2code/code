@@ -139,7 +139,12 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
-  const allCalendarEventsRendered = document.querySelectorAll(".mail-calendar-grid-event").length === 300;
+  const allCalendarEventsRendered = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 300);
+  const initialPhoneTimeline = document.querySelector<HTMLElement>(".mail-calendar-time-grid.is-day");
+  const phoneTimelineScrollWorks = window.innerWidth > 640
+    || (!!initialPhoneTimeline && document.documentElement.scrollWidth === window.innerWidth
+      && initialPhoneTimeline.scrollWidth > initialPhoneTimeline.clientWidth
+      && (initialPhoneTimeline.querySelector<HTMLElement>(".mail-calendar-grid-event")?.getBoundingClientRect().width ?? 0) >= 130);
   const calendarSelector = document.querySelector<HTMLSelectElement>("select[aria-label='Show calendars']");
   if (calendarSelector) {
     calendarSelector.value = "g-account-0";
@@ -188,6 +193,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
     check(document.querySelectorAll(".daily-mail-calendar-message").length === 72, "The daily view renders eight recent rows for each of nine connected accounts"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
+    check(phoneTimelineScrollWorks, "The phone keeps dense event lanes readable inside the calendar without widening the page"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
     check(overlapLanesWork && eventTitleIsVisible, "Concurrent events receive stable separate lanes with visible titles"),
     check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),

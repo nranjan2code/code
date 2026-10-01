@@ -41,7 +41,8 @@ export function MailCalendarAgenda(props: Props) {
     return result;
   });
   const shownDays = createMemo(() => view() === "day" ? days().slice(0, 1) : view() === "week" ? days().slice(0, 7) : days());
-  const eventsByDay = (key: string) => props.events.filter((event) => {
+  const sourceEvents = createMemo(() => props.events);
+  const eventsByDay = (key: string) => sourceEvents().filter((event) => {
     if (event.all_day) {
       const start = event.starts_on;
       const end = event.ends_on ?? (start ? addDays(start, 1) : null);
@@ -97,6 +98,7 @@ export function MailCalendarAgenda(props: Props) {
     }
     return layouts;
   });
+  const maxLaneCount = () => Math.max(1, ...Array.from(eventLayouts().values(), (layout) => layout.laneCount));
   const labelTime = (event: MailCalendarEventPreview, key: string) => {
     if (event.all_day) return "All day";
     if (!event.starts_at || !event.ends_at) return "Time unavailable";
@@ -128,7 +130,7 @@ export function MailCalendarAgenda(props: Props) {
       <div class="mail-calendar-agenda-list"><For each={shownDays()}>{(key) => <section class="mail-calendar-agenda-day"><h3>{dayLabel(key)}</h3><Show when={eventsByDay(key).length > 0} fallback={<p class="settings-hint">No events</p>}><div class="mail-calendar-agenda-events"><For each={eventsByDay(key)}>{(event) => renderEvent(event, key)}</For></div></Show></section>}</For></div>
     </Show>
     <Show when={view() === "day" || view() === "week"}>
-      <div class={`mail-calendar-time-grid ${view() === "day" ? "is-day" : "is-week"}`}>
+      <div class={`mail-calendar-time-grid ${view() === "day" ? "is-day" : "is-week"}`} style={{ "--mail-calendar-day-min-width": `${Math.max(680, maxLaneCount() * 144)}px` }}>
         <div class="mail-calendar-time-labels"><div class="mail-calendar-all-day-label">All day</div><For each={Array.from({ length: visibleHours().end - visibleHours().start }, (_, index) => index + visibleHours().start)}>{(hour) => <div>{new Date(2000, 0, 1, hour).toLocaleTimeString([], { hour: "numeric" })}</div>}</For></div>
         <For each={shownDays()}>{(key) => <section class="mail-calendar-time-day" aria-label={dayLabel(key)}>
           <h3>{dayLabel(key)}</h3><div class="mail-calendar-all-day-lane"><For each={eventsByDay(key).filter((event) => event.all_day)}>{(event) => <button type="button" class="mail-calendar-all-day-event" aria-label={`Open ${event.title}`} onClick={() => selectEvent(event)}>{event.title}</button>}</For></div>

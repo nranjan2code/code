@@ -2420,6 +2420,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .mail-calendar-event-content span, .mail-calendar-event-content small, .mail-calendar-event-content p { margin: 0; color: var(--text-secondary); font-size: var(--fs-meta); overflow-wrap: anywhere; }
 .mail-calendar-time-grid { display: grid; grid-template-columns: 58px minmax(0, 1fr); min-width: 0; overflow: auto; border: 1px solid var(--border-soft); border-radius: 9px; }
 .mail-calendar-time-grid.is-week { grid-template-columns: 58px repeat(7, minmax(132px, 1fr)); }
+.mail-calendar-time-grid.is-day { grid-template-columns: 58px minmax(var(--mail-calendar-day-min-width, 680px), 1fr); }
 .mail-calendar-time-labels, .mail-calendar-time-day { min-width: 0; }
 .mail-calendar-time-labels { padding-top: 34px; color: var(--muted); font-size: 12px; text-align: right; }
 .mail-calendar-time-labels > div:not(.mail-calendar-all-day-label) { height: 52px; padding-right: 7px; transform: translateY(-7px); }
