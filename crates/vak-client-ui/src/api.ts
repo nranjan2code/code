@@ -262,9 +262,9 @@ export function listMailCalendarRoutineRuns(agentId: string, routineId: string):
 export function listMailCalendarFolders(agentId: string, accountId: string): Promise<{ folders: MailCalendarFolder[] }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-folders`);
 }
-export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10, query?: string, folderId?: string): Promise<{ messages: MailCalendarMailPreview[] }> {
+export function previewMailCalendarMail(agentId: string, accountId: string, limit = 10, query?: string, folderId?: string, cursor?: string): Promise<{ messages: MailCalendarMailPreview[]; next_cursor?: string | null }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/mail-preview`, {
-    method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}), ...(folderId ? { folder_id: folderId } : {}) }),
+    method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}), ...(folderId ? { folder_id: folderId } : {}), ...(cursor ? { cursor } : {}) }),
   });
 }
 export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "no_plain_text" }> {

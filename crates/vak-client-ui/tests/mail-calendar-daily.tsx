@@ -118,16 +118,20 @@ window.fetch = async (input, init) => {
   await Promise.resolve();
   try {
     if (url.pathname.endsWith("/mail-preview")) {
-      const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; folder_id?: string };
+      const body = JSON.parse(String(init?.body ?? "{}")) as { query?: string; folder_id?: string; cursor?: string };
       mailPreviewReads.push({ accountId, ...body });
-      return json({ messages: Array.from({ length: 8 }, (_, index) => ({
-      provider_id: `${accountId}-message-${index}`,
-      thread_id: account.provider === "apple_icloud" ? null : `${accountId}-thread-${index}`,
-      from: `sender-${index}@example.test`, to: "owner@example.test", cc: null,
-      subject: `${account.provider} sample mail ${index + 1}`,
-      received_at: new Date(Date.now() - index * 60_000).toISOString(),
-      preview: `Synthetic preview row ${index + 1}`, body_text: null, body_status: "available", has_attachments: false,
-      })) });
+      const offset = body.cursor ? 8 : 0;
+      return json({ messages: Array.from({ length: 8 }, (_, pageIndex) => {
+        const index = offset + pageIndex;
+        return {
+          provider_id: `${accountId}-message-${index}`,
+          thread_id: account.provider === "apple_icloud" ? null : `${accountId}-thread-${index}`,
+          from: `sender-${index}@example.test`, to: "owner@example.test", cc: null,
+          subject: `${account.provider} sample mail ${index + 1}`,
+          received_at: new Date(Date.now() - index * 60_000).toISOString(),
+          preview: `Synthetic preview row ${index + 1}`, body_text: null, body_status: "available", has_attachments: false,
+        };
+      }), next_cursor: body.cursor ? null : "fixture-mail-page-2" });
     }
     if (url.pathname.endsWith("/thread-preview")) {
       const body = JSON.parse(String(init?.body ?? "{}")) as { thread_id?: string; cursor?: string };
@@ -372,6 +376,10 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && mailPreviewReads.at(-1)?.folder_id === "g-account-0-projects"
     && mailPreviewReads.at(-1)?.query === "quarterly budget"
     && document.querySelectorAll(".daily-mail-calendar-message").length === 8);
+  [...document.querySelectorAll<HTMLButtonElement>("button")].find((button) => button.textContent?.trim() === "Load more messages")?.click();
+  const providerMailPagingWorks = await waitFor(() => mailPreviewReads.at(-1)?.cursor === "fixture-mail-page-2"
+    && mailRowsLoaded
+    && document.querySelector("nav[aria-label='Recent email pages']")?.textContent?.includes("16 messages loaded") === true);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
@@ -398,6 +406,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(queuedAccountRefreshWorks, "An account change during an in-flight refresh queues one immediate follow-up refresh"),
     check(dateRangeCalendarWorks && dateRangeBoundariesCorrect && calendarWeekPagingStartsCorrectly && calendarNextWeekWorks && calendarPreviousWeekWorks, "Canvas calendar reads inclusive date ranges and paginates longer selections by week without blanking the prior view"),
     check(accountFoldersLoaded && selectedFolderSearchWorks, "Canvas inbox can browse an Agent-scoped provider folder or label and search only that selected mailbox"),
+    check(providerMailPagingWorks, "Canvas fetches later inbox pages from the selected provider folder and appends them without duplicates"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),

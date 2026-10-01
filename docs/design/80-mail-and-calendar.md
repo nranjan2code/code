@@ -898,12 +898,13 @@ label, and search within that selection; All inboxes searches only the linked
 accounts' default inboxes. Folder lists load for the selected Agent/account,
 and the server revalidates membership on every read. These controls apply to
 mail previews in Canvas and do not change routine scope.
-The owner inbox preview displays 10 messages at a time from its bounded
-provider response of up to 20. These controls paginate the loaded preview in
-the UI; they do not yet fetch subsequent inbox pages from a provider. Google
-and Microsoft thread previews do use provider cursors. Same-source Canvas
-refreshes retain the current preview while loading; changing its Agent or
-source shows the initial loading state.
+The owner inbox preview displays 12 messages at a time from its bounded
+provider response. Canvas can fetch subsequent pages from Google Gmail,
+Microsoft Graph, and IMAP providers using provider cursors. Each cursor is
+bound to the Agent account, folder or label, search scope, page size, and
+provider origin where applicable; changing any of those starts a fresh page
+sequence. Same-source Canvas refreshes retain the current preview while
+loading; changing its Agent or source shows the initial loading state.
 
 Today also lists this Agent's mail/calendar routines, eight per page. The
 routine list is filtered by both the current Agent id and the typed
@@ -933,8 +934,8 @@ per-Agent routine authoring and operations, and the Canvas-owned Drafts and
 Review area. Reply and event
 actions save an Agent-scoped candidate, then open it in Canvas; revision,
 digest, permission, and final-confirmation checks still gate provider effects.
-Provider inbox cursor paging, the complete conversation workspace, and
-operator-visible routine budget controls remain open. The connected Settings
+The complete conversation workspace and operator-visible routine budget
+controls remain open. The connected Settings
 fixture confirms that it no longer renders
 a duplicate daily preview or draft workspace; separate Canvas fixtures cover
 the working views with synthetic provider fixtures.

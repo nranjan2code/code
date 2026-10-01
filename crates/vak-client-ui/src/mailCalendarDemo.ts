@@ -72,9 +72,15 @@ export function syntheticMailCalendarRequest(path: string, init?: RequestInit): 
   if (endpoint === "calendar-sources") return { sources: [{ provider_id: `primary-${account.id}`, name: "Personal", primary: true }, { provider_id: `shared-${account.id}`, name: "Shared", primary: false }] };
   if (endpoint === "mail-preview") {
     if (body.folder_id && !["inbox", "important", "archive", "archive-projects"].includes(String(body.folder_id))) return fail("This synthetic folder is not available.");
+    if (body.cursor && body.cursor !== "demo-mail-page-2") return fail("This synthetic mail page is not available.");
+    const offset = body.cursor ? 8 : 0;
     const count = Math.max(1, Math.min(Number(body.limit ?? 10), 30));
-    const messages = Array.from({ length: count }, (_, i) => ({ provider_id: `demo-message-${account.id}-${i}`, thread_id: `demo-thread-${account.id}-${i}`, from: [`Maya Chen <maya@example.test>`, `Sam Patel <sam@example.test>`, `Updates <updates@example.test>`][i % 3], to: account.identity_masked, cc: null, subject: [`Project check-in · ${i + 1}`, "Your weekly summary", "Schedule update"][i % 3], received_at: dateFor(-i, 8 + i % 8), preview: "Synthetic sample message for preview and regression testing. No real account is connected.", body_text: "Hello! This is synthetic demonstration content. It contains no real personal or provider data.", body_status: "available", has_attachments: i % 5 === 0, attachments: [] }));
-    return { messages: body.query ? messages.filter((message) => `${message.subject} ${message.from}`.toLowerCase().includes(String(body.query).toLowerCase())) : messages };
+    const messages = Array.from({ length: count }, (_, index) => {
+      const i = offset + index;
+      return { provider_id: `demo-message-${account.id}-${i}`, thread_id: `demo-thread-${account.id}-${i}`, from: [`Maya Chen <maya@example.test>`, `Sam Patel <sam@example.test>`, `Updates <updates@example.test>`][i % 3], to: account.identity_masked, cc: null, subject: [`Project check-in · ${i + 1}`, "Your weekly summary", "Schedule update"][i % 3], received_at: dateFor(-i, 8 + i % 8), preview: "Synthetic sample message for preview and regression testing. No real account is connected.", body_text: "Hello! This is synthetic demonstration content. It contains no real personal or provider data.", body_status: "available", has_attachments: i % 5 === 0, attachments: [] };
+    });
+    const matching = body.query ? messages.filter((message) => `${message.subject} ${message.from}`.toLowerCase().includes(String(body.query).toLowerCase())) : messages;
+    return { messages: matching, next_cursor: body.cursor ? null : "demo-mail-page-2" };
   }
   if (endpoint === "message-preview") return { provider_id: body.provider_id, body_text: "Synthetic demo message body. No provider connection is used.", body_status: "available" };
   if (endpoint === "thread-preview") return { provider_id: body.thread_id, messages: [{ provider_id: `${body.thread_id}-1`, thread_id: body.thread_id, from: "Maya Chen <maya@example.test>", to: account.identity_masked, cc: null, subject: "Synthetic conversation", received_at: dateFor(-1), preview: "Synthetic reply", body_text: "This conversation is sample content for safe testing.", body_status: "available", has_attachments: true, attachments: [{ provider_id: "demo-attachment-1", filename: "sample-notes.txt", mime_type: "text/plain", size_bytes: 96, previewable: true }] }] };

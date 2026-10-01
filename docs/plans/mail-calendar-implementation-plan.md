@@ -2203,3 +2203,14 @@ remains open.
   is in progress; budget administration, provider inbox cursors, complete
   conversation workspace, 24/7 service acceptance, and lifecycle erasure remain
   open.
+- 2026-10-01: Added provider-backed inbox continuation to Today Canvas. Gmail
+  uses its page token; Graph uses a validated same-origin continuation URL;
+  IMAP uses a UIDVALIDITY-bound cursor. Cursors are scoped to account, folder,
+  query, and page size, and Canvas appends without replacing loaded rows. The
+  synthetic daily browser fixture passes 31 checks, including folder/search
+  continuation and duplicate suppression; all 126 mail/calendar crate tests
+  and the state registry test pass, as does `cargo check -p vak-server`. The
+  web production build and typecheck pass. No live provider credentials or
+  account data were used. Calendar event continuation, complete conversation
+  workspace, budget administration, lifecycle erasure, and 24/7 service
+  acceptance remain open.

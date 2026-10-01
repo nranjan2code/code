@@ -20707,13 +20707,9 @@ mod scheduler_pure_tests {
     #[test]
     fn automation_scheduler_health_distinguishes_starting_active_and_stale() {
         let now = Utc::now();
+        assert_eq!(automation_scheduler_health(None, now)["status"], "starting");
         assert_eq!(
-            automation_scheduler_health(None, now)["status"],
-            "starting"
-        );
-        assert_eq!(
-            automation_scheduler_health(Some(now - chrono::Duration::seconds(40)), now)
-                ["status"],
+            automation_scheduler_health(Some(now - chrono::Duration::seconds(40)), now)["status"],
             "active"
         );
         let stale = automation_scheduler_health(Some(now - chrono::Duration::seconds(61)), now);
@@ -20928,11 +20924,7 @@ mod scheduler_pure_tests {
         let occurrence = format!("calendar:{}", "a5".repeat(32));
         let vault = AccountVault::for_agent(&agent_id).unwrap();
         vault
-            .queue_calendar_occurrences(
-                &routine_id,
-                &account_id,
-                std::slice::from_ref(&occurrence),
-            )
+            .queue_calendar_occurrences(&routine_id, &account_id, std::slice::from_ref(&occurrence))
             .unwrap();
         vault
             .stage_delivered_calendar_occurrences(

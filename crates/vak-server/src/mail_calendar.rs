@@ -1134,6 +1134,8 @@ pub(super) struct MailPreviewRequest {
     limit: Option<usize>,
     query: Option<String>,
     folder_id: Option<String>,
+    #[serde(default)]
+    cursor: Option<String>,
 }
 
 pub(super) async fn mail_folders(
@@ -1315,36 +1317,24 @@ pub(super) async fn mail_preview(
         "requested",
     );
     let client = vak_mail_calendar::provider::ProviderReadClient::default();
-    let preview = if request
+    let query = request
         .query
         .as_deref()
-        .is_some_and(|query| !query.trim().is_empty())
-    {
-        client
-            .search_mail_in_folder(
-                &account,
-                &vault,
-                &agent_id,
-                &format!("agent:{agent_id}"),
-                request.query.as_deref().unwrap_or_default(),
-                request.folder_id.as_deref(),
-                request.limit.unwrap_or(10),
-            )
-            .await
-    } else {
-        client
-            .recent_mail_in_folder(
-                &account,
-                &vault,
-                &agent_id,
-                &format!("agent:{agent_id}"),
-                request.folder_id.as_deref(),
-                request.limit.unwrap_or(10),
-            )
-            .await
-    };
+        .filter(|query| !query.trim().is_empty());
+    let preview = client
+        .mail_preview_page(
+            &account,
+            &vault,
+            &agent_id,
+            &format!("agent:{agent_id}"),
+            request.folder_id.as_deref(),
+            query,
+            request.cursor.as_deref(),
+            request.limit.unwrap_or(10),
+        )
+        .await;
     match preview {
-        Ok(messages) => {
+        Ok(page) => {
             record_account_event(
                 &state,
                 "mail_content_preview",
@@ -1354,7 +1344,8 @@ pub(super) async fn mail_preview(
                 &account.capabilities,
                 "succeeded",
             );
-            Json(serde_json::json!({"messages": messages})).into_response()
+            Json(serde_json::json!({"messages": page.messages, "next_cursor": page.next_cursor}))
+                .into_response()
         }
         Err(error) => {
             mark_preview_reauthentication(&state, &account, &error);

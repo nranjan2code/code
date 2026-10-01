@@ -20,11 +20,14 @@ const addDays = (day: string, amount: number) => { const date = new Date(`${day}
 type DailyAccount = {
   account: api.MailCalendarAccount;
   messages: api.MailCalendarMailPreview[];
+  nextMailCursor: string | null;
   events: api.MailCalendarEventPreview[];
   busy: api.MailCalendarBusySlot[];
   mailError: boolean;
   calendarError: boolean;
 };
+
+type MailPageChunk = { messages: api.MailCalendarMailPreview[]; nextCursor: string | null };
 
 type SelectedConversation = {
   accountId: string;
@@ -53,8 +56,8 @@ async function readToday(agentId: string, day: string, through: string, mailAcco
     const batchResults = await Promise.all(batch.map(async (account): Promise<DailyAccount> => {
       const [mail, calendar, freeBusy] = await Promise.all([
         account.capabilities.includes("mail_read") && account.credential_available && (mailAccountId === "all" || mailAccountId === account.id)
-          ? api.previewMailCalendarMail(agentId, account.id, 8, query, mailAccountId === account.id ? folderId || undefined : undefined).then((value) => ({ value: value.messages, failed: false })).catch(() => ({ value: [] as api.MailCalendarMailPreview[], failed: true }))
-          : Promise.resolve({ value: [] as api.MailCalendarMailPreview[], failed: false }),
+          ? api.previewMailCalendarMail(agentId, account.id, 8, query, mailAccountId === account.id ? folderId || undefined : undefined).then((value) => ({ value, failed: false })).catch(() => ({ value: { messages: [] as api.MailCalendarMailPreview[], next_cursor: null }, failed: true }))
+          : Promise.resolve({ value: { messages: [] as api.MailCalendarMailPreview[], next_cursor: null }, failed: false }),
         account.capabilities.includes("calendar_read") && account.credential_available
           ? api.previewMailCalendarEvents(agentId, account.id, from, to, 50).then((value) => ({ value: value.events.map((event) => ({ ...event, account_id: account.id, account_name: providerName(account) })), failed: false })).catch(() => ({ value: [] as api.MailCalendarEventPreview[], failed: true }))
           : Promise.resolve({ value: [] as api.MailCalendarEventPreview[], failed: false }),
@@ -65,7 +68,8 @@ async function readToday(agentId: string, day: string, through: string, mailAcco
       const needsCredential = !account.credential_available;
       return {
         account,
-        messages: mail.value,
+        messages: mail.value.messages,
+        nextMailCursor: mail.value.next_cursor ?? null,
         events: calendar.value,
         busy: freeBusy.value,
         mailError: mail.failed || (needsCredential && account.capabilities.includes("mail_read")),
@@ -101,6 +105,18 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
   const [calendarPage, setCalendarPage] = createSignal(0);
   const [mailPage, setMailPage] = createSignal(0);
+  const [mailAdditionalPages, setMailAdditionalPages] = createSignal<Record<string, MailPageChunk[]>>({});
+  const [mailLoadingMore, setMailLoadingMore] = createSignal(false);
+  const [mailLoadError, setMailLoadError] = createSignal("");
+  let mailPaginationGeneration = 0;
+  let mailPaginationAgentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
+  createEffect(() => {
+    const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";
+    if (agentId === mailPaginationAgentId) return;
+    mailPaginationAgentId = agentId;
+    mailPaginationGeneration += 1;
+    setMailAdditionalPages({}); setMailLoadError(""); setMailLoadingMore(false); setMailPage(0);
+  });
   const [eventAction, setEventAction] = createSignal("");
   const [eventActionError, setEventActionError] = createSignal<string | null>(null);
   const [accountRefreshPending, setAccountRefreshPending] = createSignal(false);
@@ -118,6 +134,8 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     loader.reload();
   };
   const selectMailAccount = async (accountId: string) => {
+    mailPaginationGeneration += 1;
+    setMailAdditionalPages({}); setMailLoadError(""); setMailLoadingMore(false);
     setMailAccountFilter(accountId);
     setMailFolderFilter("");
     setMailFolders([]);
@@ -144,6 +162,8 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     }
   };
   const applyMailSearch = () => {
+    mailPaginationGeneration += 1;
+    setMailAdditionalPages({}); setMailLoadError(""); setMailLoadingMore(false);
     setMailSearchQuery(mailSearchInput().trim().slice(0, 128));
     setMailPage(0);
     closeConversation();
@@ -278,7 +298,58 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
       const hasMailCapability = () => data.accounts.some((account) => account.account.capabilities.includes("mail_read"));
       const hasCalendarCapability = () => data.accounts.some((account) => account.account.capabilities.includes("calendar_read") || account.account.capabilities.includes("calendar_free_busy"));
       const mailFailedAccounts = () => data.accounts.filter((account) => account.mailError);
-      const mailRows = () => data.accounts.flatMap((account) => account.messages.map((message) => ({ account, message })));
+      const scopedMailAccounts = () => data.accounts.filter((account) => account.account.capabilities.includes("mail_read") && (data.mailAccountId === "all" || data.mailAccountId === account.account.id));
+      const mailRows = () => {
+        const rows: Array<{ account: DailyAccount; message: api.MailCalendarMailPreview }> = [];
+        for (const account of data.accounts) {
+          const seen = new Set<string>();
+          for (const message of [...account.messages, ...(mailAdditionalPages()[account.account.id] ?? []).flatMap((page) => page.messages)]) {
+            if (seen.has(message.provider_id)) continue;
+            seen.add(message.provider_id);
+            rows.push({ account, message });
+          }
+        }
+        return rows;
+      };
+      const accountMailCursor = (account: DailyAccount) => {
+        const pages = mailAdditionalPages()[account.account.id] ?? [];
+        return pages.length ? pages[pages.length - 1].nextCursor : account.nextMailCursor;
+      };
+      const hasMoreProviderMail = () => scopedMailAccounts().some((account) => !!accountMailCursor(account));
+      const loadMoreProviderMail = async () => {
+        if (mailLoadingMore() || loader.loading() || mailFoldersLoading() || !hasMoreProviderMail() || props.subject.kind !== "daily_mail_calendar") return;
+        const generation = ++mailPaginationGeneration;
+        const agentId = props.subject.agentId;
+        const accounts = scopedMailAccounts().filter((account) => !!accountMailCursor(account));
+        setMailLoadingMore(true); setMailLoadError("");
+        let failed = 0;
+        try {
+          for (let offset = 0; offset < accounts.length; offset += 2) {
+            const batch = accounts.slice(offset, offset + 2);
+            const pages = await Promise.all(batch.map(async (account) => {
+              const cursor = accountMailCursor(account);
+              if (!cursor) return null;
+              try {
+                const page = await api.previewMailCalendarMail(agentId, account.account.id, 8, data.mailQuery, data.mailAccountId === account.account.id ? data.mailFolderId || undefined : undefined, cursor);
+                return { accountId: account.account.id, page: { messages: page.messages, nextCursor: page.next_cursor ?? null } };
+              } catch {
+                failed += 1;
+                return null;
+              }
+            }));
+            if (generation !== mailPaginationGeneration) return;
+            setMailAdditionalPages((current) => {
+              const next = { ...current };
+              for (const entry of pages) if (entry) next[entry.accountId] = [...(next[entry.accountId] ?? []), entry.page];
+              return next;
+            });
+          }
+          if (failed) setMailLoadError(`Could not load more messages for ${failed} ${failed === 1 ? "account" : "accounts"}. Existing messages remain available.`);
+          setMailPage((page) => Math.min(page, Math.max(0, Math.ceil(mailRows().length / 12) - 1)));
+        } finally {
+          if (generation === mailPaginationGeneration) setMailLoadingMore(false);
+        }
+      };
       const mailPageSize = 12;
       const mailPageCount = () => Math.max(1, Math.ceil(mailRows().length / mailPageSize));
       const visibleMailRows = () => mailRows().slice(mailPage() * mailPageSize, (mailPage() + 1) * mailPageSize);
@@ -333,7 +404,9 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
             <Show when={!hasMailCapability()}><p class="settings-hint">No connected account has email access.</p></Show>
             <For each={mailFailedAccounts()}>{(account) => <p class="daily-mail-calendar-warning" role="status">Inbox unavailable for {providerName(account.account)}. Check this account in Settings.</p>}</For>
             <For each={visibleMailAccounts()}>{(account) => <div class="daily-mail-calendar-mail-account"><h4>{providerName(account.account)}</h4><For each={account.messages}>{(message) => <article class="daily-mail-calendar-message"><div><strong>{message.subject || "(No subject)"}</strong><small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small><Show when={message.preview}><p>{message.preview}</p></Show></div><Show when={message.thread_id} fallback={<button type="button" class="settings-button" onClick={openSettings}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" onClick={() => void readConversation(account.account.id, threadId())}>Open conversation</button>}</Show></article>}</For></div>}</For>
-            <Show when={mailRows().length > mailPageSize}><nav class="daily-mail-calendar-pagination" aria-label="Recent email pages"><button type="button" class="settings-button" disabled={mailPage() === 0} onClick={() => setMailPage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {mailPage() + 1} of {mailPageCount()} · {mailRows().length} messages</span><button type="button" class="settings-button" disabled={mailPage() + 1 >= mailPageCount()} onClick={() => setMailPage((page) => Math.min(mailPageCount() - 1, page + 1))}>Next</button></nav></Show>
+            <Show when={mailRows().length > mailPageSize}><nav class="daily-mail-calendar-pagination" aria-label="Recent email pages"><button type="button" class="settings-button" disabled={mailPage() === 0} onClick={() => setMailPage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {mailPage() + 1} of {mailPageCount()} · {mailRows().length} messages loaded</span><button type="button" class="settings-button" disabled={mailPage() + 1 >= mailPageCount()} onClick={() => setMailPage((page) => Math.min(mailPageCount() - 1, page + 1))}>Next</button></nav></Show>
+            <Show when={mailLoadError()}><p class="daily-mail-calendar-warning" role="status">{mailLoadError()}</p></Show>
+            <Show when={hasMoreProviderMail() || mailLoadingMore()}><div class="daily-mail-calendar-pagination"><span>More messages are available from the connected mail provider.</span><button type="button" class="settings-button" disabled={mailLoadingMore() || loader.loading() || mailFoldersLoading()} onClick={() => void loadMoreProviderMail()}>{mailLoadingMore() ? "Loading more…" : "Load more messages"}</button></div></Show>
             <Show when={hasMailCapability() && data.accounts.every((account) => account.messages.length === 0) && mailFailedAccounts().length === 0}><p class="settings-hint">{data.mailQuery ? "No messages matched this search." : "No recent messages in this view."}</p></Show>
             <Show when={selectedConversation()}>{(conversation) => {
               const account = () => data.accounts.find((item) => item.account.id === conversation().accountId)?.account;

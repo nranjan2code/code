@@ -181,6 +181,14 @@ pub struct MailThread {
     pub next_cursor: Option<String>,
 }
 
+/// One bounded owner inbox/search page. Continuations are opaque and scoped
+/// to the provider, folder, query, and page size used to produce them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MailPreviewPage {
+    pub messages: Vec<MailItem>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MailFolder {
     /// Provider opaque folder/label ID, validated again before use.
@@ -737,6 +745,196 @@ impl ProviderReadClient {
                     folder_id,
                 )
                 .await
+            }
+            Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
+        }
+    }
+
+    /// Read one provider-backed page from a single verified folder. Unlike
+    /// `recent_mail_in_folder`, this preserves the provider continuation so a
+    /// Canvas can fetch later pages without re-reading or caching content.
+    pub async fn mail_preview_page(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        folder_id: Option<&str>,
+        query: Option<&str>,
+        cursor: Option<&str>,
+        limit: usize,
+    ) -> Result<MailPreviewPage, ProviderReadError> {
+        admit(account, vault, agent_id, audience, Capability::MailRead)?;
+        let limit = limit.clamp(1, MAX_MAIL_ITEMS);
+        if cursor.is_some_and(|value| value.len() > MAX_GRAPH_WATCH_CURSOR_BYTES) {
+            return Err(ProviderReadError::InvalidSearch);
+        }
+        let query = query.map(validate_mail_search_query).transpose()?;
+        let folder_id = folder_id.unwrap_or(match account.provider {
+            Provider::Google => "INBOX",
+            _ => "inbox",
+        });
+        let default_folder = match account.provider {
+            Provider::Google => "INBOX",
+            _ => "inbox",
+        };
+        if !folder_id.eq_ignore_ascii_case(default_folder) {
+            let folders = self
+                .list_mail_folders(account, vault, agent_id, audience)
+                .await?;
+            if !folders.iter().any(|folder| folder.provider_id == folder_id) {
+                return Err(ProviderReadError::InvalidSearch);
+            }
+        }
+        if account.provider == Provider::AppleIcloud
+            || (matches!(account.provider, Provider::Google | Provider::Microsoft)
+                && vault.has_app_password(&account.id))
+        {
+            if !matches!(folder_id.to_ascii_lowercase().as_str(), "inbox") {
+                return Err(ProviderReadError::Unsupported);
+            }
+            return icloud_mail_preview_page(account, vault, query.as_deref(), cursor, limit).await;
+        }
+
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderReadError::Vault)?;
+        let scope = mail_page_scope(folder_id, query.as_deref());
+        match account.provider {
+            Provider::Google => {
+                if !valid_google_label_id(folder_id) {
+                    return Err(ProviderReadError::InvalidSearch);
+                }
+                let page_token = decode_google_mail_page_cursor(cursor, folder_id, &scope, limit)?;
+                let mut request = self
+                    .http
+                    .get(format!("{}/users/me/messages", self.google_gmail_base))
+                    .bearer_auth(token.as_str())
+                    .query(&[("labelIds", folder_id), ("maxResults", &limit.to_string())]);
+                if let Some(query) = query.as_deref() {
+                    request = request.query(&[("q", format!(r#""{query}""#))]);
+                }
+                if let Some(page_token) = page_token.as_deref() {
+                    request = request.query(&[("pageToken", page_token)]);
+                }
+                let response = request
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                let list = parse_response(response, MAX_RESPONSE_BYTES).await?;
+                let ids = list
+                    .get("messages")
+                    .and_then(Value::as_array)
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                let mut messages = Vec::with_capacity(ids.len().min(limit));
+                for row in ids.iter().take(limit) {
+                    let id = row
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .filter(|id| {
+                            !id.is_empty()
+                                && id.len() <= 256
+                                && id.bytes().all(|byte| {
+                                    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+                                })
+                        })
+                        .ok_or(ProviderReadError::InvalidResponse)?;
+                    let response = self
+                        .http
+                        .get(format!("{}/users/me/messages/{id}", self.google_gmail_base))
+                        .bearer_auth(token.as_str())
+                        .query(&[("format", "full")])
+                        .send()
+                        .await
+                        .map_err(|_| ProviderReadError::Unavailable)?;
+                    let value = parse_response(response, MAX_MESSAGE_BYTES).await?;
+                    if value.get("id").and_then(Value::as_str) != Some(id) {
+                        return Err(ProviderReadError::InvalidResponse);
+                    }
+                    messages.push(parse_google_message(&value));
+                }
+                let next_cursor = list
+                    .get("nextPageToken")
+                    .and_then(Value::as_str)
+                    .map(|value| encode_google_mail_page_cursor(value, folder_id, &scope, limit))
+                    .transpose()?;
+                Ok(MailPreviewPage {
+                    messages,
+                    next_cursor,
+                })
+            }
+            Provider::Microsoft => {
+                if !valid_graph_folder_id(folder_id) {
+                    return Err(ProviderReadError::InvalidSearch);
+                }
+                let url = match cursor {
+                    Some(cursor) => decode_graph_mail_page_cursor(
+                        cursor,
+                        folder_id,
+                        &scope,
+                        &self.microsoft_graph_base,
+                        limit,
+                    )?,
+                    None => {
+                        let mut url = graph_url_segments(
+                            &self.microsoft_graph_base,
+                            &["me", "mailFolders", folder_id, "messages"],
+                        )?;
+                        url.query_pairs_mut()
+                            .append_pair("$top", &limit.to_string())
+                            .append_pair("$orderby", "receivedDateTime desc")
+                            .append_pair("$select", "id,conversationId,from,toRecipients,ccRecipients,subject,receivedDateTime,bodyPreview,body,hasAttachments");
+                        if let Some(query) = query.as_deref() {
+                            url.query_pairs_mut()
+                                .append_pair("$search", &format!("\"{query}\""));
+                        }
+                        url
+                    }
+                };
+                let response = self
+                    .http
+                    .get(url)
+                    .bearer_auth(token.as_str())
+                    .header(
+                        "Prefer",
+                        "outlook.timezone=\"UTC\", outlook.body-content-type=\"text\"",
+                    )
+                    .send()
+                    .await
+                    .map_err(|_| ProviderReadError::Unavailable)?;
+                let value = parse_response(response, MAX_RESPONSE_BYTES).await?;
+                let rows = value
+                    .get("value")
+                    .and_then(Value::as_array)
+                    .ok_or(ProviderReadError::InvalidResponse)?;
+                let mut messages = Vec::with_capacity(rows.len().min(limit));
+                for row in rows.iter().take(limit) {
+                    let mut message =
+                        parse_graph_message(row).ok_or(ProviderReadError::InvalidResponse)?;
+                    if message.has_attachments {
+                        message.attachments = self
+                            .microsoft_attachment_refs(&token, &message.provider_id)
+                            .await?;
+                    }
+                    messages.push(message);
+                }
+                let next_cursor = value
+                    .get("@odata.nextLink")
+                    .and_then(Value::as_str)
+                    .map(|url| {
+                        encode_graph_mail_page_cursor(
+                            url,
+                            folder_id,
+                            &scope,
+                            &self.microsoft_graph_base,
+                            limit,
+                        )
+                    })
+                    .transpose()?;
+                Ok(MailPreviewPage {
+                    messages,
+                    next_cursor,
+                })
             }
             Provider::AppleIcloud => Err(ProviderReadError::Unsupported),
         }
@@ -2368,6 +2566,94 @@ async fn icloud_recent_mail(
     result
 }
 
+async fn icloud_mail_preview_page(
+    account: &ConnectedAccount,
+    vault: &AccountVault,
+    query: Option<&str>,
+    cursor: Option<&str>,
+    limit: usize,
+) -> Result<MailPreviewPage, ProviderReadError> {
+    let (login, password) = vault
+        .app_password_credentials(&account.id)
+        .map_err(|_| ProviderReadError::Vault)?;
+    let mut session = imap_session(
+        imap_host(account.provider)?,
+        login.as_str(),
+        password.as_str(),
+    )
+    .await?;
+    let result = async {
+        let mailbox = tokio::time::timeout(StdDuration::from_secs(10), session.examine("INBOX"))
+            .await
+            .map_err(|_| ProviderReadError::Unavailable)?
+            .map_err(map_imap_error)?;
+        if mailbox.exists == 0 {
+            return Ok(MailPreviewPage {
+                messages: Vec::new(),
+                next_cursor: None,
+            });
+        }
+        let validity = mailbox
+            .uid_validity
+            .ok_or(ProviderReadError::InvalidResponse)?;
+        let scope = mail_page_scope("INBOX", query);
+        let before_uid = match cursor {
+            None => None,
+            Some(cursor) => {
+                let mut parts = cursor.split(':');
+                if parts.next() != Some("apple-mail-page-v1")
+                    || parts.next().and_then(|value| value.parse::<u32>().ok()) != Some(validity)
+                {
+                    return Err(ProviderReadError::InvalidSearch);
+                }
+                let before = parts
+                    .next()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .filter(|value| *value > 0)
+                    .ok_or(ProviderReadError::InvalidSearch)?;
+                if parts.next() != Some(scope.as_str()) || parts.next().is_some() {
+                    return Err(ProviderReadError::InvalidSearch);
+                }
+                Some(before)
+            }
+        };
+        let criterion = query.map_or_else(|| "ALL".to_owned(), |query| format!("TEXT \"{query}\""));
+        let mut uids =
+            tokio::time::timeout(StdDuration::from_secs(10), session.uid_search(criterion))
+                .await
+                .map_err(|_| ProviderReadError::Unavailable)?
+                .map_err(map_imap_error)?
+                .into_iter()
+                .filter(|uid| before_uid.is_none_or(|before| *uid < before))
+                .collect::<Vec<_>>();
+        uids.sort_unstable_by(|left, right| right.cmp(left));
+        let has_more = uids.len() > limit;
+        uids.truncate(limit);
+        let ids = uids
+            .iter()
+            .map(|uid| format!("{validity}:{uid}"))
+            .collect::<Vec<_>>();
+        let messages = if ids.is_empty() {
+            Vec::new()
+        } else {
+            icloud_fetch_mail_by_ids(&mut session, &ids).await?
+        };
+        let next_cursor = if has_more {
+            uids.last()
+                .map(|uid| format!("apple-mail-page-v1:{validity}:{uid}:{scope}"))
+        } else {
+            None
+        };
+        Ok(MailPreviewPage {
+            messages,
+            next_cursor,
+        })
+    }
+    .await;
+    let _ = tokio::time::timeout(StdDuration::from_secs(2), session.logout()).await;
+    result
+}
+
 async fn icloud_search_mail(
     account: &ConnectedAccount,
     vault: &AccountVault,
@@ -3184,6 +3470,144 @@ fn encode_google_thread_cursor(thread_id: &str, limit: usize, offset: usize) -> 
     format!("gmail-thread-v1:{thread_id}:{limit}:{offset}")
 }
 
+fn mail_page_scope(folder_id: &str, query: Option<&str>) -> String {
+    let material = format!("{folder_id}\0{}", query.unwrap_or_default());
+    format!("{:x}", Sha256::digest(material.as_bytes()))
+}
+
+fn cursor_b64(value: &str) -> String {
+    base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(value.as_bytes())
+}
+
+fn decode_cursor_b64(value: &str) -> Result<String, ProviderReadError> {
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(value)
+        .map_err(|_| ProviderReadError::InvalidSearch)?;
+    String::from_utf8(bytes).map_err(|_| ProviderReadError::InvalidSearch)
+}
+
+fn encode_google_mail_page_cursor(
+    token: &str,
+    folder_id: &str,
+    scope: &str,
+    limit: usize,
+) -> Result<String, ProviderReadError> {
+    if token.is_empty() || token.len() > 4096 || token.chars().any(char::is_control) {
+        return Err(ProviderReadError::InvalidResponse);
+    }
+    let cursor = format!(
+        "gmail-page-v1:{limit}:{}:{scope}:{}",
+        cursor_b64(folder_id),
+        cursor_b64(token)
+    );
+    (cursor.len() <= MAX_GRAPH_WATCH_CURSOR_BYTES)
+        .then_some(cursor)
+        .ok_or(ProviderReadError::InvalidResponse)
+}
+
+fn decode_google_mail_page_cursor(
+    cursor: Option<&str>,
+    folder_id: &str,
+    scope: &str,
+    limit: usize,
+) -> Result<Option<String>, ProviderReadError> {
+    let Some(cursor) = cursor else {
+        return Ok(None);
+    };
+    let mut parts = cursor.split(':');
+    if parts.next() != Some("gmail-page-v1")
+        || parts.next().and_then(|value| value.parse::<usize>().ok()) != Some(limit)
+        || parts
+            .next()
+            .and_then(|value| decode_cursor_b64(value).ok())
+            .as_deref()
+            != Some(folder_id)
+        || parts.next() != Some(scope)
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    let token = parts.next().ok_or(ProviderReadError::InvalidSearch)?;
+    if parts.next().is_some() || token.is_empty() || token.len() > 6000 {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    let token = decode_cursor_b64(token)?;
+    if token.is_empty() || token.len() > 4096 || token.chars().any(char::is_control) {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    Ok(Some(token))
+}
+
+fn encode_graph_mail_page_cursor(
+    value: &str,
+    folder_id: &str,
+    scope: &str,
+    graph_base: &str,
+    limit: usize,
+) -> Result<String, ProviderReadError> {
+    validate_graph_mail_page_url(value, graph_base, folder_id)?;
+    let cursor = format!(
+        "graph-mail-page-v1:{limit}:{}:{scope}:{}",
+        cursor_b64(folder_id),
+        cursor_b64(value)
+    );
+    (cursor.len() <= MAX_GRAPH_WATCH_CURSOR_BYTES)
+        .then_some(cursor)
+        .ok_or(ProviderReadError::InvalidResponse)
+}
+
+fn decode_graph_mail_page_cursor(
+    cursor: &str,
+    folder_id: &str,
+    scope: &str,
+    graph_base: &str,
+    limit: usize,
+) -> Result<url::Url, ProviderReadError> {
+    if cursor.len() > MAX_GRAPH_WATCH_CURSOR_BYTES {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    let mut parts = cursor.split(':');
+    if parts.next() != Some("graph-mail-page-v1")
+        || parts.next().and_then(|value| value.parse::<usize>().ok()) != Some(limit)
+        || parts
+            .next()
+            .and_then(|value| decode_cursor_b64(value).ok())
+            .as_deref()
+            != Some(folder_id)
+        || parts.next() != Some(scope)
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    let encoded_url = parts.next().ok_or(ProviderReadError::InvalidSearch)?;
+    if parts.next().is_some() || encoded_url.is_empty() {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    let value = decode_cursor_b64(encoded_url)?;
+    validate_graph_mail_page_url(&value, graph_base, folder_id)
+}
+
+fn validate_graph_mail_page_url(
+    value: &str,
+    graph_base: &str,
+    folder_id: &str,
+) -> Result<url::Url, ProviderReadError> {
+    let base = url::Url::parse(graph_base).map_err(|_| ProviderReadError::InvalidResponse)?;
+    let next = url::Url::parse(value).map_err(|_| ProviderReadError::InvalidSearch)?;
+    let expected = graph_url_segments(graph_base, &["me", "mailFolders", folder_id, "messages"])?;
+    if value.len() > MAX_GRAPH_WATCH_CURSOR_BYTES
+        || next.scheme() != base.scheme()
+        || next.host_str() != base.host_str()
+        || next.port_or_known_default() != base.port_or_known_default()
+        || next.path() != expected.path()
+        || next.username() != ""
+        || next.password().is_some()
+        || next.fragment().is_some()
+        || next.query().is_none()
+    {
+        return Err(ProviderReadError::InvalidSearch);
+    }
+    Ok(next)
+}
+
 fn decode_google_thread_cursor(
     cursor: Option<&str>,
     thread_id: &str,
@@ -3917,6 +4341,62 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use uuid::Uuid;
 
+    #[test]
+    fn mail_preview_cursors_bind_folder_query_page_size_and_graph_origin() {
+        let scope = mail_page_scope("Label_abc", Some("quarterly budget"));
+        let google =
+            encode_google_mail_page_cursor("opaque-next-token", "Label_abc", &scope, 8).unwrap();
+        assert_eq!(
+            decode_google_mail_page_cursor(Some(&google), "Label_abc", &scope, 8).unwrap(),
+            Some("opaque-next-token".to_owned())
+        );
+        assert!(decode_google_mail_page_cursor(Some(&google), "INBOX", &scope, 8).is_err());
+        assert!(
+            decode_google_mail_page_cursor(
+                Some(&google),
+                "Label_abc",
+                &mail_page_scope("Label_abc", Some("different query")),
+                8
+            )
+            .is_err()
+        );
+        assert!(decode_google_mail_page_cursor(Some(&google), "Label_abc", &scope, 10).is_err());
+
+        let graph = "https://graph.example/v1.0";
+        let graph_scope = mail_page_scope("folder-1", Some("quarterly budget"));
+        let url =
+            "https://graph.example/v1.0/me/mailFolders/folder-1/messages?$top=8&$skiptoken=next";
+        let cursor =
+            encode_graph_mail_page_cursor(url, "folder-1", &graph_scope, graph, 8).unwrap();
+        assert_eq!(
+            decode_graph_mail_page_cursor(&cursor, "folder-1", &graph_scope, graph, 8)
+                .unwrap()
+                .as_str(),
+            url
+        );
+        assert!(
+            decode_graph_mail_page_cursor(&cursor, "other-folder", &graph_scope, graph, 8).is_err()
+        );
+        assert!(
+            decode_graph_mail_page_cursor(
+                &cursor,
+                "folder-1",
+                &mail_page_scope("folder-1", Some("other query")),
+                graph,
+                8
+            )
+            .is_err()
+        );
+        for invalid in [
+            "https://attacker.example/v1.0/me/mailFolders/folder-1/messages?$skiptoken=next",
+            "https://graph.example/v1.0/me/mailFolders/other/messages?$skiptoken=next",
+        ] {
+            assert!(
+                encode_graph_mail_page_cursor(invalid, "folder-1", &graph_scope, graph, 8).is_err()
+            );
+        }
+    }
+
     fn linked_test_account(provider: Provider) -> (AccountVault, ConnectedAccount, String, String) {
         vak_config::paths::isolate_home_for_tests();
         let agent_id = format!("mailcal-attachment-{}", Uuid::now_v7());
@@ -3964,6 +4444,122 @@ mod tests {
         };
         let audience = format!("agent:{agent_id}");
         (vault, account, agent_id, audience)
+    }
+
+    #[tokio::test]
+    async fn google_owner_mail_pages_retain_a_folder_and_query_bound_provider_cursor() {
+        use axum::extract::{Path, Query};
+        use std::collections::HashMap;
+        let (vault, account, agent_id, audience) = linked_test_account(Provider::Google);
+        let page_calls = Arc::new(std::sync::Mutex::new(Vec::<HashMap<String, String>>::new()));
+        let observed = Arc::clone(&page_calls);
+        let app = axum::Router::new()
+            .route(
+                "/gmail/v1/users/me/labels",
+                axum::routing::get(|| async {
+                    axum::Json(json!({"labels":[{"id":"INBOX","name":"INBOX"},{"id":"Label_projects","name":"Projects"}]}))
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/messages",
+                axum::routing::get(move |Query(query): Query<HashMap<String, String>>| {
+                    let observed = Arc::clone(&observed);
+                    async move {
+                        observed.lock().unwrap().push(query.clone());
+                        if query.get("pageToken").map(String::as_str) == Some("opaque-next") {
+                            axum::Json(json!({"messages":[{"id":"message-3","threadId":"thread-3"}]}))
+                        } else {
+                            axum::Json(json!({"messages":[{"id":"message-1","threadId":"thread-1"},{"id":"message-2","threadId":"thread-2"}],"nextPageToken":"opaque-next"}))
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/gmail/v1/users/me/messages/{message_id}",
+                axum::routing::get(|Path(message_id): Path<String>| async move {
+                    axum::Json(json!({"id":message_id,"threadId":"thread-1","snippet":"preview","internalDate":"1790784000000","payload":{"mimeType":"text/plain","headers":[{"name":"Subject","value":"Page result"},{"name":"From","value":"sender@example.test"}],"body":{"data":"aGVsbG8"}}}))
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = ProviderReadClient {
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap(),
+            google_gmail_base: format!("http://{address}/gmail/v1"),
+            google_calendar_base: format!("http://{address}/calendar/v3"),
+            microsoft_graph_base: format!("http://{address}/graph/v1.0"),
+        };
+        let first = client
+            .mail_preview_page(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                Some("Label_projects"),
+                Some("quarterly budget"),
+                None,
+                2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(first.messages.len(), 2);
+        assert_eq!(first.messages[0].provider_id, "message-1");
+        assert!(first.next_cursor.is_some());
+        let second = client
+            .mail_preview_page(
+                &account,
+                &vault,
+                &agent_id,
+                &audience,
+                Some("Label_projects"),
+                Some("quarterly budget"),
+                first.next_cursor.as_deref(),
+                2,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            second
+                .messages
+                .iter()
+                .map(|message| message.provider_id.as_str())
+                .collect::<Vec<_>>(),
+            ["message-3"]
+        );
+        assert!(second.next_cursor.is_none());
+        let observed = page_calls.lock().unwrap();
+        assert_eq!(observed.len(), 2);
+        assert!(
+            observed
+                .iter()
+                .all(
+                    |query| query.get("labelIds").map(String::as_str) == Some("Label_projects")
+                        && query.get("q").map(String::as_str) == Some("\"quarterly budget\"")
+                )
+        );
+        assert!(observed[1].get("pageToken").map(String::as_str) == Some("opaque-next"));
+        assert!(
+            client
+                .mail_preview_page(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &audience,
+                    Some("INBOX"),
+                    Some("quarterly budget"),
+                    first.next_cursor.as_deref(),
+                    2
+                )
+                .await
+                .is_err()
+        );
+        server.abort();
     }
 
     #[tokio::test]
