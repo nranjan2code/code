@@ -2845,6 +2845,14 @@ impl Agent {
                 .iter()
                 .filter_map(|(id, out)| match out {
                     ToolRunOutput::Err(content) => {
+                        // History lookup is optional context. A failed lookup
+                        // is evidence that history was unavailable, not a
+                        // malformed call the model can repair by repeating it.
+                        // Keep the tool error in the ledger, but let the model
+                        // answer a fresh request or ask for the missing detail.
+                        if call_names.get(id).is_some_and(|name| name == "recall") {
+                            return None;
+                        }
                         let kind = ToolErrorKind::classify(content);
                         if kind.is_correctable() {
                             Some((
@@ -3174,7 +3182,9 @@ impl Agent {
                 }
             }
 
-            if let Some(outcome) = reconcile_repair_budget(self, &failed_correctable).await {
+            if let Some(outcome) =
+                reconcile_repair_budget(self, &failed_correctable, &receipts.unresolved_error).await
+            {
                 return outcome;
             }
 
@@ -5087,7 +5097,11 @@ impl Agent {
                 ToolRunOutput::Ok(content) => {
                     ToolRunOutput::Ok(windowed_result(&call.id, content, &self.call_yields))
                 }
-                failed => failed,
+                ToolRunOutput::Err(error) => ToolRunOutput::Err(format!(
+                    "{error}\n[optional-history]: lookup failed. Do not repeat this recall call. \
+                     Continue with the current request using available tools; if the missing \
+                     historical detail is essential, ask the user for it."
+                )),
             };
             results.push((call.id, output));
         }
@@ -6708,15 +6722,18 @@ fn tool_recovery_hint(error: &str) -> Option<&'static str> {
 async fn reconcile_repair_budget(
     agent: &mut Agent,
     failed_correctable: &[(String, ToolErrorKind)],
+    unresolved_error: &Option<(String, String)>,
 ) -> Option<TurnOutcome> {
     if failed_correctable.is_empty() {
         agent.repair.consecutive_failed_turns = 0;
+        agent.repair.last_error = None;
         return None;
     }
     if agent.repair.exhausted {
         return None;
     }
     agent.repair.consecutive_failed_turns += 1;
+    agent.repair.last_error = unresolved_error.as_ref().map(|(_, error)| error.clone());
 
     if agent.repair.consecutive_failed_turns == REPAIR_DIRECTIVE_TURN {
         // The model has now failed to self-repair the same fault across two
@@ -6814,7 +6831,13 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
         .map(|(name, _)| format!("`{name}`"))
         .collect::<Vec<_>>()
         .join(", ");
-    agent
+    let error = agent
+        .repair
+        .last_error
+        .as_deref()
+        .map(bounded_error_summary)
+        .unwrap_or_else(|| "see run diagnostics".to_string());
+    let _diagnostic = agent
         .record_activity(
             vak_session::ActivityKind::Diagnostic,
             vak_session::ActivityStatus::Failed,
@@ -6822,8 +6845,8 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
             Some(format!(
                 "correctable tool failures were not repaired within the run repair \
                  budget ({} repair turns); run stopped rather than signing a false \
-                 complete",
-                MAX_REPAIR_TURNS
+                 complete. Last error: {}",
+                MAX_REPAIR_TURNS, error
             )),
             std::collections::BTreeMap::from([
                 (
@@ -6845,8 +6868,7 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
         content: vec![ContentBlock::text(format!(
             "I couldn't complete this request because repeated calls to {summary} \
              failed. I stopped rather than give an answer I couldn't support. \
-             The run record has the exact tool errors. Please try again after \
-             those errors are addressed."
+             The latest tool error was: {error}"
         ))],
         stop_reason: StopReason::EndTurn,
         usage: Usage::default(),
@@ -6854,6 +6876,19 @@ async fn degraded_outcome(agent: &Agent, failed: &[(String, ToolErrorKind)]) -> 
         response_id: None,
     };
     TurnOutcome::Completed { response }
+}
+
+fn bounded_error_summary(error: &str) -> String {
+    let value: Value = serde_json::from_str(error).unwrap_or(Value::Null);
+    let summary = value
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or(error);
+    let mut bounded: String = summary.chars().take(320).collect();
+    if summary.chars().count() > 320 {
+        bounded.push('…');
+    }
+    bounded
 }
 
 /// Effectful repetitions reach a human at this count. An identical `read`
@@ -6930,6 +6965,8 @@ struct RepairState {
     /// Consecutive turns ending with one or more unresolved correctable tool
     /// failures. Resets to 0 when a turn produces no correctable failures.
     consecutive_failed_turns: u32,
+    /// Latest error retained for the final bounded user-facing diagnosis.
+    last_error: Option<String>,
     /// Set once the run repair budget is exhausted; the loop must not keep
     /// dispatching for repair after this.
     exhausted: bool,
