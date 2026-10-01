@@ -1153,20 +1153,18 @@ fn remove_dangling_cli_symlink(prefix: &Path) {
 fn purge_state(yes: bool) -> i32 {
     use vak_core::state::{OnPurge, Root};
 
-    let mut targets: Vec<(PathBuf, &'static str)> = Vec::new();
+    let mut targets: Vec<(PathBuf, String)> = Vec::new();
     for root in Root::ALL {
         let base = vak_core::state::root_path(root);
         for entry in vak_core::state::entries_for(root) {
             if entry.on_purge != OnPurge::Remove {
                 continue;
             }
-            let path = if entry.path.is_empty() {
-                base.clone()
-            } else {
-                base.join(entry.path)
-            };
-            if path.exists() {
-                targets.push((path, entry.path));
+            // A pattern entry (`agents/{agent}/…`) names one path per Agent
+            // home; `expand` lists the ones present.
+            for relative in entry.expand(&base) {
+                let path = vak_core::state::resolve(&base, &relative);
+                targets.push((path, relative.display().to_string()));
             }
         }
     }
@@ -1220,6 +1218,9 @@ fn purge_state(yes: bool) -> i32 {
                 failed = true;
             }
         }
+    }
+    for root in Root::ALL {
+        vak_core::state::remove_empty_pattern_dirs(root, &vak_core::state::root_path(root));
     }
 
     println!();

@@ -1,0 +1,10 @@
+# Ceilings for the home-path ratchet (home_path_ratchet.rs).
+#
+# Raw home-path uses in production code, measured as blast-radius §0
+# describes (docs/plans/data-architecture-blast-radius.md). A change that
+# removes uses lowers the number here in the same change; nothing raises it.
+# M3a deletes this file and its test when every count reaches zero.
+sessions_home = 213
+shared_data_home = 84
+vak_literal = 67
+hash_cwd = 13

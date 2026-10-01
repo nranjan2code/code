@@ -145,8 +145,8 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
 The maintainer started it on 2026-09-25 with M0, which is done and shipped
 in 5.0.0. On 2026-10-01 the maintainer locked plan revision 3 (decisions
-L6–L12). Nothing after M0 is behaviour yet, and no session starts a later
-step unasked.
+L6–L12), and the two 5.x guards landed the same day. Nothing after them is
+behaviour yet, and no session starts a later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
@@ -182,8 +182,8 @@ step unasked.
 1. Confirm the maintainer has said to start, and with which step.
 2. Re-run the blast-radius scans (§0 of that doc, with its patterns). Its
    counts and file locations were taken at `438cfcd5` and will have drifted.
-3. Follow the order: the two 5.x guards (the home-path ratchet and the
-   per-Agent registry split); M1 and M2 in parallel; M3a after M1; M3b, the
+3. Follow the order: the two 5.x guards (done); M1 and M2 in parallel;
+   M3a after M1; M3b, the
    data baseline, in six slices; M4 (runs, triggers, effects, fencing); M6;
    then M6.5, M8, and M7a → M7b in parallel; M9 last. M5 runs in parallel
    after M1.
@@ -223,6 +223,16 @@ step unasked.
 - Doc 64's topology section and "What is authoritative" describe the real
   4.x tree.
 
+**The two 5.x guards, done 2026-10-01:**
+- The home-path ratchet (`home_path_uses_do_not_grow`,
+  `crates/vak-core/tests/home_path_ratchet.rs`) holds raw
+  `sessions_home()`, `shared_data_home()`, `.vak` literal and `hash_cwd(`
+  uses at their ceilings in `home_path_ratchet.txt`; lower a ceiling in the
+  change that removes uses.
+- The registry declares each Agent-home subpath as its own
+  `agents/{agent}/…` entry; backup, purge and the upgrade gate expand the
+  segment (`agent_home_subpaths_are_declared`).
+
 **Known gaps M0 leaves for later milestones:**
 - A non-git space's routine is refused, not run: running it needs M4's
   copy environment.
@@ -237,12 +247,13 @@ step unasked.
   which grows into Triggers at M4. Docs 76, 80 and 81 use that model.
 - Build no second identity for "the root of this work": durable accounting
   keys by M1's `RunId` (the reliable-work plan's E1 waits for it).
-- Add no raw home-path call (`sessions_home()`, `shared_data_home()`,
-  `hash_cwd(`); the ratchet enforces it once it lands.
+- Resolve every new path through `vak_config::paths`, and reach a `Core`
+  home through an existing helper rather than a new raw `sessions_home()` or
+  `shared_data_home()` call; the ratchet fails on a new raw call, `.vak`
+  literal or `hash_cwd(`.
 - Declare every new durable file in `vak_core::state::REGISTRY`, including
-  each new subpath of an Agent home, with its real kind.
-- Resolve every new path through `vak_config::paths` and the `Core` home
-  accessors.
+  each new subpath of an Agent home as an `agents/{agent}/…` entry with its
+  real kind.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
 - Record an actor where a contribution has one; never infer authorship.
 - Keep conversation content out of logs.

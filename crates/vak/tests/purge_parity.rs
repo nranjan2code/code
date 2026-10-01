@@ -45,6 +45,11 @@ fn purge_removes_declared_state_and_preserves_the_users_own_projects() {
     // State the registry declares, across both roots.
     let data = home.path();
     write(&data.join("sessions/w/a.jsonl"), "{\"kind\":\"header\"}\n");
+    write(
+        &data.join("agents/writer/sessions/w/b.jsonl"),
+        "{\"kind\":\"header\"}\n",
+    );
+    write(&data.join("agents/writer/memory/user/USER.md"), "note\n");
     write(&data.join("security-events.jsonl"), "{}\n");
     write(
         &data.join("gateway/bots.json"),
@@ -79,6 +84,9 @@ fn purge_removes_declared_state_and_preserves_the_users_own_projects() {
     // Ours is gone.
     for gone in [
         data.join("sessions"),
+        // Every declared subpath of an Agent home, and then the emptied
+        // homes themselves.
+        data.join("agents"),
         data.join("security-events.jsonl"),
         data.join("gateway"),
         shared.join(".env"),

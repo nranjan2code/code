@@ -126,10 +126,10 @@ pub fn export_to(
     let mut manifest = BackupManifest::default();
 
     let mut jobs: Vec<(PathBuf, PathBuf)> = Vec::new();
-    for relative in crate::state::backup_paths(crate::state::Root::Data) {
-        let src = home.join(relative);
+    for relative in crate::state::backup_targets(crate::state::Root::Data, home) {
+        let src = home.join(&relative);
         if src.is_file() {
-            jobs.push((src, dest_dir.join(relative)));
+            jobs.push((src, dest_dir.join(&relative)));
             continue;
         }
         if !src.is_dir() {
@@ -474,6 +474,32 @@ mod tests {
         let raw = std::fs::read_to_string(dest.path().join(MANIFEST_NAME)).unwrap();
         let parsed: BackupManifest = serde_json::from_str(&raw).unwrap();
         assert_eq!(parsed, manifest);
+    }
+
+    #[test]
+    fn backup_covers_every_agent_home_and_skips_undeclared_subpaths() {
+        // The registry declares Agent homes per subpath; a backup must
+        // expand that pattern rather than look for a literal `{agent}`.
+        let home = tempdir().unwrap();
+        for rel in [
+            "agents/vak/sessions/h/a.jsonl",
+            "agents/writer/memory/user/USER.md",
+            "agents/writer/stray/undeclared.txt",
+        ] {
+            let p = home.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, rel).unwrap();
+        }
+        let dest = tempdir().unwrap();
+        let manifest = export_to(home.path(), dest.path(), false).unwrap();
+        assert_eq!(manifest.file_count, 2);
+        assert!(dest.path().join("agents/vak/sessions/h/a.jsonl").is_file());
+        assert!(
+            dest.path()
+                .join("agents/writer/memory/user/USER.md")
+                .is_file()
+        );
+        assert!(!dest.path().join("agents/writer/stray").exists());
     }
 
     #[test]

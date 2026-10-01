@@ -13,8 +13,9 @@ unchanged.
 Production code is every `.rs` file under `crates/` outside `tests/`
 directories, with `#[cfg(test)]` items removed by brace matching and `//`
 comment lines skipped. Test code is the rest. The patterns are written out
-below so the next run is comparable; the home-path ratchet (plan §4, "Now")
-checks the first five in.
+below so the next run is comparable. The home-path ratchet (plan §4,
+"Now") holds the `sessions_home()`, `shared_data_home()`, `.vak` literal and
+`hash_cwd(` rows in `crates/vak-core/tests/home_path_ratchet.txt`.
 
 | Measure | Pattern | `767db1d0` | `438cfcd5` |
 |---|---|---|---|
@@ -84,21 +85,25 @@ Kept as the record of what M0 changed.
 
 **UI, docs and tests** as listed in the plan's M0.
 
-## Now — two guards on 5.x
+## Now — two guards on 5.x — done 2026-10-01
 
 **Code**
-- `crates/vak-core/src/state.rs:139`: the single `agents` entry becomes
-  one entry per subpath under an `agents/{agent}/` pattern (sessions,
-  checkpoints, memory, skill-proposals, entities, sandbox, office-workspaces,
-  coworking, presentations.json, flow-runs, commitments, routing, intent and
-  security evidence, activity log, agent-network), each with its real kind.
-- `crates/vak-core/tests/state_registry.rs`: fails on an unknown subpath
-  under any Agent home.
-- A new ratchet test in `crates/vak-core/tests/` with the §0 counts checked
-  in beside it.
+- `crates/vak-core/src/state.rs`: the single `agents` entry became one
+  entry per subpath under `agents/{agent}/` (sessions, checkpoints, memory,
+  entities, skill-proposals, skills, commitments, routing, intent and
+  security evidence, cost and activity logs, presentations.json, flow-runs,
+  agent-network, sandbox, office-workspaces, coworking), each with its real
+  kind, plus `StateEntry::expand`, `backup_targets` (replacing
+  `backup_paths`) and `remove_empty_pattern_dirs`; the upgrade gate looks a
+  file up wherever it is declared now.
+- `crates/vak-core/src/backup.rs` and `crates/vak/src/install/mod.rs`
+  (`purge_state`): expand the pattern.
+- `crates/vak-core/tests/state_registry.rs`: `agent_home_subpaths_are_declared`.
+- `crates/vak-core/tests/home_path_ratchet.rs` and `home_path_ratchet.txt`.
 
 **Docs**
-- AGENTS.md "Pending": the two guards in "don't deepen the debt".
+- AGENTS.md "Pending" (the two guards in "don't deepen the debt"); doc 46
+  VII.2.
 
 **Tests**
 - `home_path_uses_do_not_grow`, `agent_home_subpaths_are_declared`.

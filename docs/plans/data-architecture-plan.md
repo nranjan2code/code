@@ -1,8 +1,9 @@
 # Plan — data architecture, lifecycle, tracing and cloud
 
 Status: **plan, revision 3 (2026-10-01). M0 is done (2026-09-25, shipped in
-5.0.0). Next are the two 5.x guards (§4, "Now"), then M1 and M2 in
-parallel. Each step waits for the maintainer (see AGENTS.md, "Pending").**
+5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01). Next are M1
+and M2 in parallel. Each step waits for the maintainer (see AGENTS.md,
+"Pending").**
 
 - Design: `docs/design/73-data-architecture-and-lifecycle.md` (the model)
   and `docs/design/74-lifecycle-and-data-administration.md` (lifecycles,
@@ -239,23 +240,29 @@ Only fixes whose code survives into the target.
 - `non_git_space_routine_is_refused_loudly`,
   `child_core_home_is_not_nested`, `unchanged_capabilities_not_rewritten`.
 
-### Now — two guards on 5.x (S)
+### Now — two guards on 5.x (S) — done 2026-10-01
 
 The debt grew while M1 waited: `sessions_home()` calls went from 200 to
 213 and `shared_data_home()` from 69 to 84 in six days, and new per-Agent
 stores were declared by nothing more specific than `agents/` (review 2
 R41, R42). Two guards stop that before M3a:
 
-- **Home-path ratchet.** A workspace test holds the blast-radius §0 counts
-  for raw home-path calls, `.vak` literals and `hash_cwd(` in a checked-in
-  file. It fails on any increase and accepts a decrease (the file is
-  lowered in the same change). M3a deletes the test when the counts reach
+- **Home-path ratchet.** `crates/vak-core/tests/home_path_ratchet.rs`
+  counts raw `sessions_home()`, `shared_data_home()`, `.vak` literal and
+  `hash_cwd(` uses by the blast-radius §0 method, against ceilings in
+  `home_path_ratchet.txt` (213, 84, 67 and 13 at landing). It fails on an
+  increase, naming the largest files, and on a decrease until the ceiling
+  is lowered in the same change. M3a deletes both when the counts reach
   zero.
 - **Registry split.** The single `agents` entry in
-  `crates/vak-core/src/state.rs` becomes one entry per subpath under an
-  `agents/{agent}/` pattern, each with its real kind (Ledger, Config,
-  Document-like rewrite, Derived). The enforcement test fails on an
-  unknown subpath under any Agent home.
+  `crates/vak-core/src/state.rs` is now eighteen `agents/{agent}/…` entries,
+  each with its real kind; a new `Document` kind covers the stores the
+  runtime rewrites (memory, entities, skill proposals, presentation packs,
+  Office rooms). Backup, `--purge` and the upgrade gate expand the
+  `{agent}` segment (`StateEntry::expand`); the gate finds a file wherever
+  it is declared now, so the split is no violation; a purge removes each
+  emptied Agent home. The enforcement test drives real writes into an Agent
+  home and fails on any subpath with no entry of its own.
 
 **Exit tests**
 - `home_path_uses_do_not_grow`, `agent_home_subpaths_are_declared`.

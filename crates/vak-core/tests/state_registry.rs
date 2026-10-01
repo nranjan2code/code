@@ -79,6 +79,96 @@ async fn a_real_run_writes_only_declared_durable_state() {
     );
 }
 
+/// Every file a real run writes inside an Agent home is declared by an
+/// `agents/{agent}/…` entry of its own, never by a blanket `agents` entry,
+/// and a subpath nobody declared is not covered (data-architecture plan,
+/// "Now"; doc 73 D26).
+#[tokio::test]
+async fn agent_home_subpaths_are_declared() {
+    let home = vak_config::paths::isolate_home_for_tests();
+    let workspace = tempfile::tempdir().expect("workspace");
+
+    let core = vak_core::Core::new_with_trust(workspace.path().to_path_buf(), true).expect("core");
+    let data = home.join("state-registry-agent-home");
+    core.set_sessions_home(data.clone());
+    let agent_home = core.sessions_home();
+    assert!(
+        agent_home.starts_with(data.join("agents")),
+        "a Core writes under its Agent's home: {}",
+        agent_home.display()
+    );
+
+    // Real per-Agent writes: a session ledger, a memory note, an entity and
+    // an audit entry.
+    let session = core.start_session().await.expect("session");
+    let session_id = session.header().expect("header").session_id.clone();
+    vak_core::memory::append_note(
+        &agent_home,
+        workspace.path(),
+        "fact",
+        "registry",
+        &session_id,
+        "the registry declares this",
+    )
+    .expect("memory note");
+    vak_core::entities::upsert_entity(
+        &agent_home,
+        Some(workspace.path()),
+        vak_core::entities::EntityRecord {
+            id: "registry-probe".into(),
+            name: "Registry probe".into(),
+            entity_type: "thing".into(),
+            summary: "written by the registry test".into(),
+            attributes: Default::default(),
+            relations: Vec::new(),
+            updated_at: chrono::Utc::now(),
+        },
+    )
+    .expect("entity");
+    vak_core::security_events::record(
+        &agent_home,
+        vak_core::security_events::EventKind::ConfigChange,
+        "registry_probe",
+        "state-registry test",
+        None,
+    );
+
+    let written: Vec<PathBuf> = files_under(&data)
+        .into_iter()
+        .filter(|rel| !is_incidental(rel))
+        .filter(|rel| rel.starts_with("agents"))
+        .collect();
+    for subpath in ["sessions", "memory", "entities", "security-events.jsonl"] {
+        assert!(
+            written.iter().any(|rel| rel
+                .components()
+                .nth(2)
+                .is_some_and(|c| c.as_os_str() == subpath)),
+            "expected the run to write agents/<id>/{subpath}: {written:?}"
+        );
+    }
+    let undeclared: Vec<&PathBuf> = written
+        .iter()
+        .filter(|rel| {
+            !state::REGISTRY.iter().any(|entry| {
+                entry.root == Root::Data
+                    && entry.path.starts_with("agents/{agent}/")
+                    && entry.matches(rel)
+            })
+        })
+        .collect();
+    assert!(
+        undeclared.is_empty(),
+        "files in an Agent home with no `agents/{{agent}}/…` declaration: {undeclared:?}\n\
+         Declare each new subpath in `vak_core::state::REGISTRY` with its real kind."
+    );
+
+    assert!(
+        !state::is_declared(Root::Data, Path::new("agents/vak/a-new-store/x.json")),
+        "an undeclared Agent-home subpath must not be covered by anything"
+    );
+}
+
 /// Seeding writes the Shared layer, which is the other root.
 #[test]
 fn seeding_writes_only_declared_shared_state() {

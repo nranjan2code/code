@@ -272,7 +272,8 @@ Found in the second review (`docs/plans/data-architecture-review-2.md`,
   `agents` entry (`crates/vak-core/src/state.rs:139`) covers memory and
   presentation packs (rewritten), Office rooms (rewritten, added
   2026-09-27), grants, sandbox records, commitments and checkpoints, with
-  one kind, so no new per-Agent store can be caught undeclared.
+  one kind, so no new per-Agent store can be caught undeclared. Fixed
+  2026-10-01 by the 5.x registry split (plan §4, "Now").
 - **D27. Five proposals need primitives the model lacks.** Intake (doc 76),
   mail and calendar (80), pieces (81), the fleet (79) and the collaboration
   plan need triggers beyond cron, durable cursors, external effects with

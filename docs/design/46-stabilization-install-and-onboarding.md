@@ -649,6 +649,7 @@ Declared from what actually exists today (verified on disk, 2026-09-02):
 | `data_home()/security-events.jsonl` | audit log | Ledger | untouched | remove |
 | `data_home()/memory/`, `checkpoints/`, `skill-proposals/`, `trusted/` | user state | Ledger/Config | untouched | remove |
 | `data_home()/cost-log.jsonl`, `routing-evidence.jsonl`, `tasks.json`, `desktop.json` | ledgers + task config | Ledger/Config | additive-only | remove |
+| `data_home()/agents/<agent>/…` | each Agent's sessions, checkpoints, memory, entities, skill proposals, skills, evidence ledgers, presentation packs, flow runs, sandbox records, Office rooms and coworking grants, one entry per subpath | Ledger/Document/Config | untouched (config: additive-only) | remove |
 | `data_home()/locks/` | runtime locks | Derived | rebuilt | remove |
 | `cache_home()` | FTS index, WAL sidecars | Cache | rebuilt | remove |
 | `~/vak-home/.vak/config.toml` | **Shared config layer** | Config | additive-only | remove |
@@ -665,6 +666,13 @@ Two enforcement tests, both cheap and both load-bearing:
    fails the build — which is exactly how this list stops rotting.
 2. **Purge matches the registry.** `--purge` removes precisely the `Remove`
    entries and nothing marked `Preserve`, asserted on the filesystem.
+
+Agent homes (2026-10-01) are declared per subpath with an `{agent}`
+segment (`agents/{agent}/sessions`, …) rather than as one `agents` entry,
+so a new per-Agent store fails test 1 until someone declares it. Backup,
+`--purge` and the upgrade gate expand the segment to the Agent homes that
+exist; a purge then removes each emptied home, and leaves one that still
+holds something undeclared where it was.
 
 The registry also becomes the single source for `--purge`'s
 preserve-allowlist (D3), for backup coverage, and for the upgrade gate

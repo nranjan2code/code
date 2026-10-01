@@ -55,6 +55,11 @@ pub enum Kind {
     Secret,
     /// Derived from something else and safe to lose.
     Derived,
+    /// Named content the runtime or a person edits in place: memory notes,
+    /// entities, skill proposals, presentation packs, Office rooms. It is
+    /// rewritten at runtime, so it is not a ledger, and an update never
+    /// writes it (doc 73 §5 makes every save a version at M3b).
+    Document,
 }
 
 /// What an update may do to this entry.
@@ -99,11 +104,99 @@ pub struct StateEntry {
     pub in_backup: bool,
 }
 
+/// The path segment that stands for any one Agent id
+/// (`vak_config::paths::agent_home`), so each subpath of every Agent home is
+/// declared once rather than the whole `agents/` tree as one entry.
+pub const AGENT_SEGMENT: &str = "{agent}";
+
 impl StateEntry {
-    /// True when `relative` is this entry or lives inside it.
+    /// True when `relative` is this entry or lives inside it. An
+    /// [`AGENT_SEGMENT`] in the entry matches exactly one path component.
     pub fn matches(&self, relative: &Path) -> bool {
-        let entry = Path::new(self.path);
-        relative == entry || relative.starts_with(entry)
+        let mut actual = relative.components();
+        for expected in Path::new(self.path).components() {
+            let Some(found) = actual.next() else {
+                return false;
+            };
+            let wildcard = expected.as_os_str() == AGENT_SEGMENT
+                && matches!(found, std::path::Component::Normal(_));
+            if !wildcard && expected != found {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The paths, relative to `base`, that this entry names on disk right
+    /// now: itself when present, or one path per existing Agent home for a
+    /// pattern entry. Everything that acts on the registry (backup, purge,
+    /// the upgrade gate) goes through this, so a pattern can never be joined
+    /// onto a root as a literal `{agent}` directory that does not exist.
+    pub fn expand(&self, base: &Path) -> Vec<PathBuf> {
+        let mut found = vec![PathBuf::new()];
+        for part in Path::new(self.path).components() {
+            if part.as_os_str() == AGENT_SEGMENT {
+                found = found
+                    .into_iter()
+                    .flat_map(|prefix| {
+                        child_dirs(&resolve(base, &prefix))
+                            .into_iter()
+                            .map(move |name| prefix.join(name))
+                    })
+                    .collect();
+            } else {
+                for prefix in &mut found {
+                    prefix.push(part);
+                }
+            }
+        }
+        found.retain(|relative| resolve(base, relative).exists());
+        found
+    }
+}
+
+/// `base` joined with `relative`, where an empty `relative` is `base`
+/// itself rather than `base` with a trailing separator.
+pub fn resolve(base: &Path, relative: &Path) -> PathBuf {
+    if relative.as_os_str().is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join(relative)
+    }
+}
+
+/// Names of the real directories directly inside `dir`, sorted. Symlinks
+/// are not followed, so a purge can never be led out of the root.
+fn child_dirs(dir: &Path) -> Vec<std::ffi::OsString> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut names: Vec<_> = entries
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .map(|entry| entry.file_name())
+        .collect();
+    names.sort();
+    names
+}
+
+/// One subpath of every Agent home. Declared per subpath so that a new
+/// per-Agent store fails the enforcement test until someone states what it
+/// is, instead of passing because `agents/` was declared whole
+/// (data-architecture plan, "Now"; doc 73 D26).
+const fn agent_entry(path: &'static str, owner: &'static str, kind: Kind) -> StateEntry {
+    StateEntry {
+        path,
+        root: Root::Data,
+        owner,
+        schema: None,
+        kind,
+        on_update: match kind {
+            Kind::Config => OnUpdate::AdditiveOnly,
+            _ => OnUpdate::Untouched,
+        },
+        on_purge: OnPurge::Remove,
+        in_backup: true,
     }
 }
 
@@ -135,16 +228,55 @@ pub const REGISTRY: &[StateEntry] = &[
         on_purge: OnPurge::Remove,
         in_backup: true,
     },
-    StateEntry {
-        path: "agents",
-        root: Root::Data,
-        owner: "vak-core",
-        schema: None,
-        kind: Kind::Ledger,
-        on_update: OnUpdate::Untouched,
-        on_purge: OnPurge::Remove,
-        in_backup: true,
-    },
+    // ---- every Agent home, one entry per subpath ----
+    // Some server-side stores here are written under the server Core's own
+    // Agent whichever Agent owns the session (doc 73 D25); M3b moves them.
+    agent_entry("agents/{agent}/sessions", "vak-session", Kind::Ledger),
+    agent_entry("agents/{agent}/checkpoints", "vak-core", Kind::Ledger),
+    agent_entry("agents/{agent}/memory", "vak-core", Kind::Document),
+    agent_entry("agents/{agent}/entities", "vak-core", Kind::Document),
+    agent_entry("agents/{agent}/skill-proposals", "vak-core", Kind::Document),
+    agent_entry("agents/{agent}/skills", "vak-core", Kind::Config),
+    agent_entry(
+        "agents/{agent}/commitments.jsonl",
+        "vak-commit",
+        Kind::Ledger,
+    ),
+    agent_entry(
+        "agents/{agent}/routing-evidence.jsonl",
+        "vak-core",
+        Kind::Ledger,
+    ),
+    agent_entry(
+        "agents/{agent}/intent-evidence.jsonl",
+        "vak-core",
+        Kind::Ledger,
+    ),
+    agent_entry(
+        "agents/{agent}/security-events.jsonl",
+        "vak-core",
+        Kind::Ledger,
+    ),
+    agent_entry("agents/{agent}/cost-log.jsonl", "vak-core", Kind::Ledger),
+    agent_entry(
+        "agents/{agent}/activity-log.jsonl",
+        "vak-core",
+        Kind::Ledger,
+    ),
+    agent_entry(
+        "agents/{agent}/presentations.json",
+        "vak-store",
+        Kind::Document,
+    ),
+    agent_entry("agents/{agent}/flow-runs", "vak-flow", Kind::Ledger),
+    agent_entry("agents/{agent}/agent-network", "vak-core", Kind::Config),
+    agent_entry("agents/{agent}/sandbox", "vak-server", Kind::Ledger),
+    agent_entry(
+        "agents/{agent}/office-workspaces",
+        "vak-server",
+        Kind::Document,
+    ),
+    agent_entry("agents/{agent}/coworking", "vak-server", Kind::Ledger),
     StateEntry {
         path: "security-events.jsonl",
         root: Root::Data,
@@ -232,7 +364,7 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
+        kind: Kind::Document,
         on_update: OnUpdate::Untouched,
         on_purge: OnPurge::Remove,
         in_backup: true,
@@ -242,7 +374,7 @@ pub const REGISTRY: &[StateEntry] = &[
         root: Root::Data,
         owner: "vak-core",
         schema: None,
-        kind: Kind::Ledger,
+        kind: Kind::Document,
         on_update: OnUpdate::Untouched,
         on_purge: OnPurge::Remove,
         in_backup: true,
@@ -549,12 +681,45 @@ pub fn entries_for(root: Root) -> impl Iterator<Item = &'static StateEntry> {
     REGISTRY.iter().filter(move |e| e.root == root)
 }
 
-/// Relative paths an ordinary backup copies, for `root`.
-pub fn backup_paths(root: Root) -> Vec<&'static str> {
+/// Paths, relative to `base`, that an ordinary backup of `root` copies:
+/// every declared entry present there, with each pattern entry expanded to
+/// the Agent homes that exist.
+pub fn backup_targets(root: Root, base: &Path) -> Vec<PathBuf> {
     entries_for(root)
         .filter(|e| e.in_backup)
-        .map(|e| e.path)
+        .flat_map(|e| e.expand(base))
         .collect()
+}
+
+/// Remove the directories a pattern entry implies once they are empty:
+/// each Agent home, then `agents/` itself.
+///
+/// A purge removes declared subpaths; this tidies what held them. An Agent
+/// home that still holds something undeclared is not empty, so it stays
+/// exactly where it was, as the preserve rule requires.
+pub fn remove_empty_pattern_dirs(root: Root, base: &Path) {
+    let mut parents: Vec<PathBuf> = Vec::new();
+    for entry in entries_for(root) {
+        let components: Vec<_> = Path::new(entry.path).components().collect();
+        let Some(at) = components
+            .iter()
+            .position(|c| c.as_os_str() == AGENT_SEGMENT)
+        else {
+            continue;
+        };
+        let parent: PathBuf = components[..at].iter().collect();
+        if !parents.contains(&parent) {
+            parents.push(parent);
+        }
+    }
+    for parent in parents {
+        let dir = resolve(base, &parent);
+        for name in child_dirs(&dir) {
+            // Fails, harmlessly, on a home that is not empty.
+            let _ = std::fs::remove_dir(dir.join(name));
+        }
+        let _ = std::fs::remove_dir(&dir);
+    }
 }
 
 /// True when `relative` under `root` is declared.
@@ -586,6 +751,112 @@ mod tests {
         assert!(sessions.matches(Path::new("sessions")));
         assert!(sessions.matches(Path::new("sessions/abc/def.jsonl")));
         assert!(!sessions.matches(Path::new("sessions-other")));
+    }
+
+    #[test]
+    fn a_pattern_entry_matches_one_agent_component_and_nothing_wider() {
+        let sessions = REGISTRY
+            .iter()
+            .find(|e| e.path == "agents/{agent}/sessions")
+            .unwrap();
+        assert!(sessions.matches(Path::new("agents/vak/sessions/h/a.jsonl")));
+        assert!(sessions.matches(Path::new("agents/writer/sessions")));
+        assert!(!sessions.matches(Path::new("agents/vak/memory/MEMORY.md")));
+        assert!(!sessions.matches(Path::new("agents/sessions")));
+        assert!(!sessions.matches(Path::new("agents")));
+    }
+
+    #[test]
+    fn an_unknown_agent_subpath_is_undeclared() {
+        // The point of the split: a new per-Agent store is not covered by
+        // a blanket `agents` entry, so the enforcement test sees it.
+        assert!(is_declared(
+            Root::Data,
+            Path::new("agents/vak/sessions/h/a.jsonl")
+        ));
+        assert!(is_declared(
+            Root::Data,
+            Path::new("agents/writer/office-workspaces/s/r.json")
+        ));
+        assert!(!is_declared(
+            Root::Data,
+            Path::new("agents/vak/new-store/x.json")
+        ));
+        assert!(!is_declared(Root::Data, Path::new("agents/vak/stray.txt")));
+    }
+
+    #[test]
+    fn a_pattern_entry_expands_to_each_agent_home_present() {
+        let home = tempfile::tempdir().unwrap();
+        for rel in [
+            "agents/vak/sessions/h/a.jsonl",
+            "agents/writer/sessions/h/b.jsonl",
+            "agents/writer/memory/user/USER.md",
+        ] {
+            let path = home.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, rel).unwrap();
+        }
+        let find = |path: &str| REGISTRY.iter().find(|e| e.path == path).unwrap();
+        assert_eq!(
+            find("agents/{agent}/sessions").expand(home.path()),
+            vec![
+                PathBuf::from("agents/vak/sessions"),
+                PathBuf::from("agents/writer/sessions")
+            ]
+        );
+        assert_eq!(
+            find("agents/{agent}/memory").expand(home.path()),
+            vec![PathBuf::from("agents/writer/memory")]
+        );
+        assert!(
+            find("agents/{agent}/sandbox")
+                .expand(home.path())
+                .is_empty()
+        );
+        assert_eq!(
+            find("sessions").expand(home.path()),
+            Vec::<PathBuf>::new(),
+            "an absent plain entry expands to nothing"
+        );
+    }
+
+    #[test]
+    fn empty_agent_homes_are_tidied_and_undeclared_ones_kept() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join("agents/vak")).unwrap();
+        std::fs::create_dir_all(home.path().join("agents/writer")).unwrap();
+        std::fs::write(home.path().join("agents/writer/stray.txt"), "x").unwrap();
+        remove_empty_pattern_dirs(Root::Data, home.path());
+        assert!(!home.path().join("agents/vak").exists());
+        assert!(home.path().join("agents/writer/stray.txt").exists());
+    }
+
+    #[test]
+    fn an_entry_split_into_finer_entries_is_not_a_violation() {
+        // Upgrading across the split: the earlier build declared `agents`
+        // whole; the later one declares each subpath.
+        let before = snap(
+            "agents",
+            "Untouched",
+            vec![file("agents/vak/sessions/h/a.jsonl", "aaa")],
+        );
+        let mut after = snap(
+            "agents/{agent}/sessions",
+            "Untouched",
+            vec![file("agents/vak/sessions/h/a.jsonl", "aaa")],
+        );
+        assert!(verify_upgrade(&before, &after).is_empty());
+
+        after.entries[0].files[0].sha256 = "bbb".into();
+        let found = verify_upgrade(&before, &after);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].detail.contains("contents changed"));
+
+        after.entries[0].files.clear();
+        let found = verify_upgrade(&before, &after);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].detail.contains("gone from the registry"));
     }
 
     #[test]
@@ -821,19 +1092,16 @@ pub fn snapshot(version: &str) -> StateSnapshot {
     let mut entries = Vec::new();
     for entry in REGISTRY {
         let base = root_path(entry.root);
-        let target = if entry.path.is_empty() {
-            base.clone()
-        } else {
-            base.join(entry.path)
-        };
         let mut files = Vec::new();
-        let candidates = if target.is_dir() {
-            walk(&target)
-        } else if target.is_file() {
-            vec![target.clone()]
-        } else {
-            Vec::new()
-        };
+        let mut candidates = Vec::new();
+        for relative in entry.expand(&base) {
+            let target = resolve(&base, &relative);
+            if target.is_dir() {
+                candidates.extend(walk(&target));
+            } else if target.is_file() {
+                candidates.push(target);
+            }
+        }
         for file in candidates {
             let Some((sha256, bytes)) = digest_of(&file) else {
                 continue;
@@ -907,12 +1175,28 @@ fn key_paths(value: &serde_json::Value, prefix: &str, out: &mut Vec<String>) {
 /// calls it, so the rules have one definition.
 pub fn verify_upgrade(before: &StateSnapshot, after: &StateSnapshot) -> Vec<Violation> {
     let mut violations = Vec::new();
-    for prior in &before.entries {
-        let Some(later) = after
+    // A file is looked up wherever it is declared now, not only under the
+    // entry that held it before, so splitting one entry into finer ones (as
+    // the per-Agent split did to `agents`) loses nothing and is no violation.
+    let declared_now = |root: &str, path: &str| {
+        after
             .entries
             .iter()
-            .find(|e| e.entry == prior.entry && e.root == prior.root)
-        else {
+            .filter(|e| e.root == root)
+            .flat_map(|e| e.files.iter())
+            .find(|f| f.path == path)
+    };
+    for prior in &before.entries {
+        let still_declared = after
+            .entries
+            .iter()
+            .any(|e| e.entry == prior.entry && e.root == prior.root);
+        if !still_declared
+            && prior
+                .files
+                .iter()
+                .any(|f| declared_now(&prior.root, &f.path).is_none())
+        {
             violations.push(Violation {
                 entry: prior.entry.clone(),
                 path: prior.entry.clone(),
@@ -920,15 +1204,15 @@ pub fn verify_upgrade(before: &StateSnapshot, after: &StateSnapshot) -> Vec<Viol
                 detail: "the entry is gone from the registry entirely".into(),
             });
             continue;
-        };
-        let base = match later.root.as_str() {
+        }
+        let base = match prior.root.as_str() {
             "shared" => root_path(Root::Shared),
             "cache" => root_path(Root::Cache),
             _ => root_path(Root::Data),
         };
 
         for file in &prior.files {
-            let now = later.files.iter().find(|f| f.path == file.path);
+            let now = declared_now(&prior.root, &file.path);
             match prior.on_update.as_str() {
                 "Untouched" => match now {
                     None => violations.push(Violation {
