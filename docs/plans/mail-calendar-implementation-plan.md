@@ -1779,3 +1779,16 @@ remains open.
   mail/calendar tests, 14 Server mail/calendar tests, formatting, TypeScript
   check, and production web build pass; the build retains existing Vite
   chunk-size and mixed-import warnings. No live account data was accessed.
+- 2026-10-01: Opened the feature build in a separate local browser session on
+  port 8923, using `VAK_HOME=~/Library/Application Support/vak/mail-calendar-
+  routine-preview-check` and the separate workspace
+  `~/vak-home/.mail-calendar-routine-preview-check`. The Email and calendar
+  Settings page rendered with all three provider choices, security warnings,
+  deletion limits, working area, and routine safety explanation. With no
+  connected account, created a synthetic timed-event draft, inspected its
+  local-only exact preview, saved revision 1, closed and reopened it with all
+  fields intact, then deleted it; the UI confirmed no provider data changed.
+  No account or credential was connected or read. This is a local draft
+  browser smoke check; connected-account source-to-Review acceptance, saved
+  viewport screenshots, live-provider behavior, and 24-hour recovery remain
+  open.
