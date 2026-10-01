@@ -99,8 +99,11 @@ window.fetch = async (input, init) => {
       const candidate = savedCandidates.find((item) => item.id === id);
       const body = JSON.parse(String(init.body ?? "{}")) as Record<string, any>;
       if (!candidate || candidate.revision !== body.expected_revision || candidate.candidate_digest !== body.candidate_digest) return new Response("{}", { status: 409 });
-      if (reconciliationChecks > 1) candidate.action_state = "confirmed";
-      return json(reconciliationChecks > 1
+      const matched = id === "fixture-ambiguous-event"
+        ? reconciliationChecks > 1
+        : id === "fixture-ambiguous-cancel";
+      if (matched) candidate.action_state = "confirmed";
+      return json(matched
         ? { matched: true, receipt: { state: "confirmed", provider_item_id: "fixture-confirmed-event" } }
         : { matched: false, state: "unknown", message: "No matching event is visible yet." });
     }
@@ -558,12 +561,15 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   [...(ambiguousMailRow?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === "Check provider result")?.click();
   const mailReconciliationPostsExactCandidate = await waitFor(() => mailReconciliationChecks === 1
     && savedCandidates.find((candidate) => candidate.id === "fixture-ambiguous-mail")?.action_state === "confirmed");
-  const ambiguousCancelRow = [...document.querySelectorAll<HTMLElement>(".mail-calendar-draft-row")].find((row) => row.textContent?.includes("Cancelled fixture event"));
-  const cancelReconciliationAvailable = !!ambiguousCancelRow
-    && [...ambiguousCancelRow.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Check provider result");
-  [...(ambiguousCancelRow?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === "Check provider result")?.click();
+  const ambiguousCancelRow = () => [...document.querySelectorAll<HTMLElement>(".mail-calendar-draft-row")].find((row) => row.textContent?.includes("Cancelled fixture event"));
+  const cancelReconciliationAvailable = !!ambiguousCancelRow()
+    && [...(ambiguousCancelRow()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].some((button) => button.textContent?.trim() === "Check provider result");
+  const cancelReconcileButton = () => [...(ambiguousCancelRow()?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((button) => button.textContent?.trim() === "Check provider result");
+  const mailReconciliationSettled = await waitFor(() => !!mailReconciliationPostsExactCandidate && cancelReconcileButton()?.disabled === false);
+  cancelReconcileButton()?.click();
   const cancelReconciliationConfirms = await waitFor(() => reconciliationChecks === 3
     && savedCandidates.find((candidate) => candidate.id === "fixture-ambiguous-cancel")?.action_state === "confirmed"
+    && savedCandidates.find((candidate) => candidate.id === "fixture-ambiguous-event")?.action_state === "confirmed"
     && document.body.textContent?.includes("provider confirms this event was cancelled") === true);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
@@ -607,7 +613,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(ambiguousDraftVisible && inconclusiveReconciliationStaysLocked && positiveReconciliationConfirms, "Canvas keeps an ambiguous event create non-retryable when no provider marker is visible, then marks it confirmed when the broker finds the attempt"),
     check(updateReconciliationAvailable, "Canvas offers provider reconciliation for an ambiguous supported event update"),
     check(mailReconciliationAvailable && mailReconciliationPostsExactCandidate, "Canvas offers owner-triggered reconciliation for the exact ambiguous email-send candidate"),
-    check(cancelReconciliationAvailable && cancelReconciliationConfirms, "Canvas checks an ambiguous cancellation and confirms only the selected synthetic event candidate"),
+    check(cancelReconciliationAvailable && mailReconciliationSettled && cancelReconciliationConfirms, "Canvas waits for the preceding reconciliation to settle, then confirms only the selected synthetic cancellation candidate"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div:not(.mail-calendar-all-day-label)").length <= 24, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
     check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),
