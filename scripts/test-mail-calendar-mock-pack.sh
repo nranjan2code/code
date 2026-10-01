@@ -11,6 +11,7 @@ printf '%s\n' 'Mail/calendar mock regression pack (Cargo offline; synthetic fixt
 cargo test --offline --locked -p vak-mail-calendar
 cargo test --offline --locked -p vak-core mail_calendar
 cargo test --offline --locked -p vak-server mail_calendar
+cargo test --offline --locked -p vak-server --lib restart_requeues_inflight_mail_watch_items_from_the_agent_vault
 cargo test --offline --locked -p vak-server --test mail_calendar_worker
 
 printf '%s\n' 'Mail/calendar mock regression pack passed.'

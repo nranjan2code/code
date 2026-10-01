@@ -1726,9 +1726,10 @@ remains open.
   `./scripts/test-mail-calendar-mock-pack.sh`, documented at
   `crates/vak-mail-calendar/MOCK_REGRESSION_PACK.md`. One offline command runs
   the provider/vault crate, Core and server mail/calendar boundary tests, and
-  parser-worker integration fixtures. Inputs are generated in memory and test
-  servers bind only to loopback; the pack requires no live account or
-  credential and does not access the developer data home.
+  parser-worker integration fixtures, plus the server restart/requeue test for
+  an interrupted mail watch. Inputs are generated in memory and test servers
+  bind only to loopback; the pack requires no live account or credential and
+  does not access the developer data home.
 - 2026-10-01: Reverified the current branch: all 109 mail/calendar unit tests
   and its state-registry test pass; all 11 Core mail/calendar boundary tests,
   13 server mail/calendar unit tests, 4 owner-authenticated HTTP tests, 5
