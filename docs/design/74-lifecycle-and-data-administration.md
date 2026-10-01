@@ -127,9 +127,10 @@ two lists (review R8).
   - Expiry comes after the candidate is promoted or rejected, or after the
     idle TTL, whichever comes first.
   - A worktree environment also removes its branch.
-  - An environment with an unreviewed candidate is never removed without
-    the candidate first moving to `rejected{expired}`, which is recorded and
-    notified.
+  - Removing an environment never removes an unreviewed draft: the draft's
+    files are objects or a frozen candidate, which follow the draft-version
+    retention (§2.7, §3.1). A candidate moves to `rejected{expired}` only
+    when that retention expires it, which is recorded and notified.
 
 ### 2.7 Artifact and version
 
@@ -143,6 +144,11 @@ erased`.
 - Sharing is a grant (§6, screen A6) and never copies data.
 - Unpublishing revokes grants and links; external copies are named in the
   receipt.
+- A draft version that is not accepted, starred or shared moves to the trash
+  when the draft-version label expires it (default 60 days, §3.1),
+  restorable for the trash window and then erased. Accepting, starring or
+  sharing it stops the clock. The Library lists such drafts under "Older
+  drafts" after 14 days; that is a view, not a state (`82-library.md` §3).
 
 ### 2.8 Documents (memory, entities, skills, prompt layers, presentation packs)
 
@@ -237,6 +243,7 @@ RetentionLabel {
 | runs (no conversation) | — | 180 d |
 | checkpoints (sealed session) | — | 30 d |
 | environments | — | 7 d after settle |
+| draft versions (not accepted, starred or shared) | — | 60 d, then the trash |
 | Document history (memory, entities) | — | 90 d |
 | inbox entries | — | 90 d |
 | pending/denied allowlist entries | — | 90 d |
@@ -416,7 +423,7 @@ receipts. "Guard" names the confirmation a destructive action needs.
 | A4 | Work › Runs | Actions-style table: run id, cause, Agent, space, schedule/slot, status and decision (with skip reason), duration, cost, started | open, cancel (if running), re-run (creates a new Run with cause *manual*) | M4 |
 | A4b | Run detail | timeline: span waterfall (M5) and records; sessions; executions with stdout objects; artifacts produced; deliveries; receipts; cost | open any linked node | M4, M5 |
 | A5 | Operate › Schedules | list: next slot (in the schedule's timezone), last decision, 30-day success rate, skipped reasons, `on_crash`; editor for definitions | pause/resume, run now, backfill a missed slot (explicit, recorded), edit | M4 |
-| A6 | Work › Library | artifacts by space, kind and audience; version history; promotions; shares (inherited vs broken); comments; label | share / unshare (grant dialog showing inheritance), promote (Review path), request erasure | M8 |
+| A6 | Work › Library (the operator view of `82-library.md`'s model) | artifacts by space, kind and audience; version history; promotions; shares (inherited vs broken); comments; label | share / unshare (grant dialog showing inheritance), promote (Review path), request erasure | M8 |
 | A7 | Operate › Data › Storage | bytes and counts by class × tenant/space/Agent; growth over time (daily catalog snapshots, measured); top consumers; dedupe ratio; cache and telemetry sizes vs quota | set a quota (operator), open the consumer | M7 |
 | A8 | Operate › Data › Lifecycle | reconciler status; the **pending plan** (the dry-run) grouped by action with reason and policy; recent transitions; quarantine; errors | run a tick now, pause the reconciler (recorded; stewards are notified), retry a failed action | M7 |
 | A9 | Operate › Data › Integrity | chain verification per record chain (last full and sampled), catalog staleness digest, object verification, key status, undeclared-path incidents | verify now, rebuild catalog (mechanical, invariant 19) | M6, M7 |
@@ -438,11 +445,11 @@ receipts. "Guard" names the confirmation a destructive action needs.
 | C1 | Conversation menu | state and label badge | Archive, Move to trash, Export, Delete permanently (when policy allows the owner; otherwise "Ask an admin", which creates an erasure request) |
 | C2 | Trash | trashed conversations with days left | Restore, Delete permanently |
 | C3 | "Why is this gone?" | shown when a link or search hits a tombstone: when, by which policy or request, whether a receipt exists; never content | open the receipt (if the viewer may) |
-| C4 | Library panel | artifacts this person can see; versions; comments | open, compare versions, share, promote (through Review) |
+| C4 | Library (a sidebar destination of its own; specified in `82-library.md`, which supersedes the panel described here) | artifacts this person can see; versions; comments | open, compare versions, share, promote (through Review) |
 | C5 | Share dialog | current access (inherited vs explicit), roles | grant, revoke, break inheritance (named as such) |
 | C6 | Runs panel per Agent | routine history with skip reasons and deliveries (replaces `TasksModal` last-run fields) | run now, pause (if permitted) |
 | C7 | Settings › Your data | what Vak keeps about this person, per class; retention that applies; storage used | export all, trash all, request erasure |
-| C8 | Workbench | execution states (running / settled / scrubbed), candidate expiry | keep candidate (extends to the label max), reject |
+| C8 | Workbench | execution states (running / settled / scrubbed), draft expiry | star (the Library's star, which keeps a draft from fading, `82-library.md` §3), reject |
 
 ## 7. API
 
@@ -472,7 +479,7 @@ POST   /conversations/{id}/trash | /restore | /archive | /unarchive
 GET    /runs  /runs/{id}  /runs/{id}/spans   POST /runs/{id}/cancel | /rerun
 GET    /schedules  /schedules/{id}/slots   POST /schedules/{id}/pause | /resume | /run | /backfill
 GET    /search  /lineage/{node}  /nodes/{id}
-GET    /library …  (M8)
+GET    /library  /library/{key}             the Library (doc 82): from its L1; keys change at M8
 GET    /data/sync …  (M9)
 ```
 

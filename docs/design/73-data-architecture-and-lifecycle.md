@@ -280,8 +280,8 @@ Tenant ─┬─ Space ─┬─ Agent ─┬─ Conversation ── Session ─
   inputs (workspace snapshot digest), outputs (object refs), streams (as
   objects) and exit.
 - **Artifact**: a named thing a person sees and can share: a document,
-  dataset, dashboard, card, changeset, report. Versions are immutable.
-  "Current" is a ref.
+  dataset, dashboard, saved card, changeset, report; `82-library.md` §3
+  says what becomes one. Versions are immutable. "Current" is a ref.
 
 **Identifier rules.** Every id is `<prefix>_<full UUIDv7>` (`ten_ spc_ agt_
 cnv_ ses_ trn_ run_ exe_ art_ ver_ sch_ dlv_`), or `obj_<hex>` for objects.
@@ -817,5 +817,5 @@ Also in revision 2:
 | project `.vak/{flows,commands,launch.toml,permissions.local.toml}` | various | Desired (project intent) |
 | project `.vak/prompts/` | vak-core | Document (prompt layers; project intent) |
 | project `.vak/env` (NATS secrets in plaintext, D15) | vak-server | **removed**; values move to the Secret class |
-| project `inbox/` | vak-server | Object + Artifact |
+| project `inbox/` | vak-server | Object; a Source of what is made from it, and version 1 of an Artifact once Vak versions it (doc 82 §3) |
 | temp `vak-provider-gates/`, browser profiles, `vak-prompt-*.md` | vak-llm / vak-tools / vak | Ephemeral (runtime) |

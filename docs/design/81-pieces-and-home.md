@@ -172,9 +172,11 @@ only on the cases the rule leaves open.
 
 ### 4.2 Changing
 
-Each piece has **its own conversation**. "Add answer counts per tag" in that
-conversation produces a candidate version through the existing Review path
-(doc 54): new code, new description, and a preview built from real data. The
+A piece is changed in its authoring Agent's own conversation, with the piece
+attached (`82-library.md` §6), not in a conversation of its own (doc 64).
+"Add answer counts per tag" there produces a candidate version through the
+existing Review path (doc 54): new code, new description, and a preview
+built from real data. The
 current version keeps running until the candidate is promoted. A candidate
 may run alongside the current version so the owner compares both outputs
 before switching. Rollback is one action.
@@ -612,7 +614,8 @@ Vak.
 - **Invariant 12 (secrets are not ambient).** Unchanged in spirit; the
   gateway's credential injection is the recipient-scoped injection it
   already requires.
-- **Invariant 37 (agent ownership).** Pieces need an owner model (§20.6).
+- **Invariant 37 (agent ownership).** Pieces need an owner model (§20.6,
+  resolved by `82-library.md`).
 - **Invariant 38 (scheduled work is a `TaskDef`).** Satisfied either way
   §20.5 resolves, provided there is one schedule model.
 - A new invariant would state Principles 1, 4 and 7: pieces run without a
@@ -624,6 +627,7 @@ Vak.
 | Doc | Relationship |
 |---|---|
 | 73 / 74 data architecture | a piece is an Artifact with a recipe; versions, objects, catalog, retention and erasure are theirs. Pieces depend on M6 (catalog) and M8 (artifacts) |
+| 82 Library | a piece is an artifact that is Live, listed in the Library with everything else; the Library's Keep live is this document's Keep |
 | 76 intake | a Source (host-owned connector) and a piece job (owner-approved code) both feed the catalog; a piece may bind to Sources rather than re-fetching |
 | 80 mail and calendar | its routines and account linking become pieces and connections on this platform; its operating modes are §6.2's triggers |
 | 54 task environments | drafts and candidates use its environments and Review path; keeping is a new promotion target |
@@ -648,8 +652,9 @@ Vak.
    (recommended: ask, with an opt-in per piece).
 5. **Triggers and `TaskDef`.** Triggers compile to TaskDefs, or TaskDef is
    replaced by the trigger model. One survives.
-6. **Ownership.** Owned by the Space with the authoring Agent recorded
-   (recommended, so any Agent can refresh or repair), or owned by the Agent.
+6. **Ownership.** Resolved by `82-library.md` §1 decision 4: owned by the
+   Space with the authoring Agent recorded (from M3b, which these phases
+   follow), so any Agent can refresh or repair.
 7. **Sharing.** When pieces are shared with other people, the share model is
    doc 73 §10's grants, and a viewer never inherits the owner's connections.
 

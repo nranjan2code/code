@@ -341,6 +341,10 @@ commit are recorded here so the next run can be diffed.
 - `crates/vak-server/src/heartbeat.rs`, `crates/vak-flow` (`flow-runs/`),
   `crates/vak-agent/src/task.rs` (delegation) and best-of-N all create Runs.
 - New `EnvironmentBackend` impl `CopyEnvironment` in `crates/vak-sandbox`.
+- The Library prototype (added 2026-10-01 with `docs/design/82-library.md`):
+  its rule that lists each routine run's declarations as entries of their
+  own goes; a routine's runs become versions of one artifact at their
+  destination path (doc 82 §2.1, L4).
 
 **UI**
 - `crates/vak-client-ui/src/components/TasksModal.tsx` and `types.ts`:
@@ -387,6 +391,8 @@ commit are recorded here so the next run can be diffed.
 - New `crates/vak-catalog`; delete `crates/vak-store`. Its callers:
   `vak-server` (2 production uses and 18 test uses of `vak_store::`),
   `vak-core` index spawns, admin search, `search_all`.
+- The Library prototype's declarations table goes with `vak-store`; Library
+  search moves to the catalog (`docs/design/82-library.md` §9, L3).
 - Remove scanning lookups: `find_session_on_disk` (`vak-server/src/lib.rs:7988`),
   `read_historical_header` (`:8039`), `find_session_in_cwd`, and the recall
   ledger cache in `vak-tools`.
@@ -458,6 +464,10 @@ commit are recorded here so the next run can be diffed.
 - `crates/vak-server/src/coworking.rs` grants become one grants table.
 - `crates/vak-tools/src/office_apply.rs` and `doc_read.rs`: a draft is an
   artifact version.
+- The Library prototype (`docs/design/82-library.md` L1/L2): its projection
+  over `sandbox/records.jsonl` and the session ledgers, its path-derived
+  keys and the key in `AttachedArtifact` are replaced by Artifact records
+  and `art_` ids. Nothing maps across, because M3b discarded their data.
 
 **UI**
 - Client: Library, share dialog, version history, Runs panel.
@@ -467,7 +477,8 @@ commit are recorded here so the next run can be diffed.
   Operate, Configure and System groups in `App.tsx:6862-6945`.
 
 **Docs**
-- 54, 69 and 72 sections superseded; 33 and 58 navigation.
+- 54, 69 and 72 sections superseded; 33 and 58 navigation; 82's notes on
+  what holds before M8.
 
 ## M9 — cloud remote
 

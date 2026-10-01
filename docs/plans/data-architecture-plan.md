@@ -437,16 +437,18 @@ diff; the layout scan (blast-radius §0) finds no raw home-path use outside
 ### M8 — Artifacts, sharing, information architecture (L)
 
 - **Artifacts and Versions.** Candidates and promotions (doc 54), Office
-  drafts (doc 72), changesets, datasets, dashboards and cards all become
-  artifact version events. A changeset promotes into git as a commit on a
-  branch.
+  drafts (doc 72), changesets, datasets, dashboards and saved cards all
+  become artifact version events; a card stays in its chat unless a person
+  saves it (`docs/design/82-library.md` §3). A changeset promotes into git
+  as a commit on a branch.
 - **Grants** with inheritance and explicit breaks; doc 69's coworking grants
   move into the same table.
 - **Navigation reconciliation** in the admin console (doc 74 §6.1) and the
   client.
 - **Screens:**
   - Admin Library (A6).
-  - Client Library (C4), Share dialog (C5), version history.
+  - Client Library (C4), Share dialog (C5), version history, built to
+    `docs/design/82-library.md` (its phases L4 and L5 ride this milestone).
   - `SharedConversation.tsx`, `ArtifactCanvas`, `OfficeRedline` and
     `WorkbenchPanel` move onto the Artifact API.
 

@@ -110,7 +110,13 @@ Read before changing behaviour in these areas:
   extends 73/74 without starting a data milestone),
   `81-pieces-and-home.md` (the proposed platform for kept, live and hosted
   work: pieces that run as code without a model, their gateways, storage and
-  operations, and Home; it depends on data-architecture M6 and M8).
+  operations, and Home; it depends on data-architecture M6 and M8),
+  `82-library.md` (the proposed Library: one place for everything Vak makes,
+  artifacts with their versions, parts and the conversations that made
+  them; Continue working attaches an artifact to its Agent's own
+  conversation (doc 64), never a new one. It is the product spec for doc
+  74's C4 and A6. Its L1 and L2 are a prototype before the data
+  architecture, whose data M3b discards; later phases ride M4, M6 and M8).
 
 ### What is authoritative
 
