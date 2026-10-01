@@ -3107,7 +3107,9 @@ mod tests {
                 artifact: vak_delivery::ArtifactRef {
                     name: "report.xlsx".into(),
                     path: Some(path.into()),
-                    media_type: Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into()),
+                    media_type: Some(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                    ),
                     description: None,
                     size_bytes: None,
                     status: None,
@@ -3125,8 +3127,16 @@ mod tests {
         };
         let mut items = vec![
             artifact("old", "/workspace/.vak/scratch/run-a/report.xlsx", "run-a"),
-            artifact("other-dir", "/workspace/.vak/scratch/run-b/archive/report.xlsx", "run-b"),
-            artifact("latest", "/workspace/.vak/scratch/run-b/report.xlsx", "run-b"),
+            artifact(
+                "other-dir",
+                "/workspace/.vak/scratch/run-b/archive/report.xlsx",
+                "run-b",
+            ),
+            artifact(
+                "latest",
+                "/workspace/.vak/scratch/run-b/report.xlsx",
+                "run-b",
+            ),
         ];
         let roots = HashMap::from([
             ("run-a".into(), "/workspace/.vak/scratch/run-a".into()),
@@ -3134,7 +3144,10 @@ mod tests {
         ]);
         super::deduplicate_file_artifacts_with_scratch(&mut items, &roots);
         assert_eq!(
-            items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(),
+            items
+                .iter()
+                .map(|item| item.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["other-dir", "latest"]
         );
     }
