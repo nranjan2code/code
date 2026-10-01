@@ -2321,3 +2321,12 @@ remains open.
   acceptance fixture passes five checks, including keeping mail/calendar work
   out of Settings. The Daily Canvas fixture still needs a successful rerun.
   Real-provider behavior and 24-hour service recovery remain open.
+- 2026-10-01: After clearing the feature worktree's stale Rust build cache,
+  reran the focused Rust coverage with a shared Cargo target: 128 provider/vault
+  tests plus the state-registry test, 19 Core mail/calendar tests, 17 Server
+  mail/calendar tests, four owner-authenticated HTTP tests, one scheduled-run
+  test, five isolated-worker tests, and one restart/requeue test all pass.
+  `npm run typecheck`, `cargo fmt --all --check`, and `git diff --check` pass.
+  The full mock-pack script was not rerun as one command, and the rendered Daily
+  Canvas fixture still needs browser verification. No live provider data was
+  used. Real-provider behavior and 24-hour service recovery remain open.
