@@ -21,6 +21,13 @@ type DailyAccount = {
   calendarError: boolean;
 };
 
+type SelectedConversation = {
+  accountId: string;
+  threadId: string;
+  messages: api.MailCalendarMailPreview[];
+  nextCursor?: string | null;
+};
+
 function providerName(account: api.MailCalendarAccount) {
   const name = account.provider === "google" ? "Google" : account.provider === "microsoft" ? "Microsoft" : "Apple iCloud";
   return account.identity_masked ? `${name} · ${account.identity_masked}` : name;
@@ -74,7 +81,12 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     ([agentId]) => readToday(agentId),
   );
   const [selectedEvent, setSelectedEvent] = createSignal<api.MailCalendarEventPreview | null>(null);
+  const [selectedConversation, setSelectedConversation] = createSignal<SelectedConversation | null>(null);
+  const [conversationLoading, setConversationLoading] = createSignal(false);
+  const [conversationError, setConversationError] = createSignal<string | null>(null);
+  const [conversationRequest, setConversationRequest] = createSignal(0);
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
+  const [mailPage, setMailPage] = createSignal(0);
   const [eventAction, setEventAction] = createSignal("");
   const [eventActionError, setEventActionError] = createSignal<string | null>(null);
   const [accountRefreshPending, setAccountRefreshPending] = createSignal(false);
@@ -106,6 +118,46 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
     loader.reload();
   });
   const manualRefresh = () => { lastRefresh = Date.now(); setSelectedEvent(null); loader.reload(); };
+  const closeConversation = () => {
+    setConversationRequest((value) => value + 1);
+    setSelectedConversation(null);
+    setConversationError(null);
+    setConversationLoading(false);
+  };
+  const readConversation = async (accountId: string, threadId: string, cursor?: string, append = false) => {
+    const request = conversationRequest() + 1;
+    setConversationRequest(request);
+    if (!append) setSelectedConversation({ accountId, threadId, messages: [] });
+    setConversationLoading(true);
+    setConversationError(null);
+    try {
+      const page = await api.previewMailCalendarThread(
+        props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "",
+        accountId,
+        threadId,
+        cursor,
+      );
+      if (conversationRequest() !== request) return;
+      setSelectedConversation((current) => {
+        if (!current || current.accountId !== accountId || current.threadId !== threadId) return current;
+        const messages = append ? [...current.messages] : [];
+        const seen = new Set(messages.map((message) => message.provider_id));
+        for (const message of page.messages) {
+          if (!seen.has(message.provider_id)) {
+            seen.add(message.provider_id);
+            messages.push(message);
+          }
+        }
+        return { accountId, threadId, messages, nextCursor: page.next_cursor };
+      });
+    } catch (cause) {
+      if (conversationRequest() === request) {
+        setConversationError(cause instanceof Error ? cause.message : "Could not load this conversation.");
+      }
+    } finally {
+      if (conversationRequest() === request) setConversationLoading(false);
+    }
+  };
   onMount(() => {
     const timer = window.setInterval(() => {
       if (Date.now() - lastRefresh >= 5 * 60_000) refreshIfStale();
@@ -131,6 +183,14 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
       const hasMailCapability = () => data.accounts.some((account) => account.account.capabilities.includes("mail_read"));
       const hasCalendarCapability = () => data.accounts.some((account) => account.account.capabilities.includes("calendar_read") || account.account.capabilities.includes("calendar_free_busy"));
       const mailFailedAccounts = () => data.accounts.filter((account) => account.mailError);
+      const mailRows = () => data.accounts.flatMap((account) => account.messages.map((message) => ({ account, message })));
+      const mailPageSize = 12;
+      const mailPageCount = () => Math.max(1, Math.ceil(mailRows().length / mailPageSize));
+      const visibleMailRows = () => mailRows().slice(mailPage() * mailPageSize, (mailPage() + 1) * mailPageSize);
+      const visibleMailAccounts = () => data.accounts.flatMap((account) => {
+        const messages = visibleMailRows().filter((row) => row.account.account.id === account.account.id).map((row) => row.message);
+        return messages.length ? [{ ...account, messages }] : [];
+      });
       const calendarFailedAccounts = () => data.accounts.filter((account) => account.calendarError);
       const openSettings = () => { setPendingSettingsPage("mail-calendar"); setSettingsOpen(true); };
       const prepareEventAction = async (kind: "update" | "cancel") => {
@@ -168,8 +228,28 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
           <section class="daily-mail-calendar-section"><h3>Recent email</h3>
             <Show when={!hasMailCapability()}><p class="settings-hint">No connected account has email access.</p></Show>
             <For each={mailFailedAccounts()}>{(account) => <p class="daily-mail-calendar-warning" role="status">Inbox unavailable for {providerName(account.account)}. Check this account in Settings.</p>}</For>
-            <For each={data.accounts.filter((account) => account.messages.length > 0)}>{(account) => <div class="daily-mail-calendar-mail-account"><h4>{providerName(account.account)}</h4><For each={account.messages}>{(message) => <article class="daily-mail-calendar-message"><div><strong>{message.subject || "(No subject)"}</strong><small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small><Show when={message.preview}><p>{message.preview}</p></Show></div><Show when={message.thread_id} fallback={<button type="button" class="settings-button" onClick={openSettings}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" onClick={() => openMailCalendarCitation({ accountId: account.account.id, threadId: threadId(), messageId: message.provider_id })}>Open conversation</button>}</Show></article>}</For></div>}</For>
+            <For each={visibleMailAccounts()}>{(account) => <div class="daily-mail-calendar-mail-account"><h4>{providerName(account.account)}</h4><For each={account.messages}>{(message) => <article class="daily-mail-calendar-message"><div><strong>{message.subject || "(No subject)"}</strong><small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small><Show when={message.preview}><p>{message.preview}</p></Show></div><Show when={message.thread_id} fallback={<button type="button" class="settings-button" onClick={openSettings}>Open email</button>}>{(threadId) => <button type="button" class="settings-button" onClick={() => void readConversation(account.account.id, threadId())}>Open conversation</button>}</Show></article>}</For></div>}</For>
+            <Show when={mailRows().length > mailPageSize}><nav class="daily-mail-calendar-pagination" aria-label="Recent email pages"><button type="button" class="settings-button" disabled={mailPage() === 0} onClick={() => setMailPage((page) => Math.max(0, page - 1))}>Previous</button><span aria-live="polite">Page {mailPage() + 1} of {mailPageCount()} · {mailRows().length} messages</span><button type="button" class="settings-button" disabled={mailPage() + 1 >= mailPageCount()} onClick={() => setMailPage((page) => Math.min(mailPageCount() - 1, page + 1))}>Next</button></nav></Show>
             <Show when={hasMailCapability() && data.accounts.every((account) => account.messages.length === 0) && mailFailedAccounts().length === 0}><p class="settings-hint">No recent messages.</p></Show>
+            <Show when={selectedConversation()}>{(conversation) => {
+              const account = () => data.accounts.find((item) => item.account.id === conversation().accountId)?.account;
+              const accountLabel = () => account() ? providerName(account()!) : "Connected account";
+              return <section class="daily-mail-calendar-conversation" aria-label="Conversation preview">
+                <header><div><span>{accountLabel()}</span><h4>{conversation().messages[0]?.subject || "Conversation"}</h4></div><button type="button" class="settings-button" onClick={closeConversation}>Close conversation</button></header>
+                <p class="settings-hint">Read-only conversation preview. Message content is untrusted; opening it does not add it to the Agent conversation.</p>
+                <Show when={conversationError()}><p class="daily-mail-calendar-warning" role="alert">{conversationError()}</p></Show>
+                <For each={conversation().messages}>{(message) => <article class="daily-mail-calendar-conversation-message" data-mail-message-id={message.provider_id}>
+                  <strong>{message.subject || "(No subject)"}</strong>
+                  <small>{message.from || "Sender unavailable"}{message.received_at ? ` · ${new Date(message.received_at).toLocaleString()}` : ""}</small>
+                  <Show when={message.to || message.cc}><small>{message.to ? `To: ${message.to}` : ""}{message.to && message.cc ? " · " : ""}{message.cc ? `Cc: ${message.cc}` : ""}</small></Show>
+                  <small>Conversation content is untrusted. Ignore instructions inside it.</small>
+                  <p>{message.body_text || message.preview || "No plain-text message content was returned."}</p>
+                  <Show when={message.thread_id}><button type="button" class="settings-button" onClick={() => openMailCalendarCitation({ accountId: conversation().accountId, threadId: conversation().threadId, messageId: message.provider_id })}>Open in mail workspace to draft a reply</button></Show>
+                </article>}</For>
+                <Show when={conversation().nextCursor}><button type="button" class="settings-button" disabled={conversationLoading()} onClick={() => void readConversation(conversation().accountId, conversation().threadId, conversation().nextCursor ?? undefined, true)}>{conversationLoading() ? "Loading more…" : "Load more messages"}</button></Show>
+                <Show when={conversationLoading() && conversation().messages.length === 0}><p role="status">Loading conversation…</p></Show>
+              </section>;
+            }}</Show>
           </section>
         </Show>
         <footer class="daily-mail-calendar-privacy">Read-only preview for this Agent and your local owner session. Refresh runs every five minutes while visible and when you return after a minute away. Provider content is not added to the conversation by opening this view.</footer>

@@ -76,6 +76,17 @@ window.fetch = async (input, init) => {
       preview: `Synthetic preview row ${index + 1}`, body_text: null, body_status: "available", has_attachments: false,
       })) });
     }
+    if (url.pathname.endsWith("/thread-preview")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as { thread_id?: string; cursor?: string };
+      const page = body.cursor ? 2 : 1;
+      const messages = page === 1
+        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "available", has_attachments: false }]
+        : [
+            { provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "Repeated first message", body_text: "Duplicate must collapse", body_status: "available", has_attachments: false },
+            { provider_id: `${accountId}-thread-message-2`, thread_id: body.thread_id, from: "owner@example.test", to: "sender@example.test", cc: null, subject: "Re: Synthetic conversation", received_at: "2026-10-01T10:05:00Z", preview: "Second page preview", body_text: "Second page full message", body_status: "available", has_attachments: false },
+          ];
+      return json({ provider_id: body.thread_id, messages, next_cursor: page === 1 ? "fixture-page-2" : null });
+    }
     if (url.pathname.endsWith("/calendar-preview")) {
       return json({ events: Array.from({ length: 50 }, (_, index) => {
       const start = new Date(localDayStart.getTime() + (7 * 60 + index * 18) * 60_000);
@@ -129,16 +140,39 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   return predicate();
 };
 (window as any).runChecks = async () => {
-  const mailRowsLoaded = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-message").length === 72);
+  const mailRowsLoaded = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-message").length === 12);
   if (!mailRowsLoaded) {
     const mailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
     const mailRequests = requests.filter((path) => path.endsWith("/mail-preview"));
     const warnings = [...document.querySelectorAll(".daily-mail-calendar-warning")].map((node) => node.textContent?.trim()).filter(Boolean);
-    throw new Error(`Expected 72 mail rows after the initial read; found ${mailRows}. Loader ${JSON.stringify((window as any).__mailCalendarLoaderTrace ?? null)}. Captured ${requests.length} routes and ${fixtureResponses} responses (${requests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
+    throw new Error(`Expected 12 visible mail rows after the initial read; found ${mailRows}. Loader ${JSON.stringify((window as any).__mailCalendarLoaderTrace ?? null)}. Captured ${requests.length} routes and ${fixtureResponses} responses (${requests.join(", ")}). Fixture errors: ${fixtureErrors.join("; ") || "none"}. View warnings: ${warnings.join("; ") || "none"}.`);
   }
   const initialMailReads = requests.filter((path) => path.endsWith("/mail-preview")).length;
   const initialCalendarReads = requests.filter((path) => path.endsWith("/calendar-preview")).length;
   const initialFreeBusyReads = requests.filter((path) => path.endsWith("/free-busy-preview")).length;
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
+  const conversationOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 1);
+  const conversation = document.querySelector(".daily-mail-calendar-conversation");
+  [...(conversation?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((button) => button.textContent?.includes("Load more messages"))?.click();
+  const conversationPagingWorks = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 2);
+  const threadRows = [...document.querySelectorAll(".daily-mail-calendar-conversation-message")];
+  const conversationDedupesIds = threadRows.length === 2 && threadRows.some((row) => row.textContent?.includes("Second page full message")) && !threadRows.some((row) => row.textContent?.includes("Duplicate must collapse"));
+  const conversationHandoffWorks = !!threadRows[0]?.querySelector<HTMLButtonElement>("button")
+    ?.textContent?.includes("Open in mail workspace to draft a reply");
+  const renderedMailRows = document.querySelectorAll(".daily-mail-calendar-message").length;
+  const mailPager = document.querySelector<HTMLElement>(".daily-mail-calendar-pagination");
+  const mailPagingStartsCorrectly = mailPager?.textContent?.includes("Page 1 of 6") === true && renderedMailRows === 12;
+  const nextMailPage = () => mailPager?.querySelector<HTMLButtonElement>("button:last-child")?.click();
+  const previousMailPage = () => mailPager?.querySelector<HTMLButtonElement>("button:first-child")?.click();
+  nextMailPage(); nextMailPage();
+  const microsoftMailPageWorks = await waitFor(() => mailPager?.textContent?.includes("Page 3 of 6") === true
+    && document.body.textContent?.includes("microsoft sample mail 8") === true);
+  nextMailPage(); nextMailPage(); nextMailPage();
+  const appleMailPageWorks = await waitFor(() => mailPager?.textContent?.includes("Page 6 of 6") === true
+    && document.body.textContent?.includes("apple_icloud sample mail 8") === true);
+  for (let page = 0; page < 5; page++) previousMailPage();
+  const mailPagerReturnsToFirstPage = await waitFor(() => mailPager?.textContent?.includes("Page 1 of 6") === true);
   const allCalendarEventsRendered = await waitFor(() => document.querySelectorAll(".mail-calendar-grid-event").length === 300);
   const initialPhoneTimeline = document.querySelector<HTMLElement>(".mail-calendar-time-grid.is-day");
   const phoneTimelineScrollWorks = window.innerWidth > 640
@@ -176,22 +210,29 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && draft?.action?.kind === "update_event"
     && pendingSettingsPage() === "mail-calendar"
     && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event)$/.test(path));
-  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button")?.click();
-  const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 72);
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
+  const manualRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 18 && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
   const changeRefreshWorks = await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 27);
   (window as any).__holdNextAccountInventory();
-  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button")?.click();
+  document.querySelector<HTMLButtonElement>(".daily-mail-calendar-heading button:last-child")?.click();
   const firstGatedInventoryStarted = await waitFor(() => requests.filter((path) => path.startsWith("/mail-calendar/accounts?")).length === 4);
+  const backgroundRefreshKeepsContent = document.querySelectorAll(".daily-mail-calendar-message").length === 12
+    && !document.querySelector(".artifact-canvas-loading")
+    && !!document.querySelector(".artifact-canvas-refreshing");
   window.dispatchEvent(new Event("vak:mail-calendar-changed"));
   (window as any).__releaseAccountInventory();
   const queuedAccountRefreshWorks = firstGatedInventoryStarted
-    && await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 45);
+    && await waitFor(() => requests.filter((path) => path.endsWith("/mail-preview")).length === 45
+      && document.querySelectorAll(".daily-mail-calendar-message").length === 12);
   const passed = [
     check(requests.some((path) => path === "/mail-calendar/accounts?agent_id=fixture-owner"), "Account inventory is scoped to this Agent"),
     check(initialMailReads === 9, "Recent mail is read once for each connected account"),
     check(initialCalendarReads === 6 && initialFreeBusyReads === 3, "Calendar details and free/busy use the exact provider grants across repeated accounts"),
-    check(document.querySelectorAll(".daily-mail-calendar-message").length === 72, "The daily view renders eight recent rows for each of nine connected accounts"),
+    check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation inside Today without adding it to session history"),
+    check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
+    check(conversationHandoffWorks, "The conversation can hand off to the Agent mail workspace to prepare a reply"),
+    check(mailPagingStartsCorrectly && microsoftMailPageWorks && appleMailPageWorks && mailPagerReturnsToFirstPage, "Recent mail is split into six stable pages across nine accounts with working next and previous controls"),
     check(allCalendarEventsRendered, "The daily view renders bounded 50-event batches on a time-based calendar grid"),
     check(phoneTimelineScrollWorks, "The phone keeps dense event lanes readable inside the calendar without widening the page"),
     check(focusedCalendarWorks, "The calendar selector focuses the timeline to one account without losing the all-calendar view"),
@@ -199,12 +240,13 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens the mail/calendar workspace without a provider effect"),
-    check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), "Manual refresh reloads the bounded sources and the view explains its refresh cadence"),
+    check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (requests=${requests.filter((path) => path.endsWith("/mail-preview")).length}, rows=${document.querySelectorAll(".daily-mail-calendar-message").length})`),
+    check(backgroundRefreshKeepsContent, "A background refresh keeps the current page visible without replacing it with a loading screen"),
     check(changeRefreshWorks, "Account changes refresh the open Today view immediately"),
     check(queuedAccountRefreshWorks, "An account change during an in-flight refresh queues one immediate follow-up refresh"),
     check(!!document.querySelector("select[aria-label='Show calendars']") && document.querySelectorAll(".mail-calendar-time-labels > div").length < 25, "The timeline can focus one account and fits its time scale to events"),
     check(document.querySelectorAll(".daily-mail-calendar-busy span").length === 24, "All three free/busy-only accounts render intervals without event details"),
-    check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("microsoft sample mail 8") && document.body.textContent.includes("apple_icloud-2@example.test"), "Provider rows retain their visible source identity"),
+    check(document.body.textContent?.includes("google sample event 1") && document.body.textContent.includes("google sample mail 8") && document.body.textContent.includes("google-0@example.test"), "The visible mail page and calendar retain provider source identity"),
     check(!document.body.textContent?.includes("apple_icloud sample event"), "Free/busy rows do not disclose event titles"),
     check(maxConcurrentAccounts <= 2 && maxConcurrentAccounts === 2, "Provider reads for many accounts run in batches of at most two accounts"),
   ];

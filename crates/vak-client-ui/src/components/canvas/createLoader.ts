@@ -25,6 +25,8 @@ export function createLoader<S, T>(
   const [attempt, setAttempt] = createSignal(0);
   let generation = 0;
   let held: { value: T } | undefined;
+  let loadedSource: S | undefined;
+  let hasLoadedSource = false;
 
   const release = () => {
     if (held) dispose?.(held.value);
@@ -41,7 +43,8 @@ export function createLoader<S, T>(
     attempt();
     const mine = ++generation;
     const current = () => mine === generation;
-    release();
+    const keepPrevious = held !== undefined && hasLoadedSource && sameSource(loadedSource, wanted);
+    if (!keepPrevious) release();
     setLoading(true);
     setError(null);
     untrack(() => load(wanted, current))
@@ -51,6 +54,8 @@ export function createLoader<S, T>(
           return;
         }
         held = { value };
+        loadedSource = wanted;
+        hasLoadedSource = true;
         setData(() => value);
       })
       .catch((cause) => {
@@ -64,6 +69,8 @@ export function createLoader<S, T>(
   onCleanup(() => {
     generation += 1;
     release();
+    loadedSource = undefined;
+    hasLoadedSource = false;
   });
 
   return { data, loading, error, reload: () => setAttempt((count) => count + 1) };

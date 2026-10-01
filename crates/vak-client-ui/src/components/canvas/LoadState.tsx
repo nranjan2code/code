@@ -7,21 +7,26 @@ export default function LoadState<T>(props: { loader: Loader<T>; extra?: JSX.Ele
   return (
     <>
       <Show when={props.loader.loading()}>
-        <div class="artifact-canvas-loading">
-          <div class="artifact-canvas-spinner" />
-          <span>Preparing preview…</span>
-        </div>
+        <Show when={!props.loader.data()}>
+          <div class="artifact-canvas-loading" role="status">
+            <div class="artifact-canvas-spinner" />
+            <span>Preparing preview…</span>
+          </div>
+        </Show>
       </Show>
       <Show when={props.loader.error()}>
-        <div class="artifact-canvas-error">
+        <div class="artifact-canvas-error" role="alert">
           <Icon name="warning" size={16} />
           <span>{props.loader.error()}</span>
           {props.extra}
           <button type="button" class="artifact-canvas-btn" onClick={props.loader.reload}>Retry</button>
         </div>
       </Show>
-      <Show when={!props.loader.loading() && !props.loader.error()}>
+      <Show when={!props.loader.loading() && !props.loader.error() || !!props.loader.data()}>
         <Show when={props.loader.data()} keyed>{(data) => props.children(data as T)}</Show>
+      </Show>
+      <Show when={props.loader.loading() && !!props.loader.data()}>
+        <span class="artifact-canvas-refreshing" role="status">Refreshing…</span>
       </Show>
     </>
   );

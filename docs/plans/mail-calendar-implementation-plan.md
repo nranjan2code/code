@@ -2114,3 +2114,13 @@ remains open.
   tests, scheduler restart/requeue, and five worker tests. This verifies cursor
   safety through one transient provider outage, not scheduler uptime, a real
   network outage, or the Stage 4 24-hour acceptance.
+- 2026-10-01: Added six-page navigation to the Today Canvas recent-mail list
+  (12 visible messages at a time across connected accounts), while retaining
+  per-account source labels. The daily synthetic browser fixture passes 23
+  checks, including next/previous navigation across Google, Microsoft, and
+  Apple samples and a held in-flight refresh that confirms existing content
+  remains rendered without a loading-screen flash. Shared Canvas loading now
+  retains the prior preview during same-source refreshes and shows a small
+  refresh status; source changes still receive the initial loading state.
+  Browser coverage is synthetic and does not establish live provider or
+  assistive-technology acceptance.

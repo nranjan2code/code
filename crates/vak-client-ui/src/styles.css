@@ -5570,6 +5570,15 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 .daily-mail-calendar-message small { color: var(--muted); font-size: var(--fs-meta); overflow-wrap: anywhere; }
 .daily-mail-calendar-message p { margin: 2px 0 0; color: var(--text-soft); font-size: var(--fs-meta); white-space: pre-wrap; overflow-wrap: anywhere; }
 .daily-mail-calendar-message button { flex: 0 0 auto; }
+.daily-mail-calendar-conversation { display: grid; gap: var(--space-3); padding: var(--space-4); border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-raised); }
+.daily-mail-calendar-conversation > header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); }
+.daily-mail-calendar-conversation > header span, .daily-mail-calendar-conversation-message > small { color: var(--muted); font-size: var(--fs-meta); }
+.daily-mail-calendar-conversation h4 { margin: 3px 0 0; font-size: var(--fs-ui); overflow-wrap: anywhere; }
+.daily-mail-calendar-conversation-message { display: grid; gap: var(--space-2); padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.daily-mail-calendar-conversation-message > p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text-soft); font-size: var(--fs-control); }
+.daily-mail-calendar-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-3); padding-top: var(--space-3); }
+.daily-mail-calendar-pagination > span { color: var(--muted); font-size: var(--fs-control); font-variant-numeric: tabular-nums; }
+.artifact-canvas-refreshing { position: sticky; top: 0; z-index: 1; display: block; width: fit-content; margin: 0 0 0 auto; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-raised); color: var(--muted); font-size: var(--fs-meta); }
 .daily-mail-calendar-privacy { padding-top: var(--space-3); border-top: 1px solid var(--border); color: var(--muted); font-size: var(--fs-meta); }
 @media (max-width: 600px) { .daily-mail-calendar-body { padding: var(--space-3); } .daily-mail-calendar-message { align-items: flex-start; flex-direction: column; } .chat-daily-canvas-link { top: 6px; right: 8px; } }
 .artifact-canvas-tabs {
