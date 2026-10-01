@@ -1,10 +1,12 @@
 # 74 — Lifecycle management and data administration
 
-Status: **proposal, 2026-09-25.** Nothing here is shipped. This is the
-companion to `docs/design/73-data-architecture-and-lifecycle.md` (the data
-model) and to `docs/plans/data-architecture-plan.md` (milestones), and it
+Status: **proposal, revision 2 (2026-10-01).** Nothing here is shipped
+except M0's trash. This is the companion to
+`docs/design/73-data-architecture-and-lifecycle.md` (the data model) and to
+`docs/plans/data-architecture-plan.md` (milestones, revision 3), and it
 answers review findings R2, R8, R26, R28, R33 and R34 in
-`docs/plans/data-architecture-review.md`. It defines how every kind of Vak
+`docs/plans/data-architecture-review.md`, and R55, R57 and R60–R63 in
+`docs/plans/data-architecture-review-2.md`. It defines how every kind of Vak
 data is born, changes state, and ends, which policies govern that, how
 people see and act on it, and which screens, APIs and commands that takes.
 
@@ -27,7 +29,11 @@ people see and act on it, and which screens, APIs and commands that takes.
    pressure, Agent or space erasure, tenant offboarding.
 5. **Records expire per conversation, never per entry.** Partial deletion
    would break `derive_messages()` and the hash chain. Non-content shared
-   ledgers (cost, routing, activity) expire by sealed segment.
+   ledgers (cost, routing, activity) expire by sealed segment. The one
+   exception is a non-owner contributor: their frames in a shared
+   conversation have their own key (doc 73 §7.3), so erasing that person
+   destroys only that key, leaves every frame in place and shows a typed
+   placeholder where their words were.
 6. **Recoverable before irreversible.** Trash is hidden everywhere and
    restorable. Erasure destroys keys and cannot be undone. The gap between
    them is policy (default 30 days).
@@ -39,6 +45,11 @@ people see and act on it, and which screens, APIs and commands that takes.
    audience before anything else (invariant 37). Operations URLs keep
    `workspace` and `time` context, and every drill-down ends at raw
    evidence.
+9. **Everyday words first** (doc 75 §7–8). Client screens (§6.3) use the
+   words people recognise and keep ids, digests, paths and byte counts
+   behind Show technical details. The data vocabulary (the word for a
+   Space, run, trigger, trash, delete permanently) is settled in doc 75's
+   glossary before the first screen that needs it (plan L11).
 
 ## 2. Lifecycles
 
@@ -73,7 +84,7 @@ record (rule 2), so that is not repeated per row.
 
 `active → paused → archived → revoked → erased`
 
-| State | Admission | Schedules | Endpoints | Data |
+| State | Admission | Triggers | Endpoints | Data |
 |---|---|---|---|---|
 | active | yes | run | live | normal |
 | paused | refused (fails closed, invariant 37) | skipped (a Run record says so) | live, replies "paused" | intact |
@@ -95,7 +106,7 @@ tombstone.
 | open → idle | no turn for N minutes | none (leases released) | yes |
 | idle → sealed | reconciler | open segment sealed; checkpoints pruned to baseline plus final | yes (appending re-opens a new segment) |
 | → archived | person | hidden from the default list; searchable | yes |
-| → trashed | person (own conversation) or admin | **hidden everywhere**: lists, every search, recall, prompts, exports, digests. Schedules that deliver into it pause. | yes, within the trash window |
+| → trashed | person (own conversation) or admin | **hidden everywhere**: lists, every search, recall, prompts, exports, digests. Triggers that deliver into it pause. | yes, within the trash window |
 | trashed → erased | window end, or "Delete permanently" | erasure (§4) | no |
 | → expired | `last_activity + delete_after` with no hold | erasure (§4) with cause *policy* | no |
 
@@ -103,18 +114,31 @@ This replaces today's `archive.json`/`deleted.json` sidecars
 (`crates/vak-server/src/lib.rs:9056-9210`), whose "delete" only hides from
 two lists (review R8).
 
-### 2.5 Run and schedule
+### 2.5 Run, trigger, effect and cursor
 
 - **Run:** `claimed → running → settled{completed | failed | cancelled |
-  abandoned | skipped}`. The claim is a CAS on `(schedule, slot)`. A lease
-  that expires while running becomes `abandoned`. The Run record stays with
-  its conversation's retention; a Run with no conversation (a skip, a
-  script watchdog) follows the space's `runs` label.
-- **Schedule:** `draft → enabled ⇄ paused → disabled → deleted`.
-  - Deleting a schedule tombstones the definition; its Runs are kept.
+  abandoned | skipped}`. The claim is a CAS on `(trigger, slot | event id)`
+  under the claimant's writer epoch. A lease that expires while running
+  becomes `abandoned`. The Run record stays with its conversation's
+  retention; a Run with no conversation (a skip, a script watchdog) follows
+  the space's `runs` label.
+- **Trigger** (doc 73 §8): `draft → enabled ⇄ paused → disabled → deleted`.
+  - Deleting a trigger tombstones the definition; its Runs are kept.
   - Pausing records every slot that passes as `skipped{paused}`, so the
     history has no silent gap.
   - `on_crash = skip | retry_once` decides what an `abandoned` slot does.
+- **Effect:** `prepared → dispatched → accepted | confirmed | failed |
+  unknown → reconciled`. An `unknown` effect is reconciled from the
+  provider, never replayed, including after a restore or handoff. Effect
+  records are audit-adjacent: ids, digests, actor and receipt stay readable
+  for the audit label; any content field (a message body, a subject) is
+  keyed to its conversation like any other copy (§4).
+- **Cursor:** `current → expired → resynced`. A resync is bounded and
+  records the gap it could not fill.
+- **Connection and grant** (docs 80, 81): `linked → active ⇄ needs
+  reconnect → revoked`. Revoking stops every read, write, refresh and
+  subscription at once; data already retained follows its own labels, and
+  the disconnect screen says what remains.
 
 ### 2.6 Execution and environment
 
@@ -123,7 +147,9 @@ two lists (review R8).
   grace period). Its stdout, stderr and produced files are objects that
   follow the owning conversation.
 - **Environment:** reuses `vak_sandbox::EnvironmentState`: `planned →
-  preparing → ready → running → stopped → expired → removed`.
+  preparing → ready → running → stopped → expired → removed`. An Agent's
+  workspace is never an environment: it is a Workspace bound to (Space,
+  Agent) and lives as long as both (plan L10).
   - Expiry comes after the candidate is promoted or rejected, or after the
     idle TTL, whichever comes first.
   - A worktree environment also removes its branch.
@@ -175,8 +201,8 @@ erased`.
 
 ### 2.10 Delivery jobs and inbox
 
-- **Delivery job:** `queued → attempting → delivered | dead-lettered →
-  sealed`. When a job settles its record moves into the deliveries ledger
+- **Delivery job:** an effect record of kind delivery (§2.5): `queued →
+  attempting → delivered | dead-lettered → sealed`. When a job settles its record moves into the deliveries ledger
   and the job file is removed. Today delivered jobs are never removed.
 - **Inbox entry:** `unread → acked → expired` (default 90 days). Entry
   bodies are content keyed to their conversation (§4).
@@ -222,9 +248,13 @@ RetentionLabel {
 }
 ```
 
-- **Attached to** a tenant, space, Agent or conversation. It inherits
+- **Attached to** any labelable catalog node: a tenant, space, Agent,
+  conversation, artifact, piece, source or connection. It inherits
   downward, and a node may *break* inheritance and attach its own label, as
-  with SharePoint labels.
+  with SharePoint labels. A piece's declared snapshot retention (doc 81 §5)
+  and a source's item bound (doc 76) are labels on those nodes, so they
+  resolve with everything else and never outlive a hold or a shorter
+  `delete_after` above them.
 - **Resolution per class:**
   - the minimum keep is the **maximum** `retain_for` along the chain;
   - the maximum keep is the **minimum** `delete_after`, but never below the
@@ -281,7 +311,7 @@ stays in trash.
 | Scope | Who may request | Approval |
 |---|---|---|
 | conversation | its owner (a person, for their own), or a steward | none for the owner after the trash window; steward otherwise |
-| audience / person (data-subject request) | steward | two-person when a second admin exists |
+| audience / person (data-subject request), including their contributions to other people's shared conversations | steward | two-person when a second admin exists |
 | Agent | owner or steward | two-person |
 | space | owner or steward | two-person |
 | tenant | owner | two-person, plus the offboarding window |
@@ -300,7 +330,7 @@ offboarding, portability requests and `vak data export` all produce.
 ### 3.6 Roles
 
 Today the admin console has a single operator credential. A customer space
-needs the following, which M7 introduces:
+needs the following, which M7b introduces:
 
 | Role | Can |
 |---|---|
@@ -335,10 +365,16 @@ An erasure of scope S then runs these steps:
 2. **Check holds.** Any hold in scope blocks the whole request, recorded as
    `blocked{hold}` with the hold ids.
 3. **Walk lineage outward** from those conversations: Documents with
-   `derived_from`, artifacts produced and not promoted elsewhere, catalog
-   rows, embeddings, key grants, run records, delivery jobs, inbox entries.
-4. **Destroy conversation keys.** Records, field-encrypted content and key
-   grants become unreadable.
+   `derived_from`, artifact versions, catalog rows, embeddings, key grants,
+   run and effect records, delivery jobs, inbox entries. For artifacts: a
+   version made in an erased conversation that was never Saved, starred or
+   shared holds only that conversation's grant and is erased with it; a
+   Saved version holds the artifact's own grant and survives as the
+   person's document, with its lineage edge to the conversation tombstoned
+   and any label quoting the conversation erased (doc 73 §7.3).
+4. **Destroy conversation keys**, or for a person's contributions to
+   someone else's conversation, that person's contributor keys. Records,
+   field-encrypted content and key grants become unreadable.
 5. **Remove derived plaintext:**
    - catalog rows, with `secure_delete` and a WAL checkpoint;
    - embeddings;
@@ -355,7 +391,7 @@ An erasure of scope S then runs these steps:
    The receipt is an audit-class record, signed, and downloadable.
 8. **Restore guard.** A backup restored later re-applies every erasure
    tombstone from the audit record before any restored data becomes
-   readable (plan M7).
+   readable (plan M7a).
 
 Headless honesty (doc 73 §7.3): where the KEK sits in the encrypted-file
 fallback, whose key lives beside it, at-rest encryption is nominal.
@@ -401,13 +437,13 @@ Changes:
 |---|---|---|
 | Overview | Home, Inbox | Home (adds **Data health**), Inbox |
 | Work | Sessions, Commitments | **Conversations** (renamed; lifecycle-aware), **Runs** (new), **Library** (new, M8), Commitments |
-| Operate | Operations Center: Posture, Live work, Runtime & pools, Channels & delivery, Automations, Providers, incidents, sandbox | the same, plus **Schedules** (moved from Configure › Integrations › Scheduled tasks), and a **Data** section: **Storage**, **Lifecycle**, **Integrity**, **Sync** (M9) |
+| Operate | Operations Center: Posture, Live work, Runtime & pools, Channels & delivery, Automations, Providers, incidents, sandbox | the same, plus **Triggers** (moved from Configure › Integrations › Scheduled tasks), and a **Data** section: **Storage**, **Lifecycle**, **Integrity**, **Sync** (M9) |
 | Configure | Integrations, Gateway, Permissions & security, Prompts, Memory, Settings | the same, plus **Governance** (**Retention & holds**, **Erasure requests**), **Spaces**, **Agents** (lifecycle panel), Security › **Keys** |
 | System | Setup, FinOps | Setup, FinOps (per Agent and per run), **Backup & restore**, **Diagnostics › Traces & logs**, Security › **Audit export** |
 
 `#/operations/work/runs/<session_id>` is replaced by `#/runs/<run_id>`
-(review R13). Scheduled-task *definitions* stay editable under Operate ›
-Schedules; there is one place for schedules, not two.
+(review R13). Trigger definitions (today's scheduled tasks) stay editable
+under Operate › Triggers; there is one place for triggers, not two.
 
 ### 6.2 Screens
 
@@ -417,23 +453,23 @@ receipts. "Guard" names the confirmation a destructive action needs.
 
 | # | Screen | Shows | Actions (guard) | Milestone |
 |---|---|---|---|---|
-| A1 | Home › Data health | storage by class, quota pressure, reconciler last tick and errors, open erasure requests, active holds, integrity status | links only | M7 |
-| A2 | Work › Conversations | the list with facets: Agent, space, audience, state (open/idle/sealed/archived/trashed), label, hold, size, last activity | archive, trash, restore, export, request erasure (preview → typed confirmation), place hold (steward) | M0 (trash honesty), M7 |
-| A3 | Conversation detail | tabs: Transcript, Forensics (existing `SessionForensics.tsx`), **Lineage** (graph from catalog edges), **Lifecycle** (effective label with the chain that produced it, holds, expiry date, transition history), Receipts | same as A2, per item | M6, M7 |
-| A4 | Work › Runs | Actions-style table: run id, cause, Agent, space, schedule/slot, status and decision (with skip reason), duration, cost, started | open, cancel (if running), re-run (creates a new Run with cause *manual*) | M4 |
+| A1 | Home › Data health | storage by class, quota pressure, reconciler last tick and errors, open erasure requests, active holds, integrity status | links only | M7a |
+| A2 | Work › Conversations | the list with facets: Agent, space, audience, state (open/idle/sealed/archived/trashed), label, hold, size, last activity | archive, trash, restore, export, request erasure (preview → typed confirmation), place hold (steward) | M0 (trash honesty), M7a |
+| A3 | Conversation detail | tabs: Transcript, Forensics (existing `SessionForensics.tsx`), **Lineage** (graph from catalog edges), **Lifecycle** (effective label with the chain that produced it, holds, expiry date, transition history), Receipts | same as A2, per item | M6, M7a |
+| A4 | Work › Runs | Actions-style table: run id, cause, Agent, space, trigger and slot or event, status and decision (with skip reason), duration, cost, started | open, cancel (if running), re-run (creates a new Run with cause *manual*) | M4 |
 | A4b | Run detail | timeline: span waterfall (M5) and records; sessions; executions with stdout objects; artifacts produced; deliveries; receipts; cost | open any linked node | M4, M5 |
-| A5 | Operate › Schedules | list: next slot (in the schedule's timezone), last decision, 30-day success rate, skipped reasons, `on_crash`; editor for definitions | pause/resume, run now, backfill a missed slot (explicit, recorded), edit | M4 |
+| A5 | Operate › Triggers | list by kind (schedule, event, webhook, watch, source poll): next slot (in the trigger's timezone), last decision, 30-day success rate, skipped reasons, `on_crash`; editor for definitions | pause/resume, run now, backfill a missed slot (explicit, recorded), edit | M4 |
 | A6 | Work › Library (the operator view of `82-library.md`'s model) | artifacts by space, kind and audience; version history; promotions; shares (inherited vs broken); comments; label | share / unshare (grant dialog showing inheritance), promote (Review path), request erasure | M8 |
-| A7 | Operate › Data › Storage | bytes and counts by class × tenant/space/Agent; growth over time (daily catalog snapshots, measured); top consumers; dedupe ratio; cache and telemetry sizes vs quota | set a quota (operator), open the consumer | M7 |
-| A8 | Operate › Data › Lifecycle | reconciler status; the **pending plan** (the dry-run) grouped by action with reason and policy; recent transitions; quarantine; errors | run a tick now, pause the reconciler (recorded; stewards are notified), retry a failed action | M7 |
-| A9 | Operate › Data › Integrity | chain verification per record chain (last full and sampled), catalog staleness digest, object verification, key status, undeclared-path incidents | verify now, rebuild catalog (mechanical, invariant 19) | M6, M7 |
-| A10 | Configure › Governance › Retention & holds | labels (rules per class); the inheritance tree tenant → space → Agent → conversation with effective policy and breaks; **impact preview** (what expires in 7/30/90 days); holds with scope, reason and items covered | create/edit label (preview impact; typed confirmation when it shortens anything), attach/break, create hold, release hold (reason required) | M7 |
-| A11 | Configure › Governance › Erasure requests | queue with status; the preview (counts per class, derived items, processors outside reach, backups still holding ciphertext); progress; receipts | create (scope picker), approve (second person), cancel before execution, download receipt | M7 |
-| A12 | Configure › Security › Keys | tenant KEK backend (keychain or encrypted-file, with the honest note), last rotation, escrow bundles issued; no key material ever shown | rotate KEK, issue escrow bundle (typed confirmation; recorded) | M7 |
-| A13 | Configure › Spaces | spaces with per-machine bindings, trust state, git state, default label, quota, size | bind/unbind, trust, archive, request erasure | M3b, M7 |
-| A14 | Configure › Agents › Lifecycle panel | state, and the data effects of the next transition (schedules affected, endpoints cut, data retained) | pause, resume, archive, revoke (immediate; typed confirmation), request erasure | M7 |
-| A15 | Configure › Security › Audit export | range and scope; record kinds included; bundle signature | create export (a Run with a receipt) | M7 |
-| A16 | System › Backup & restore | backups (ciphertext; key grants wrapped; whether escrow is included); restore dry-run showing erasures that will be re-applied | create, restore (typed confirmation), expire | M7 |
+| A7 | Operate › Data › Storage | bytes and counts by class × tenant/space/Agent; growth over time (daily catalog snapshots, measured); top consumers; dedupe ratio; cache and telemetry sizes vs quota | set a quota (operator), open the consumer | M7a |
+| A8 | Operate › Data › Lifecycle | reconciler status; the **pending plan** (the dry-run) grouped by action with reason and policy; recent transitions; quarantine; errors | run a tick now, pause the reconciler (recorded; stewards are notified), retry a failed action | M7a |
+| A9 | Operate › Data › Integrity | chain verification per record chain (last full and sampled), catalog staleness digest, object verification, key status, undeclared-path incidents | verify now, rebuild catalog (mechanical, invariant 19) | M6, M7a |
+| A10 | Configure › Governance › Retention & holds | labels (rules per class); the inheritance tree tenant → space → Agent → conversation with effective policy and breaks; **impact preview** (what expires in 7/30/90 days); holds with scope, reason and items covered | create/edit label (preview impact; typed confirmation when it shortens anything), attach/break, create hold, release hold (reason required) | M7b |
+| A11 | Configure › Governance › Erasure requests | queue with status; the preview (counts per class, derived items, processors outside reach, backups still holding ciphertext); progress; receipts | create (scope picker), approve (second person), cancel before execution, download receipt | M7b |
+| A12 | Configure › Security › Keys | the key authority (keychain, encrypted-file with the honest note, or a KMS) and its health, last rotation, escrow bundles issued; no key material ever shown | rotate KEK, issue escrow bundle (typed confirmation; recorded) | M7b |
+| A13 | Configure › Spaces | spaces with per-machine bindings, trust state, git state, default label, quota, size | bind/unbind, trust, archive, request erasure | M3b, M7b |
+| A14 | Configure › Agents › Lifecycle panel | state, and the data effects of the next transition (schedules affected, endpoints cut, data retained) | pause, resume, archive, revoke (immediate; typed confirmation), request erasure | M7a |
+| A15 | Configure › Security › Audit export | range and scope; record kinds included; bundle signature | create export (a Run with a receipt) | M7b |
+| A16 | System › Backup & restore | backups (ciphertext; key grants wrapped; whether escrow is included); restore dry-run showing erasures that will be re-applied | create, restore (typed confirmation), expire | M7a |
 | A17 | System › Diagnostics › Traces & logs | search by run id or trace fields; span waterfall; log tail filtered by trace; telemetry quota | none (read-only) | M5 |
 | A18 | Operate › Data › Sync | remotes, push/pull lag, pending objects and segments, leases held, conflicts, last error | push/pull now, release a stale lease (recorded) | M9 |
 | A19 | System › FinOps | existing charts, plus per Agent and per run (cost rows now carry both) | existing | M1 (data), M4 (views) |
@@ -477,7 +513,8 @@ GET|POST      /data/keys  POST /data/keys/rotate  POST /data/keys/escrow
 GET|POST      /data/backups  POST /data/backups/{id}/restore/preview | /restore
 POST   /conversations/{id}/trash | /restore | /archive | /unarchive
 GET    /runs  /runs/{id}  /runs/{id}/spans   POST /runs/{id}/cancel | /rerun
-GET    /schedules  /schedules/{id}/slots   POST /schedules/{id}/pause | /resume | /run | /backfill
+GET    /triggers  /triggers/{id}/slots   POST /triggers/{id}/pause | /resume | /run | /backfill
+GET    /effects  /effects/{id}           POST /effects/{id}/reconcile
 GET    /search  /lineage/{node}  /nodes/{id}
 GET    /library  /library/{key}             the Library (doc 82): from its L1; keys change at M8
 GET    /data/sync …  (M9)
@@ -491,13 +528,15 @@ These replace, in the same change (invariant 30):
 - `POST /workspaces/forget`
 - `POST /backup/export|import`
 - `/agents/{id}/schedule|runs` (already deleted in M0)
+- `/tasks`, `/tasks/{id}/run-now`, `/tasks/{id}/retry-delivery` (by
+  `/triggers` and `/effects` at M4)
 - the session-keyed Operations "runs"
 
 ## 8. CLI parity
 
 `vak data status | usage | plan | gc [--dry-run] | verify | rebuild-catalog |
 labels … | hold … | erase --scope … [--preview] | export --scope … | keys … |
-backup … | cat | grep`, plus `vak runs …` and `vak schedules …`.
+backup … | cat | grep`, plus `vak runs …`, `vak triggers …` and `vak effects …`.
 
 Every destructive command prints the preview and requires `--confirm
 <digest>` (or an interactive typed confirmation). `vak doctor --repair` may
@@ -519,4 +558,9 @@ invoke only reconciler actions classed as mechanical (invariant 19).
   - label shortening previews its impact and needs confirmation;
   - a restore re-applies erasures;
   - an Agent revoke cuts its endpoints within one tick while its data stays;
+  - a steward erases a guest from the owner's shared conversation: the
+    owner's messages stay, the guest's show the placeholder, and the chain
+    still verifies;
+  - erasing the conversation that made one version of a Saved artifact
+    keeps the Saved version and removes the unsaved drafts;
   - a paused schedule records every skipped slot.

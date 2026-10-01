@@ -389,6 +389,13 @@ explicit owners, retention, quotas, and recovery behavior. Candidates are
 versioned and approvals/receipts are append-only. Trash filters apply across
 UI, search, model retrieval, citations, exports, and automations.
 
+The shared shapes are the data architecture's (plan revision 3; doc 73 §3,
+§8): a routine is a Trigger (`schedule` or `watch`), a mailbox or calendar
+position is a cursor ref, an account is a Connection with grants, every
+send, RSVP and event change is an effect record (idempotency key, payload
+digest, receipt, `unknown` until reconciled), and one-lease-per-routine is
+a writer epoch. This package uses them and builds none of its own.
+
 Disconnect stops reads, writes, refresh, and subscriptions immediately; it
 does not claim to erase retained transcripts. The connection screen states
 what remains and provides the applicable retention/removal controls. Durable

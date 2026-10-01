@@ -285,9 +285,9 @@ admits WebAssembly or microVMs later without changing the description
 | `webhook:<route>` | an outside service called the piece's signed route (§7.2) |
 | `manual` | someone pressed Refresh, or asked in chat |
 
-Triggers resolve through the one schedule model. Today that is `TaskDef`;
-§20.5 decides whether triggers are TaskDefs or TaskDef grows into triggers —
-never both.
+Triggers resolve through the one trigger model: `TaskDef` grows into
+Triggers at data-architecture M4, and the kinds above are its kinds
+(§20.5, settled by plan revision 3, L7; doc 73 §8).
 
 ### 6.3 Resources and priority
 
@@ -342,7 +342,10 @@ and composes them. Nothing is reached ambiently.
 
 ## 8. Storage
 
-Each piece declares what it needs:
+A piece's KV, database, snapshots and time series are doc 73's
+**Application** class: owned by the piece, keyed per piece, always backed
+up, and erased with its piece or Space. Its declared snapshot retention is
+a label on the piece (doc 74 §3.1). Each piece declares what it needs:
 
 - **KV** — state and cursors ("last seen question id").
 - **SQL** — one SQLite database per piece.
@@ -366,7 +369,10 @@ without polling each other, and the way a piece raises attention (§12.3).
 ## 10. Connections, grants and secrets
 
 - Accounts — mail, calendar, social, a paid API — are connected once at
-  platform level (doc 80's account linking generalised).
+  platform level (doc 80's account linking generalised). A connection and
+  its grants are doc 73's Connection: privileged Desired state, with the
+  credentials in the Secret class. Every effect is an effect record with an
+  idempotency key and a receipt (doc 73 §8).
 - A piece receives a **grant**: a connection plus a scope (`read`, `draft`,
   `send`, `post`, …) plus optional filters (one mailbox label, one calendar).
 - Revoking a connection or a grant stops it everywhere immediately; affected
@@ -539,7 +545,8 @@ laptop holds such a piece, Vak offers to move it: *"Move this to your server
 so it keeps updating when your laptop is closed?"* The owner edits from any
 device; the piece runs where it is placed. Moving is: stop, snapshot,
 transfer folder and data, reconcile on the new host, verify, switch. A piece
-never runs on two hosts at once (a lease with fencing, doc 80's rule).
+never runs on two hosts at once (a lease with fencing, doc 80's rule; the
+epochs are doc 73 §8's).
 
 A laptop that slept reports what it missed — *"missed 15 runs: this computer
 was off"* — and catches up per `catch_up`.
@@ -626,7 +633,7 @@ Vak.
 
 | Doc | Relationship |
 |---|---|
-| 73 / 74 data architecture | a piece is an Artifact with a recipe; versions, objects, catalog, retention and erasure are theirs. Pieces depend on M6 (catalog) and M8 (artifacts) |
+| 73 / 74 data architecture | a piece is an Artifact with a recipe; versions, objects, catalog, retention and erasure are theirs; triggers, cursors, effects, fencing, connections and the Application class are doc 73 §3, §5 and §8's. Pieces depend on M4 (triggers, effects), M6 (catalog) and M8 (artifacts) |
 | 82 Library | a piece is an artifact that is Live, listed in the Library with everything else; the Library's Keep live is this document's Keep |
 | 76 intake | a Source (host-owned connector) and a piece job (owner-approved code) both feed the catalog; a piece may bind to Sources rather than re-fetching |
 | 80 mail and calendar | its routines and account linking become pieces and connections on this platform; its operating modes are §6.2's triggers |
@@ -650,8 +657,9 @@ Vak.
 4. **Repair envelope.** Whether agent repairs that do not widen the
    description may auto-promote after passing checks, or always ask
    (recommended: ask, with an opt-in per piece).
-5. **Triggers and `TaskDef`.** Triggers compile to TaskDefs, or TaskDef is
-   replaced by the trigger model. One survives.
+5. **Triggers and `TaskDef`.** Settled by data-architecture plan revision
+   3 (L7): `TaskDef` grows into one Trigger model at M4, and this
+   document's triggers are its kinds. One survives.
 6. **Ownership.** Resolved by `82-library.md` §1 decision 4: owned by the
    Space with the authoring Agent recorded (from M3b, which these phases
    follow), so any Agent can refresh or repair.

@@ -1,11 +1,14 @@
 # 73 — Data architecture: information model, lifecycle, tracing, index and cloud
 
-Status: **proposal, revision 2 (2026-09-25); decisions locked (§13); plan in
+Status: **proposal, revision 3 (2026-10-01); decisions locked (§13); plan in
 `docs/plans/data-architecture-plan.md`; review fixes applied from
-`docs/plans/data-architecture-review.md`.** Nothing here is shipped. §2 is an audit of
-what the tree does today, taken from the source and from sizes (never
-contents) of a real development data home; each defect names the file that
-causes it and says whether it was reproduced or read from code.
+`docs/plans/data-architecture-review.md` (revision 2) and
+`docs/plans/data-architecture-review-2.md` (revision 3).** Nothing here is
+shipped except M0's fixes. §2 is an audit of what the tree does, taken from
+the source and from sizes (never contents) of a real development data home;
+each defect names the file that causes it and says whether it was
+reproduced or read from code. "The data baseline" means the version plan §1
+(L3) names; this document never writes the number.
 
 `79-private-headless-fleet.md` is the proposal for one dedicated 24/7 VM per
 customer, operator-blind management and disaster recovery. It adds a hosted
@@ -254,16 +257,42 @@ Found in review (`docs/plans/data-architecture-review.md`), read from code:
   test (`crates/vak-core/tests/state_registry.rs`) starts one session and
   records one event, so most of D10 and D17 went unseen.
 
+Found in the second review (`docs/plans/data-architecture-review-2.md`,
+2026-10-01), read from code:
+
+- **D25. Server-side stores ignore the session's Agent.** The sandbox
+  records, candidates and execution streams
+  (`crates/vak-server/src/lib.rs:11052-11082`), the Office rooms
+  (`office_workspace.rs:136,285`) and the coworking grants (`lib.rs:7962`,
+  `:8142`, `:8203`) resolve `state.core.sessions_home()`, the server's own
+  Core, rather than the session's scoped Core. One file holds every Agent's
+  records, against invariant 37, and an Agent-scope erasure would miss them
+  or take another Agent's with the built-in one.
+- **D26. The registry declares every Agent home as one ledger.** The
+  `agents` entry (`crates/vak-core/src/state.rs:139`) covers memory and
+  presentation packs (rewritten), Office rooms (rewritten, added
+  2026-09-27), grants, sandbox records, commitments and checkpoints, with
+  one kind, so no new per-Agent store can be caught undeclared.
+- **D27. Five proposals need primitives the model lacks.** Intake (doc 76),
+  mail and calendar (80), pieces (81), the fleet (79) and the collaboration
+  plan need triggers beyond cron, durable cursors, external effects with
+  receipts and unknown outcomes, fenced leases, connections and principals
+  (§3, §8).
+
 ## 3. Information model
 
 One object graph, with identity separate from location.
 
 ```
 Tenant ─┬─ Space ─┬─ Agent ─┬─ Conversation ── Session ── Turn ── Step ── Call ── Execution
-        │         │         └─ Memory, Entities, Commitments
-        │         ├─ Schedule ── Run*
+        │         │         ├─ Memory, Entities, Commitments
+        │         │         └─ Agent workspace
+        │         ├─ Trigger ── Run* ── Effect*
         │         ├─ Artifact ── Version* ── Object*
+        │         ├─ Source ── Item*         (doc 76)
         │         └─ Endpoint (channel/bot) ── Delivery*
+        ├─ Principal (owner, invitee, channel sender, Agent, system)
+        ├─ Connection ── Grant*              (an account, docs 80, 81)
         └─ Audit, FinOps, Operations            (* = produced over time)
 ```
 
@@ -272,10 +301,31 @@ Tenant ─┬─ Space ─┬─ Agent ─┬─ Conversation ── Session ─
 - **Space**: what "workspace" means to a person. It has a stable `spc_` id
   and one or more *bindings* to filesystem roots on particular machines. The
   cwd hash becomes a lookup from binding to space, never an identity (fixes
-  D11).
-- **Run**: any unit of work with a cause: a user turn, a schedule slot, a
-  channel request, a delegation, a revision, a heartbeat. A Run owns zero or
-  more Sessions and Turns.
+  D11). The word people see for it is settled in doc 75's glossary (plan
+  L11).
+- **Agent workspace**: the folder a non-built-in Agent works in, bound to
+  (Space, Agent). It is a Workspace (§5) with its Space's and Agent's
+  lifecycle, never an Environment, so no environment expiry touches it
+  (plan L10). The built-in Agent's workspace is the Space's working tree.
+- **Principal**: whoever acts, with a stable `prn_` id: the owner (doc 78),
+  an invited person (doc 69), a channel sender, an Agent or the system. A
+  principal id is attribution, never authority: authority still comes from
+  admission, grants and the permission engine. How a person proves who they
+  are is doc 78's and the collaboration plan's.
+- **Trigger**: what starts work without a person typing it: a schedule
+  (cron, interval, once), an event, a webhook, opening a stale tile, a
+  watch, a source poll, or a manual "run now". It is Desired state owned by
+  an Agent; `TaskDef` grows into it (plan L7).
+- **Run**: any unit of work with a cause: a user turn, a trigger slot or
+  event, a channel request, a delegation, a revision, a heartbeat. A Run
+  owns zero or more Sessions and Turns.
+- **Effect**: one action outside Vak (a channel delivery, a sent mail, a
+  calendar change, a post, a deploy), with an idempotency key and the
+  receipt that proves its outcome (§8).
+- **Connection**: an account linked once (mail, calendar, a social account,
+  a paid API), with **grants** that give a piece or routine a scope of it
+  (docs 80 and 81). Its credentials are Secret; the connection and grants
+  are privileged Desired state.
 - **Execution**: one sandboxed process invocation, with its environment,
   inputs (workspace snapshot digest), outputs (object refs), streams (as
   objects) and exit.
@@ -284,7 +334,8 @@ Tenant ─┬─ Space ─┬─ Agent ─┬─ Conversation ── Session ─
   says what becomes one. Versions are immutable. "Current" is a ref.
 
 **Identifier rules.** Every id is `<prefix>_<full UUIDv7>` (`ten_ spc_ agt_
-cnv_ ses_ trn_ run_ exe_ art_ ver_ sch_ dlv_`), or `obj_<hex>` for objects.
+prn_ cnv_ ses_ trn_ run_ exe_ art_ ver_ trg_ eff_ con_ src_ dlv_`), or
+`obj_<hex>` for objects.
 An object id is HMAC-SHA256 of the plaintext under a tenant id key (§7.3),
 so dedupe works inside a tenant while a file's presence cannot be confirmed
 across tenants. Ids are never truncated, never clock-only, and never derived
@@ -303,18 +354,25 @@ struct TraceKey {
     turn: Option<TurnId>,                       // directive entry id, as today
     run: RunId,                                 // == W3C trace-id
     span: SpanId, parent_span: Option<SpanId>,  // turn/step/call/execution
+    actor: PrincipalId,                         // who did this
+    on_behalf_of: Option<PrincipalId>,          // whose authority an Agent acts under
     cause: Cause,
 }
 enum Cause {
     User { request_id },            Channel { endpoint, request_id },
-    Schedule { schedule, slot },    Delegation { parent_run, tool_use_id },
+    Trigger { trigger, kind, slot_or_event },   // schedule, event, webhook, on_open, watch, source_poll, manual
+    Delegation { parent_run, tool_use_id },
     Revision { candidate },         Heartbeat,     System { job },
 }
 ```
 
-- **Contract:** a writer that cannot fill `tenant/space/agent/run/span/cause`
-  does not write. That is a review failure, just like a pre-baseline
-  compatibility branch.
+- **Contract:** a writer that cannot fill
+  `tenant/space/agent/run/span/actor/cause` does not write. That is a review
+  failure, just like a pre-baseline compatibility branch.
+- **Actor** (plan L9): every contribution records its real actor, and an
+  Agent's work records the principal it acts for. A version's author, a
+  comment's writer and a guest's message are therefore read from records,
+  never inferred (doc 82 §0, collaboration plan §3).
 - **Constructors:** `TraceKey` has one owner (`vak-session`, next to
   `Entry`) and is propagated by value through `ToolContext`, `AgentConfig`,
   the broker protocol and delivery packets. It is never re-derived from
@@ -330,18 +388,19 @@ locations*, not of file names.
 
 | Class | Examples | Authority | Mutability | Deleted by | Backup | Cloud |
 |---|---|---|---|---|---|---|
-| **Record** | session ledgers, runs, commitments, promotions, audit, cost, deliveries | source of truth | append-only, segmented | conversation content: crypto-shred per conversation (§7.3); non-content shared ledgers: expire by sealed segment | always | sealed segments |
+| **Record** | session ledgers, runs, effects, commitments, promotions, audit, cost, deliveries | source of truth | append-only, segmented | conversation content: crypto-shred per conversation, or per contributor within it (§7.3); non-content shared ledgers: expire by sealed segment | always | sealed segments |
 | **Object** | file contents, attachments, drafts, checkpoint contents, evidence bodies, stdout/stderr, exports | content-addressed (keyed id) | immutable | GC when no key grant or ref remains | always | by id, deduped |
-| **Document** | memory notes, entities, skills, skill proposals, prompt layers, presentation packs | named; a person or the runtime edits it | every save is an immutable version; "current" is a ref | forget = tombstone; history by retention; erased with its `derived_from` source | always | versions as objects |
-| **Ref** | artifact current version, session head, schedule cursor, bindings | pointer | CAS-updated | with its owner | always | CAS sync |
-| **Desired** | config layers, Agents, schedules, endpoints, bots, allowlist, prompt layers | operator intent | atomic replace, additive schema | explicit | always | sync (no secrets) |
-| **Secret** | provider keys, bot tokens | credential store | operator only | explicit | opt-in | never plaintext; references only |
-| **Workspace** | a space's working tree, Agent workspaces, worktrees, task environments | projection of objects + human edits | mutable | lifecycle of its Run/Space | via checkpoints → objects | via objects |
-| **Derived** | catalog, FTS, embeddings, belief state, route aggregates, thumbnails | rebuilt from records/objects | overwritten | any time | never | rebuilt remotely |
+| **Document** | memory notes, entities, skills, skill proposals, prompt layers, presentation packs, Office rooms | named; a person or the runtime edits it | every save is an immutable version; "current" is a ref | forget = tombstone; history by retention; erased with its `derived_from` source | always | versions as objects |
+| **Ref** | artifact current version, session head, trigger claims, cursors, leases, bindings | pointer with a generation and a writer epoch | CAS-updated; a stale epoch is refused | with its owner | always | CAS sync |
+| **Desired** | config layers, Agents, triggers, endpoints, bots, allowlist, prompt layers, connections and their grants, sources, the owner record (`auth/`) | operator intent | versioned like a Document: each save a version, current a ref; additive schema | explicit | always | sync (no secrets) |
+| **Secret** | provider keys, bot tokens, connection credentials | credential store | operator only | explicit | opt-in | never plaintext; references only |
+| **Workspace** | a space's working tree, Agent workspaces, worktrees, task environments | projection of objects + human edits | mutable | Agent workspace: with its Space or Agent; worktree or environment: with its Run | via checkpoints → objects | via objects |
+| **Application** | a piece's KV, SQLite database, snapshots and time series (doc 81 §8) | the piece that owns it | mutable, by the piece's own code | with its piece or Space, or with an erased `derived_from` source; snapshots by the piece's label | always | as objects (snapshot) |
+| **Derived** | data catalog, FTS, embeddings, belief state, route aggregates, glimpses | rebuilt from records/objects | overwritten | any time | never | rebuilt remotely |
 | **Ephemeral** | scratch tmp, caches, locks, sockets, gates, browser profiles | none | anything | end of Execution/process, boot sweep | never | never |
 | **Telemetry** | logs, spans, metrics | none (records win) | rotated | size/age | never | optional, allowlisted OTLP export; fleet receives no content (§11.2) |
 
-Four rules follow:
+Five rules follow:
 
 - **Content is keyed to its conversation wherever it is written.** A content
   field in a shared ledger (inbox body, delivery text, outbox payload,
@@ -357,26 +416,36 @@ Four rules follow:
   ledgers small and syncable.
 - **The project tree holds only project intent.** `<space>/.vak/` keeps
   committable configuration (prompt layers, launch, permissions, flows,
-  commands). Runtime state (executions, worktrees, candidates, agent
-  workspaces) moves under the data home, keyed by id. This changes invariant
-  35 (decision Q3).
+  commands). Runtime state (executions, worktrees, candidates) moves under
+  the data home, keyed by id. A non-built-in Agent's workspace moves too,
+  but it is a Workspace bound to (Space, Agent), not runtime: it lives as
+  long as its Space and Agent, and the deliverables made there reach the
+  Space's working tree through Review, like any candidate (plan L10;
+  answers `82-library.md` §10 question 3). This changes invariant 35
+  (decision Q3).
+- **Every record lives in the scope of the Agent it belongs to**, resolved
+  from its TraceKey, never from which process wrote it (fixes D25).
 
 ## 6. Physical layout
 
 ```
 <data>/tenants/<ten>/
-  catalog.db                          Derived   (§9) — rebuildable
-  objects/ab/cdef…                    Object    keyed-hash id, zstd, per-object key
-  keys/                               key grants (wrapped); conversation/space/artifact keys
+  catalog.db                          Derived   (§9) — the data catalog, rebuildable
+  objects/ab/cdef…                    Object    keyed-hash id, compressed then sealed, per-object key
+  keys/                               key grants (wrapped); conversation/contributor/space/artifact keys
   records/
     spaces/<spc>/agents/<agt>/sessions/<ses>/{HEAD, 000001.seg, 000002.open}
     runs/…                            Record    every Run, including skips
+    effects/…                         Record    every external effect and its receipt (§8)
     commitments/…  deliveries/…  promotions/…  finops/…  inbox/…
     audit/{security,operations,lifecycle,erasure,grants}/…   no content, ever
   documents/<kind>/<id>               Document  current ref + versions as objects
-  refs/                               Ref       one KV table (CAS)
-  desired/{agents,schedules,endpoints,bots,labels,holds}, allowlist
+  refs/                               Ref       one KV table (CAS, generation, writer epoch)
+  desired/{agents,triggers,endpoints,bots,connections,sources,labels,holds,auth}, allowlist
+                                      Desired   versioned: current ref + versions as objects
+  apps/<piece>/{kv,data.db,snapshots}  Application (doc 81)
   lifecycle/quarantine/…              staged destructive actions (doc 74 §5)
+  workspaces/<spc>/<agt>/             Workspace; a non-built-in Agent's workspace
   executions/<exe>/{tmp,…}            Ephemeral; removed when the Execution settles
   environments/<run>/                 Workspace; worktrees & task envs by run id
 <cache>/<ten>/                        Derived   caches (pip/npm per agent), fts, embeddings
@@ -387,12 +456,19 @@ Four rules follow:
 ```
 
 - **Segmented ledgers.**
-  - A session ledger is a directory of segments. Each entry is a frame,
-    encrypted under the conversation key when tenant policy is on.
-  - The open segment only ever grows. A sealed segment is compressed,
-    hashed, and chained to the previous one; the per-entry `prev_hash` chain
-    that ledgers already carry (`vak-session/src/log.rs:225`) continues
-    across segments.
+  - A session ledger is a directory of segments. Each entry is a frame:
+    compressed, then encrypted under the conversation key (or a
+    contributor's key, §7.3) when tenant policy is on. Ciphertext does not
+    compress, so compression happens per frame, before encryption.
+  - The open segment only ever grows. A sealed segment is hashed and
+    chained to the previous one, and compressed as a whole only when its
+    frames are plaintext.
+  - The per-entry `prev_hash` chain that ledgers already carry
+    (`vak-session/src/log.rs:306-319`, today a digest of the plaintext line)
+    covers each frame **as stored**, and continues across segments. Integrity
+    therefore verifies without keys and after a crypto-shred, which is what
+    lets a fleet restore drill return a content-free result (doc 79 §8).
+    KEK rotation re-wraps keys and never re-encrypts, so hashes stay stable.
   - Sealing is copy, verify (count, hashes, chain), atomic swap, then a seal
     entry. Entries are never rewritten; only their encoding changes, by a
     verified seal (the invariant 2 amendment).
@@ -455,14 +531,28 @@ work: exclusivity is unknown at write time, and per-conversation keys defeat
 dedupe (review R1). The design is:
 
 - **Key hierarchy.**
-  - The tenant KEK lives in the credential store
-    (`vak_config::credentials`: OS keychain, or the encrypted-file fallback).
-  - The KEK wraps **scope keys**: one per conversation (spanning its session
-    rotations), one per space (checkpoints, promoted files), and one per
-    artifact (shared versions).
+  - Key custody sits behind a `KeyAuthority` trait (wrap, unwrap, rotate,
+    revoke, health). Locally it is the credential store
+    (`vak_config::credentials`: OS keychain, or the encrypted-file
+    fallback); a KMS or an attested, customer-controlled release (doc 79 §5)
+    is another implementation, not a redesign. An unhealthy authority fails
+    closed: new work is refused rather than written unprotected.
+  - The tenant KEK sits under the authority and wraps **scope keys**: one
+    per conversation (spanning its session rotations), one per non-owner
+    contributor within a conversation (below), one per space (checkpoints,
+    promoted files), one per artifact (saved and shared versions) and one
+    per piece (its Application store).
   - AEAD comes from `ring`, already a workspace dependency.
 - **Records are encrypted per entry** under their conversation key, so
   appends never rewrite anything.
+- **A guest's contributions have their own key.** When someone other than
+  the owner writes into a conversation (an invited person's message or
+  comment, doc 69), their frames are encrypted under a
+  (conversation, principal) key. Erasing that person destroys that key
+  only: the owner's conversation stays readable, the frames stay in place,
+  the chain still verifies, and `derive_messages()` shows a typed "removed
+  at a participant's request" placeholder. This is the one exception to
+  "records expire per conversation" (doc 74 §1 rule 5).
 - **Content fields in shared ledgers** (inbox body, delivery text, outbox
   payload, commitment statement) are field-encrypted under the
   conversation key they came from (§5).
@@ -471,7 +561,17 @@ dedupe (review R1). The design is:
   object stays readable while any grant survives, so the same file in two
   conversations is stored once and outlives the erasure of either.
 - **Object ids are keyed hashes** (HMAC-SHA256 under a tenant id key):
-  dedupe within the tenant, no cross-tenant confirmation-of-file.
+  dedupe within the tenant, no cross-tenant confirmation-of-file. The limit:
+  any scope in a tenant can test whether a file exists elsewhere in it.
+  That is harmless with one owner; when a tenant gains a second person
+  (doc 74 §3.6), the id key is scoped per space and dedupe narrows to a
+  space. M7b decides it with the data roles.
+- **Versions across conversations.** An artifact's version made in
+  conversation C holds only C's key grant until it is Saved, starred or
+  shared, when the artifact scope takes a grant of its own. Erasing C
+  removes its unsaved drafts and every label that quotes C; a Saved version
+  survives as the person's document, with its lineage edge to C tombstoned
+  (doc 74 §4).
 - **Erasure destroys the scope key**, removes derived plaintext (catalog
   rows, embeddings, Document versions derived only from the scope), GCs
   objects left with no grant, and writes a content-free audit tombstone plus
@@ -507,35 +607,67 @@ dedupe (review R1). The design is:
 ### 7.4 Default policies
 
 Retention labels (`retain_for`, `delete_after`, `on_expiry` per class)
-attach to the tenant, a space, an Agent or a conversation. They inherit
-downward, with explicit break points, like SharePoint retention labels. The
+attach to any labelable node: the tenant, a space, an Agent, a
+conversation, an artifact, a piece, a source or a connection. A piece's
+declared snapshot retention (doc 81 §5) is a label on the piece. Labels
+inherit downward, with explicit break points, like SharePoint retention labels. The
 minimum keep is the longest `retain_for` in the chain. The maximum keep is
 the shortest `delete_after`, never below the minimum. Holds suspend expiry.
 The default label, holds, quotas and erasure scopes are in doc 74 §3.
 Execution scratch is removed when the Execution settles, and telemetry is
 capped at 14 days or 200 MB.
 
-## 8. Runs and schedules
+## 8. Runs, triggers, effects and fencing
 
-- **One schedule model** (fixes D7). `AgentSchedule` is removed in the same
-  change: API, CLI, UI, tests and doc paragraphs. A schedule is Desired state
-  owned by an Agent (`sch_` id, cron/interval/once, timezone, prompt or
-  script, delivery target, policy pin).
-- **Every slot produces a Run record**, whatever happens. It records
-  `schedule`, `slot` (the intended instant), `fired_at`, `attempt`,
-  `decision` = `fired | skipped{reason} | coalesced | failed{reason}`,
-  `sessions[]`, `result_id`, `deliveries[]`, cost, and the full `TraceKey`.
-  "No provider", "not a git repository", "previous run still going" and
-  "lease held elsewhere" are all *records*, never `eprintln!` + `return None`
-  (fixes D5).
-- **At most one start per slot.** A run has side effects, so a crash
-  between start and record cannot be made exactly-once (review R4). Instead:
-  - Before any side effect, the slot `(schedule, slot)` is claimed with a
-    CAS on a ref. Catch-up, restarts and a second server all go through the
-    claim, so a slot is never started twice and never silently lost.
+Docs 76, 79, 80 and 81 and the collaboration plan all need work that starts
+without a person, positions in outside streams, actions outside Vak with
+honest outcomes, and one writer at a time (D27). This section is the one
+model for all of them; each proposal uses it rather than building its own.
+
+- **One trigger model** (fixes D7; plan L7). `AgentSchedule` was removed in
+  M0. `TaskDef` grows into **Trigger**: Desired state owned by an Agent
+  (`trg_` id, kind, timezone, prompt or script, delivery target, policy
+  pin). Kinds are `schedule` (cron, interval, once), `event` (a bus subject,
+  doc 81 §9), `webhook` (a signed route, doc 81 §7.2), `on_open` (a stale
+  tile), `watch` (a provider notification or bounded poll, doc 80),
+  `source_poll` (an intake Source, doc 76) and `manual`. There is no second
+  schedule or trigger model anywhere (invariant 38).
+- **Every slot or event produces a Run record**, whatever happens. It
+  records `trigger`, `slot` (the intended instant) or the event id,
+  `fired_at`, `attempt`, `decision` = `fired | skipped{reason} | coalesced |
+  failed{reason}`, `sessions[]`, `result_id`, `effects[]`, cost, and the full
+  `TraceKey`. "No provider", "not a git repository", "previous run still
+  going" and "lease held elsewhere" are all *records*, never `eprintln!` +
+  `return None` (fixes D5).
+- **At most one start per slot or event.** A run has side effects, so a
+  crash between start and record cannot be made exactly-once (review R4).
+  Instead:
+  - Before any side effect, `(trigger, slot | event id)` is claimed with a
+    CAS on a ref under the claimant's writer epoch. Catch-up, restarts, a
+    second server and a restored copy all go through the claim, so a slot is
+    never started twice and never silently lost.
   - A run whose lease expires is recorded `abandoned`.
-  - The schedule's `on_crash = skip | retry_once` decides whether that slot
+  - The trigger's `on_crash = skip | retry_once` decides whether that slot
     is retried.
+- **Cursors.** A durable position in an outside stream (a mailbox, a
+  calendar, a feed, a channel's update offset) is a Ref with CAS and an
+  epoch. An expired cursor resyncs within a bound and records the gap; it
+  never downloads everything again.
+- **Effects.** Every action outside Vak is an effect record:
+  `prepared → dispatched → accepted | confirmed | failed | unknown →
+  reconciled`, carrying an idempotency key, the exact payload digest, the
+  actor and the provider's receipt. Channel delivery (today's outbox) is
+  the first kind; a sent mail, a calendar change, a piece's post and a
+  deploy are later kinds on the same record. An outcome Vak cannot prove is
+  `unknown` until reconciled from the provider, and a `dispatched` or
+  `unknown` effect is never replayed after a restart, a restore or a
+  handoff (doc 79 §8, doc 80 D4).
+- **Fencing.** Every ref holds a generation and a writer epoch. Session
+  writers, trigger claims, routine leases, channel pollers and effect
+  dispatch hold an epoch; a write under a stale one is refused. Restoring
+  a store, or moving work to another host, bumps the epoch, so the old
+  writer is fenced even when no remote is configured. §11's leases extend
+  the same epochs across remotes.
 - **Environments are named by the full run id.** A git worktree is used only
   when the space *is* a git repository. Otherwise the run gets a
   `CopyEnvironment`: the first real `EnvironmentBackend` (D20). It copies
@@ -544,13 +676,15 @@ capped at 14 days or 200 MB.
 - **The ledger names its cause.** `SessionHeader` gains `run: RunId` and
   `cause: Cause`, an additive field (invariant 29). The handle id is the
   ledger id, with no suffix (fixes D6).
-- **The Runs view** works like an Actions tab: per Agent and per schedule,
-  showing status, duration, cost, outputs and deliveries, and drilling into
+- **The Runs view** works like an Actions tab: per Agent and per trigger,
+  showing status, duration, cost, outputs and effects, and drilling into
   the session, executions and artifacts through the catalog's edges.
 
-## 9. Catalog, index and search
+## 9. Data catalog, index and search
 
-`catalog.db` is one Derived store per tenant. It replaces `store.db`, the
+`catalog.db` is one Derived store per tenant, called the *data catalog* in
+prose because "catalog" also names the plugin marketplace's catalogs
+(doc 39). It replaces `store.db`, the
 recall ledger cache, and every scanning lookup (`find_session_on_disk`,
 `read_historical_header`, `find_session_in_cwd`). `workspaces.json`,
 `workspace-names.json` and `trusted/` become the Spaces store (Desired).
@@ -564,7 +698,8 @@ derived copies, and erasure removes their rows explicitly (§7.3).
 
 - **`nodes`**: one row per addressable thing (space, agent, conversation,
   session, turn, run, execution, artifact, version, candidate, delivery,
-  schedule, memory note, commitment). Columns: every `TraceKey` field, kind,
+  effect, trigger, source, item, piece, connection, principal, memory note,
+  commitment). Columns: every `TraceKey` field, kind,
   class, lifecycle state, policy, `expires_at`, size, audience and ACL
   digest, created/sealed timestamps.
 - **`edges`**: lineage (`produced_by`, `derived_from`, `version_of`,
@@ -614,7 +749,8 @@ The cloud is a *remote*, as in git, not a different product:
   Secrets never do; the cloud holds its own credentials, and records carry
   references (invariant 8).
 - **One writer per session.** The session lock becomes a lease with a
-  holder, an epoch and an expiry. Handing a live conversation to the cloud
+  holder, an expiry and the writer epoch every ref already carries (§8).
+  Handing a live conversation to the cloud
   means releasing the lease at a turn boundary; the cloud acquires it and
   continues from the same HEAD. The four-plane network contract (doc 31)
   applies: a push that cannot complete is store-and-forward, never data
@@ -674,6 +810,14 @@ Periodic backup alone supports only a measured nonzero RPO. This is a new
 write-acknowledgement contract for all file, credential, owner, schedule and
 delivery paths, not a property gained by adding S3 to the current tree.
 Doc 79 §8.1 specifies the degraded-mode disclosure and failure tests.
+`vak-storage`'s `Store` exposes a commit generation and a
+pre-acknowledgement hook so this mode can be added without redesign, but
+three classes write around it: Workspace (tools write files directly),
+Secret (the credential store) and Application (a piece's own database).
+Until each joins the protocol, the mode's promise excludes it by name, and
+workspace files are covered only through checkpoints as objects.
+The recovery manifest names the Desired-state revision, which exists
+because Desired state is versioned (§5).
 The old VM must be unable to resume schedules, channel polling, writes or
 delivery after the new epoch is active. Recovered external actions are
 reconciled from receipts rather than replayed blindly. A restore without the
@@ -736,16 +880,20 @@ Resolved with the maintainer, with zero users and no backward compatibility:
 - **Compliance bar for the first customer release:** retention labels,
   erasure by crypto-shred, legal hold, audit export. Region pinning, BYOK and
   eDiscovery come with the cloud phase.
-- **Cutover:** a new **5.0.0** baseline (the workspace is at 4.0.2) that
-  refuses every earlier data home with the single invariant-29 message. No
-  migrator and no dual layout.
-- **Runtime state leaves the project tree:** executions, environments,
-  candidates and Agent workspaces move under the tenant; invariant 35 is
-  rewritten; a space's `.vak/` holds only project intent.
-- **Defaults:** `spc_` space ids with per-machine bindings; SQLite catalog
-  locally and Postgres in the cloud behind one trait; `tracing` with JSON
-  logs and optional OTLP; one schedule model (`TaskDef`, with
-  `AgentSchedule` deleted).
+- **Cutover:** a new data baseline that refuses every earlier data home
+  with the single invariant-29 message. No migrator and no dual layout. Its
+  version is written once, in plan §1 (L3); the number first chosen was
+  spent on M0's release. Main moves to the baseline's line when M3b's first
+  slice merges, and fixes for the line before it go on a maintenance branch
+  (plan L6).
+- **Runtime state leaves the project tree:** executions, environments and
+  candidates move under the tenant; invariant 35 is rewritten; a space's
+  `.vak/` holds only project intent. Agent workspaces move too, as
+  Workspaces bound to (Space, Agent), never Environments (plan L10).
+- **Defaults:** `spc_` space ids with per-machine bindings; SQLite data
+  catalog locally and Postgres in the cloud behind one trait; `tracing` with
+  JSON logs and optional OTLP; one trigger model (`TaskDef` grown into
+  Trigger, with `AgentSchedule` deleted).
 - **Added by the review (revision 2):**
   - The key hierarchy and key grants of §7.3.
   - Content keyed to its conversation, and `derived_from` on derived
@@ -755,25 +903,41 @@ Resolved with the maintainer, with zero users and no backward compatibility:
   - Telemetry that carries no content.
   - The Document class.
   - Per-conversation expiry.
+- **Added by the second review (revision 3, locked 2026-10-01):**
+  - Triggers, cursors, effect records and fencing epochs (§8).
+  - Principals, with `actor` and `on_behalf_of` on the trace key (§4).
+  - A key per non-owner contributor within a conversation (§7.3).
+  - A `KeyAuthority` trait for key custody (§7.3).
+  - The hash chain over frames as stored, and compression before
+    encryption (§6).
+  - Versioned Desired state, and the Application class (§5).
+  - Labels on any labelable node (§7.4).
+  - The reordered milestones (§14).
 
 ## 14. Phasing
 
-The milestone plan (revision 2), exit tests, budgets and AGENTS.md changes
+The milestone plan (revision 3), exit tests, budgets and AGENTS.md changes
 are in `docs/plans/data-architecture-plan.md`. The order is:
 
-- **M0** fixes on 4.x, then **M1** trace key, then **M2** storage
-  substrate.
-- **M3a** is the Scope refactor with no behaviour change; **M3b** is the
-  5.0.0 layout switch.
-- **M4** runs, then **M6** catalog, then **M7** lifecycle and erasure, then
-  **M8** artifacts and sharing, then **M9** remote.
+- **M0** fixes on 4.x (done, shipped in 5.0.0), then two guards on 5.x:
+  the home-path ratchet and the per-Agent registry split.
+- **M1** trace key and principals, and **M2** storage substrate, in
+  parallel.
+- **M3a**, the Scope refactor with no behaviour change, straight after M1;
+  then **M3b**, the data-baseline layout switch, in six slices.
+- **M4** runs, triggers, effects and fencing, then **M6** data catalog.
+- After M6, three branches: **M6.5** intake (doc 76), **M8** artifacts and
+  sharing, and **M7a** honest deletion followed by **M7b** governance.
+  **M9** remote follows M7b and M8.
 - **M5** telemetry runs in parallel from M1.
 
-The catalog comes before lifecycle because erasure needs lineage. Each
+The catalog comes before lifecycle because erasure needs lineage. M8 runs
+beside M7a and M7b so erasure covers artifacts from its first commit. Each
 milestone ships whole (invariant 30).
 
-Also in revision 2:
-- The review and its fixes: `docs/plans/data-architecture-review.md`.
+Also in the plan's history:
+- The first review and its fixes: `docs/plans/data-architecture-review.md`.
+- The second review and its fixes: `docs/plans/data-architecture-review-2.md`.
 - What each milestone touches: `docs/plans/data-architecture-blast-radius.md`.
 - Lifecycles, policies, screens and API: doc 74.
 
@@ -784,22 +948,24 @@ Also in revision 2:
 | data `agents/<id>/sessions/<cwd-hash>/<ses>.jsonl` | vak-session | Record (segmented, by space id) |
 | data `agents/<id>/checkpoints/<ses>/NNNN.json`, `checkpoints/blobs/` | vak-core | Record manifest + Object |
 | data `agents/<id>/memory/`, `skill-proposals/`, `entities/<cwd-hash>/` | vak-core | **Document** (rewritten by amend/forget; versions + `derived_from`) (review R9) |
-| data `agents/<id>/sandbox/{records.jsonl,candidates,staging,revisions,previews,executions}` | vak-server / vak-sandbox | Record + Object + Workspace |
+| data `agents/<server Core's id>/sandbox/{records.jsonl,candidates,staging,revisions,previews,executions}`, holding every Agent's records (D25) | vak-server / vak-sandbox | Record + Object + Workspace, each in its session's Agent scope |
 | data `agents/<id>/presentations.json` | vak-store | **Document** (presentation-pack library: definitions + activations) (review R9) |
 | data `agents/<id>/flow-runs/` | vak-flow | Record (runs) |
 | data `agents/<id>/{routing-evidence,intent-evidence,security-events,activity-log}.jsonl` | vak-core | Record (with TraceKey) |
-| data `agents/<id>/coworking/grants.jsonl` | vak-server | Record (grants) |
+| data `agents/<id>/commitments.jsonl` | vak-commit | Record; statement field keyed to its conversation |
+| data `agents/<server Core's id>/coworking/grants.jsonl` (D25) | vak-server | Record (grants, keyed by principal; M8's one grants table) |
+| data `agents/<server Core's id>/office-workspaces/<session>/<room>.json` (D25; rewritten on every edit) | vak-server | **Document** (each save a version; the head is a ref) in its session's Agent scope |
 | data `agents/<id>/agent-network/broker.sock` | vak-core | Ephemeral (runtime) |
 | data `sandbox/promotions/` | vak-sandbox | Record |
 | data `gateway/{bindings,allowlist,bots}.json`, `default-workspace` | vak-server | Desired |
-| data `gateway/deliveries.jsonl`, `delivery/jobs/` | vak-server / vak-delivery | Record |
+| data `gateway/deliveries.jsonl`, `delivery/jobs/` | vak-server / vak-delivery | Record: effect records of kind delivery (§8) |
+| data `auth/{owner.json,owner.lock}` (owner passkeys and recovery-code digests, doc 78) | vak-server | Desired (tenant; always backed up) + Ephemeral (lock) |
 | data `operations/{incidents,actions}.jsonl` | vak-server | Record (audit) |
-| data `tasks.json` | vak-core | Desired (schedules) + Run records |
+| data `tasks.json` | vak-core | Desired (Triggers) + Run records |
 | data `cost-log.jsonl`, `budget-alerts.jsonl` | vak-core | Record (finops) as segment chains; retention drops sealed segments, no compaction rewrite (D19) |
-| data `commitments.jsonl` | vak-commit | Record; statement field keyed to its conversation |
 | data `inbox.jsonl`, `inbox.dedupe.lock` | vak-core | Record (body keyed to its conversation) + Ephemeral |
 | data `trusted/`, `workspaces.json`, `workspace-names.json` | vak-core / vak-server | Desired (space bindings) |
-| data `feeds/feeds.duckdb` (written by Python, D18) | scripts/feeds | Record (external content, retention-bounded; path passed by Rust) |
+| data `feeds/feeds.duckdb` (written by Python, D18) | scripts/feeds | removed by M6.5: items become Objects plus catalog nodes, Sources become Desired (doc 76) |
 | data `feeds.toml`, `output.toml`, `flows/` | various | Desired |
 | data `skills/` | vak-core | Document |
 | data `locks/`, `release/`, `update-check.json`, `install.json`, `desktop.json`, `tray.json` | various | Ephemeral / Desired |
@@ -809,11 +975,12 @@ Also in revision 2:
 | cache `store.db*` | vak-store | Derived (catalog) |
 | logs `*.log` | vak-ops / vak-desktop | Telemetry (JSON, rotated) |
 | `~/vak-home/.vak/{config.toml,skills,plugins,.seed-manifest.json}` | vak-config / vak-core / vak-plugin | Desired (Shared layer) |
+| plugin packages `catalog-staging/<id>` (marketplace installs in progress) | vak-server / vak-plugin | Ephemeral (removed when the install settles) |
 | `~/vak-home/{credentials.enc,.credential_key,.credential_key.lock}` | vak-config | Secret |
 | project `.vak/scratch/<agent>/<exe>/tmp`, `.vak/scratch/<agent>/cache` | vak-tools | Ephemeral |
 | project `.vak/worktrees/<run>` | vak-core | Workspace (environment) |
-| project `.vak/agents/<id>/workspace/` | vak-config | Workspace |
-| project `.vak/{agents.json,agents_runs.jsonl}` | vak-server | Desired / Record |
+| project `.vak/agents/<id>/workspace/` | vak-config | Workspace at `workspaces/<spc>/<agt>/`, bound to (Space, Agent), never an Environment (plan L10) |
+| project `.vak/agents.json` (`agents_runs.jsonl` removed in M0) | vak-server | Desired |
 | project `.vak/{flows,commands,launch.toml,permissions.local.toml}` | various | Desired (project intent) |
 | project `.vak/prompts/` | vak-core | Document (prompt layers; project intent) |
 | project `.vak/env` (NATS secrets in plaintext, D15) | vak-server | **removed**; values move to the Secret class |

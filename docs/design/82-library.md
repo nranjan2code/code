@@ -8,7 +8,7 @@ This document is the product specification for the Library: doc 74's client
 Library (C4) and admin Library (A6), and the plan's M8 screens, build to it.
 Phase L1 may start before the data architecture because it adds no durable
 store (§9), and it is a **discovery prototype**: everything it derives or
-links to is discarded by M3b's 5.0.0 reset (§9.2). Later phases ride
+links to is discarded by M3b's data-baseline reset (§9.2). Later phases ride
 data-architecture milestones M4 (runs), M6 (catalog) and M8 (artifacts) in
 `73-data-architecture-and-lifecycle.md`. Companion to
 `81-pieces-and-home.md`: Home is the desk for live things, the Library is
@@ -50,7 +50,8 @@ came from. Four gaps matter for this design:
 - **An agent's own later revision starts a new chain.**
   `parent_candidate_id` is not set when the agent revises its draft in a
   later turn without a person asking.
-- **A version's author is not recorded.** `CandidateRecord` has no actor. A
+- **A version's author is not recorded.** `CandidateRecord` has no actor
+  (data-architecture M1 adds one to every record, plan L9). A
   revision a person asked for copies its parent's `turn_id` and names its
   child session in `revision_session_id`. An Office room edit is marked only
   by `environment_id = "office-workspace"`; its editor is in the room's own
@@ -82,7 +83,7 @@ which chat made it and scrolling.
    (`vak_config::paths::agent_workspace`). From M3b it belongs to the Space,
    with the authoring Agent recorded. A conversation always belongs to
    exactly one Agent. (Resolves `81-pieces-and-home.md` §20 decision 6 the
-   same way for pieces; §10 question 3 names what doc 73 must still say.)
+   same way for pieces; doc 73 §5 now answers §10 question 3.)
 5. **Only declared deliverables are entries** (§3). Supporting files are
    parts. Cards stay in chat unless saved.
 6. **L1 ships as a read-only projection** over existing records and
@@ -284,7 +285,7 @@ Volume control is the design. The rules:
 6. **Cards stay in chat** unless saved ("save this recipe"); a saved card is
    a `saved card` artifact holding the card's payload. Saving is a write, so
    saved cards arrive with M8; no save action exists today.
-7. **Drafts fade (M7/M8).** Fading is the lifecycle reconciler applying the
+7. **Drafts fade (M7a/M8).** Fading is the lifecycle reconciler applying the
    default retention label (doc 74 §2.7 and §3.1), not a Library rule. A
    draft version not accepted, starred or shared is listed under "Older
    drafts" after 14 days, which is a view, not a state. After 60 days it
@@ -332,7 +333,7 @@ Volume control is the design. The rules:
   without a glimpse shows its icon.
 - **Filters**: kind; Agent; workspace (space from M3b); Waiting for review;
   changed (today, this week, this month, earlier); Starred (M8); Shared with
-  me (M8); Live (doc 81 P1); Trash (M7).
+  me (M8); Live (doc 81 P1); Trash (M7a).
 - **Grouping without filing**: by workspace, by Agent, by commitment (doc
   47); folders and tags are optional (M8).
 - **Search** in the language people remember in: by title and content ("the
@@ -506,7 +507,7 @@ what it is.
 | **L1 Read-only Library** | nothing in the data architecture | `Tool::artifact` replacing `produces_artifact`, forwarded by `BrokeredTool`; `title`/`summary` on `write` and `office_apply`; a derived table of declarations (one row per declaring call: Agent, workspace, session, turn, call, tool, path, title, summary, time) in the `vak-store` cache, fed by the incremental ingest that already runs after each turn and rebuilt when its generation changes; the Library screen and artifact page over declarations, drafts and promotions, filtered per session for trash and per Agent for audience; glimpses; Open conversation; Download; Open in Library from chat, Canvas and Workbench |
 | **L2 Continue working** | L1 | `AttachedArtifact` and its server-rendered block; Continue working and Make another in the composer; the TurnCard naming the artifact; the cross-conversation `recall` scope with per-call trash and audience checks; the Make another write refusal; doc 68's section |
 | **L3 Search** | M6 | content and lineage search through the catalog; Sources and Related |
-| **L4 Identity and edits** | M4, M8 | `art_` ids; a routine's runs as versions of one artifact; sibling versions; rename, star, folders and tags, move, archive; edit in app; Put back; saved cards; draft fading as a retention label (M7) |
+| **L4 Identity and edits** | M4, M8 | `art_` ids; a routine's runs as versions of one artifact; sibling versions; rename, star, folders and tags, move, archive; edit in app; Put back; saved cards; draft fading as a retention label (M7a) |
 | **L5 Sharing and live** | M8, doc 81 P1 | artifact grants; Keep live hands an artifact to the piece platform |
 
 L1 touches the Tool trait and the broker, the agent loop's completion
@@ -557,7 +558,8 @@ invitation token never reaches it (doc 69).
 
 ### 9.2 What M3b discards
 
-M3b removes every Vak-owned data root and refuses state from before 5.0.0
+M3b removes every Vak-owned data root and refuses state from before the
+data baseline (plan §1, L3)
 (invariant 29). Derived keys, glimpses, the declarations table, artifact
 attachments in L1/L2 ledgers and any link a person saved to a Library entry
 do not survive it, and nothing maps them forward. L1 and L2 are worth
@@ -592,11 +594,11 @@ content.
    the eval suite before deciding (§9.3). The same eval compares a titled
    `write` with presenting the file through a card, the channel already
    measured as reliable with small local models (`07-prompt.md` v3.4.5).
-3. **Where a non-built-in Agent's deliverables live after M3b.** Doc 73
-   moves Agent workspaces under the tenant (decision Q3) but does not say
-   where their deliverables go. Decision 4 assumes they reach the Space's
-   working tree through Review, like any candidate. Recommended: doc 73 §5
-   states that before M3b starts.
+3. **Where a non-built-in Agent's deliverables live after M3b.**
+   Resolved by plan revision 3 (L10) and doc 73 §5, as decision 4 assumed:
+   an Agent's workspace is a Workspace bound to (Space, Agent), never an
+   Environment, and its deliverables reach the Space's working tree
+   through Review, like any candidate.
 
 ## 11. Non-goals
 

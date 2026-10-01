@@ -22,7 +22,10 @@ ownership and storage, and does not depend on starting M1 of the data refactor.
 
 1. Root ownership: use the existing admitted request/episode and its source ledger
    identity; distinguish it from the session and from a durable commitment. Do
-   not introduce the future data-architecture `Run` model in this change.
+   not introduce the future data-architecture `Run` record in this change, but
+   key any durable root account by that plan's typed `RunId`, which lands
+   first in its M1 (data plan revision 3, review 2 R46), so M4 adopts the
+   account instead of replacing it.
 2. Policy: finite outer resource limits come from operator/user policy and current
    admission. Calibrate defaults against measured workloads. Learned estimates
    may allocate within those limits, never silently raise them.

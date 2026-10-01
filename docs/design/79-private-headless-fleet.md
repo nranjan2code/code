@@ -6,7 +6,12 @@ current single-owner EC2 installation remains a development baseline, not
 evidence that the privacy and disaster-recovery acceptance tests below pass.
 This document extends the local-first data model in
 `73-data-architecture-and-lifecycle.md` and its milestone plan; it does not
-start or reorder any pending milestone.
+start or reorder any pending milestone. Plan revision 3 (2026-10-01) builds
+the substrate hooks this document needs into M2 rather than later: a
+`KeyAuthority` trait for customer-controlled key release, writer epochs for
+fencing a replaced VM, versioned Desired state for the recovery manifest, a
+hash chain over stored frames so integrity verifies without keys, and a
+commit-generation hook for §8.1's strong durability mode.
 
 ## 1. Product contract and trust boundary
 

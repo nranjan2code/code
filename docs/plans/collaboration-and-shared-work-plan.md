@@ -326,6 +326,12 @@ Before implementing, reconcile this plan with:
 
 Coordinate with the pending data architecture plan before introducing
 durable records. This proposal starts none of M1–M9 or the fleet work.
+That plan's revision 3 supplies what this needs: principal ids with
+`actor` and `on_behalf_of` on every record (M1), so a contribution's real
+actor and an Agent's sponsor are recorded; effect records with idempotency
+keys (M4), so a retried handover never creates a second assignment; and a
+key per non-owner contributor, so a participant can be erased from a shared
+conversation (doc 73 §7.3).
 New implementation must respect the applicable canonical path, registry,
 UUIDv7, content-free logging and trash rules. An incompatible ownership or
 schema change needs an explicit version/baseline decision before coding.

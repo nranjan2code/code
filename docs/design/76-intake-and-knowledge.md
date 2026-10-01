@@ -1,6 +1,9 @@
 # 76 — Intake and knowledge: one path for data in, one place to use it
 
-Status: **proposal, 2026-09-27. Nothing here is shipped.** It supersedes the
+Status: **proposal, 2026-09-27; §9 shipped 2026-09-27 (`5426018f`).
+Nothing else here is shipped.** It is milestone M6.5 of the data
+architecture plan (revision 3), and its Sources poll through that plan's
+Trigger model (`source_poll`) with cursors (doc 73 §8). It supersedes the
 feed system's target model in `docs/design/51-feed-system.md` (which stays the
 accurate description of the shipped 5.x Python pipeline until this lands) and
 is the intake-and-retrieval facet of the data architecture in
@@ -200,6 +203,8 @@ cooldown, fixing today's re-fire-every-tick and unbounded `alert_log`.
 - **Sequencing.** Intake is a *consumer* of the catalog, so it builds on:
   - **M1** TraceKey — every item carries one;
   - **M2** object store — item bodies are objects;
+  - **M4** triggers and cursors — a Source polls through a `source_poll`
+    trigger, and its position is a cursor ref;
   - **M6** catalog — nodes/edges/text are where items live and are searched.
 
   It is therefore an **M6-or-later** deliverable (proposed **M6.5**, before or
@@ -207,10 +212,10 @@ cooldown, fixing today's re-fire-every-tick and unbounded `alert_log`.
   (invariant 30): the Python pipeline, the DuckDB store, `feed_mcp.py`,
   `feed_search.py`'s BM25, the `search_index` table and the four dead helpers
   are **deleted in the same change** that lands catalog intake. There is no
-  compatibility path and no migration (0 users; 5.x refuses pre-baseline
+  compatibility path and no migration (0 users; the data baseline refuses pre-baseline
   state, invariant 29).
 
-## 9. The one fix that lands now, independently
+## 9. The one fix that lands now, independently (shipped 2026-09-27)
 
 The code-execution hole (§4) is live in 5.x and must not wait for M6. Verified
 on a running server against an **untrusted** `/tmp` workspace
@@ -249,8 +254,10 @@ parent secret; a workspace `scripts/feeds` is never executed).
   parsers as pinned worker-shipped Python behind the broker. Recommendation:
   **Rust for RSS/HTTP/YouTube-XML** (small), reassess for anything needing a
   large parser.
-- **D3 — is intake M6.5 (before M8) or folded into M8 artifacts?**
+- **D3 — is intake M6.5 (before M8) or folded into M8 artifacts?** Settled
+  by plan revision 3: M6.5, in parallel with M8.
   Recommendation: **M6.5**, so retrieval is unified as soon as the catalog
   exists.
 - **D4 — do we ship §9 now** as a standalone 5.x change ahead of the redesign?
+  Settled: shipped in `5426018f`.
   Recommendation: **yes** — it is a live token-exfil hole.

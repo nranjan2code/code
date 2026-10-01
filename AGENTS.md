@@ -103,8 +103,8 @@ Read before changing behaviour in these areas:
   `76-intake-and-knowledge.md` (the pending redesign of the feed system into
   one intake path feeding the catalog, agent-reachable, with shared
   lifecycle; supersedes the target model of `51-feed-system.md` and depends on
-  the data-architecture catalog at M6.5. Its §9 is a standalone security fix
-  for the shipped pipeline),
+  the data-architecture catalog at M6.5. Its §9, a standalone security fix
+  for the shipped pipeline, shipped on 2026-09-27),
   `79-private-headless-fleet.md` (the proposed dedicated 24/7 customer VM
   fleet, operator-blind boundary, provisioning and disaster recovery; it
   extends 73/74 without starting a data milestone),
@@ -117,6 +117,9 @@ Read before changing behaviour in these areas:
   conversation (doc 64), never a new one. It is the product spec for doc
   74's C4 and A6. Its L1 and L2 are a prototype before the data
   architecture, whose data M3b discards; later phases ride M4, M6 and M8).
+  Docs 76, 79, 80, 81 and 82 use the data architecture's shared primitives
+  (triggers, cursors, effects, fencing, connections, principals) from plan
+  revision 3 rather than building their own.
 
 ### What is authoritative
 
@@ -138,18 +141,23 @@ Parked, and not to be assumed shipped: release supply-chain hardening
 (SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
 completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
-### Pending: the data architecture refactor (M0 done 2026-09-25; M1 next)
+### Pending: the data architecture refactor (M0 done 2026-09-25; plan revision 3)
 
-The maintainer started it on 2026-09-25 with M0, which is done. Nothing
-after M0 is behaviour yet, and no session starts a later milestone unasked.
+The maintainer started it on 2026-09-25 with M0, which is done and shipped
+in 5.0.0. On 2026-10-01 the maintainer locked plan revision 3 (decisions
+L6–L12). Nothing after M0 is behaviour yet, and no session starts a later
+step unasked.
 
 **What it is.** One architecture for everything Vak writes:
-- typed ids and a trace key on every record;
-- a content-addressed, encrypted storage substrate;
-- a tenant/space layout, cut as a new **5.0.0** baseline;
-- a Run record for every trigger;
+- typed ids, principals and a trace key with its actor on every record;
+- a content-addressed, encrypted storage substrate with fencing epochs and
+  a pluggable key authority;
+- a tenant/space layout, cut as a new data baseline (the version is in plan
+  §1, L3; no other document writes it);
+- one trigger model, a Run record for every trigger, and effect records for
+  every action outside Vak;
 - structured telemetry that carries no content;
-- one catalog for search and lineage;
+- one data catalog for search and lineage;
 - a lifecycle reconciler with retention labels, legal hold and
   crypto-shred erasure;
 - versioned artifacts with inherited sharing;
@@ -157,28 +165,34 @@ after M0 is behaviour yet, and no session starts a later milestone unasked.
 - a cloud remote.
 
 **Read, in this order:**
-1. `docs/plans/data-architecture-plan.md`: the locked decisions L1–L5,
-   milestones M0–M9, exit tests, and the AGENTS.md changes each milestone
+1. `docs/plans/data-architecture-plan.md`: the locked decisions L1–L12,
+   the milestones, exit tests, and the AGENTS.md changes each milestone
    makes.
 2. `docs/design/73-data-architecture-and-lifecycle.md`: the model, and the
-   audit of today (defects D1–D24).
+   audit of today (defects D1–D27).
 3. `docs/design/74-lifecycle-and-data-administration.md`: lifecycles,
    policies, erasure, screens, API.
-4. `docs/plans/data-architecture-review.md`: why revision 2 differs from
-   the first draft.
+4. `docs/plans/data-architecture-review.md` and
+   `docs/plans/data-architecture-review-2.md`: why revisions 2 and 3 differ
+   from what came before.
 5. `docs/plans/data-architecture-blast-radius.md`: what each milestone
    touches.
 
 **How to pick it up:**
-1. Confirm the maintainer has said to start, and with which milestone.
-2. Re-run the blast-radius scans (§0 of that doc). Its counts and file
-   locations were taken at `767db1d0` and will have drifted.
-3. Follow the order M0 → M1 → M2 → M3a → M3b (5.0.0) → M4 → M6 → M7 → M8 →
-   M9, with M5 in parallel after M1.
+1. Confirm the maintainer has said to start, and with which step.
+2. Re-run the blast-radius scans (§0 of that doc, with its patterns). Its
+   counts and file locations were taken at `438cfcd5` and will have drifted.
+3. Follow the order: the two 5.x guards (the home-path ratchet and the
+   per-Agent registry split); M1 and M2 in parallel; M3a after M1; M3b, the
+   data baseline, in six slices; M4 (runs, triggers, effects, fencing); M6;
+   then M6.5, M8, and M7a → M7b in parallel; M9 last. M5 runs in parallel
+   after M1.
    - M3b never starts before the M3a refactor (no behaviour change) has
      merged.
-   - Erasure (M7) never starts before the catalog (M6), because it needs
+   - Erasure (M7a) never starts before the catalog (M6), because it needs
      lineage.
+   - From M3b's first slice, main is the baseline's line and cuts no 5.x
+     release; 5.x fixes go on `release/5` (L6).
 4. Each milestone ships whole: code, tests, docs, its AGENTS.md changes and
    its screens. The replaced path goes in the same change (invariant 30).
    There is no compatibility code, because there are no users.
@@ -212,14 +226,25 @@ after M0 is behaviour yet, and no session starts a later milestone unasked.
 **Known gaps M0 leaves for later milestones:**
 - A non-git space's routine is refused, not run: running it needs M4's
   copy environment.
-- The trash hides; it never erases. Erasure is M7.
+- The trash hides; it never erases. Erasure is M7a.
+- Server-side sandbox records, execution streams, Office rooms and coworking
+  grants are written under the server Core's Agent home, whichever Agent
+  owns the session (D25). M3a marks those call sites and M3b fixes them;
+  until then filter them by the session header's Agent.
 
 **Until the next milestone lands, don't deepen the debt:**
-- Build no second schedule model: scheduled work is a `TaskDef`.
-- Declare every new durable file in `vak_core::state::REGISTRY`.
+- Build no second schedule or trigger model: scheduled work is a `TaskDef`,
+  which grows into Triggers at M4. Docs 76, 80 and 81 use that model.
+- Build no second identity for "the root of this work": durable accounting
+  keys by M1's `RunId` (the reliable-work plan's E1 waits for it).
+- Add no raw home-path call (`sessions_home()`, `shared_data_home()`,
+  `hash_cwd(`); the ratchet enforces it once it lands.
+- Declare every new durable file in `vak_core::state::REGISTRY`, including
+  each new subpath of an Agent home, with its real kind.
 - Resolve every new path through `vak_config::paths` and the `Core` home
   accessors.
 - Give new records full UUIDv7 ids, never clock-derived or truncated ones.
+- Record an actor where a contribution has one; never infer authorship.
 - Keep conversation content out of logs.
 - Read a session for a person or the model through a path that honours the
   trash (`open_historical_session`, `Core::open_session`, or

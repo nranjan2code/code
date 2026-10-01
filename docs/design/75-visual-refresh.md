@@ -440,6 +440,14 @@ on the old terms in user-facing strings, like vak-eval's banned-token gate.
 | Prompts | The narrowest layer that sets this wins. | This agent's version replaces the shared one. |
 | Settings navigation | EXPERIENCE · THIS AGENT · ARCHIVED | Everyday · Agents · Advanced |
 
+**Still to settle: the data vocabulary.** The data architecture (docs 73
+and 74, plan revision 3, L11) adds model terms that will reach everyday
+screens: Space, run, trigger, effect, trash, delete permanently, "Why is
+this gone?". Each gets an entry here before the first screen that needs it
+(M3b's Spaces, M4's runs and triggers, M7a's trash). "Space" needs the most
+care: the picker already says "Folder" for a working directory, but a Space
+can be bound to folders on several machines, or to none on a hosted server.
+
 ## 8. Everyday by default, technical on request
 
 One setting, Show technical details, decides how much machinery each screen
