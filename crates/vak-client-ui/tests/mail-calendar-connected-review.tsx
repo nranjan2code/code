@@ -249,6 +249,8 @@ const exerciseReviewKeyboard = async (opener: HTMLButtonElement) => {
   ];
   const report = document.createElement("pre");
   report.id = "fixture-report";
+  report.setAttribute("role", "region");
+  report.setAttribute("aria-label", "Acceptance results");
   report.textContent = `${passed.length} checks passed\n${passed.join("\n")}`;
   document.body.append(report);
   return passed;
@@ -258,6 +260,7 @@ if (new URLSearchParams(location.search).has("run")) {
     const report = document.createElement("pre");
     report.id = "fixture-report";
     report.setAttribute("role", "alert");
+    report.setAttribute("aria-label", "Acceptance results");
     report.textContent = `Failed: ${error instanceof Error ? error.message : String(error)}`;
     document.body.append(report);
   });

@@ -2053,3 +2053,11 @@ remains open.
   the revision and edited body before account-scoped cleanup. The focused test
   passes. This proves candidate persistence through the encrypted vault
   adapter, not app-process restart or platform keychain recovery.
+- 2026-10-01: Captured the real Settings event editor and its local-only preview
+  at desktop and phone dimensions in light and dark themes, with separate phone
+  captures framing the full preview. The connected-review fixture passes all
+  20 checks; axe reports zero violations after correcting Settings group
+  heading levels and naming the calendar date-range group. These synthetic
+  fixture captures establish component layout and keyboard-focused Review
+  behavior, not full-app theme switching, assistive-technology acceptance,
+  provider behavior, or closure of Stage 2.

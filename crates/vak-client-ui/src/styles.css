@@ -2301,7 +2301,7 @@ html[data-visual-pack="dimensional"] .settings-app-mark img { content: url("/ass
 .settings-content header h1 { margin: 0 0 6px; font-family: var(--display); font-size: var(--fs-title); font-weight: 600; line-height: 28px; }
 .settings-content header p { margin: 0; color: var(--muted); }
 .settings-group { margin: 0 0 29px; }
-.settings-group > h3 { margin: 0 0 9px; color: var(--text-soft); font-size: var(--fs-meta); font-weight: 600; }
+.settings-group > h2 { margin: 0 0 9px; color: var(--text-soft); font-size: var(--fs-meta); font-weight: 600; }
 /* Explanatory line under a group heading, before its rows. Matches the
    nav's scope copy so the two read as the same voice. */
 .settings-group-copy { margin: -3px 0 11px; color: var(--muted); font-size: var(--fs-caption); line-height: 1.5; max-width: 62ch; }
@@ -4270,7 +4270,7 @@ body.is-resizing .split-divider {
 .prompt-scope-note span { color: var(--muted); font-size: var(--fs-caption); line-height: 1.45; }
 .prompt-scope-note code { margin-top: 3px; overflow: hidden; color: var(--faint); font-size: var(--fs-caption); text-overflow: ellipsis; white-space: nowrap; }
 .prompt-page .settings-group { margin-bottom: 30px; }
-.prompt-page .settings-group > h3 { margin-bottom: 10px; }
+.prompt-page .settings-group > h2 { margin-bottom: 10px; }
 .prompt-page .settings-card { background: var(--surface); }
 .prompt-page .settings-hint { line-height: 1.45; }
 .prompt-page .settings-actions { margin-top: 13px; }

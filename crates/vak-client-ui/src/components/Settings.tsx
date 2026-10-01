@@ -109,7 +109,7 @@ function Row(props: { title: string; description: string; children: JSX.Element;
 }
 
 function Group(props: { title?: string; id?: string; children: JSX.Element }) {
-  return <section id={props.id} class="settings-group"><Show when={props.title}><h3>{props.title}</h3></Show><div class="settings-card">{props.children}</div></section>;
+  return <section id={props.id} class="settings-group"><Show when={props.title}><h2>{props.title}</h2></Show><div class="settings-card">{props.children}</div></section>;
 }
 
 /** A closed "Technical details" row whose values stay intact behind it
@@ -3081,7 +3081,7 @@ export default function Settings() {
                 <Show when={mailCalendarPreview()} keyed>{(preview) => <div class="settings-preview" aria-live="polite">
                   <div class="settings-preview-heading"><strong>{preview.kind === "mail" ? `${preview.folderName ?? "Mail"} preview` : preview.kind === "calendar" ? "Calendar preview" : "Availability preview"}</strong><button class="settings-button" onClick={() => setMailCalendarPreview(null)}>Close preview</button></div>
                   <Show when={preview.kind === "calendar" || preview.kind === "freebusy"}>
-                    <div class="mail-calendar-work-actions" aria-label="Calendar preview date range">
+                    <div class="mail-calendar-work-actions" role="group" aria-label="Calendar preview date range">
                       <button class="settings-button" disabled={mailCalendarBusy()} onClick={() => shiftMailCalendarPreviewRange(preview, -7)}>Previous 7 days</button>
                       <label>From<input aria-label="Preview start date" type="date" value={mailCalendarRangeFrom()} onInput={(event) => setMailCalendarRangeFrom(event.currentTarget.value)} /></label>
                       <label>Through<input aria-label="Preview end date" type="date" value={mailCalendarRangeTo()} onInput={(event) => setMailCalendarRangeTo(event.currentTarget.value)} /></label>
