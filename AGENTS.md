@@ -107,7 +107,10 @@ Read before changing behaviour in these areas:
   for the shipped pipeline),
   `79-private-headless-fleet.md` (the proposed dedicated 24/7 customer VM
   fleet, operator-blind boundary, provisioning and disaster recovery; it
-  extends 73/74 without starting a data milestone).
+  extends 73/74 without starting a data milestone),
+  `81-pieces-and-home.md` (the proposed platform for kept, live and hosted
+  work: pieces that run as code without a model, their gateways, storage and
+  operations, and Home; it depends on data-architecture M6 and M8).
 
 ### What is authoritative
 
