@@ -2069,3 +2069,11 @@ remains open.
   effect endpoint (22 checks total; axe: zero violations). The targeted
   owner-scoped candidate HTTP regression passes. Phone/light/dark conflict
   layout evidence and broader full-app acceptance remain open.
+- 2026-10-01: Saved screenshots of the exact email-send and event-create Review
+  dialogs at 1440 × 900 and 390 × 844, in light and dark themes. Both show the
+  complete recipient or event payload and the explicit final action; the
+  synthetic effect buttons were not activated. Axe reports zero violations
+  with the exact email Review open (40 passes, 49 inapplicable). The same
+  fixture mocks all routes and contacts no provider. These component captures
+  do not replace full-app theme, assistive-technology, or live-provider
+  acceptance.
