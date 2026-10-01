@@ -1907,3 +1907,7 @@ remains open.
   the existing Today regression still passes all 16 checks, and the production
   web build succeeds. This does not close connected-account or provider
   acceptance.
+- 2026-10-01: Fixed a Today Canvas freshness race: an account change received
+  during a provider read now queues one immediate follow-up read instead of
+  being dropped. Added a deterministic in-flight-read regression; all 17 Today
+  checks pass, and the UI typecheck and production build succeed.

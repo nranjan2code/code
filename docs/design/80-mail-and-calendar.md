@@ -340,9 +340,11 @@ history or send/change anything. It reads at most two accounts concurrently
 to bound provider request bursts while retaining the combined view. While
 visible, it refreshes every five minutes, after a minute away when the owner
 returns, and when network connectivity returns. Account changes completed in
-Settings notify an open Today Canvas for immediate refresh. Provider push
-subscriptions can later shorten update delay; a push is only a hint to fetch
-and verify current state, never a source of content or authorization. The
+Settings notify an open Today Canvas for immediate refresh; if a change arrives
+during a read, one follow-up refresh runs as soon as that read completes.
+Provider push subscriptions can later shorten update delay; a push is only a
+hint to fetch and verify current state, never a source of content or
+authorization. The
 starter remains an on-demand Agent conversation for a cited, read-only day
 plan. Account and routine administration remain in Settings; connected-account
 source-to-Review browser acceptance is still open.

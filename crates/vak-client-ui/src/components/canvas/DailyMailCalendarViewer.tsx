@@ -1,4 +1,4 @@
-import { For, Show, createSignal, onCleanup, onMount } from "solid-js";
+import { createEffect, For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import * as api from "../../api";
 import { syntheticMailCalendarEnabled } from "../../mailCalendarDemo";
 import { openMailCalendarCitation, setPendingSettingsPage, setSettingsOpen } from "../../store";
@@ -76,6 +76,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [calendarAccountFilter, setCalendarAccountFilter] = createSignal("all");
   const [eventAction, setEventAction] = createSignal("");
   const [eventActionError, setEventActionError] = createSignal<string | null>(null);
+  const [accountRefreshPending, setAccountRefreshPending] = createSignal(false);
   const [syntheticDemo, setSyntheticDemo] = createSignal(syntheticMailCalendarEnabled());
   const freshnessLabel = () => `${syntheticDemo() ? "Synthetic demo data · no provider connected" : "From connected accounts"} · updated ${loader.data()?.refreshedAt ?? ""}`;
   let lastRefresh = Date.now();
@@ -87,11 +88,22 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   };
   const refreshAfterAccountChange = () => {
     setSyntheticDemo(syntheticMailCalendarEnabled());
-    if (document.visibilityState !== "visible" || loader.loading()) return;
+    if (document.visibilityState !== "visible") return;
+    if (loader.loading()) {
+      setAccountRefreshPending(true);
+      return;
+    }
     lastRefresh = Date.now();
     setSelectedEvent(null);
     loader.reload();
   };
+  createEffect(() => {
+    if (!accountRefreshPending() || loader.loading()) return;
+    setAccountRefreshPending(false);
+    lastRefresh = Date.now();
+    setSelectedEvent(null);
+    loader.reload();
+  });
   const manualRefresh = () => { lastRefresh = Date.now(); setSelectedEvent(null); loader.reload(); };
   onMount(() => {
     const timer = window.setInterval(() => {
