@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show } from "solid-js";
+import { createEffect, createSignal, For, Show, untrack } from "solid-js";
 import * as api from "../../api";
 import type { MailCalendarCandidate, MailCalendarDraftAction, MailCalendarMailPreview, MailCalendarAccount } from "../../api";
 import ConfirmModal from "../ConfirmModal";
@@ -60,9 +60,11 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
 
   createEffect(() => {
     const id = props.agentId;
-    setSelected(null);
-    setPage(0);
-    void refresh(id);
+    untrack(() => {
+      setSelected(null);
+      setPage(0);
+      void refresh(id);
+    });
   });
 
   const openCandidate = (candidate: MailCalendarCandidate) => {

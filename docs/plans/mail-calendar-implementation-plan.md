@@ -2379,3 +2379,13 @@ remains open.
   Apple's live IMAP and CalDAV endpoints. The complete synthetic mail/calendar
   regression pack passes, including 128 provider/vault, 19 Core, 17 Server,
   four authenticated HTTP, restart/requeue, and five isolated-worker tests.
+- 2026-10-01: Rendered browser acceptance found that opening a reply candidate
+  could immediately clear its selected draft. The draft loader's Agent-change
+  effect had accidentally subscribed to the draft list while starting a
+  refresh; draft insertion reran it and reset the selection. Refresh now runs
+  untracked from the Agent-only effect. The real-browser synthetic Today
+  Canvas fixture passes all 43 checks, including Reply-To selection, focused
+  reply editing, exact Review, provider pagination, refresh stability, and
+  calendar actions. All 43 checks pass at desktop and 390px phone width, with
+  no horizontal overflow or browser console errors. UI typechecks and the full
+  synthetic regression pack pass. No live provider data was used.
