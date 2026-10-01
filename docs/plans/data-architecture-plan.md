@@ -267,7 +267,18 @@ R41, R42). Two guards stop that before M3a:
 **Exit tests**
 - `home_path_uses_do_not_grow`, `agent_home_subpaths_are_declared`.
 
-### M1 — Identity, trace key, principals, provenance (M)
+### M1 — Identity, trace key, principals, provenance (M) — in progress
+
+Landed (main, 2026-10-01): slice 1 (typed ids, `TraceKey` and `Cause`,
+additive `space`/`run`/`cause` on `SessionHeader`, `TestScope`) and slice 2
+(a `Traced` trait with additive `trace`/`actor` on 12 side-ledger row types,
+`derived_from` on memory notes, entities and skill proposals, checkpoint
+labels carrying the turn id). Every write site still sets the key to `None`.
+Remaining: slice 3 (`ToolContext.trace`, the broker protocol bump,
+`SandboxEventSink` and sandbox records, the bus envelope and real
+`prev_hash`), slice 4 (real `RunId` and `PrincipalId` through admission,
+`InboundRequest` and delivery packets, the typed-id replacements, the data
+dictionary, FinOps per Agent and per run, AGENTS.md changes).
 
 - **Typed ids** in `vak-session/src/ids.rs`; **`TraceKey` and `Cause`** in
   `trace.rs` (doc 73 §4). `TraceKey::child` is the only way to make a span.
@@ -309,7 +320,18 @@ R41, R42). Two guards stop that before M3a:
   `derived_writes_record_provenance`, `records_reference_is_current`,
   `root_work_account_keyed_by_run_id`.
 
-### M2 — Storage substrate `vak-storage` (L, in parallel with M1)
+### M2 — Storage substrate `vak-storage` (L, in parallel with M1) — in progress
+
+Landed (main, 2026-10-01): slices 1 and 2 in `crates/vak-storage` (key
+authority trait with an in-memory implementation, writer-epoch refs in
+memory and SQLite, keyed sealed objects, hash-chained records, the verified
+seal with crash recovery, persistent scope keys with shred and hold, the
+Documents helper, the `Store` trait with commit generation and a
+pre-acknowledgement hook, the `Remote` trait declared, a fuzz skeleton).
+Remaining: the credential-store `KeyAuthority` (outside this crate, because
+it depends on `vak-config`), a byte-level torn-write test of the seal, a
+fuzz run and corpus, a flock single-writer lock, streaming for large blobs,
+and the workspace pins for `async-nats` and `webauthn-rs`.
 
 A library only, with no behaviour change elsewhere. It absorbs doc 79's
 requirements now, because they are cheap before the substrate exists and

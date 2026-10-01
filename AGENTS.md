@@ -148,8 +148,10 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
 The maintainer started it on 2026-09-25 with M0, which is done and shipped
 in 5.0.0. On 2026-10-01 the maintainer locked plan revision 3 (decisions
-L6–L12), and the two 5.x guards landed the same day. Nothing after them is
-behaviour yet, and no session starts a later step unasked.
+L6–L12), and the two 5.x guards landed the same day. M1 slices 1 and 2 and
+M2 slices 1 and 2 are on main (plan §4 lists what remains of each); nothing
+in them is behaviour yet, because no caller uses them. No session starts a
+later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
 - typed ids, principals and a trace key with its actor on every record;
