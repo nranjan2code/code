@@ -1194,6 +1194,14 @@ crates/vak-store     SQLite FTS5 rebuildable index over session JSONL:
                      calls/results/thinking), structured metadata queries,
                      idempotent import, WAL mode — docs/design/23 +
                      33 (JSONL stays source of truth)
+crates/vak-storage   the storage substrate, NO vak dependencies (docs/design/
+                     73-data-architecture-and-lifecycle.md §5-§7.3): keys
+                     (KeyAuthority, fail-closed wrap/unwrap/rotate/revoke),
+                     refs (CAS with generation and writer epoch, memory and
+                     SQLite), objects (HMAC-keyed ids, zstd then AEAD under a
+                     per-object key, grants per scope) and records (per-entry
+                     AEAD frames, hash chain over the stored bytes, so it
+                     verifies without keys and after a shred); slice 1 of M2
 crates/vak-delivery  schema-v2 channel-neutral semantic output contract,
                      delivery posture (cadence x urgency) deciding WHEN a
                      packet goes out and never what it says; an approval and

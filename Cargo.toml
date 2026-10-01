@@ -5,6 +5,7 @@ members = [
     "crates/vak-session",
     "crates/vak-context",
     "crates/vak-store",
+    "crates/vak-storage",
     "crates/vak-tools",
     "crates/vak-agent",
     "crates/vak-config",
@@ -118,6 +119,10 @@ semver = "1"
 sha2 = "0.10"
 # Ed25519 verification for signed plugin/catalog evidence; no signing or key generation.
 ring = "=0.17.14"
+# Storage substrate (vak-storage): bundled SQLite for CAS refs, moved here from vak-store.
+rusqlite = { version = "=0.32.1", features = ["bundled", "hooks"] }
+# zstd compresses every object and record frame before it is sealed (vak-storage).
+zstd = "=0.13.3"
 hex = "0.4"
 # Cross-platform OS secret storage (macOS Keychain / Windows Credential
 # Manager / Linux Secret Service) for the credential store

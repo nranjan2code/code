@@ -1,0 +1,18 @@
+[package]
+name = "vak-storage"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Encrypted content-addressed storage substrate: keys, refs, objects, record chains"
+
+[dependencies]
+ring = { workspace = true }
+rusqlite = { workspace = true }
+zstd = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
