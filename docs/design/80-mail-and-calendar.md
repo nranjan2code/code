@@ -51,6 +51,15 @@ cancellation profiles, RSVP, complete event-trigger browser acceptance,
 broader provider reconciliation, live-provider conformance, full connected
 source-to-Review browser acceptance, and 24-hour service-recovery acceptance
 remain open. Apple Calendar has not been verified with a live credential.
+Scheduled routines also offer an explicit **Include this Agent's open
+commitments** option. When selected, the routine receives the existing
+read-only `commitments` tool in addition to its bounded mail/calendar broker.
+The child session is stamped with the local owner audience, and the tool reads
+only commitments visible to that audience in the owning Agent's ledger. The
+option is rejected when commitments are disabled and runs are refused if that
+setting is later disabled. This is the first cross-activity integration; files,
+other services, writing commitments, and automatic provider effects remain
+separately gated or deferred.
 Mail previews and conversation pages also carry bounded sender, To, and Cc
 fields from Google, Microsoft Graph, and Apple IMAP. Bcc is not requested from
 Microsoft and is never projected into the owner or Agent result.
@@ -297,6 +306,16 @@ automations, not only when a person opens a mailbox screen. Examples:
 | Weekly planning | Calendar availability and open commitments | Proposed focus blocks and reschedules, each with attendee impact |
 | Bills and renewals | Selected bill or renewal notices and relevant commitments | Due-date reminder or proposed task; payment remains a separately authorized capability |
 | Family and appointments | Authorized shared calendar and selected confirmation messages | Preparation reminder or proposed schedule change without disclosing private event details |
+
+The routine editor now offers an explicit **Include this Agent's open
+commitments** option. When selected, a scheduled routine receives the existing
+read-only `commitments` tool in addition to its bounded mail/calendar broker.
+Its child session is stamped with the local owner audience, and the tool reads
+only commitments visible to that audience in the owning Agent's ledger. The
+option is rejected when commitments are disabled and runs are refused if that
+setting is later disabled. This is the first cross-activity integration; files,
+other services, writing commitments, and automatic provider effects remain
+separately gated or deferred.
 
 An automation definition names its trigger, connected account, selection
 rule, Agent, audience, cadence, allowed reads, possible outputs, expiry, and

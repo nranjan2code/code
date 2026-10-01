@@ -1204,6 +1204,7 @@ mod tests {
             operations: [RoutineOperation::RecentMail].into_iter().collect(),
             max_items: 5,
             watch_new_mail: false,
+            read_commitments: false,
             calendar_event_trigger: None,
         };
         assert_eq!(
@@ -1421,6 +1422,7 @@ mod tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
+                read_commitments: false,
                 calendar_event_trigger: None,
             }),
             worker_exe: std::path::PathBuf::new(),
@@ -1449,6 +1451,7 @@ mod tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 10,
                 watch_new_mail: false,
+                read_commitments: false,
                 calendar_event_trigger: None,
             }),
             worker_exe: std::path::PathBuf::new(),
@@ -1573,6 +1576,7 @@ mod tests {
                 operations: [RoutineOperation::RecentMail].into_iter().collect(),
                 max_items: 5,
                 watch_new_mail: false,
+                read_commitments: false,
                 calendar_event_trigger: None,
             }),
             worker_exe: std::path::PathBuf::new(),

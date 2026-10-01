@@ -87,6 +87,10 @@ pub struct RoutineScope {
     pub max_items: u8,
     #[serde(default)]
     pub watch_new_mail: bool,
+    /// Explicitly allow this routine to read its owning Agent's open
+    /// commitments for cross-activity summaries. Never grants write access.
+    #[serde(default)]
+    pub read_commitments: bool,
     /// Optional trigger relative to one timed calendar event. Execution still
     /// uses the owning TaskDef scheduler and its one-run-per-routine lease.
     #[serde(default)]
@@ -939,6 +943,7 @@ mod contract_tests {
         .unwrap();
         assert_eq!(legacy.mail_folder_id, None);
         assert_eq!(legacy.calendar_event_trigger, None);
+        assert!(!legacy.read_commitments);
         assert!(legacy.validate().is_ok());
 
         let mut invalid_watch = legacy;

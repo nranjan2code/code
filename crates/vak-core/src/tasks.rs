@@ -807,6 +807,7 @@ mod tests {
                 .collect(),
             max_items: 5,
             watch_new_mail: true,
+            read_commitments: false,
             calendar_event_trigger: None,
         };
         let mut task = base_task();

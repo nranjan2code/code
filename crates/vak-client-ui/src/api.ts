@@ -1771,6 +1771,7 @@ export interface TaskDraft {
     operations: Array<"recent_mail" | "mail_thread" | "calendar_events" | "free_busy">;
     max_items: number;
     watch_new_mail: boolean;
+    read_commitments: boolean;
     calendar_event_trigger?: {
       boundary: "start" | "end";
       /** Positive means before the boundary; negative means after it. */
