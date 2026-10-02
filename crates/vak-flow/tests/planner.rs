@@ -53,6 +53,20 @@ fn extract_toml_handles_fenced_raw_and_garbage() {
 struct ScriptedPlanner {
     /// Responses consumed in order across ALL requests (planner + children).
     responses: Mutex<VecDeque<ScriptedResponse>>,
+    /// Never reused, so concurrent tests and a later instance at a freed
+    /// address never share the process-wide capacity gate.
+    capacity_key: String,
+}
+
+impl ScriptedPlanner {
+    fn new(responses: impl IntoIterator<Item = ScriptedResponse>) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        Self {
+            responses: Mutex::new(responses.into_iter().collect()),
+            capacity_key: format!("test-planner:{}", NEXT.fetch_add(1, Ordering::Relaxed)),
+        }
+    }
 }
 
 enum ScriptedResponse {
@@ -64,6 +78,10 @@ enum ScriptedResponse {
 impl Provider for ScriptedPlanner {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -163,11 +181,9 @@ async fn drain(f: impl std::future::Future<Output = PlanOutcome>) -> PlanOutcome
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn valid_plan_executes_to_completion() {
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from(vec![ScriptedResponse::Text(fenced(
-            GOOD_PLAN,
-        ))])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new(vec![ScriptedResponse::Text(fenced(
+        GOOD_PLAN,
+    ))]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
@@ -193,11 +209,9 @@ async fn valid_plan_executes_to_completion() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn garbage_plan_fails_closed_without_execution() {
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from(vec![ScriptedResponse::Text(
-            "I'm sorry, I cannot produce a TOML plan for that.".into(),
-        )])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new(vec![ScriptedResponse::Text(
+        "I'm sorry, I cannot produce a TOML plan for that.".into(),
+    )]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
@@ -235,9 +249,9 @@ type = \"bash\"
 command = \"echo b\"
 deps = [\"a\"]
 ";
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from([ScriptedResponse::Text(fenced(cyclic))])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new([ScriptedResponse::Text(fenced(
+        cyclic,
+    ))]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
@@ -275,12 +289,10 @@ id = \"report\"
 type = \"merge\"
 deps = [\"boom\"]
 ";
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from(vec![
-            ScriptedResponse::Text(fenced(failing_plan)),
-            ScriptedResponse::Text(fenced(GOOD_PLAN)),
-        ])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new(vec![
+        ScriptedResponse::Text(fenced(failing_plan)),
+        ScriptedResponse::Text(fenced(GOOD_PLAN)),
+    ]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
@@ -311,14 +323,12 @@ type = \"bash\"
 command = \"exit 7\"
 required = true
 ";
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from(vec![
-            ScriptedResponse::Text(fenced(bad_plan)),
-            ScriptedResponse::Text(fenced(bad_plan)),
-            // A third plan would be accepted here if the budget were unbounded.
-            ScriptedResponse::Text(fenced(GOOD_PLAN)),
-        ])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new(vec![
+        ScriptedResponse::Text(fenced(bad_plan)),
+        ScriptedResponse::Text(fenced(bad_plan)),
+        // A third plan would be accepted here if the budget were unbounded.
+        ScriptedResponse::Text(fenced(GOOD_PLAN)),
+    ]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
@@ -399,9 +409,7 @@ async fn multiline_basic_string_plan_is_sanitized_and_executes() {
     // `prompt = "..."`, which is invalid TOML. The structural sanitizer must
     // repair it so the plan parses and executes instead of failing closed.
     let plan = "[flow]\nname = \"multiline\"\n\n[[nodes]]\nid = \"probe\"\ntype = \"bash\"\ncommand = \"echo line-one\necho line-two\"\n\n[[nodes]]\nid = \"report\"\ntype = \"merge\"\ndeps = [\"probe\"]\n";
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from([ScriptedResponse::Text(fenced(plan))])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new([ScriptedResponse::Text(fenced(plan))]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
@@ -426,12 +434,10 @@ async fn transient_planner_failure_is_retried() {
     // Invariant 7: the planner bypasses the loop's retry machinery, so it
     // must retry transient provider failures itself instead of failing the
     // whole run closed.
-    let provider = Arc::new(ScriptedPlanner {
-        responses: Mutex::new(VecDeque::from(vec![
-            ScriptedResponse::Error(LlmError::Network("connection reset".into())),
-            ScriptedResponse::Text(fenced(GOOD_PLAN)),
-        ])),
-    });
+    let provider = Arc::new(ScriptedPlanner::new(vec![
+        ScriptedResponse::Error(LlmError::Network("connection reset".into())),
+        ScriptedResponse::Text(fenced(GOOD_PLAN)),
+    ]));
     let deps = make_deps(provider);
 
     let outcome = drain(plan_and_run(
