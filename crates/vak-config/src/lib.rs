@@ -5,9 +5,9 @@ pub mod credentials;
 pub mod file_update;
 pub mod finops;
 pub mod paths;
+pub mod scope;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_scope;
-pub mod scope;
 
 pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic};
 
