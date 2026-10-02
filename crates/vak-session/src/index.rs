@@ -138,7 +138,7 @@ fn scan(path: &Path) -> Result<Vec<CachedMessage>, SearchError> {
             Role::User => "user",
             Role::Assistant => "assistant",
         };
-        let text = record.message.text_content();
+        let text = record.as_typed().text_content();
         if text.trim().is_empty() {
             continue;
         }

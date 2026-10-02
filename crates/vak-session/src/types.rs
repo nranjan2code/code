@@ -305,25 +305,40 @@ pub struct TranscriptMessage {
     pub typed: Option<String>,
 }
 
+/// `message` with its first text block replaced by what the person typed, when
+/// the runtime rewrote it. Everything a person reads or searches uses this; the
+/// model is fed the stored message.
+fn with_typed(message: &Message, typed: Option<&str>) -> Message {
+    let mut message = message.clone();
+    if let Some(typed) = typed
+        && let Some(vak_llm::ContentBlock::Text { text }) = message
+            .content
+            .iter_mut()
+            .find(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
+    {
+        *text = typed.to_string();
+    }
+    message
+}
+
 impl TranscriptMessage {
     /// The message as a person should read it: their own words where the
     /// runtime expanded a command, skill or mention. The model is never fed
     /// this; it reads `message`.
     pub fn as_typed(&self) -> Message {
-        let mut message = self.message.clone();
-        if let Some(typed) = &self.typed
-            && let Some(vak_llm::ContentBlock::Text { text }) = message
-                .content
-                .iter_mut()
-                .find(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
-        {
-            *text = typed.clone();
-        }
-        message
+        with_typed(&self.message, self.typed.as_deref())
     }
 }
 
 impl MessageRecord {
+    /// The message as a person should read or search it (see `with_typed`).
+    pub fn as_typed(&self) -> Message {
+        with_typed(
+            &self.message,
+            self.meta.as_ref().and_then(|meta| meta.typed.as_deref()),
+        )
+    }
+
     /// A user-role message the runtime authored. The body still begins with
     /// the kind's marker (the model reads it); the tag is what every other
     /// layer reads instead of guessing from the text.
@@ -1069,5 +1084,52 @@ mod agent_identity_tests {
         let identity = serde_json::from_value::<super::AgentIdentity>(value).unwrap();
         assert_eq!(identity.animation, "subtle");
         assert_eq!(identity.voice, "default");
+    }
+}
+
+#[cfg(test)]
+mod typed_tests {
+    use super::*;
+
+    fn record(typed: Option<&str>) -> MessageRecord {
+        MessageRecord {
+            message: Message {
+                role: vak_llm::Role::User,
+                content: vec![
+                    vak_llm::ContentBlock::text("<skill name=\"x\">BODY</skill>\n\nread notes.txt"),
+                    vak_llm::ContentBlock::text("second block stays"),
+                ],
+            },
+            meta: typed.map(|typed| MessageMeta {
+                typed: Some(typed.to_string()),
+                ..Default::default()
+            }),
+        }
+    }
+
+    #[test]
+    fn typed_text_replaces_only_the_first_text_block() {
+        let shown = record(Some("/skill:x read @notes.txt")).as_typed();
+        assert_eq!(shown.content.len(), 2);
+        assert_eq!(
+            shown.text_content(),
+            "/skill:x read @notes.txt\nsecond block stays"
+        );
+    }
+
+    #[test]
+    fn a_message_the_runtime_did_not_rewrite_is_shown_as_stored() {
+        let plain = record(None);
+        assert_eq!(
+            plain.as_typed().text_content(),
+            plain.message.text_content()
+        );
+    }
+
+    #[test]
+    fn the_stored_message_the_model_reads_is_never_changed() {
+        let rewritten = record(Some("/skill:x"));
+        let _ = rewritten.as_typed();
+        assert!(rewritten.message.text_content().contains("BODY"));
     }
 }

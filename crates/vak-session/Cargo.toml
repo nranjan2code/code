@@ -20,6 +20,8 @@ vak-llm = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# `ids.rs` tests build a random v4 id to prove it is refused.
+uuid = { workspace = true, features = ["v4"] }
 
 [lints]
 workspace = true

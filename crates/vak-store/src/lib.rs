@@ -460,7 +460,7 @@ impl Store {
                     vak_llm::Role::User => "user",
                     vak_llm::Role::Assistant => "assistant",
                 };
-                let (text, tool_name, is_error) = extract_message_text(&record.message.content);
+                let (text, tool_name, is_error) = extract_message_text(&record.as_typed().content);
                 let model = record.meta.as_ref().and_then(|m| m.model.clone());
                 Some(IndexedEntry {
                     entry_id: entry.id.clone(),
