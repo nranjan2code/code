@@ -10,7 +10,7 @@
 An open-source AI agent for code, documents, research and everyday work.<br>
 It runs on your machine, uses the model you choose, and works inside the boundaries you set.
 
-[![Version](https://img.shields.io/badge/version-5.3.2-F5A400?style=flat-square)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-6.0.0-F5A400?style=flat-square)](CHANGELOG.md)
 [![License](docs/assets/readme/badges/license.svg)](LICENSE)
 [![Rust](docs/assets/readme/badges/rust.svg)](Cargo.toml)
 [![Platforms](docs/assets/readme/badges/platforms.svg)](#get-started)
