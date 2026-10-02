@@ -256,7 +256,8 @@ impl SlackBridge {
             Ok(req) => req
                 .with_attachments(attachments)
                 .waiting()
-                .with_bot_id(self.bot_id.clone()),
+                .with_bot_id(self.bot_id.clone())
+                .with_request_id(Some(format!("slack:{}:{}", message.channel_id, message.ts))),
             Err(e) => {
                 return GatewayReply {
                     chunks: vec![format!("(bridge refused to send: {e})")],
@@ -282,7 +283,13 @@ impl SlackBridge {
                     let chunks = delivery
                         .as_ref()
                         .map(vak_delivery::DeliveryPacket::channel_text_chunks)
-                        .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
+                        .unwrap_or_else(|_| {
+                            vec![vak_delivery::slack::markdown_to_mrkdwn(
+                                v["text"]
+                                    .as_str()
+                                    .unwrap_or("The response could not be formatted."),
+                            )]
+                        });
                     GatewayReply {
                         chunks,
                         session_id,
@@ -311,86 +318,41 @@ impl SlackBridge {
             .as_ref()
             .map(vak_delivery::DeliveryPacket::structured_cards)
             .unwrap_or_default();
+        for chunk in &reply.chunks {
+            post_slack_message(
+                &self.api_base,
+                &self.bot_token,
+                serde_json::json!({
+                    "channel": channel_id, "text": chunk,
+                    "parse": "none", "link_names": false,
+                }),
+            )
+            .await?;
+        }
         if !cards.is_empty() {
             let cards = cards.into_iter().cloned().collect::<Vec<_>>();
-            let chunks = if reply.chunks.is_empty() {
-                vec![String::new()]
-            } else {
-                reply.chunks.clone()
-            };
-            let body = serde_json::json!({
-                "channel": channel_id,
-                "text": chunks[0],
-                "blocks": vak_delivery::slack::structured_card_blocks(&cards),
-                "parse": "none",
-                "link_names": false,
-            });
-            let resp = http()
-                .post(format!("{}/chat.postMessage", self.api_base))
-                .bearer_auth(&self.bot_token)
-                .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("slack chat.postMessage: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("slack chat.postMessage returned {}", resp.status()));
-            }
-            let result: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("slack chat.postMessage body: {e}"))?;
-            if result["ok"].as_bool() != Some(true) {
-                return Err(format!(
-                    "slack chat.postMessage not ok: {}",
-                    result["error"].as_str().unwrap_or("?")
-                ));
-            }
-            for chunk in chunks.iter().skip(1) {
-                let response = http()
-                    .post(format!("{}/chat.postMessage", self.api_base))
-                    .bearer_auth(&self.bot_token)
-                    .json(&serde_json::json!({"channel":channel_id,"text":chunk,"parse":"none","link_names":false}))
-                    .send().await.map_err(|e| format!("slack chat.postMessage: {e}"))?;
-                if !response.status().is_success() {
-                    return Err(format!(
-                        "slack chat.postMessage returned {}",
-                        response.status()
-                    ));
-                }
-                let result: Value = response
-                    .json()
-                    .await
-                    .map_err(|e| format!("slack chat.postMessage body: {e}"))?;
-                if result["ok"].as_bool() != Some(true) {
-                    return Err(format!(
-                        "slack chat.postMessage not ok: {}",
-                        result["error"].as_str().unwrap_or("?")
-                    ));
-                }
-            }
-            return Ok(());
-        }
-        for chunk in &reply.chunks {
-            let resp = http()
-                .post(format!("{}/chat.postMessage", self.api_base))
-                .bearer_auth(&self.bot_token)
-                .json(&serde_json::json!({ "channel": channel_id, "text": chunk }))
-                .send()
-                .await
-                .map_err(|e| format!("slack chat.postMessage: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("slack chat.postMessage returned {}", resp.status()));
-            }
-            let body: Value = resp
-                .json()
-                .await
-                .map_err(|e| format!("slack chat.postMessage body: {e}"))?;
-            if body["ok"].as_bool() != Some(true) {
-                return Err(format!(
-                    "slack chat.postMessage not ok: {}",
-                    body["error"].as_str().unwrap_or("?")
-                ));
-            }
+            let fallback = cards
+                .iter()
+                .map(|card| {
+                    let source = vak_delivery::structured_markdown(card);
+                    source
+                        .split_once("\n\n```json")
+                        .map_or(source.as_str(), |(text, _)| text)
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            post_slack_message(
+                &self.api_base,
+                &self.bot_token,
+                serde_json::json!({
+                    "channel": channel_id,
+                    "text": fallback.chars().take(2500).collect::<String>(),
+                    "blocks": vak_delivery::slack::structured_card_blocks(&cards),
+                    "parse": "none", "link_names": false,
+                }),
+            )
+            .await?;
         }
         Ok(())
     }
@@ -411,25 +373,52 @@ impl SlackBridge {
         if !response.status().is_success() {
             return Err(format!("voice speak returned {}", response.status()));
         }
-        let part = reqwest::multipart::Part::bytes(
-            response.bytes().await.map_err(|e| e.to_string())?.to_vec(),
-        )
-        .file_name("reply.wav")
-        .mime_str("audio/wav")
-        .map_err(|e| e.to_string())?;
-        let sent = http()
-            .post(format!("{}/files.uploadV2", self.api_base))
+        let audio = response.bytes().await.map_err(|e| e.to_string())?;
+        let upload = http()
+            .get(format!("{}/files.getUploadURLExternal", self.api_base))
             .bearer_auth(&self.bot_token)
-            .multipart(
-                reqwest::multipart::Form::new()
-                    .text("channel_id", channel_id.to_string())
-                    .part("file", part),
-            )
+            .query(&[
+                ("filename", "reply.wav"),
+                ("length", &audio.len().to_string()),
+            ])
             .send()
             .await
             .map_err(|e| e.to_string())?;
-        if !sent.status().is_success() {
-            return Err(format!("slack voice upload returned {}", sent.status()));
+        let upload_status = upload.status();
+        let upload: Value = upload.json().await.map_err(|e| e.to_string())?;
+        if !upload_status.is_success() || upload["ok"].as_bool() != Some(true) {
+            return Err(format!("Slack upload URL request failed ({upload_status})"));
+        }
+        let upload_url = upload["upload_url"]
+            .as_str()
+            .ok_or("Slack upload URL missing")?;
+        // This URL is returned by Slack. Never forward the bot token or audio
+        // to an arbitrary host if a proxy or compromised response changes it.
+        if !upload_url.starts_with("https://files.slack.com/") {
+            return Err("Slack returned an unexpected upload host".into());
+        }
+        let file_id = upload["file_id"].as_str().ok_or("Slack file id missing")?;
+        let uploaded = http()
+            .post(upload_url)
+            .body(audio)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+        if !uploaded.status().is_success() {
+            return Err(format!(
+                "Slack audio bytes upload failed ({})",
+                uploaded.status()
+            ));
+        }
+        let complete = http()
+            .post(format!("{}/files.completeUploadExternal", self.api_base))
+            .bearer_auth(&self.bot_token)
+            .json(&serde_json::json!({"files":[{"id":file_id,"title":"Voice reply"}],"channel_id":channel_id}))
+            .send().await.map_err(|e| e.to_string())?;
+        let complete_status = complete.status();
+        let complete: Value = complete.json().await.map_err(|e| e.to_string())?;
+        if !complete_status.is_success() || complete["ok"].as_bool() != Some(true) {
+            return Err(format!("Slack audio completion failed ({complete_status})"));
         }
         Ok(())
     }
@@ -463,6 +452,36 @@ impl SlackBridge {
             }
         }
     }
+}
+
+async fn post_slack_message(api_base: &str, token: &str, body: Value) -> Result<(), String> {
+    let response = http()
+        .post(format!(
+            "{}/chat.postMessage",
+            api_base.trim_end_matches('/')
+        ))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|error| format!("slack chat.postMessage: {error}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "slack chat.postMessage returned {}",
+            response.status()
+        ));
+    }
+    let result: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("slack chat.postMessage body: {error}"))?;
+    if result["ok"].as_bool() != Some(true) {
+        return Err(format!(
+            "slack chat.postMessage not ok: {}",
+            result["error"].as_str().unwrap_or("?")
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -14,6 +14,7 @@ import {
   setNotice,
   setArmedGoal,
   setDockTab,
+  setSideOpen,
   setShowShortcuts,
   openConnect,
   workspaceSwitching,
@@ -24,7 +25,7 @@ import {
   setPendingSettingsPage,
   setSettingsOpen,
 } from "../store";
-import { loadHealth, openAgentChat, refreshSessions, sendPrompt, stopRun, switchWorkspace } from "../App";
+import { loadHealth, openAgentChat, refreshSessions, sendPrompt, sendSideQuestion, stopRun, switchWorkspace } from "../App";
 import * as api from "../api";
 import { ATTACH_FILES_EVENT } from "../attachFiles";
 import type { SkillInfo } from "../types";
@@ -50,12 +51,25 @@ interface SlashOption {
   name: string;
   kind: "command" | "skill";
   description: string;
+  group: string;
+}
+
+const SLASH_LIMIT = 40;
+const FILE_LIMIT = 12;
+
+/** 0 exact, 1 prefix, 2 in the name, 3 in the description, -1 no match. */
+function rankMatch(name: string, description: string, needle: string): number {
+  if (!needle) return 0;
+  const n = name.toLowerCase();
+  if (n === needle) return 0;
+  if (n.startsWith(needle)) return 1;
+  if (n.includes(needle)) return 2;
+  return description.toLowerCase().includes(needle) ? 3 : -1;
 }
 
 const BUILTIN_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "clear", description: "Clear current prompt draft and pending attachments" },
   { name: "btw", description: "Ask a side question without landing on main session chain" },
-  { name: "compact", description: "Compact session context to free up context window tokens" },
   { name: "status", description: "Check current work without starting or steering a task" },
   { name: "diff", description: "Open diff inspector to review code changes" },
   { name: "terminal", description: "Open integrated shell terminal pane" },
@@ -238,29 +252,40 @@ export default function Composer(props: { cwd: string }) {
       .then((r) => setSkills(r.skills))
       .catch((error) => setLookupError(`Skills unavailable: ${error instanceof Error ? error.message : String(error)}`));
     api
-      .listCommands()
+      .listCommands(agent)
       .then((r) => setCommands(r.commands))
       .catch((error) => setLookupError(`Commands unavailable: ${error instanceof Error ? error.message : String(error)}`));
   });
 
-  const slashMatches = (): SlashOption[] => {
+  const slashAllRaw = (): SlashOption[] => {
     const value = text();
     if (!ta || ta.selectionStart === 0 || !value.startsWith("/") || value === slashDismissed()) return [];
     const m = /^\/([\w-]*)$/.exec(value.slice(0, ta.selectionStart));
     if (!m) return [];
     const needle = m[1].toLowerCase();
 
-    const cmds: SlashOption[] = BUILTIN_SLASH_COMMANDS
-      .concat(commands())
-      .filter((c) => !needle || c.name.toLowerCase().includes(needle) || c.description.toLowerCase().includes(needle))
-      .map((c) => ({ id: `cmd-${c.name}`, name: c.name, kind: "command", description: c.description }));
-
-    const sks: SlashOption[] = skills()
-      .filter((s) => !needle || s.name.toLowerCase().includes(needle) || s.description.toLowerCase().includes(needle))
-      .map((s) => ({ id: `skill-${s.name}`, name: s.name, kind: "skill", description: s.description || "Skill" }));
-
-    return [...cmds, ...sks].slice(0, 10);
+    const builtin = new Set(BUILTIN_SLASH_COMMANDS.map((c) => c.name));
+    const cmds = (BUILTIN_SLASH_COMMANDS as { name: string; description: string; source?: string }[]).concat(commands()).map((c, order) => ({
+      id: `cmd-${c.name}`, name: c.name, kind: "command" as const, description: c.description, order,
+      group: builtin.has(c.name) && !c.source ? "Built-in" : c.source?.startsWith("plugin:") ? `Plugin · ${c.source.slice(7)}` : "Your commands",
+    }));
+    const sks = skills().map((k, order) => ({
+      id: `skill-${k.name}`, name: k.name, kind: "skill" as const, description: k.description || "Skill", order, group: "Skills",
+    }));
+    const groupOrder = (g: string) => (g === "Built-in" ? 0 : g === "Your commands" ? 1 : g === "Skills" ? 3 : 2);
+    return [...cmds, ...sks]
+      .map((o) => ({ o, rank: rankMatch(o.name, o.description, needle) }))
+      .filter((x) => x.rank >= 0 && (x.rank < 3 || needle.length >= 3))
+      .sort((a, b) => Number(a.rank === 3) - Number(b.rank === 3) || groupOrder(a.o.group) - groupOrder(b.o.group) || a.o.group.localeCompare(b.o.group) || a.rank - b.rank || a.o.name.localeCompare(b.o.name))
+      .map((x) => ({ id: x.o.id, name: x.o.name, kind: x.o.kind, description: x.o.description, group: x.o.group }));
   };
+  const slashAll = createMemo(slashAllRaw);
+  const slashMatches = (): SlashOption[] => slashAll().slice(0, SLASH_LIMIT);
+
+  createEffect(() => {
+    slashPicked();
+    queueMicrotask(() => document.querySelector(".slash-item.on")?.scrollIntoView({ block: "nearest" }));
+  });
 
   const applySlashOption = (option: SlashOption) => {
     if (option.kind === "command") {
@@ -299,17 +324,11 @@ export default function Composer(props: { cwd: string }) {
         queueMicrotask(grow);
         return;
       }
-      if (option.name === "compact") {
-        const next = "/compact ";
-        setText(next);
-        queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
-        return;
-      }
       const next = `/${option.name} `;
       setText(next);
       queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
     } else {
-      const next = `use the ${option.name} skill `;
+      const next = `/skill:${option.name} `;
       setText(next);
       queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
     }
@@ -354,7 +373,14 @@ export default function Composer(props: { cwd: string }) {
       return;
     }
     const q = mn.query.toLowerCase();
-    setCandidates(files().filter((f) => f.toLowerCase().includes(q)).slice(0, 8));
+    const base = (f: string) => f.slice(f.lastIndexOf("/") + 1).toLowerCase();
+    const score = (f: string) => (base(f).startsWith(q) ? 0 : base(f).includes(q) ? 1 : 2);
+    setCandidates(
+      files()
+        .filter((f) => f.toLowerCase().includes(q))
+        .sort((a, b) => score(a) - score(b) || a.length - b.length)
+        .slice(0, FILE_LIMIT),
+    );
   });
 
   const applyPick = (path: string) => {
@@ -411,6 +437,15 @@ export default function Composer(props: { cwd: string }) {
       setComposerError("files can be attached once this turn finishes");
       return;
     }
+    const side = /^\/btw\s+(\S[\s\S]*)$/.exec(t);
+    if (side && !files.length && !chips.length) {
+      recordPrompt(t);
+      setText("");
+      setSideOpen(true);
+      queueMicrotask(grow);
+      void sendSideQuestion(side[1]);
+      return;
+    }
     const target = replyTarget();
     if (t) recordPrompt(t);
     setHistoryIdx(-1);
@@ -451,7 +486,7 @@ export default function Composer(props: { cwd: string }) {
         return;
       }
       const typedInFull = slashList.some((o) => `/${o.name}` === text().trim() && !(o.kind === "command" && LOCAL_SLASH_COMMANDS.has(o.name)));
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !typedInFull)) {
+      if (!e.isComposing && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !typedInFull))) {
         e.preventDefault();
         applySlashOption(slashList[Math.min(slashPicked(), slashList.length - 1)]);
         return;
@@ -475,7 +510,7 @@ export default function Composer(props: { cwd: string }) {
         setPicked((p) => Math.max(p - 1, 0));
         return;
       }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+      if (!e.isComposing && (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey))) {
         e.preventDefault();
         applyPick(candidates()[picked()]);
         return;
@@ -548,10 +583,14 @@ export default function Composer(props: { cwd: string }) {
       <Show when={slashMatches().length}>
         <div class="mention-menu slash-menu">
           <For each={slashMatches()}>
-            {(opt, i) => (
+            {(opt, i) => (<>
+              <Show when={i() === 0 || slashMatches()[i() - 1].group !== opt.group}>
+                <div class="slash-group">{opt.group}</div>
+              </Show>
               <button
                 class="slash-item"
                 classList={{ on: slashPicked() === i() }}
+                aria-selected={slashPicked() === i()}
                 onMouseEnter={() => setSlashPicked(i())}
                 onClick={() => applySlashOption(opt)}
               >
@@ -561,9 +600,12 @@ export default function Composer(props: { cwd: string }) {
                 <span class="slash-name">/{opt.name}</span>
                 <span class="slash-desc">{opt.description}</span>
               </button>
-            )}
+            </>)}
           </For>
-          <div class="mention-hint">commands & skills · Tab or Enter to use, Esc to dismiss</div>
+          <div class="mention-hint">
+            {slashAll().length > SLASH_LIMIT ? `${slashAll().length - SLASH_LIMIT} more, keep typing to narrow · ` : ""}
+            Tab or Enter to use, Esc to dismiss
+          </div>
         </div>
       </Show>
       <Show when={mention() && candidates().length}>

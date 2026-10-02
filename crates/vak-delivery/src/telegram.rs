@@ -91,7 +91,6 @@ pub fn markdown_to_html(markdown: &str) -> String {
         if let Some(after) = trimmed.strip_prefix('#')
             && (after.starts_with(' ') || after.starts_with('#'))
         {
-            let level = 1 + after.chars().take_while(|c| *c == '#').count();
             let text = after.trim().trim_start_matches('#').trim();
             if !text.is_empty() {
                 flush_quote(&mut out, &mut quote);
@@ -100,15 +99,9 @@ pub fn markdown_to_html(markdown: &str) -> String {
                 }
                 blank_pending = false;
                 let rendered = inline_markdown(&escape_html(text));
-                if level <= 2 {
-                    out.push_str("<b>");
-                    out.push_str(&rendered.to_uppercase());
-                    out.push_str("</b>\n\n");
-                } else {
-                    out.push_str("<b>");
-                    out.push_str(&rendered);
-                    out.push_str("</b>\n\n");
-                }
+                out.push_str("<b>");
+                out.push_str(&rendered);
+                out.push_str("</b>\n\n");
                 continue;
             }
         }
@@ -316,7 +309,10 @@ fn inline_markdown(value: &str) -> String {
     for (index, code) in codes.iter().enumerate() {
         value = value.replace(
             &format!("\u{0}{index}\u{0}"),
-            &format!("<code>{}</code>", escape_html(code)),
+            // The original line was escaped before placeholders were made.
+            // Escape only code spans that enter through this function from an
+            // unescaped source (the sentinel preserves already-safe text).
+            &format!("<code>{code}</code>"),
         );
     }
     value
@@ -579,9 +575,8 @@ pub fn strip_html(html: &str) -> String {
     out
 }
 
-/// Project semantic cards into Telegram's rich-message format. Telegram has
-/// no generic card object, so the native deliverable is a safe HTML message
-/// with a title and key/value rows, chunked with valid tags at each boundary.
+/// Project semantic cards into Telegram HTML. The readable projection walks
+/// nested fields too, so unfamiliar card shapes retain their actual data.
 pub fn structured_card_chunks(
     cards: &[crate::StructuredOutput],
     max_chars: Option<usize>,
@@ -589,39 +584,11 @@ pub fn structured_card_chunks(
     let markdown = cards
         .iter()
         .map(|card| {
-            let title = card.payload["title"]
-                .as_str()
-                .unwrap_or(&card.semantic_type);
-            let fields: Vec<String> = card
-                .payload
-                .as_object()
-                .into_iter()
-                .flat_map(|object| object.iter())
-                .filter(|(key, value)| {
-                    key.as_str() != "title"
-                        && (value.is_string() || value.is_number() || value.is_boolean())
-                })
-                .take(12)
-                .map(|(key, value)| {
-                    format!(
-                        "- **{key}:** {}",
-                        value
-                            .as_str()
-                            .map(str::to_owned)
-                            .unwrap_or_else(|| value.to_string())
-                    )
-                })
-                .collect();
-            if fields.is_empty() {
-                crate::structured_markdown(card)
-                    .split_once("\n\n```json")
-                    .map_or_else(
-                        || crate::structured_markdown(card),
-                        |(summary, _)| summary.to_owned(),
-                    )
-            } else {
-                format!("### {title}\n\n{}", fields.join("\n"))
-            }
+            let source = crate::structured_markdown(card);
+            source
+                .split_once("\n\n```json")
+                .map_or(source.as_str(), |(summary, _)| summary)
+                .to_owned()
         })
         .collect::<Vec<_>>()
         .join("\n\n---\n\n");

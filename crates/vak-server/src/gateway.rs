@@ -3590,7 +3590,7 @@ async fn execute_turn_chain(
             match outcome {
                 Ok((o, log)) => {
                     let err = outcome_is_error(&o);
-                    let text = crate::projection::text_with_run_cards(&log, outcome_text(&o));
+                    let text = crate::projection::channel_narration(&log, outcome_text(&o));
                     if let Some(tx) = reply_tx {
                         let _ = tx.send(ChatReply {
                             text: text.clone(),

@@ -996,13 +996,37 @@ impl ChannelAdapter for DiscordAdapter {
                 }
                 (
                     format!("{}/channels/{channel_id}/messages", self.api_base),
-                    serde_json::json!({ "content": content }),
+                    serde_json::json!({ "content": content, "allowed_mentions": {"parse": []} }),
                 )
             },
             |request| request.header("Authorization", format!("Bot {}", self.bot_token)),
             "discord createMessage",
         )
-        .await
+        .await?;
+        let cards = packet
+            .structured_cards()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        if !cards.is_empty() {
+            let response = reqwest::Client::new()
+                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
+                .header("Authorization", format!("Bot {}", self.bot_token))
+                .json(&serde_json::json!({
+                    "embeds": vak_delivery::discord::structured_card_embeds(&cards),
+                    "allowed_mentions": {"parse": []},
+                }))
+                .send()
+                .await
+                .map_err(|error| format!("discord createMessage: {error}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "discord createMessage returned {}",
+                    response.status()
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1042,7 +1066,54 @@ impl ChannelAdapter for SlackAdapter {
             |request| request.bearer_auth(&self.bot_token),
             "slack chat.postMessage",
         )
-        .await
+        .await?;
+        let cards = packet
+            .structured_cards()
+            .into_iter()
+            .cloned()
+            .collect::<Vec<_>>();
+        if !cards.is_empty() {
+            let fallback = cards
+                .iter()
+                .map(|card| {
+                    let source = vak_delivery::structured_markdown(card);
+                    source
+                        .split_once("\n\n```json")
+                        .map_or(source.as_str(), |(text, _)| text)
+                        .to_owned()
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            let response = reqwest::Client::new()
+                .post(format!("{}/chat.postMessage", self.api_base))
+                .bearer_auth(&self.bot_token)
+                .json(&serde_json::json!({
+                    "channel": channel_id,
+                    "text": fallback.chars().take(2500).collect::<String>(),
+                    "blocks": vak_delivery::slack::structured_card_blocks(&cards),
+                    "parse": "none", "link_names": false,
+                }))
+                .send()
+                .await
+                .map_err(|error| format!("slack chat.postMessage: {error}"))?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "slack chat.postMessage returned {}",
+                    response.status()
+                ));
+            }
+            let result: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|error| format!("slack response: {error}"))?;
+            if result["ok"].as_bool() != Some(true) {
+                return Err(format!(
+                    "slack chat.postMessage not ok: {}",
+                    result["error"].as_str().unwrap_or("?")
+                ));
+            }
+        }
+        Ok(())
     }
 }
 
@@ -1071,6 +1142,18 @@ async fn post_chunks(
             .map_err(|error| format!("{operation}: {error}"))?;
         if !resp.status().is_success() {
             return Err(format!("{operation} returned {}", resp.status()));
+        }
+        if operation.starts_with("slack ") {
+            let result: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|error| format!("{operation} response: {error}"))?;
+            if result["ok"].as_bool() != Some(true) {
+                return Err(format!(
+                    "{operation} not ok: {}",
+                    result["error"].as_str().unwrap_or("?")
+                ));
+            }
         }
     }
     Ok(())

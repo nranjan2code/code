@@ -1,6 +1,15 @@
 # Channel delivery and formatting audit — 2026-10-02
 
-Status: audit complete; defects remain open. No production behavior changed.
+Status: audit complete; implementation repairs are in progress on `main`.
+
+The pre-fix probe output below is a baseline, not a current result. This repair
+pass changes production behavior for C01-C03, C05-C12, C15-C17, and the
+immediate/proactive card duplication and provider-result paths. It does not
+close durable reply replay (C04), complete Slack pagination/cold-start recovery
+(C13), per-chunk outbox receipts/pacing (C14), or the broader feature-parity
+items in C18. The remaining transport and live-client acceptance work is listed
+at the end; do not treat the baseline probe output as validation of the new
+code.
 
 The channel output problems are real implementation defects, not just weak model
 formatting. The most serious failures remove answer content, lose replies, repeat
@@ -25,12 +34,14 @@ live-provider or client screenshot acceptance is claimed.
 
 Reproduction source and output are in
 [`../research/channel-delivery-audit-2026-10-02/`](../research/channel-delivery-audit-2026-10-02/).
-Run `python3 docs/research/channel-delivery-audit-2026-10-02/run-probes.py`.
-The script builds the actual delivery library and links the probes against it;
-it does not reimplement the renderers. It deliberately exits nonzero for unmet
-expectations: **13 tests, 12 failures, one passing basic-formatting control**.
+Run `python3 docs/research/channel-delivery-audit-2026-10-02/run-probes.py` to
+reproduce the pre-fix baseline. The script builds the actual delivery library
+and links probes against it; it does not reimplement the renderers. It
+deliberately exits nonzero for unmet expectations: **13 probes, 12 baseline
+failures, one passing basic-formatting control**. It has not been rerun against
+the repair pass.
 
-The existing `cargo test -p vak-delivery --tests` suite passes: **163 tests**,
+Before the repair pass, `cargo test -p vak-delivery --tests` passed: **163 tests**,
 including the tests containing the large audit sweeps. Its success does not
 establish correct channel output: see the verification section below. The
 evidence folder includes its result summary and hashes of inspected source files.

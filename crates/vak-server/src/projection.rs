@@ -148,6 +148,30 @@ pub(crate) fn text_with_run_cards(session: &SessionLog, narration: String) -> St
     }
 }
 
+/// Keep the model's short narration separate from the structured cards.
+/// Channel bridges have native card projections; including these same cards
+/// in the narration made Discord/Slack show each result twice.
+pub(crate) fn channel_narration(session: &SessionLog, narration: String) -> String {
+    let session_id = session
+        .header()
+        .map(|header| header.session_id.clone())
+        .unwrap_or_default();
+    let timeline = snapshot(&session_id, session);
+    let has_card = timeline.items.iter().any(|item| {
+        item.kind == OutputKind::Card
+            && matches!(
+                &item.content,
+                OutputContent::Structured { .. } | OutputContent::Adaptive { .. }
+            )
+    });
+    if !has_card {
+        return narration;
+    }
+    vak_delivery::supplemental_card_note(&narration)
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Typed cards from the latest turn, retained separately for channel-native
 /// renderers. The text fallback remains alongside them for older consumers.
 pub(crate) fn run_cards(session: &SessionLog) -> Vec<vak_delivery::StructuredOutput> {
@@ -3314,7 +3338,7 @@ mod tests {
             Some("needs_work")
         );
         assert!(first.items.iter().any(|item| matches!(
-            item.content,
+            &item.content,
             OutputContent::Structured { ref output } if output.semantic_type == "link.preview"
         )));
     }

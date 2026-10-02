@@ -1371,26 +1371,69 @@ fn chunk_markdown_preserving_fences(text: &str, max_chars: Option<usize>) -> Vec
     for line in text.split_inclusive('\n') {
         let trimmed = line.trim_start().trim_end_matches('\n');
         let is_fence_marker = trimmed.starts_with("```");
-
-        let reserve = if in_fence { 4 } else { 0 }; // room for a closing "```\n"
-        if !current.is_empty()
-            && current.chars().count() + line.chars().count() + reserve > max_chars
-        {
-            if in_fence {
-                current.push_str("```\n");
-            }
-            chunks.push(std::mem::take(&mut current));
-            if in_fence {
-                current.push_str(&fence_header);
-                current.push('\n');
-            }
-        }
-        current.push_str(line);
         if is_fence_marker {
-            if !in_fence {
+            let closing = in_fence;
+            let reserve = if closing { 0 } else { 4 };
+            if !current.is_empty()
+                && current.chars().count() + line.chars().count() + reserve > max_chars
+            {
+                if closing {
+                    current.push_str("```\n");
+                    chunks.push(std::mem::take(&mut current));
+                    in_fence = false;
+                    continue;
+                }
+                chunks.push(std::mem::take(&mut current));
+            }
+            if !closing {
                 fence_header = trimmed.to_string();
             }
+            current.push_str(line);
             in_fence = !in_fence;
+            continue;
+        }
+
+        let mut rest = line;
+        while !rest.is_empty() {
+            let reserve = if in_fence { 4 } else { 0 };
+            if current.chars().count() + rest.chars().count() + reserve <= max_chars {
+                current.push_str(rest);
+                break;
+            }
+
+            let is_fence_header_only = in_fence && current == format!("{}\n", fence_header);
+            if !current.is_empty() && !is_fence_header_only {
+                if in_fence {
+                    current.push_str("```\n");
+                }
+                chunks.push(std::mem::take(&mut current));
+                if in_fence {
+                    current.push_str(&fence_header);
+                    current.push('\n');
+                }
+            }
+
+            let available = max_chars
+                .saturating_sub(current.chars().count())
+                .saturating_sub(reserve)
+                .max(1);
+            let split = rest
+                .char_indices()
+                .nth(available)
+                .map_or(rest.len(), |(index, _)| index);
+            let (part, tail) = rest.split_at(split);
+            current.push_str(part);
+            rest = tail;
+            if !rest.is_empty() {
+                if in_fence {
+                    current.push_str("```\n");
+                }
+                chunks.push(std::mem::take(&mut current));
+                if in_fence {
+                    current.push_str(&fence_header);
+                    current.push('\n');
+                }
+            }
         }
     }
     if !current.trim().is_empty() {

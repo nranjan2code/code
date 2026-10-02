@@ -288,7 +288,11 @@ impl DiscordBridge {
             Ok(req) => req
                 .with_attachments(attachments)
                 .waiting()
-                .with_bot_id(self.bot_id.clone()),
+                .with_bot_id(self.bot_id.clone())
+                .with_request_id(Some(format!(
+                    "discord:{}:{}",
+                    message.channel_id, message.id
+                ))),
             Err(e) => {
                 return GatewayReply {
                     chunks: vec![format!("(bridge refused to send: {e})")],
@@ -314,7 +318,13 @@ impl DiscordBridge {
                     let chunks = delivery
                         .as_ref()
                         .map(vak_delivery::DeliveryPacket::channel_text_chunks)
-                        .unwrap_or_else(|e| vec![format!("(delivery failed: {e})")]);
+                        .unwrap_or_else(|_| {
+                            vec![vak_delivery::discord::markdown_to_discord(
+                                v["text"]
+                                    .as_str()
+                                    .unwrap_or("The response could not be formatted."),
+                            )]
+                        });
                     GatewayReply {
                         chunks,
                         session_id,
@@ -343,15 +353,21 @@ impl DiscordBridge {
             .as_ref()
             .map(vak_delivery::DeliveryPacket::structured_cards)
             .unwrap_or_default();
+        for chunk in &reply.chunks {
+            let resp = http()
+                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
+                .header("Authorization", format!("Bot {}", self.bot_token))
+                .json(&serde_json::json!({ "content": chunk, "allowed_mentions": {"parse": []} }))
+                .send()
+                .await
+                .map_err(|e| format!("discord createMessage: {e}"))?;
+            if !resp.status().is_success() {
+                return Err(format!("discord createMessage returned {}", resp.status()));
+            }
+        }
         if !cards.is_empty() {
             let cards = cards.into_iter().cloned().collect::<Vec<_>>();
-            let chunks = if reply.chunks.is_empty() {
-                vec![String::new()]
-            } else {
-                reply.chunks.clone()
-            };
             let body = serde_json::json!({
-                "content": chunks[0],
                 "embeds": vak_delivery::discord::structured_card_embeds(&cards),
                 "allowed_mentions": {"parse": []},
             });
@@ -359,34 +375,6 @@ impl DiscordBridge {
                 .post(format!("{}/channels/{channel_id}/messages", self.api_base))
                 .header("Authorization", format!("Bot {}", self.bot_token))
                 .json(&body)
-                .send()
-                .await
-                .map_err(|e| format!("discord createMessage: {e}"))?;
-            if !resp.status().is_success() {
-                return Err(format!("discord createMessage returned {}", resp.status()));
-            }
-            for chunk in chunks.iter().skip(1) {
-                let response = http()
-                    .post(format!("{}/channels/{channel_id}/messages", self.api_base))
-                    .header("Authorization", format!("Bot {}", self.bot_token))
-                    .json(&serde_json::json!({"content":chunk,"allowed_mentions":{"parse":[]}}))
-                    .send()
-                    .await
-                    .map_err(|e| format!("discord createMessage: {e}"))?;
-                if !response.status().is_success() {
-                    return Err(format!(
-                        "discord createMessage returned {}",
-                        response.status()
-                    ));
-                }
-            }
-            return Ok(());
-        }
-        for chunk in &reply.chunks {
-            let resp = http()
-                .post(format!("{}/channels/{channel_id}/messages", self.api_base))
-                .header("Authorization", format!("Bot {}", self.bot_token))
-                .json(&serde_json::json!({ "content": chunk }))
                 .send()
                 .await
                 .map_err(|e| format!("discord createMessage: {e}"))?;

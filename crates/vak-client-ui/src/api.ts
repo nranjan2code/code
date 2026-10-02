@@ -563,8 +563,8 @@ export interface DiscoveredSkill {
 
 export interface CustomCommand { name: string; description: string; source?: string; }
 
-export function listCommands(): Promise<{ commands: CustomCommand[] }> {
-  return req("/commands");
+export function listCommands(agent?: string): Promise<{ commands: CustomCommand[] }> {
+  return req(withAgent("/commands", agent));
 }
 
 export interface InstalledPlugin {

@@ -390,7 +390,18 @@ impl TelegramBridge {
                 }
             }
             let reply = self
-                .process(u.chat_id, u.sender_id, &text, &attachments)
+                .process(
+                    u.chat_id,
+                    u.sender_id,
+                    &text,
+                    &attachments,
+                    &format!(
+                        "telegram:{}:{}:{}",
+                        self.bot_id.as_deref().unwrap_or("default"),
+                        u.chat_id,
+                        u.update_id
+                    ),
+                )
                 .await;
             // Deliver whatever we got — an error notice beats silence, but a
             // failed send must not lose our offset progress either way.
@@ -490,6 +501,7 @@ impl TelegramBridge {
         sender_id: i64,
         text: &str,
         attachments: &[serde_json::Value],
+        request_id: &str,
     ) -> GatewayReply {
         // 0c-03: real per-user chat/sender, not a fixed placeholder — see
         // InboundRequest::new for why that distinction is enforced here.
@@ -503,7 +515,8 @@ impl TelegramBridge {
                 .with_attachments(attachments.to_vec())
                 .waiting()
                 .accepting_files()
-                .with_bot_id(self.bot_id.clone()),
+                .with_bot_id(self.bot_id.clone())
+                .with_request_id(Some(request_id.to_owned())),
             Err(e) => {
                 return GatewayReply {
                     text: format!("(bridge refused to send: {e})"),
@@ -686,13 +699,29 @@ impl TelegramBridge {
         let rendered = reply.delivery.as_ref().and_then(|packet| {
             let body = serde_json::json!({"delivery": packet});
             super::prepared_packet(body, "telegram").ok().map(|packet| {
+                let cards = packet
+                    .structured_cards()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let card_chunks =
+                    vak_delivery::telegram::structured_card_chunks(&cards, Some(3900));
+                let text_chunks = packet.channel_text_chunks();
                 let has_surface_chunks = !packet.chunks.is_empty();
-                (packet.channel_text_chunks(), has_surface_chunks)
+                let mut chunks = card_chunks;
+                chunks.extend(text_chunks);
+                (chunks, has_surface_chunks)
             })
         });
         let (chunks, parse_html) = match rendered {
             Some((chunks, parse_html)) if !chunks.is_empty() => (chunks, parse_html),
-            _ => (vec![reply.text.clone()], false),
+            _ => (
+                vak_delivery::telegram::split_html_chunks(
+                    &vak_delivery::telegram::markdown_to_html(&reply.text),
+                    Some(3900),
+                ),
+                true,
+            ),
         };
         for chunk in chunks {
             let url = format!("{}/bot{}/sendMessage", self.api_base, self.bot_token);
@@ -706,24 +735,64 @@ impl TelegramBridge {
             }
             let resp = http().post(&url).json(&body).send().await;
             match resp {
-                Ok(r) if r.status().is_success() => {}
+                Ok(r) if r.status().is_success() => {
+                    let status = r.status();
+                    let response: Value = r
+                        .json()
+                        .await
+                        .map_err(|e| telegram_http_error("sendMessage body", &e))?;
+                    if response["ok"].as_bool() != Some(true) {
+                        let description =
+                            response["description"].as_str().unwrap_or("unknown error");
+                        if parse_html && response["error_code"].as_u64() == Some(400) {
+                            let fallback = serde_json::json!({
+                                "chat_id": chat_id,
+                                "text": crate::channels::strip_tags(&chunk),
+                            });
+                            let retry = http()
+                                .post(&url)
+                                .json(&fallback)
+                                .send()
+                                .await
+                                .map_err(|e| telegram_http_error("sendMessage retry", &e))?;
+                            let retry_status = retry.status();
+                            let retry_body: Value = retry
+                                .json()
+                                .await
+                                .map_err(|e| telegram_http_error("sendMessage retry body", &e))?;
+                            if retry_status.is_success() && retry_body["ok"].as_bool() == Some(true)
+                            {
+                                continue;
+                            }
+                            return Err(format!(
+                                "sendMessage returned {status} ({description}); plain retry returned {retry_status}"
+                            ));
+                        }
+                        return Err(format!("sendMessage rejected ({status}): {description}"));
+                    }
+                }
                 Ok(r) => {
                     let status = r.status();
                     // Converter edge-case guard: resend that chunk as plain
                     // text so a formatting bug degrades to ugly, not lost.
                     if parse_html && status.as_u16() == 400 {
-                        eprintln!(
-                            "[telegram] HTML rejected ({status}); falling back to plain text — \
-                             chunk head: {}",
-                            chunk.chars().take(80).collect::<String>()
-                        );
+                        eprintln!("[telegram] HTML rejected ({status}); retrying as plain text");
                         let fallback = serde_json::json!({
                             "chat_id": chat_id,
                             "text": crate::channels::strip_tags(&chunk),
                         });
                         let r2 = http().post(&url).json(&fallback).send().await;
                         match r2 {
-                            Ok(r2) if r2.status().is_success() => continue,
+                            Ok(r2) if r2.status().is_success() => {
+                                let status = r2.status();
+                                let body: Value = r2.json().await.map_err(|e| {
+                                    telegram_http_error("sendMessage retry body", &e)
+                                })?;
+                                if body["ok"].as_bool() == Some(true) {
+                                    continue;
+                                }
+                                return Err(format!("sendMessage plain retry rejected ({status})"));
+                            }
                             Ok(r2) => {
                                 return Err(format!(
                                     "sendMessage returned {} (plain retry: {})",
@@ -769,8 +838,13 @@ impl TelegramBridge {
             .send()
             .await
             .map_err(|e| telegram_http_error("sendDocument", &e))?;
-        if !sent.status().is_success() {
-            return Err(format!("sendDocument returned {}", sent.status()));
+        let status = sent.status();
+        let response: Value = sent
+            .json()
+            .await
+            .map_err(|e| telegram_http_error("sendDocument body", &e))?;
+        if !status.is_success() || response["ok"].as_bool() != Some(true) {
+            return Err(format!("sendDocument rejected ({status})"));
         }
         Ok(())
     }
@@ -901,14 +975,13 @@ impl TelegramBridge {
 
     /// Run until the process is killed. Transient poll/send failures back
     /// off and retry; they never drop the update stream position.
-    /// Non-acking ownership probe: `timeout=0, offset=-1` returns at most
-    /// the LAST update and acknowledges nothing, so probing is safe before
-    /// the real loop decides where to start.
+    /// Non-acking ownership probe. Omitting the offset reads the earliest
+    /// unconfirmed update without deleting older pending updates.
     async fn probe_ownership(&self) -> Result<(), PollBlock> {
         let url = format!("{}/bot{}/getUpdates", self.api_base, self.bot_token);
         let resp = http()
             .get(&url)
-            .query(&[("timeout", "0"), ("offset", "-1")])
+            .query(&[("timeout", "0")])
             .send()
             .await
             .map_err(|_| PollBlock::Transient)?;

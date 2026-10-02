@@ -1,10 +1,7 @@
 //! GFM-to-Slack `mrkdwn` projection.
 //!
-//! Slack's `mrkdwn` dialect diverges from GFM in exactly the spots that
-//! matter most: bold uses a single `*`, italic uses `_`, links use
-//! `<url|text>`, there is no heading syntax and no table syntax at all.
-//! This module renders a conservative GFM subset into text that actually
-//! looks right when Slack's client parses it.
+//! Slack mrkdwn differs from GFM in emphasis and links. This module projects
+//! a conservative subset and renders unsupported tables as aligned text.
 
 /// Convert a conservative GFM subset to Slack `mrkdwn`.
 pub fn markdown_to_mrkdwn(markdown: &str) -> String {
@@ -71,7 +68,7 @@ pub fn markdown_to_mrkdwn(markdown: &str) -> String {
         }
 
         if let Some(after) = trimmed.strip_prefix('#')
-            && after.starts_with(' ')
+            && (after.starts_with(' ') || after.starts_with('#'))
         {
             let text = after.trim().trim_start_matches('#').trim();
             if !text.is_empty() {
@@ -402,25 +399,34 @@ pub fn structured_card_blocks(cards: &[crate::StructuredOutput]) -> Vec<serde_js
             break;
         }
         blocks.push(serde_json::json!({"type":"header","text":{"type":"plain_text","text":title.chars().take(150).collect::<String>()}}));
-        let fields: Vec<serde_json::Value> = card.payload.as_object().into_iter().flat_map(|object| object.iter())
-            .filter(|(key, value)| key.as_str() != "title" && (value.is_string() || value.is_number() || value.is_boolean()))
-            .take(10)
-            .map(|(key, value)| serde_json::json!({"type":"plain_text","text":format!("{}\n{}", key, value.as_str().map(str::to_owned).unwrap_or_else(|| value.to_string()).chars().take(1900).collect::<String>())}))
-            .collect();
-        if !fields.is_empty() {
-            for part in fields.chunks(2).take(50usize.saturating_sub(blocks.len())) {
-                blocks.push(serde_json::json!({"type":"section","fields":part}));
-            }
-        } else {
-            let summary = crate::structured_markdown(card)
-                .split_once("\n\n```json")
-                .map_or_else(
-                    || crate::structured_markdown(card),
-                    |(summary, _)| summary.to_owned(),
+        let source = crate::structured_markdown(card);
+        let summary = source
+            .split_once("\n\n```json")
+            .map_or(source.as_str(), |(summary, _)| summary);
+        let mut rest = summary;
+        while !rest.is_empty() && blocks.len() < 50 {
+            let end = rest
+                .char_indices()
+                .take_while(|(index, _)| *index < 2800)
+                .map(|(index, _)| index)
+                .last()
+                .unwrap_or(rest.len());
+            let split = if end < rest.len() {
+                rest[..end]
+                    .rfind('\n')
+                    .filter(|index| *index > 0)
+                    .unwrap_or(end)
+            } else {
+                end
+            };
+            let (part, tail) = rest.split_at(split);
+            let part = part.trim();
+            if !part.is_empty() {
+                blocks.push(
+                    serde_json::json!({"type":"section","text":{"type":"mrkdwn","text":part}}),
                 );
-            if blocks.len() < 50 {
-                blocks.push(serde_json::json!({"type":"section","text":{"type":"plain_text","text":summary.chars().take(2900).collect::<String>()}}));
             }
+            rest = tail.trim_start_matches('\n');
         }
     }
     blocks

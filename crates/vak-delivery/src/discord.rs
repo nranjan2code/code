@@ -1,10 +1,7 @@
 //! GFM-to-Discord markdown projection.
 //!
-//! Discord's message markdown is close to GFM already (bold, italic,
-//! strikethrough, inline/fenced code, blockquotes, and `#`/`##`/`###`
-//! headings all match). The two real gaps are links — `[text](url)` is not
-//! turned into a hyperlink in a plain message, only inside embeds — and
-//! tables, which Discord has no syntax for at all.
+//! Discord supports the common GFM constructs natively, including headings
+//! and masked links. Tables are lowered to aligned code blocks.
 pub fn markdown_to_discord(markdown: &str) -> String {
     let mut out = String::with_capacity(markdown.len() + 64);
     let mut in_fence = false;
@@ -73,36 +70,11 @@ pub fn markdown_to_discord(markdown: &str) -> String {
             continue;
         }
 
-        if let Some(after) = trimmed.strip_prefix('#')
-            && after.starts_with(' ')
-        {
-            let text = after.trim().trim_start_matches('#').trim();
-            if !text.is_empty() {
-                if blank_pending && !out.is_empty() {
-                    out.push('\n');
-                }
-                blank_pending = false;
-                out.push_str("<b>");
-                out.push_str(&replace_links(text));
-                out.push_str("</b>\n");
-                continue;
-            }
-        }
-
-        if let Some(rest) = strip_task_item(trimmed) {
-            if blank_pending && !out.is_empty() {
-                out.push('\n');
-            }
-            blank_pending = false;
-            out.push_str(&format!("{rest}\n"));
-            continue;
-        }
-
         if blank_pending && !out.is_empty() {
             out.push('\n');
         }
         blank_pending = false;
-        out.push_str(&replace_links(line));
+        out.push_str(line);
         out.push('\n');
     }
     flush_table(&mut out, &mut table);
@@ -119,39 +91,6 @@ fn is_horizontal_rule(trimmed: &str) -> bool {
 
 fn is_spoiler(trimmed: &str) -> bool {
     trimmed.starts_with("||") && trimmed.ends_with("||") && trimmed.len() > 4
-}
-
-/// Discord suppresses the hyperlink for a plain-message `[text](url)`; it
-/// only renders the text and the raw URL runs together. Render both the
-/// label and a wrapped URL (`<...>` suppresses Discord's own link-preview
-/// embed) so the destination is still visible and doesn't spam an embed.
-fn replace_links(value: &str) -> String {
-    let mut out = String::new();
-    let mut rest = value;
-    while let Some(open) = rest.find('[') {
-        let Some(relative_text_end) = rest[open..].find("](") else {
-            break;
-        };
-        let text_end = open + relative_text_end;
-        let Some(relative_url_end) = rest[text_end..].find(')') else {
-            break;
-        };
-        let url_end = text_end + relative_url_end;
-        let url = &rest[text_end + 2..url_end];
-        if url.contains(['<', '>', ' ']) {
-            out.push_str(&rest[..open + 1]);
-            rest = &rest[open + 1..];
-            continue;
-        }
-        out.push_str(&rest[..open]);
-        out.push_str(&rest[open + 1..text_end]);
-        out.push_str(" (<");
-        out.push_str(url);
-        out.push_str(">)");
-        rest = &rest[url_end + 1..];
-    }
-    out.push_str(rest);
-    out
 }
 
 fn flush_table(out: &mut String, rows: &mut Vec<String>) {

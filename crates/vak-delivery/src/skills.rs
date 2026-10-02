@@ -1505,7 +1505,7 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
             title,
             p["artifact_path"].as_str().unwrap_or_default()
         )),
-        _ => {}
+        _ => append_readable_fields(p, "", &mut lines, 0),
     }
     let json = serde_json::to_string_pretty(p).unwrap_or_else(|_| p.to_string());
     let fence = "`".repeat(
@@ -1518,6 +1518,46 @@ pub fn structured_markdown(output: &StructuredOutput) -> String {
     );
     lines.push(format!("{fence}json\n{json}\n{fence}"));
     lines.join("\n\n")
+}
+
+/// Add nested fields to a readable summary. Channel text is a user-facing
+/// projection, so validated objects and arrays must not disappear behind a
+/// title merely because their semantic type has no bespoke renderer yet.
+fn append_readable_fields(value: &Value, path: &str, lines: &mut Vec<String>, depth: usize) {
+    if lines.len() >= 500 || depth >= 12 {
+        return;
+    }
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                if key == "title" && path.is_empty() {
+                    continue;
+                }
+                let child = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{path} › {key}")
+                };
+                append_readable_fields(value, &child, lines, depth + 1);
+                if lines.len() >= 500 {
+                    break;
+                }
+            }
+        }
+        Value::Array(items) => {
+            for (index, value) in items.iter().enumerate() {
+                let child = format!("{path} · {}", index + 1);
+                append_readable_fields(value, &child, lines, depth + 1);
+                if lines.len() >= 500 {
+                    break;
+                }
+            }
+        }
+        Value::Null => {}
+        Value::String(value) if value.is_empty() => {}
+        Value::String(value) => lines.push(format!("{path}: {value}")),
+        value => lines.push(format!("{path}: {value}")),
+    }
 }
 
 /// Replace validated rich fences in-place with their deterministic text
