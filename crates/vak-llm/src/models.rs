@@ -282,17 +282,28 @@ fn context_from_json(provider: &str, json: &serde_json::Value) -> Option<ModelCo
             })
         }
         _ => {
-            let input_tokens = data
-                .get("top_provider")
-                .and_then(|v| v.get("context_length"))
-                .and_then(|v| v.as_u64())
-                .or_else(|| data.get("context_length").and_then(|v| v.as_u64()))?;
+            // OpenRouter nests it under `top_provider`; Anthropic reports
+            // `max_input_tokens`/`max_tokens`; vLLM-style servers `max_model_len`;
+            // others `context_length`/`context_window`. OpenAI itself publishes
+            // none, which stays `None` (the configured window applies).
+            let top = |key: &str| {
+                data.get("top_provider")
+                    .and_then(|v| v.get(key))
+                    .and_then(|v| v.as_u64())
+            };
+            let field = |key: &str| data.get(key).and_then(|v| v.as_u64());
+            let input_tokens = top("context_length")
+                .or_else(|| field("context_length"))
+                .or_else(|| field("max_input_tokens"))
+                .or_else(|| field("max_model_len"))
+                .or_else(|| field("context_window"))
+                .or_else(|| field("max_context_length"))?;
             Some(ModelContext {
                 input_tokens,
-                output_tokens: data
-                    .get("top_provider")
-                    .and_then(|v| v.get("max_completion_tokens"))
-                    .and_then(|v| v.as_u64()),
+                output_tokens: top("max_completion_tokens")
+                    .or_else(|| field("max_completion_tokens"))
+                    .or_else(|| field("max_output_tokens"))
+                    .or_else(|| field("max_tokens")),
                 quantisation: None,
             })
         }
@@ -362,6 +373,42 @@ pub async fn model_context(
                     }));
                 }
             }
+        }
+        "anthropic" => {
+            let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
+            let url = if base.ends_with("/v1") {
+                format!("{base}/models/{model}")
+            } else {
+                format!("{base}/v1/models/{model}")
+            };
+            send_admitted(
+                provider_adapter.as_ref(),
+                provider,
+                client
+                    .get(url)
+                    .header("x-api-key", &auth.api_key)
+                    .header("anthropic-version", crate::anthropic::ANTHROPIC_VERSION),
+            )
+            .await
+        }
+        // OpenAI-compatible endpoints: ask for the one model. A server that
+        // does not publish limits answers without them, and that is `None`.
+        "openai" | "openai-responses" | "openrouter-responses" | "bedrock" | "opencode-zen" => {
+            let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
+            let response = send_admitted(
+                provider_adapter.as_ref(),
+                provider,
+                client
+                    .get(format!("{base}/models/{model}"))
+                    .bearer_auth(&auth.api_key),
+            )
+            .await;
+            return match response {
+                Ok(res) if res.status().is_success() => {
+                    Ok(context_from_json(provider, &read_json(res).await?))
+                }
+                _ => Ok(None),
+            };
         }
         _ => return Ok(None),
     }
@@ -620,6 +667,24 @@ mod tests {
                 quantisation: None,
             })
         );
+    }
+
+    #[test]
+    fn context_is_read_from_anthropic_and_vllm_shapes_and_absent_for_openai() {
+        let anthropic =
+            serde_json::json!({"id": "m", "max_input_tokens": 200000, "max_tokens": 64000});
+        let got = context_from_json("anthropic", &anthropic).unwrap();
+        assert_eq!(
+            (got.input_tokens, got.output_tokens),
+            (200_000, Some(64_000))
+        );
+        let vllm = serde_json::json!({"id": "m", "max_model_len": 32768});
+        assert_eq!(
+            context_from_json("openai", &vllm).unwrap().input_tokens,
+            32_768
+        );
+        let openai = serde_json::json!({"id": "gpt", "object": "model", "owned_by": "openai"});
+        assert!(context_from_json("openai", &openai).is_none());
     }
 
     #[test]

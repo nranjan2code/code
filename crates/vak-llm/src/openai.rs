@@ -402,7 +402,8 @@ pub(crate) fn map_status_error(status: u16, body: &str, retry_after: Option<u64>
             over_length @ LlmError::Context(_) => over_length,
             _ => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
         },
-        404 | 413 | 422 => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
+        413 => LlmError::Context(message),
+        404 | 422 => LlmError::invalid_request_for_endpoint("/v1/chat/completions", message),
         429 => LlmError::from_rate_limit_code(code, message, retry_after),
         503 | 529 => match retry_after {
             Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {

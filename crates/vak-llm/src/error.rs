@@ -42,11 +42,16 @@ pub enum LlmError {
 /// fit the model's context window" rather than some other malformed
 /// request. Keyed off the provider's own wording rather than a status code
 /// alone, because 400 also covers unrelated validation failures.
-const OVER_LENGTH_MARKERS: [&str; 4] = [
+const OVER_LENGTH_MARKERS: [&str; 9] = [
     "exceeds the model's maximum context length", // Ollama
     "context_length_exceeded",                    // OpenAI
-    "maximum context length",                     // OpenAI
+    "maximum context length",                     // OpenAI, vLLM, OpenRouter
     "prompt is too long",                         // Anthropic
+    "exceeds the maximum number of tokens",       // Gemini
+    "exceeds the available context size",         // llama.cpp server
+    "input is too long",                          // Bedrock
+    "reduce the length of the messages",          // OpenAI (older)
+    "too large for model with",                   // Mistral
 ];
 
 impl LlmError {
@@ -177,6 +182,24 @@ impl LlmError {
 #[cfg(test)]
 mod tests {
     use super::LlmError;
+
+    #[test]
+    fn classify_400_detects_gemini_llamacpp_and_bedrock_phrasing() {
+        for message in [
+            "The input token count (1100000) exceeds the maximum number of tokens allowed (1048576).",
+            "the request exceeds the available context size, try increasing it",
+            "Input is too long for requested model.",
+        ] {
+            assert!(
+                matches!(LlmError::classify_400(message.into()), LlmError::Context(_)),
+                "{message}"
+            );
+        }
+        assert!(matches!(
+            LlmError::classify_400("unknown field `foo`".into()),
+            LlmError::InvalidRequest(_)
+        ));
+    }
 
     #[test]
     fn terminal_quota_429_is_not_retried() {

@@ -230,7 +230,8 @@ fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> LlmErr
     match status {
         401 | 403 => LlmError::Auth(message),
         400 => LlmError::classify_400(message),
-        404 | 413 | 422 => LlmError::InvalidRequest(message),
+        413 => LlmError::Context(message),
+        404 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::from_rate_limit_code(code, message, retry_after),
         503 | 529 => match retry_after {
             Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {

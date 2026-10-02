@@ -342,7 +342,8 @@ pub fn map_status_error(status: u16, body: &str, retry_after: Option<u64>) -> Ll
     match status {
         401 | 403 => LlmError::Auth(message),
         400 => LlmError::classify_400(message),
-        404 | 413 | 422 => LlmError::InvalidRequest(message),
+        413 => LlmError::Context(message),
+        404 | 422 => LlmError::InvalidRequest(message),
         429 => LlmError::RateLimit {
             message,
             retry_after_secs: retry_after,
