@@ -1,11 +1,14 @@
 # Main consolidation — 2026-10-02
 
-Status: integrated and validated on `main`; push and checkout cleanup in progress.
+Status: complete; validated, pushed to `origin/main`, and checkout cleanup finished.
 
 The maintainer requested consolidation of all pending work into `main`, a push
 to `origin`, and removal of the other local branches and worktrees. The primary
 checkout is `code`. Integration starts from `dd2ea6633` without rewriting the
-published history or changing the workspace version.
+published history or changing the workspace version. Commit `04b747243`
+contains the consolidation and is the current `origin/main` tip. The repository
+has one local branch and one worktree, both on `main`; the remote has only
+`main` as a branch.
 
 ## Sources and disposition
 
@@ -27,7 +30,10 @@ published history or changing the workspace version.
 The initial inventory, each worktree's binary diff and untracked files, all six
 stash patches, Git refs and a verified full-history bundle were saved outside
 the checkout in `consolidation-backup-2026-10-02`. Recovery data is retained
-after branch and worktree cleanup.
+after branch and worktree cleanup. The verified bundle is outside the
+repository at
+`/Users/nisheethranjan/Projects/Vak/consolidation-backup-2026-10-02/all-work.bundle`
+(SHA-256 `f601ed992a7dfb557878ddd357247def1c9fbdc6aa79ed4913bd5ef870619150`).
 
 The full test gate initially rejected two presentation-only `weather` labels
 in the built-in seeds. Its existing exceptions already allow the same card
