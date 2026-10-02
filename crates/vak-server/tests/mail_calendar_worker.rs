@@ -56,6 +56,15 @@ async fn email_mime_is_parsed_in_the_isolated_worker() {
     assert_eq!(parsed["body_status"], "available");
     assert!(!parsed.to_string().contains("hidden html"));
 
+    let html_only = b"Content-Type: text/html\r\n\r\n<p>Safe <strong>formatted</strong> text</p><img src=\"https://tracking.example.test/pixel\"><script>active content</script>";
+    let html_parsed = vak_tools::broker::parse_mail_mime(worker(), html_only)
+        .await
+        .unwrap();
+    assert_eq!(html_parsed["body_text"], "Safe formatted text");
+    assert_eq!(html_parsed["body_status"], "sanitized_html");
+    assert!(!html_parsed.to_string().contains("tracking.example.test"));
+    assert!(!html_parsed.to_string().contains("active content"));
+
     let missing =
         vak_tools::broker::parse_mail_mime(Path::new("/nonexistent/vak-tool-worker"), raw).await;
     assert!(missing.is_err());

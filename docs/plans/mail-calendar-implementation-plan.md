@@ -83,9 +83,9 @@ multistatus XML, projects at most 100 events, refuses ambiguous or unsupported
 local times, and redacts private event details while preserving busy times. It
 runs through the versioned tool-worker broker, with a private empty scratch
 directory and the network-denied verification sandbox on supported platforms.
-The same worker has a bounded MIME decoder that selects explicit `text/plain`
-parts, skips HTML and attachments, caps decoded text and part count, and labels
-messages without plain text. Apple owner previews and the brokered Agent read
+The same worker has a bounded MIME decoder that prefers explicit `text/plain`
+parts, falls back to network-denied HTML-to-text conversion, excludes
+attachments and active content, and caps decoded text and part count. Apple owner previews and the brokered Agent read
 tool fetch one explicitly selected message through fixed-UID read-only IMAP
 and pass the bounded MIME response through this worker. No live Apple message
 fetch has been performed.
@@ -104,7 +104,7 @@ implementation.
 |---|---|---|
 | Google Workspace / Gmail | Preferred: delegated OAuth authorization code with PKCE through the system browser. Additional: Google App Password over fixed-host Gmail IMAP, when the account offers App Passwords. | Incremental OAuth scope verification and separate effect capabilities. App Password is a long-lived credential, less secure than OAuth, and may be unavailable for managed, Advanced Protection, or some 2-Step Verification configurations. Its local-only route verifies TLS IMAP access, stores only in the Agent vault, and permits Inbox metadata plus selected worker-parsed messages, scheduled UID watches, and MailRead only. It never grants Calendar or send. |
 | Microsoft 365 / Outlook | Preferred: delegated Entra OAuth with PKCE. Additional: local app password for personal Outlook.com/Live/Hotmail/MSN accounts, limited to fixed-host IMAP MailRead and verified before storage. | Microsoft 365 and work/school Exchange remain OAuth-only because Exchange Online disables Basic Authentication. Microsoft documents app passwords for consumer legacy clients, while Outlook.com's current IMAP setup requires OAuth2; this fallback may be rejected as legacy authentication changes. It is local-only, less secure, and never accepts the ordinary Microsoft password. No calendar or provider write access. Graph `getSchedule` does not support personal Microsoft accounts, so OAuth personal accounts report free/busy unavailable. |
-| Apple iCloud | Current: local Apple app-specific password over fixed-host IMAP and CalDAV. Investigate Apple's newer account-authorization flow for supported third-party apps before claiming it as a Vakyartha option. | `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected plain-text message reads parsed in the worker; `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded event previews through worker-isolated discovery and parsing; `CalendarFreeBusy` uses CalDAV `free-busy-query` and returns only worker-projected UTC intervals. Selected read capabilities can be combined only after each required protocol check succeeds. Event effects and HTML-only message bodies remain unavailable. Apple app-specific passwords are broader than per-operation grants and must carry a warning before entry and revocation instructions after connection. |
+| Apple iCloud | Current: local Apple app-specific password over fixed-host IMAP and CalDAV. Investigate Apple's newer account-authorization flow for supported third-party apps before claiming it as a Vakyartha option. | `MailRead` verifies TLS IMAP sign-in and exposes bounded inbox metadata plus explicitly selected message reads parsed in the worker; `CalendarRead` verifies the fixed CalDAV endpoint and exposes bounded event previews through worker-isolated discovery and parsing; `CalendarFreeBusy` uses CalDAV `free-busy-query` and returns only worker-projected UTC intervals. Selected read capabilities can be combined only after each required protocol check succeeds. Event effects remain unavailable. Apple app-specific passwords are broader than per-operation grants and must carry a warning before entry and revocation instructions after connection. |
 
 The implemented read adapters use Gmail's bounded message list/get methods and
 Calendar's event-list/free-busy methods, plus Microsoft Graph's Inbox message
@@ -2519,3 +2519,13 @@ remains open.
   Agent-vault restart/requeue, and five isolated-worker tests. No live provider
   or developer account data was used. Sustained 24-hour recovery and live
   provider conformance remain open.
+- 2026-10-02: Added a safe text fallback for HTML-only mail. The isolated MIME
+  worker removes active elements and remote resource destinations before
+  extracting readable text, marks the body as `sanitized_html`, and the shared
+  viewer discloses that images and active content were not loaded. Plain text
+  remains preferred. The synthetic regression pack passed, including the
+  HTML-only worker test, plus formatting and diff checks. Direct browser
+  rendering is still unverified because the browser security policy blocked
+  the local fixture URL; no alternate browser path was used. Live-provider
+  conformance, sustained 24-hour recovery, and M7 account-data erasure remain
+  open.

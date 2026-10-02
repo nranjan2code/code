@@ -7535,6 +7535,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
+ "dom_query",
  "globset",
  "ical",
  "libc",

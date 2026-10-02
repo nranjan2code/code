@@ -173,7 +173,7 @@ window.fetch = async (input, init) => {
       const body = JSON.parse(String(init?.body ?? "{}")) as { thread_id?: string; cursor?: string };
       const page = body.cursor ? 2 : 1;
       const messages = page === 1
-        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", reply_to: "Reply Desk <reply@example.test>", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "available", has_attachments: true, attachments: [{ provider_id: "fixture-attachment", filename: "agenda.txt", mime_type: "text/plain", size_bytes: 24, previewable: true }] }]
+        ? [{ provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", reply_to: "Reply Desk <reply@example.test>", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "First page preview", body_text: "First page full message", body_status: "sanitized_html", has_attachments: true, attachments: [{ provider_id: "fixture-attachment", filename: "agenda.txt", mime_type: "text/plain", size_bytes: 24, previewable: true }] }]
         : [
             { provider_id: `${accountId}-thread-message-1`, thread_id: body.thread_id, from: "sender@example.test", to: "owner@example.test", cc: null, subject: "Synthetic conversation", received_at: "2026-10-01T10:00:00Z", preview: "Repeated first message", body_text: "Duplicate must collapse", body_status: "available", has_attachments: false },
             { provider_id: `${accountId}-thread-message-2`, thread_id: body.thread_id, from: "owner@example.test", to: "sender@example.test", cc: null, subject: "Re: Synthetic conversation", received_at: "2026-10-01T10:05:00Z", preview: "Second page preview", body_text: "Second page full message", body_status: "available", has_attachments: false },
@@ -318,6 +318,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
   document.querySelector<HTMLButtonElement>(".daily-mail-calendar-message button")?.click();
   const conversationOpened = await waitFor(() => document.querySelectorAll(".daily-mail-calendar-conversation-message").length === 1
     && document.querySelector(".daily-mail-calendar-conversation")?.textContent?.includes("Reply-To: Reply Desk <reply@example.test>") === true);
+  const htmlBodyDisclosure = document.querySelector(".daily-mail-calendar-conversation")?.textContent?.includes("HTML email shown as safe text. Images and active content were not loaded.") === true;
   const conversationHasFocusedWorkspace = await waitFor(() => document.querySelector(".daily-mail-calendar-body")?.classList.contains("mail-calendar-conversation-open") === true
     && !document.querySelector(".daily-mail-calendar-calendar-tools")
     && !document.querySelector(".mail-calendar-routine-workspace")
@@ -582,6 +583,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(pauseAllStopsActiveRun, "Canvas pause-all disables enabled routines and asks a currently running Agent session to stop"),
     check(routineHistoryLoadsInCanvas && routinePreviewRunWorks && routineResumeReady && routineResumeWorks && routinePauseReady && routinePauseWorks && routinePauseSettled && routineDeletionWorks, `Canvas supports per-routine history, preview run, resume, pause and schedule deletion (${[routineHistoryLoadsInCanvas, routinePreviewRunWorks, routineResumeReady, routineResumeWorks, routinePauseReady, routinePauseWorks, routinePauseSettled, routineDeletionWorks].join(",")})`),
     check(conversationOpened && conversation?.textContent?.includes("First page full message"), "Opening a recent message shows its full conversation and Reply-To header inside Today without adding it to session history"),
+    check(htmlBodyDisclosure, "HTML-only message text is labelled as sanitized, with no remote images or active content"),
     check(conversationHasFocusedWorkspace, `Opening a conversation gives it a focused Canvas workspace and moves keyboard focus to its heading (${focusedWorkspaceDiagnostics})`),
     check(conversationPagingWorks && conversationDedupesIds && requests.some((path) => path.endsWith("/thread-preview")), "Today conversation pagination follows the returned cursor and collapses repeated provider message IDs"),
     check(attachmentPreviewWorks, "An eligible conversation attachment opens a bounded read-only text preview in Today Canvas"),

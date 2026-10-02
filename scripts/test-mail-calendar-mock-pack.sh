@@ -11,6 +11,7 @@ printf '%s\n' 'Mail/calendar mock regression pack (local builds, synthetic fixtu
 npm --prefix crates/vak-client-ui run build:web
 npm --prefix crates/vak-client-ui run typecheck:mail-calendar-fixture
 cargo test --offline --locked -p vak-mail-calendar
+cargo test --offline --locked -p vak-tools mime_parser
 cargo test --offline --locked -p vak-core mail_calendar
 cargo test --offline --locked -p vak-server --features test-support mail_calendar
 cargo test --offline --locked -p vak-server --features test-support --lib restart_requeues_inflight_mail_watch_items_from_the_agent_vault

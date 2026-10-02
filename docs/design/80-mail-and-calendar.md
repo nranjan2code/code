@@ -99,8 +99,11 @@ a fixed-UID, read-only fetch parsed in the isolated worker. Calendar previews pe
 range-bounded event reads; provider XML and iCalendar content are parsed in the
 network-denied worker. CalDAV results are filtered locally against the
 requested time range after worker parsing. A bounded worker-side MIME parser
-selects bounded plain-text parts and skips HTML and attachments. Apple free/busy
-uses CalDAV `free-busy-query`; the worker returns only busy intervals without
+prefers bounded plain-text parts and uses a bounded, network-denied HTML-to-text
+fallback only when a message has no plain-text part. The worker drops scripts,
+styles, embedded documents, links' destinations, images and attachments; the
+owner preview labels sanitized HTML text. Apple free-busy uses CalDAV
+`free-busy-query`; the worker returns only busy intervals without
 event details. Apple event changes remain unavailable. No credentialed live
 Apple Calendar request has been made, so authenticated provider discovery and
 free/busy semantics still need live verification.**
@@ -504,8 +507,9 @@ message bodies during the inbox listing. A separate selected-message request
 uses `UID FETCH BODY.PEEK[]`, checks UIDVALIDITY, caps the full message at
 128 KiB within the 512 KiB IMAP session budget, and sends raw MIME directly to
 the network-denied worker. It returns only bounded `text/plain`; HTML and
-attachments are not exposed, and HTML-only messages are labelled as lacking a
-plain-text body. Calendar event access and availability each require a separate
+attachments are not exposed. HTML-only bodies are reduced to bounded text in
+the isolated worker; active content, styles, links' destinations and remote
+images are not returned or fetched. Calendar event access and availability each require a separate
 capability selection and a successful fixed-host CalDAV authentication probe.
 Both paths perform bounded discovery, validate every provider href against
 the fixed Apple origin, and parse provider responses inside the network-denied

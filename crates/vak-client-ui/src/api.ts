@@ -213,7 +213,7 @@ export interface MailCalendarMailPreview {
   received_at: string | null;
   preview: string;
   body_text: string | null;
-  body_status?: "available" | "no_plain_text" | "unavailable";
+  body_status?: "available" | "sanitized_html" | "no_plain_text" | "unavailable";
   has_attachments: boolean;
   attachments?: MailCalendarAttachmentPreview[];
 }
@@ -269,7 +269,7 @@ export function previewMailCalendarMail(agentId: string, accountId: string, limi
     method: "POST", body: JSON.stringify({ limit, ...(query?.trim() ? { query: query.trim() } : {}), ...(folderId ? { folder_id: folderId } : {}), ...(cursor ? { cursor } : {}) }),
   });
 }
-export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "no_plain_text" }> {
+export function previewMailCalendarMessage(agentId: string, accountId: string, providerId: string): Promise<{ provider_id: string; body_text: string | null; body_status: "available" | "sanitized_html" | "no_plain_text" }> {
   return req(`/mail-calendar/accounts/${encodeURIComponent(agentId)}/${encodeURIComponent(accountId)}/message-preview`, {
     method: "POST", body: JSON.stringify({ provider_id: providerId }),
   });
