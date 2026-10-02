@@ -214,11 +214,13 @@ Parked, and not to be assumed shipped: release supply-chain hardening
 (SBOM/signing) and the capacity-exhaustion Ask type. The personal-use
 completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
-### Pending: the data architecture refactor (M0 done 2026-09-25; plan revision 3)
+### Pending: the data architecture refactor (M0 done 2026-09-25; plan revision 4)
 
 The maintainer started it on 2026-09-25 with M0, which is done and shipped
 in 5.0.0. On 2026-10-01 the maintainer locked plan revision 3 (decisions
-L6–L12), and the two 5.x guards landed the same day. M1 is done (2026-10-02:
+L6–L12), and the two 5.x guards landed the same day. Plan revision 4
+(2026-10-03) ships 6.0.0 independently and defers the data baseline to 7.0.0.
+M1 is done (2026-10-02:
 the trace key is minted at admission, invariant 40, and every ledger row type
 names its actor); M2 slices 1 and 2 are on main (plan §4 lists what remains).
 M3a is next. No session starts a later step unasked.
@@ -266,8 +268,8 @@ M3a is next. No session starts a later step unasked.
      merged.
    - Erasure (M7a) never starts before the catalog (M6), because it needs
      lineage.
-   - From M3b's first slice, main is the baseline's line and cuts no 5.x
-     release; 5.x fixes go on `release/5` (L6).
+   - From M3b's first slice, main is the baseline's line and cuts no 6.x
+     release; 6.x fixes go on `release/6` (L6).
 4. Each milestone ships whole: code, tests, docs, its AGENTS.md changes and
    its screens. The replaced path goes in the same change (invariant 30).
    There is no compatibility code, because there are no users.

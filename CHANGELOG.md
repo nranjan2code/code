@@ -1,3 +1,20 @@
+## Unreleased
+
+- Ship 6.0.0 as an independent major release. The separately planned data
+  baseline is deferred to 7.0.0; this release does not cut over or purge data.
+- Expand connected mail and calendar work with bounded previews and reads,
+  local drafts, owner-reviewed actions, and scheduled read-only routines.
+- Add provider-aware capacity admission, shared quota tracking, and clearer
+  Traffic visibility; reserve run budgets against dispatches.
+- Make the Canvas shared across client surfaces, isolate previews, and keep
+  file reads attached to their named conversation.
+- Improve conversation history selection and context planning, including
+  explicit recovery of relevant prior evidence and provider context limits.
+- Complete the `/` and `@` composer menus with chaining, and show the text
+  people entered in search results and other human-facing views.
+- Tighten Bash and sandbox execution boundaries, enforce parent worker
+  budgets, and require clear confirmation before Escape stops a run.
+
 ## 5.3.2 — 2026-10-01
 
 - Turn the compact commitment arc upward from the right through the active

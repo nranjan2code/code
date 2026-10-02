@@ -232,7 +232,7 @@ schedulers, gate denials and commitment upkeep.
 ## M3b — the data baseline, in six slices
 
 The release train is plan L6: main is the baseline's line from slice 1;
-fixes for 5.x go on `release/5`.
+fixes for 6.x go on `release/6`.
 
 ### Slice 1 — baseline, purge, runtime root, registry
 
@@ -361,7 +361,7 @@ fixes for 5.x go on `release/5`.
 - `crates/vak-server/site/src/pages/security.html`, `install.html`,
   `site.js`: data-location statements. Rebuild with `build.py`.
 
-Then release 6.0.0.
+Then release 7.0.0.
 
 ## M4 — runs, triggers, effects, fencing
 

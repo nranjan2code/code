@@ -1,6 +1,6 @@
 # Plan — data architecture, lifecycle, tracing and cloud
 
-Status: **plan, revision 3 (2026-10-01). M0 is done (2026-09-25, shipped in
+Status: **plan, revision 4 (2026-10-03). M0 is done (2026-09-25, shipped in
 5.0.0), and so are the two 5.x guards (§4, "Now", 2026-10-01) and M1
 (2026-10-02). M2 is in progress and M3a is next. Each step waits for the maintainer (see AGENTS.md,
 "Pending").**
@@ -11,19 +11,22 @@ Status: **plan, revision 3 (2026-10-01). M0 is done (2026-09-25, shipped in
 - Revision 2 applied every fix in `docs/plans/data-architecture-review.md`.
 - Revision 3 applies every fix and decision in
   `docs/plans/data-architecture-review-2.md`.
+- Revision 4 records the maintainer's direction to ship 6.0.0 independently
+  of M3b and moves the data baseline to 7.0.0; M2 remains in progress and M3a
+  remains next.
 - What each milestone touches: `docs/plans/data-architecture-blast-radius.md`.
 - Baseline measurements: `docs/architecture/write-paths-and-growth.html`
   (v3.5.1) and doc 73 §2.
 
 ## 1. Decisions
 
-Locked 2026-09-25 with the maintainer; L3 re-locked 2026-10-01:
+Locked 2026-09-25 with the maintainer; L3 and L6 updated by revision 4:
 
 | # | Decision | Consequence |
 |---|---|---|
 | L1 | **Local-first, cloud as a remote.** A desktop or server works offline on its own store; a hosted cloud is a push/pull remote with session handoff. | One storage trait with two backends (local disk + SQLite; object store + Postgres). No path is ever an identity. |
 | L2 | **Compliance bar for the first customer release:** retention labels, erasure (crypto-shred), legal hold, exportable audit trail. Region pinning, BYOK and eDiscovery come with the cloud phase. | Keys, holds, lineage and receipts are in the local design from day one. M7a and M7b are both required before that release. |
-| L3 | **Cut a new data baseline at 6.0.0.** 5.0.0 was spent on M0's removals (2026-09-26). This row is the one place the number is written: every other document says "the data baseline" and points here. | The baseline refuses every earlier data home with the single invariant-29 message. No migrator, no reader for old shapes, no dual layout. Dev data homes, and the maintainer's 5.x hosts, are purged at the cutover. |
+| L3 | **Cut a new data baseline at 7.0.0.** 5.0.0 was spent on M0's removals; 6.0.0 ships independently of M3b. This row is the one place the baseline version is written: every other document says "the data baseline" and points here. | The baseline refuses every earlier data home with the single invariant-29 message. No migrator, no reader for old shapes, no dual layout. Dev data homes, and the maintainer's 6.x hosts, are purged at the cutover. |
 | L4 | **Runtime state leaves the project tree.** A space's `.vak/` holds only committable intent. | Invariant 35 is rewritten; sandbox profiles grant the execution directory explicitly. |
 | L5 | **Zero users, zero compatibility.** | Each milestone *replaces* what it supersedes in the same change (invariant 30). An early fix is made only when it is the target behaviour. |
 
@@ -31,7 +34,7 @@ Locked 2026-10-01 with the maintainer (review 2, §4):
 
 | # | Decision | Consequence |
 |---|---|---|
-| L6 | **One release train through M3b.** When M3b's first slice merges, main becomes the 6.0 line and cuts no 5.x release. Fixes a 5.x host needs go on a `release/5` branch until 6.0.0 ships. | M3b lands in slices on main (§4). A dev purge between slices is allowed (L5). 6.0.0 is released after the last slice. |
+| L6 | **One release train through M3b.** When M3b's first slice merges, main becomes the 7.0 line and cuts no 6.x release. Fixes a 6.x host needs go on a `release/6` branch until 7.0.0 ships. | M3b lands in slices on main (§4). A dev purge between slices is allowed (L5). 7.0.0 is released after the last slice. |
 | L7 | **`TaskDef` grows into one Trigger model** in M4, with cursors, effect records and fencing beside it. | Docs 76, 80 and 81 use it instead of building their own; doc 81 §20.5 is settled; invariant 38 is restated at M4. |
 | L8 | **The critical path is reordered** (§4): M1 ∥ M2, M3a straight after M1, M8 ∥ M7 after M6, M7 split into M7a and M7b, intake as M6.5. | Doc 73 §14 and the blast-radius inventory follow this order. |
 | L9 | **Principals in M1.** `prn_` ids, with `actor` and `on_behalf_of` on the trace key. | Attribution, person-scope erasure, data roles and sharing share one id. How a person proves who they are stays with doc 78 and the collaboration plan's stage C4. |
@@ -168,7 +171,7 @@ dependencies; milestones on separate arrows may run in parallel.
 ```
 Now: ratchet + registry split (5.x)
 M1 ids, trace key, principals ──┬─▶ M3a scope API ──┐
-M2 storage substrate ───────────┴───────────────────┴─▶ M3b data baseline (6.0, slices 1–6)
+M2 storage substrate ───────────┴───────────────────┴─▶ M3b data baseline (7.0, slices 1–6)
 M5 telemetry (after M1, in parallel)                       │
                                                            ▼
                                   M4 runs, triggers, effects, fencing
@@ -467,14 +470,14 @@ expensive after (review 2 R48–R53).
 diff; the layout scan (blast-radius §0) finds no raw home-path use outside
 `vak-config`.
 
-### M3b — The data baseline, 6.0 (XL, in six slices)
+### M3b — The data baseline, 7.0 (XL, in six slices)
 
-**Release train (L6).** When slice 1 merges, main is the 6.0 line and cuts
-no 5.x release; 5.x fixes go on `release/5`. Each slice ships its own tests
-and may purge dev data homes. 6.0.0 is released after slice 6.
+**Release train (L6).** When slice 1 merges, main is the 7.0 line and cuts
+no 6.x release; 6.x fixes go on `release/6`. Each slice ships its own tests
+and may purge dev data homes. 7.0.0 is released after slice 6.
 
 **Slice 1 — baseline, purge and runtime root**
-- Version 6.0.0-dev; invariant 29 becomes "6.0.0 is the supported
+- Version 7.0.0-dev; invariant 29 becomes "7.0.0 is the supported
   baseline". Pre-baseline state is refused by the one message.
 - Purge: Vak-owned roots (data, cache, logs, runtime) are removed
   wholesale; Shared uses declared entries only; Vak runtime leftovers in
@@ -518,7 +521,7 @@ Each item is keyed by space id in this slice:
 - `[server] workspace_roots`
 
 **Slice 6 — docs, site, scripts, services**
-- Every item in blast-radius M3b slice 6. Then release 6.0.0.
+- Every item in blast-radius M3b slice 6. Then release 7.0.0.
 
 **Screens**
 - Admin: Spaces (A13), with the word settled in doc 75 (L11).
@@ -782,10 +785,11 @@ proposals bring the rest.
 |---|---|
 | M0 | Done: invariant 38 drops `AgentSchedule`/`AgentRunRecord`; docs 65 and 72 lose the claims; doc 64 draws the real 4.x topology; docs 73 and 74 listed under proposals with the "Pending" section; invariant 8 gains "no API writes a secret to a file". |
 | Revision 3 | Done 2026-10-01: "Pending" names the data baseline by reference, the new order and the two guards; docs 76, 79, 80, 81 and 82, the collaboration plan and the reliable-work plan point at the primitives they use. |
+| Revision 4 | Done 2026-10-03: 6.0.0 is an independent major release; L3 moves the data baseline to 7.0.0 and L6 moves the future release train and 6.x maintenance branch accordingly. |
 | Now | "Until the next milestone lands": no raw home-path call beyond the ratchet; every Agent-home subpath declared. |
 | M1 | **New invariant:** every durable record, span and envelope carries a `TraceKey` with its actor; derived writes record `derived_from`. |
 | M2 | **Invariant 2:** entries are never rewritten; encoding changes only by a verified seal; the hash chain covers frames as stored. |
-| M3b | **Invariant 29** → 6.0.0 baseline. **Invariant 35** rewritten (runtime state under the tenant; Agent workspaces bound to Space and Agent). **Invariant 37** paths. **New invariant:** every path belongs to a declared class; ledgers hold references, not bulk content; content is keyed to its conversation wherever it is written. Layout map gains `vak-storage`. Doc 73 status → "in progress". |
+| M3b | **Invariant 29** → 7.0.0 baseline. **Invariant 35** rewritten (runtime state under the tenant; Agent workspaces bound to Space and Agent). **Invariant 37** paths. **New invariant:** every path belongs to a declared class; ledgers hold references, not bulk content; content is keyed to its conversation wherever it is written. Layout map gains `vak-storage`. Doc 73 status → "in progress". |
 | M4 | **Invariant 38:** scheduled and triggered work is a Trigger, with at most one start per slot or event. **New invariant:** every external effect is an effect record, `unknown` until reconciled and never replayed blindly; writers, claims and pollers are fenced by epoch. |
 | M5 | **Code rule:** no `eprintln!` in library crates; telemetry is content-free and never read to decide anything. |
 | M6 | **Layout map:** `vak-store` → `vak-catalog`. **Invariant 37:** search and lineage filter ACL before ranking. |
@@ -847,7 +851,7 @@ Each run asserts:
 | Risk | Mitigation |
 |---|---|
 | M3 size (626 production home-identifier uses, 529 test references at `438cfcd5`) | M3a (refactor, oracle = the existing suite), then M3b in six slices behind the finished API; the ratchet stops growth until M3a starts. |
-| Releases during M3b | One train (L6): main is the 6.0 line from slice 1; 5.x fixes on `release/5`. |
+| Releases during M3b | One train (L6): main is the 7.0 line from slice 1; 6.x fixes on `release/6`. |
 | M4 grows with every proposal | Each primitive ships with one consumer (schedule, manual, the outbox); the other trigger and effect kinds arrive with their proposals on the same record shape. |
 | Principal ids before identity proofing | Records carry ids from M1; how a person proves who they are stays with doc 78 and collaboration C4, and nothing grants authority from an id alone. |
 | A reconciler bug destroys data | Staged quarantine before commit. It ships observe-only first, then commits one action class at a time. Every destructive transition is recorded. Holds are checked at commit time, not only at plan time. |
@@ -864,7 +868,7 @@ Each run asserts:
 There is no migration tool to build (L3, L5). The dead pre-`31c1bb9c`
 checkpoints (about 1.6 GB) and the `agents/vak/agents/` nesting may be
 removed by hand. At M3b's first slice every dev data home is purged, and
-the new purge removes the owned roots wholesale. Data on a 5.x host,
+the new purge removes the owned roots wholesale. Data on a 6.x host,
 including the maintainer's EC2 host, does not cross the baseline: download
 what you want to keep as ordinary files (transcripts, documents) before
-upgrading it, because no 5.x backup restores into 6.0.
+upgrading it, because no 6.x backup restores into 7.0.
