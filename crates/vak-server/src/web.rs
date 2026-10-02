@@ -174,7 +174,7 @@ pub(crate) async fn login(
         .into();
     if !ok {
         vak_core::security_events::record(
-            &state.core.sessions_home(),
+            &state.core.scope().into_root(),
             vak_core::security_events::EventKind::AuthFailure,
             "login_failed",
             "invalid token on /auth/login",
@@ -331,7 +331,7 @@ pub(crate) async fn host_info(State(state): State<AppState>) -> Response {
 /// hence reading a header rather than reversing a directory name.
 fn recent_workspaces(state: &AppState) -> Vec<String> {
     let mut discovered: Vec<PathBuf> = vec![state.active_core().cwd().clone()];
-    let root = state.core.sessions_home().join("sessions");
+    let root = state.core.scope().sessions_root();
     let Ok(read) = std::fs::read_dir(&root) else {
         return vak_core::workspaces::visible(discovered)
             .into_iter()

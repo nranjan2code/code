@@ -137,7 +137,10 @@ fn room_path(state: &AppState, session_id: &str, room_id: &str) -> Option<PathBu
         return None;
     }
     Some(
-        vak_config::paths::office_workspaces_at(&state.core.sessions_home(), session_id)
+        state
+            .core
+            .scope()
+            .office_workspaces(session_agent(state), session_id)
             .join(format!("{room_id}.json")),
     )
 }
@@ -186,6 +189,15 @@ fn actor_principal(state: &AppState, actor_id: &str) -> vak_session::ids::Princi
     } else {
         vak_session::ids::PrincipalId::derived(&format!("participant:{actor_id}"))
     }
+}
+
+/// The Agent whose scope holds a room's files. D25: today every room lives
+/// under the server Core's own home, so this only names that Core's Agent.
+fn session_agent(state: &AppState) -> &str {
+    state
+        .core
+        .agent_identity()
+        .map_or("vak", |agent| agent.id.as_str())
 }
 
 fn authority(
@@ -300,7 +312,10 @@ pub(super) async fn list(
     if let Err(status) = authority(&state, &session_id, &principal, false) {
         return status.into_response();
     }
-    let root = vak_config::paths::office_workspaces_at(&state.core.sessions_home(), &session_id);
+    let root = state
+        .core
+        .scope()
+        .office_workspaces(session_agent(&state), &session_id);
     let entries = match fs::read_dir(root) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -651,10 +666,8 @@ async fn create_revision(
     let id = uuid::Uuid::now_v7().to_string();
     let staging_root = state
         .core
-        .sessions_home()
-        .join("sandbox")
-        .join("staging")
-        .join(&id);
+        .scope()
+        .sandbox_staging(session_agent(state), &id);
     if vak_sandbox::prepare_revision_copy(&parent.candidate, &staging_root).is_err() {
         return StatusCode::CONFLICT.into_response();
     }

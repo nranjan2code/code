@@ -248,10 +248,7 @@ pub(crate) fn append_sandbox_artifacts(
                 .map(|outcome| (item.turn_id.clone(), outcome))
         })
         .collect();
-    let path = home
-        .join("sandbox")
-        .join("executions")
-        .join(format!("{session_id}.jsonl"));
+    let path = vak_config::scope::AgentScope::new(home).sandbox_executions("", session_id);
     let Ok(text) = std::fs::read_to_string(path) else {
         return;
     };
@@ -274,9 +271,10 @@ pub(crate) fn append_sandbox_artifacts(
         .collect::<HashMap<_, _>>();
     // Unreadable records leave every draft's status unknown rather than
     // reporting a version the records may contradict.
-    let drafts = vak_sandbox::load_records(&home.join("sandbox").join("records.jsonl"))
-        .ok()
-        .map(|records| DraftVersions::new(records, session_id));
+    let drafts =
+        vak_sandbox::load_records(&vak_config::scope::AgentScope::new(home).sandbox_records(""))
+            .ok()
+            .map(|records| DraftVersions::new(records, session_id));
     for event in events {
         let vak_tools::SandboxEvent::ArtifactGenerated {
             execution_id,
@@ -493,7 +491,10 @@ fn draft_relative_path<'a>(path: &'a str, scratch: &str) -> Option<&'a std::path
     }
     let workspace = scratch
         .ancestors()
-        .find(|p| p.file_name().is_some_and(|n| n == ".vak"))
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n == vak_config::scope::PROJECT_DIR)
+        })
         .and_then(std::path::Path::parent)?;
     artifact
         .strip_prefix(scratch.strip_prefix(workspace).ok()?)
@@ -545,10 +546,7 @@ pub(crate) fn sandbox_artifact_markdown(
     home: &std::path::Path,
     session_id: &str,
 ) -> Option<String> {
-    let path = home
-        .join("sandbox")
-        .join("executions")
-        .join(format!("{session_id}.jsonl"));
+    let path = vak_config::scope::AgentScope::new(home).sandbox_executions("", session_id);
     let text = std::fs::read_to_string(path).ok()?;
     let mut rows = Vec::new();
     for line in text.lines() {

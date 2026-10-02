@@ -16,11 +16,11 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 fn log_path(home: &Path) -> PathBuf {
-    home.join("operations").join("incidents.jsonl")
+    vak_config::scope::SharedScope::new(home).operations_incidents()
 }
 
 fn actions_path(home: &Path) -> PathBuf {
-    home.join("operations").join("actions.jsonl")
+    vak_config::scope::SharedScope::new(home).operations_actions()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

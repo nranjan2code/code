@@ -207,7 +207,7 @@ pub(crate) fn pinned_core_for_workspace(
         // future custom data-home setting). Every agent's data must live
         // under the *same* root, just in its own agent-scoped subdirectory
         // (`Core::sessions_home` already layers that on top).
-        resolved.set_sessions_home(active.shared_data_home());
+        resolved.set_sessions_home(active.shared_scope().into_root());
         if let Some(provider) = active.provider_instance_override() {
             resolved.set_provider_instance(provider);
         }
@@ -422,7 +422,7 @@ pub(crate) async fn open(
             .remove(&cache_key);
     }
 
-    let dir = vak_session::SessionPath::sessions_dir(&core.sessions_home(), core.cwd());
+    let dir = vak_session::SessionPath::sessions_dir(&core.scope().into_root(), core.cwd());
     if let Err(e) = std::fs::create_dir_all(&dir) {
         return error(StatusCode::INTERNAL_SERVER_ERROR, e);
     }
@@ -446,7 +446,7 @@ pub(crate) async fn open(
         let cwd = core.cwd().clone();
         let agent_id = identity.id.clone();
         let conversation = conversation.clone();
-        let trashed = vak_core::trash::trashed(&core.shared_data_home());
+        let trashed = vak_core::trash::trashed(&core.shared_scope().into_root());
         move || scan_candidates(dir, cwd, agent_id, conversation, trashed)
     })
     .await

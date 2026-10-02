@@ -149,7 +149,7 @@ fn validate_source_url(raw: &str) -> Result<(), String> {
 /// `unwrap_or_default()`, so an unset `HOME` produced a *relative* path
 /// resolved against whatever directory the server happened to start in.
 fn feeds_config_path(_cwd: &std::path::Path) -> PathBuf {
-    _cwd.join(".vak").join("feeds.toml")
+    vak_config::scope::WorkspaceScope::new(_cwd).feeds_config()
 }
 
 fn global_feeds_config_path() -> PathBuf {

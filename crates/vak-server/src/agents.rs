@@ -218,7 +218,7 @@ pub fn save(
     profiles: &[AgentDefinition],
     trusted: bool,
 ) -> Result<Vec<AgentDefinition>, String> {
-    let dir = cwd.join(".vak");
+    let dir = vak_config::scope::WorkspaceScope::new(cwd).project_dir();
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new()
         .create(true)
