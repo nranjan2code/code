@@ -153,16 +153,12 @@ pub fn export_to(
     }
 
     if include_secrets {
-        // The encrypted-file credential backend lives beside the Shared
-        // config layer (`default_workspace()`, i.e. `~/vak-home`), not
-        // under `home` — that parameter is the sessions/ledger root
-        // (`data_home()`), a separate directory by default
-        // (docs/design/44-shared-config.md, "Secrets Chain").
-        let shared_home = vak_config::paths::default_workspace();
+        // The encrypted-file credential backend lives in the data home,
+        // which is `home` (docs/design/44-shared-config.md, "Secrets Chain").
         let secret_files = [CREDENTIALS_FILE, CREDENTIAL_KEY_FILE];
         let mut copied_any = false;
         for name in secret_files {
-            let src = shared_home.join(name);
+            let src = home.join(name);
             if src.is_file() {
                 manifest.total_bytes += copy_file(&src, &dest_dir.join(name))?;
                 manifest.file_count += 1;
@@ -390,22 +386,6 @@ mod tests {
             );
         }
     }
-
-    // A dedicated test for the encrypted-file credential backend's two
-    // files (`credentials.enc`, `.credential_key`) was tried here and
-    // removed: `export_to`'s secrets step reads from the real global
-    // `default_workspace()`, which every test in this binary that calls
-    // `vak_config::paths::isolate_home_for_tests()` shares — a single
-    // process-wide directory — and `cargo test`'s default parallelism
-    // made any test asserting a specific file state there race against
-    // sibling tests genuinely and reproducibly (confirmed: reliable at
-    // `--test-threads=1`, flaky otherwise). The logic itself is a single
-    // `is_file()` guard per file (see `export_to` above) and is covered
-    // in spirit by `secrets_excluded_by_default...` in this module for
-    // the ordinary (non-credential) backup path; exercising the
-    // credential-file branch specifically needs either an injectable
-    // home path in `export_to`'s signature or a non-global test
-    // fixture, neither of which exists yet.
 
     #[test]
     fn import_skip_never_touches_existing_data() {

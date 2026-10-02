@@ -88,8 +88,8 @@ whichever `CredentialStore` this host uses:
 - **OS-native** (macOS Keychain or Linux Secret Service on supported platforms,
   via the `keyring` crate) — used whenever a round-trip probe
   against it succeeds.
-- **Encrypted-file fallback** — an AES-256-GCM-encrypted file under the
-  shared data home (`credentials.enc`, keyed by a separate 0600
+- **Encrypted-file fallback** — an AES-256-GCM-encrypted file in the
+  data home, outside every Agent workspace (`credentials.enc`, keyed by a separate 0600
   `.credential_key` file), used whenever no OS secret service is reachable.
   This is the common case for headless Linux (servers, containers, CI with
   no D-Bus session) and is a first-class backend, not a degraded stand-in

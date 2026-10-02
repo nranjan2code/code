@@ -988,7 +988,7 @@ Also in the plan's history:
 | logs `*.log` | vak-ops / vak-desktop | Telemetry (JSON, rotated) |
 | `~/vak-home/.vak/{config.toml,skills,plugins,.seed-manifest.json}` | vak-config / vak-core / vak-plugin | Desired (Shared layer) |
 | plugin packages `catalog-staging/<id>` (marketplace installs in progress) | vak-server / vak-plugin | Ephemeral (removed when the install settles) |
-| `~/vak-home/{credentials.enc,.credential_key,.credential_key.lock}` | vak-config | Secret |
+| data `{credentials.enc,.credential_key,.credential_key.lock}` | vak-config | Secret |
 | project `.vak/scratch/<agent>/<exe>/tmp`, `.vak/scratch/<agent>/cache` | vak-tools | Ephemeral |
 | project `.vak/worktrees/<run>` | vak-core | Workspace (environment) |
 | project `.vak/agents/<id>/workspace/` | vak-config | Workspace at `workspaces/<spc>/<agt>/`, bound to (Space, Agent), never an Environment (plan L10) |

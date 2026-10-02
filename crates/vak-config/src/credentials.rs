@@ -273,12 +273,10 @@ struct EncryptedFileStore;
 
 impl EncryptedFileStore {
     fn home() -> PathBuf {
-        // Shared secrets live beside the Shared config layer
-        // (`default_workspace()`, i.e. `~/vak-home`), not under
-        // `data_home()` — that's the sessions/ledger/gateway-state
-        // directory, a separate root by default (docs/design/46, Part VI:
-        // "`~/vak-home` ... *is* the configuration and secret home").
-        crate::paths::default_workspace()
+        // The data home, never `default_workspace()`: that directory is
+        // the built-in Agent's workspace, so a file there (and the key
+        // beside it) is reachable by the workspace tools (invariant 10).
+        crate::paths::data_home()
     }
 
     fn data_path() -> PathBuf {
@@ -477,7 +475,7 @@ mod tests {
     use super::*;
 
     /// `EncryptedFileStore` holds no per-instance paths — every access
-    /// re-resolves `default_workspace()` fresh (see the type's doc
+    /// re-resolves `data_home()` fresh (see the type's doc
     /// comment: a `OnceLock`-cached instance must never bake in a path
     /// from whenever it happened to be first constructed). Testing it
     /// therefore means pointing the real global home somewhere private.

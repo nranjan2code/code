@@ -497,6 +497,12 @@ Resolution rules already in force (AGENTS.md invariants 17, 20, 23, 27, 28):
   secret home. A purge that spared it would spare everything that makes a
   reinstall not a first run.
 
+  **Secrets are the exception (2026-10-02).** `~/vak-home` is also the
+  built-in Agent's workspace, so the encrypted-file secret store
+  (`credentials.enc`, `.credential_key`) lives in `data_home()`, outside every
+  workspace. The `~/vak-home/.env` rows and diagrams in this part predate the
+  credential store; secrets resolve per doc 44, "Secrets Chain".
+
 ### What setup writes, and where
 
 Every wizard step declares its target layer explicitly. This table is the

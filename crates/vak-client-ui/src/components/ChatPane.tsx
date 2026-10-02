@@ -58,9 +58,11 @@ function EmptyChat(props: { hasSession: boolean }) {
   // While a greeting is on screen it carries the setup card (App.tsx).
   onMount(() => setGreetingsShown((n) => n + 1));
   onCleanup(() => setGreetingsShown((n) => n - 1));
-  const ongoing = createMemo(() => sessions().filter((session) => session.running).slice(0, 3));
+  // Only this Agent's own conversations: another Agent's results are not its home (invariant 37).
+  const ownSessions = createMemo(() => sessions().filter((session) => (session.agent?.id ?? "vak") === activeAgentId()));
+  const ongoing = createMemo(() => ownSessions().filter((session) => session.running).slice(0, 3));
   // A conversation with no title has had no message yet: nothing to resume.
-  const completed = createMemo(() => sessions().filter((session) => !session.running && session.title).slice(0, 3));
+  const completed = createMemo(() => ownSessions().filter((session) => !session.running && session.title).slice(0, 3));
   const [previews, setPreviews] = createSignal<Record<string, string>>({});
   const [previewLoaded, setPreviewLoaded] = createSignal<ReadonlySet<string>>(new Set());
   createEffect(() => {
