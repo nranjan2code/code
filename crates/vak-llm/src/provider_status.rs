@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
 use crate::registry::ProviderAuth;
+use crate::{Provider, RequestAdmission, Usage};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ProviderStatus {
@@ -38,6 +39,22 @@ fn client() -> Result<reqwest::Client, LlmError> {
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| LlmError::Network(e.to_string()))
+}
+
+async fn send_admitted(
+    provider: &dyn Provider,
+    route_provider: &str,
+    request: reqwest::RequestBuilder,
+    cancel: &CancellationToken,
+) -> Result<reqwest::Response, LlmError> {
+    let mut admission =
+        RequestAdmission::acquire_account_request(provider, route_provider, cancel).await?;
+    let response = tokio::select! {
+        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
+        response = request.send() => response.map_err(|error| LlmError::Network(error.to_string()))?,
+    };
+    admission.settle(&Usage::default());
+    Ok(response)
 }
 
 async fn json(response: reqwest::Response) -> Result<(u16, serde_json::Value), LlmError> {
@@ -130,12 +147,23 @@ pub async fn refresh_openrouter_capacity(
     }
     let base = base_url.trim_end_matches('/');
     let client = client()?;
+    let provider_adapter = crate::registry::default_registry().get(
+        "openrouter",
+        &ProviderAuth {
+            api_key: api_key.to_string(),
+            base_url: Some(base_url.to_string()),
+            ..ProviderAuth::default()
+        },
+    )?;
     let account_gate = crate::RateLimitGate::for_key(identity.clone());
     let observation_sequence = account_gate.next_observation_sequence();
-    let response = tokio::select! {
-        _ = cancel.cancelled() => return Err(LlmError::Aborted { partial: None }),
-        response = client.get(format!("{base}/key")).bearer_auth(api_key).send() => response.map_err(|e| LlmError::Network(e.to_string()))?,
-    };
+    let response = send_admitted(
+        provider_adapter.as_ref(),
+        "openrouter",
+        client.get(format!("{base}/key")).bearer_auth(api_key),
+        cancel,
+    )
+    .await?;
     let status = response.status().as_u16();
     let value: serde_json::Value = response
         .json()
@@ -196,14 +224,17 @@ pub async fn inspect(provider: &str, auth: &ProviderAuth) -> Result<ProviderStat
     let base = identity_base.trim_end_matches('/');
     let client = client()?;
     let account_key = crate::openai::account_capacity_key(identity_base, &auth.api_key);
+    let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
+    let cancel = CancellationToken::new();
     let account_gate = crate::RateLimitGate::for_key(account_key);
     let observation_sequence = account_gate.next_observation_sequence();
-    let key_response = client
-        .get(format!("{base}/key"))
-        .bearer_auth(&auth.api_key)
-        .send()
-        .await
-        .map_err(|e| LlmError::Network(e.to_string()))?;
+    let key_response = send_admitted(
+        provider_adapter.as_ref(),
+        provider,
+        client.get(format!("{base}/key")).bearer_auth(&auth.api_key),
+        &cancel,
+    )
+    .await?;
     let (key_status, key_json) = json(key_response).await?;
     if !(200..300).contains(&key_status) {
         return Err(status_error(key_status, &key_json, &auth.api_key));
@@ -211,12 +242,15 @@ pub async fn inspect(provider: &str, auth: &ProviderAuth) -> Result<ProviderStat
     let key = key_json.get("data").unwrap_or(&key_json);
     observe_openrouter_key_capacity(&key_json, &account_gate, observation_sequence);
 
-    let credits_response = client
-        .get(format!("{base}/credits"))
-        .bearer_auth(&auth.api_key)
-        .send()
-        .await
-        .map_err(|e| LlmError::Network(e.to_string()))?;
+    let credits_response = send_admitted(
+        provider_adapter.as_ref(),
+        provider,
+        client
+            .get(format!("{base}/credits"))
+            .bearer_auth(&auth.api_key),
+        &cancel,
+    )
+    .await?;
     let (credits_status, credits_json) = json(credits_response).await?;
     if !(200..300).contains(&credits_status) {
         return Err(status_error(credits_status, &credits_json, &auth.api_key));

@@ -435,3 +435,12 @@ no AWS configuration, scheduling, version or deployment changes.
   deadline. At refill, local usage resets and remaining capacity returns to a
   published limit, or becomes unknown when no limit was published; an expired
   zero sample can no longer keep a route permanently limited.
+- 2026-10-02: Live model listing, model-context lookup, and Anthropic capability
+  discovery now use the same account request and concurrency/cooldown gate as
+  inference. Every received metadata response settles one request; pagination
+  admits each page separately. OpenRouter `/key` and `/credits` refresh/inspect
+  requests use the account concurrency/cooldown gate too. OpenRouter's
+  free-model daily request counter stays exclusive to `:free` inference routes.
+  Gemini discovery credentials now use `x-goog-api-key` headers rather than
+  query strings, and discovery responses preserve `Retry-After` in typed
+  throttling/overload errors.

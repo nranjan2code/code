@@ -8,12 +8,14 @@
 //!     `GET {base}/models`
 //!     → `{ "data": [{ "id" }] }`
 //!   - Anthropic: same path but `x-api-key` + `anthropic-version` headers.
-//!   - Google: `GET {base}/models?key=…` → `{ "models": [{ "name": "models/x" }] }`
+//!   - Google: `GET {base}/models` with `x-goog-api-key` → `{ "models": [{ "name": "models/x" }] }`
 
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 use crate::error::LlmError;
 use crate::registry::ProviderAuth;
+use crate::{Provider, RequestAdmission, Usage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelContext {
@@ -38,10 +40,48 @@ fn http() -> Result<reqwest::Client, LlmError> {
         .map_err(|e| LlmError::Network(e.to_string()))
 }
 
+/// Send a provider metadata request through the same account request and
+/// concurrency gate used by inference. Discovery endpoints do not have a
+/// model-token estimate; a received HTTP response still consumes one request.
+async fn send_admitted(
+    provider: &dyn Provider,
+    route_provider: &str,
+    request: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, LlmError> {
+    let cancel = CancellationToken::new();
+    let started = tokio::time::Instant::now();
+    let mut admission = tokio::time::timeout(
+        DISCOVERY_TIMEOUT,
+        RequestAdmission::acquire_account_request(provider, route_provider, &cancel),
+    )
+    .await
+    .map_err(|_| LlmError::Network("provider discovery admission timed out".into()))??;
+    let remaining = DISCOVERY_TIMEOUT.saturating_sub(started.elapsed());
+    let response = tokio::time::timeout(remaining, request.send())
+        .await
+        .map_err(|_| LlmError::Network("provider discovery request timed out".into()))?
+        .map_err(|error| LlmError::Network(error.to_string()))?;
+
+    if let Some(retry_after) = response
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::openai::parse_retry_after)
+        && matches!(response.status().as_u16(), 429 | 503 | 529)
+    {
+        crate::RateLimitGate::for_key(provider.rate_limit_key()).observe_limit(
+            Some(Duration::from_secs(retry_after)),
+            Duration::from_secs(1),
+        );
+    }
+    admission.settle(&Usage::default());
+    Ok(response)
+}
+
 /// Map a non-success status onto the same error taxonomy the chat paths
 /// use, so callers can distinguish "your key is wrong" from "provider is
 /// down" without parsing strings.
-fn status_error(status: u16, body: String) -> LlmError {
+fn status_error(status: u16, body: String, retry_after_secs: Option<u64>) -> LlmError {
     let message = if body.trim().is_empty() {
         "no response body".to_string()
     } else {
@@ -51,23 +91,34 @@ fn status_error(status: u16, body: String) -> LlmError {
         401 | 403 => LlmError::Auth(message),
         429 => LlmError::RateLimit {
             message,
-            retry_after_secs: None,
+            retry_after_secs,
         },
         400 => LlmError::classify_400(message),
         404 | 422 => LlmError::InvalidRequest(message),
-        503 | 529 => LlmError::Overloaded(message),
+        503 | 529 => match retry_after_secs {
+            Some(retry_after_secs) => LlmError::OverloadedWithRetryAfter {
+                message,
+                retry_after_secs,
+            },
+            None => LlmError::Overloaded(message),
+        },
         _ => LlmError::Api { status, message },
     }
 }
 
 async fn read_json(res: reqwest::Response) -> Result<serde_json::Value, LlmError> {
     let status = res.status().as_u16();
+    let retry_after_secs = res
+        .headers()
+        .get(reqwest::header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(crate::openai::parse_retry_after);
     let body = res
         .text()
         .await
         .map_err(|e| LlmError::Network(e.to_string()))?;
     if !(200..300).contains(&status) {
-        return Err(status_error(status, body));
+        return Err(status_error(status, body, retry_after_secs));
     }
     serde_json::from_str(&body).map_err(|e| LlmError::Parse(e.to_string()))
 }
@@ -84,6 +135,7 @@ pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<Stri
         .trim_end_matches('/')
         .to_string();
     let client = http()?;
+    let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
 
     let mut ids = match provider {
         // Anthropic pages with `has_more`/`last_id` and defaults to 20 per
@@ -107,10 +159,7 @@ pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<Stri
                 if let Some(cursor) = &after {
                     req = req.query(&[("after_id", cursor.as_str())]);
                 }
-                let res = req
-                    .send()
-                    .await
-                    .map_err(|e| LlmError::Network(e.to_string()))?;
+                let res = send_admitted(provider_adapter.as_ref(), provider, req).await?;
                 let json = read_json(res).await?;
                 out.extend(collect_data_ids(json.clone()));
                 if json.get("has_more").and_then(|v| v.as_bool()) != Some(true) {
@@ -130,14 +179,12 @@ pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<Stri
             for _ in 0..MAX_PAGES {
                 let mut req = client
                     .get(format!("{base}/models"))
-                    .query(&[("key", auth.api_key.as_str()), ("pageSize", "1000")]);
+                    .header("x-goog-api-key", &auth.api_key)
+                    .query(&[("pageSize", "1000")]);
                 if let Some(cursor) = &token {
                     req = req.query(&[("pageToken", cursor.as_str())]);
                 }
-                let res = req
-                    .send()
-                    .await
-                    .map_err(|e| LlmError::Network(e.to_string()))?;
+                let res = send_admitted(provider_adapter.as_ref(), provider, req).await?;
                 let json = read_json(res).await?;
                 out.extend(collect_google_names(&json));
                 match json.get("nextPageToken").and_then(|v| v.as_str()) {
@@ -150,12 +197,14 @@ pub async fn list_models(provider: &str, auth: &ProviderAuth) -> Result<Vec<Stri
         // Everything else speaks the OpenAI listing shape, which returns
         // the full set in one response.
         _ => {
-            let res = client
-                .get(format!("{base}/models"))
-                .bearer_auth(&auth.api_key)
-                .send()
-                .await
-                .map_err(|e| LlmError::Network(e.to_string()))?;
+            let res = send_admitted(
+                provider_adapter.as_ref(),
+                provider,
+                client
+                    .get(format!("{base}/models"))
+                    .bearer_auth(&auth.api_key),
+            )
+            .await?;
             collect_data_ids(read_json(res).await?)
         }
     };
@@ -263,20 +312,29 @@ pub async fn model_context(
     let client = http()?;
     let response = match provider {
         "google" => {
-            client
-                .get(format!("{base}/models/{model}"))
-                .query(&[("key", auth.api_key.as_str())])
-                .send()
-                .await
+            let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
+            send_admitted(
+                provider_adapter.as_ref(),
+                provider,
+                client
+                    .get(format!("{base}/models/{model}"))
+                    .header("x-goog-api-key", &auth.api_key),
+            )
+            .await
         }
         "openrouter" => {
-            client
-                .get(format!("{base}/models/{model}"))
-                .bearer_auth(&auth.api_key)
-                .send()
-                .await
+            let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
+            send_admitted(
+                provider_adapter.as_ref(),
+                provider,
+                client
+                    .get(format!("{base}/models/{model}"))
+                    .bearer_auth(&auth.api_key),
+            )
+            .await
         }
         "ollama" => {
+            let provider_adapter = crate::registry::default_registry().get(provider, auth)?;
             let root = base.trim_end_matches("/v1");
             let req = client
                 .post(format!("{root}/api/show"))
@@ -286,7 +344,7 @@ pub async fn model_context(
             } else {
                 req
             };
-            match req.send().await {
+            match send_admitted(provider_adapter.as_ref(), provider, req).await {
                 Ok(res) if res.status().is_success() => {
                     let json = read_json(res).await?;
                     return Ok(context_from_json("ollama", &json));
@@ -350,13 +408,16 @@ pub async fn anthropic_model_capabilities(
     } else {
         format!("{base}/v1/models/{model}")
     };
-    let response = http()?
-        .get(&url)
-        .header("x-api-key", &auth.api_key)
-        .header("anthropic-version", crate::anthropic::ANTHROPIC_VERSION)
-        .send()
-        .await
-        .map_err(|e| LlmError::Network(e.to_string()))?;
+    let provider_adapter = crate::registry::default_registry().get("anthropic", auth)?;
+    let response = send_admitted(
+        provider_adapter.as_ref(),
+        "anthropic",
+        http()?
+            .get(&url)
+            .header("x-api-key", &auth.api_key)
+            .header("anthropic-version", crate::anthropic::ANTHROPIC_VERSION),
+    )
+    .await?;
     let json = read_json(response).await?;
     Ok(AnthropicCapabilities {
         effort: capability_supported(&json, "effort"),

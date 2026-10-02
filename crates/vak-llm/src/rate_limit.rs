@@ -343,6 +343,41 @@ pub struct RequestAdmission {
 }
 
 impl RequestAdmission {
+    /// Admit one non-generation provider API request (for example, a page of
+    /// the live model catalogue) against the shared account request window
+    /// and concurrency/cooldown gate. Such calls have no model-token demand.
+    /// OpenRouter's free-model daily counter is scoped to `:free` inference
+    /// and therefore is not charged for account metadata or discovery calls.
+    pub(crate) async fn acquire_account_request(
+        provider: &dyn Provider,
+        route_provider: &str,
+        cancel: &CancellationToken,
+    ) -> Result<Self, LlmError> {
+        let account_gate = RateLimitGate::for_key(provider.rate_limit_key());
+        let account = if route_provider.starts_with("openrouter") {
+            None
+        } else {
+            Some(account_gate.reserve_demand(0, 0, cancel).await?)
+        };
+        let dispatch = match account_gate.admit(cancel).await {
+            Ok(permit) => permit,
+            Err(error) => {
+                if let Some(mut account) = account {
+                    account.release();
+                }
+                return Err(error);
+            }
+        };
+        Ok(Self {
+            model: None,
+            account,
+            _dispatch: dispatch,
+            bedrock_mantle: false,
+            dispatch_cancel: cancel.clone(),
+            deadline_task: None,
+        })
+    }
+
     /// Refresh published capacity, reserve estimated demand and take an
     /// account concurrency slot. `route_provider` is the configured route
     /// name, which distinguishes OpenRouter's free-model account cap and
