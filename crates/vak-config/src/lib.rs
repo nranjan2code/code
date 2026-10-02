@@ -7,6 +7,7 @@ pub mod finops;
 pub mod paths;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_scope;
+pub mod scope;
 
 pub use finops::{estimate_cost_usd, resolve_usd_per_mtok, usd_per_mtok_heuristic};
 
@@ -1759,11 +1760,11 @@ pub enum ConfigError {
 /// normal workspace people can inspect, and every other workspace inherits
 /// this file without copying it.
 pub fn global_path() -> Option<PathBuf> {
-    Some(crate::paths::default_workspace().join(".vak/config.toml"))
+    Some(crate::scope::WorkspaceScope::new(crate::paths::default_workspace()).config_file())
 }
 
 pub fn project_path(cwd: &Path) -> PathBuf {
-    cwd.join(".vak/config.toml")
+    crate::scope::WorkspaceScope::new(cwd).config_file()
 }
 
 /// Cheap, stat-only "has anything changed" signal for the global + project
@@ -1808,7 +1809,7 @@ pub fn config_fingerprint(cwd: &Path) -> u64 {
 /// a local override. `create_new` also keeps two desktop launches from
 /// overwriting a project config created by the other launch.
 pub fn ensure_project_config(cwd: &Path) -> Result<PathBuf, ConfigError> {
-    let dir = cwd.join(".vak");
+    let dir = crate::scope::WorkspaceScope::new(cwd).project_dir();
     std::fs::create_dir_all(&dir).map_err(|source| ConfigError::Write {
         path: dir.clone(),
         source,

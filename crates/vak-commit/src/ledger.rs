@@ -172,7 +172,7 @@ pub struct CommitmentLedger {
 impl CommitmentLedger {
     pub fn new(sessions_home: &Path) -> Self {
         CommitmentLedger {
-            path: sessions_home.join("commitments.jsonl"),
+            path: vak_config::scope::AgentScope::new(sessions_home).commitments(),
             trace: None,
         }
     }

@@ -98,8 +98,9 @@ const PLUGIN_SKILLS: &[(&str, &str, &str, &[&str])] = &[
 const SEED_MANIFEST: &str = ".seed-manifest.json";
 
 pub fn seed_shared_capabilities() -> Result<(), String> {
-    let root = vak_config::paths::default_workspace().join(".vak");
-    seed_skills(&root.join("skills"))
+    let workspace = vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace());
+    let root = workspace.project_dir();
+    seed_skills(&workspace.skills())
         .map_err(|error| format!("Shared skill seed failed: {error}"))?;
     seed_plugins(&root).map_err(|error| format!("Shared plugin seed failed: {error}"))?;
     cleanup_retired_plugins(&root)

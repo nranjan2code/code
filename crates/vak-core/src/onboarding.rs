@@ -308,7 +308,7 @@ fn workspace_step(core: &Core) -> StepState {
             "Choose a different workspace, or restore that directory.",
         ));
     }
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     if std::fs::create_dir_all(&home).is_err() {
         return StepState::Incomplete(StepFailure::new(
             format!("The session store at {} is not writable.", home.display()),
@@ -488,8 +488,8 @@ fn sandbox_step(core: &Core) -> StepState {
 }
 
 fn capabilities_step() -> StepState {
-    let root = vak_config::paths::default_workspace().join(".vak");
-    let skills = root.join("skills");
+    let skills =
+        vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace()).skills();
     let count = std::fs::read_dir(&skills)
         .map(|entries| entries.flatten().filter(|e| e.path().is_dir()).count())
         .unwrap_or(0);
@@ -518,7 +518,7 @@ fn integrations_step(core: &Core) -> StepState {
 }
 
 fn channels_step(core: &Core) -> StepState {
-    let entries = crate::health::read_channel_entries(&core.sessions_home());
+    let entries = crate::health::read_channel_entries(core.scope().root());
     if entries.is_empty() {
         return StepState::NotApplicable {
             reason: "no channels onboarded".into(),
@@ -571,7 +571,7 @@ fn services_step(probed: &ProbedFacts) -> StepState {
 }
 
 fn first_result_step(core: &Core) -> StepState {
-    let home = core.sessions_home();
+    let home = core.scope().into_root();
     if has_any_session(&home) {
         return StepState::ok("this workspace has run at least one session");
     }
@@ -585,7 +585,7 @@ fn first_result_step(core: &Core) -> StepState {
 /// Cheap existence probe: one directory walk, no ledger parsing. Whether
 /// *a* session exists is all this step asserts.
 fn has_any_session(sessions_home: &Path) -> bool {
-    let root = sessions_home.join("sessions");
+    let root = vak_config::scope::AgentScope::new(sessions_home).sessions_root();
     let Ok(workspaces) = std::fs::read_dir(&root) else {
         return false;
     };

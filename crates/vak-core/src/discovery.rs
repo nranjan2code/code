@@ -1065,7 +1065,7 @@ mod tests {
         );
         let core = workspace.core();
         let specialist = core.clone().with_agent_identity(Some(agent("specialist")));
-        let private = specialist.sessions_home().join(".env");
+        let private = specialist.scope().env_file();
         workspace.store_secret(&private, "ANTHROPIC_API_KEY", "sk-ant-agent-private");
         workspace.store_secret(
             &private,

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
 fn path(shared_home: &Path) -> PathBuf {
-    shared_home.join("deleted.json")
+    vak_config::scope::SharedScope::new(shared_home).deleted()
 }
 
 fn read(shared_home: &Path) -> HashMap<String, bool> {

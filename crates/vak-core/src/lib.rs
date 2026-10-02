@@ -121,8 +121,8 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
         }
         let flow_path = self
             .core
-            .cwd()
-            .join(".vak/flows")
+            .workspace_scope()
+            .flows()
             .join(format!("{name}.toml"));
         let definition_toml = match std::fs::read_to_string(&flow_path) {
             Ok(body) => body,
@@ -163,15 +163,11 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             }
             (header.session_id.clone(), item.attempt.saturating_add(1))
         };
-        let state_path = self
-            .core
-            .sessions_home()
-            .join("flow-runs/managed")
-            .join(format!(
-                "{}-{}-{attempt}.json",
-                managed_run_component(contract_id),
-                managed_run_component(work_item_id),
-            ));
+        let state_path = self.core.scope().managed_flow_runs().join(format!(
+            "{}-{}-{attempt}.json",
+            managed_run_component(contract_id),
+            managed_run_component(work_item_id),
+        ));
         let mut state = vak_flow::FlowState {
             run_id: format!("{contract_id}-{work_item_id}-{attempt}"),
             flow_name: name.into(),
@@ -243,7 +239,7 @@ impl vak_agent::FlowDispatcher for CoreFlowDispatcher {
             approver,
             sandbox: self.core.agent_sandbox(),
             cwd: self.core.cwd().clone(),
-            sessions_home: self.core.sessions_home().clone(),
+            sessions_home: self.core.scope().into_root(),
             parent_session_id,
             state_path,
             agent_identity: self.core.agent_identity().cloned(),
@@ -440,7 +436,7 @@ impl Core {
 }
 
 fn vak_core_ledger(core: &Core) -> finops::FinOpsLedger {
-    finops::FinOpsLedger::new(&core.shared_data_home())
+    finops::FinOpsLedger::new(core.shared_scope().root())
 }
 
 struct CoreInner {
@@ -625,8 +621,6 @@ pub struct CapabilityRoot {
     pub scope: CapabilityScope,
 }
 
-pub const PERMISSIONS_LOCAL_FILE: &str = ".vak/permissions.local.toml";
-
 /// The built-in Agent is an explicit identity. New sessions must never rely
 /// on a missing `SessionHeader.agent` to mean Vak; absence is retained only
 /// while old ledgers are being inspected by the baseline guard.
@@ -774,7 +768,7 @@ fn continued_saved_file(
                                 };
                                 if let Ok(path) = path.canonicalize()
                                     && let Ok(relative) = path.strip_prefix(&root)
-                                    && !relative.starts_with(".vak")
+                                    && !relative.starts_with(vak_config::scope::PROJECT_DIR)
                                     && std::fs::metadata(&path).is_ok_and(|meta| {
                                         meta.is_file() && meta.len() == content.len() as u64
                                     })
@@ -1228,7 +1222,10 @@ fn route_source(cwd: &std::path::Path, key: &str) -> String {
 ///
 /// Checks both the workspace-local `.vak` and the shared home store.
 fn warn_retired_plugins(cwd: &Path, sessions_home: &Path, _config: &vak_config::Config) {
-    let roots: Vec<PathBuf> = vec![cwd.join(".vak"), sessions_home.to_path_buf()];
+    let roots: Vec<PathBuf> = vec![
+        vak_config::scope::WorkspaceScope::new(cwd).project_dir(),
+        sessions_home.to_path_buf(),
+    ];
     for root in roots {
         if let Ok(store) = vak_plugin::PluginStore::new(&root).retired_plugins() {
             for (plugin_name, retired) in &store {
@@ -1265,7 +1262,7 @@ impl Core {
             && std::env::var_os("HOME").is_none()
             && std::env::var_os("USERPROFILE").is_none()
         {
-            cwd.join(".vak")
+            vak_config::scope::WorkspaceScope::new(&cwd).project_dir()
         } else {
             sessions_home
         };
@@ -2004,7 +2001,7 @@ impl Core {
     }
 
     fn shared_capability_root(&self) -> std::path::PathBuf {
-        vak_config::paths::default_workspace().join(".vak")
+        vak_config::scope::WorkspaceScope::new(vak_config::paths::default_workspace()).project_dir()
     }
 
     /// Plugin package roots contributing skills and commands, tagged with the
@@ -2041,7 +2038,7 @@ impl Core {
     /// ordering, and a shared-scope bug in one copy is invisible in the rest.
     pub fn capability_roots(&self) -> Vec<CapabilityRoot> {
         let shared = self.shared_capability_root();
-        let workspace = self.inner.cwd.join(".vak");
+        let workspace = self.workspace_scope().project_dir();
         let mut roots = vec![CapabilityRoot {
             path: workspace.clone(),
             scope: CapabilityScope::Workspace,
@@ -2661,7 +2658,7 @@ impl Core {
             // the ledger would silently keep writing to the original
             // location. The reflection call site already got this right;
             // the per-turn call site this replaces did not.
-            &self.shared_data_home(),
+            self.shared_scope().root(),
             &finops,
             self.inner.day_budget.clone(),
         ));
@@ -2811,7 +2808,7 @@ impl Core {
     ) -> Result<String, CoreError> {
         let Some(spec) = scoped_allow_rule(tool, args) else {
             return Err(CoreError::Config(vak_config::ConfigError::Read {
-                path: std::path::PathBuf::from(PERMISSIONS_LOCAL_FILE),
+                path: vak_config::scope::WorkspaceScope::relative().permissions_local(),
                 source: std::io::Error::other(format!(
                     "'{tool}' cannot be narrowed to a safe rule from this call; \
                      approve it each time instead"
@@ -2821,7 +2818,7 @@ impl Core {
         let rule = vak_permission::Rule::parse(&spec).map_err(CoreError::Rule)?;
         if !rule.matches(tool, args) {
             return Err(CoreError::Config(vak_config::ConfigError::Read {
-                path: std::path::PathBuf::from(PERMISSIONS_LOCAL_FILE),
+                path: vak_config::scope::WorkspaceScope::relative().permissions_local(),
                 source: std::io::Error::other(format!(
                     "derived rule '{spec}' does not match the call it came from"
                 )),
@@ -2840,13 +2837,13 @@ impl Core {
         vak_permission::Rule::parse(spec).map_err(CoreError::Rule)?;
         if !self.inner.trust_project_config {
             return Err(CoreError::Config(vak_config::ConfigError::Read {
-                path: std::path::PathBuf::from(PERMISSIONS_LOCAL_FILE),
+                path: vak_config::scope::WorkspaceScope::relative().permissions_local(),
                 source: std::io::Error::other(
                     "untrusted workspace: refusing to persist permission rules",
                 ),
             }));
         }
-        let path = self.inner.cwd.join(PERMISSIONS_LOCAL_FILE);
+        let path = vak_config::scope::WorkspaceScope::new(&self.inner.cwd).permissions_local();
         vak_config::file_update::update_file(&path, |current| {
             let mut document = match current {
                 Some(text) => toml::from_str::<toml::Table>(text).map_err(|source| {
@@ -3009,7 +3006,7 @@ impl Core {
             return;
         }
         security_events::record(
-            &self.sessions_home(),
+            self.scope().root(),
             security_events::EventKind::ConfigChange,
             "answerability_mismatch",
             &format!(
@@ -3161,7 +3158,7 @@ impl Core {
     pub async fn open_session(&self, session_id: &str) -> Result<SessionLog, CoreError> {
         self.refuse_trashed(session_id)?;
         let path = vak_session::SessionPath::new_session_file(
-            &self.sessions_home(),
+            self.scope().root(),
             &self.inner.cwd,
             session_id,
         );
@@ -3172,7 +3169,7 @@ impl Core {
     pub async fn open_session_read_only(&self, session_id: &str) -> Result<SessionLog, CoreError> {
         self.refuse_trashed(session_id)?;
         let path = vak_session::SessionPath::new_session_file(
-            &self.sessions_home(),
+            self.scope().root(),
             &self.inner.cwd,
             session_id,
         );
@@ -3182,7 +3179,7 @@ impl Core {
     /// A trashed session is hidden everywhere, so nothing reopens it: a
     /// resume, a channel binding or an Agent conversation starts afresh.
     fn refuse_trashed(&self, session_id: &str) -> Result<(), CoreError> {
-        if trash::is_trashed(&self.shared_data_home(), session_id) {
+        if trash::is_trashed(self.shared_scope().root(), session_id) {
             return Err(CoreError::Session(vak_session::SessionError::Io(
                 std::io::Error::new(
                     std::io::ErrorKind::NotFound,
@@ -3206,7 +3203,7 @@ impl Core {
     fn user_env_file(&self) -> PathBuf {
         Self::read_override(&self.inner.user_env_override)
             .or_else(vak_config::user_env_path)
-            .unwrap_or_else(|| self.shared_data_home().join(".env"))
+            .unwrap_or_else(|| self.shared_scope().env_file())
     }
 
     /// The directly-injected provider, if any (tests, embedded runtimes),
@@ -3243,6 +3240,22 @@ impl Core {
     pub fn shared_data_home(&self) -> PathBuf {
         Self::read_override(&self.inner.sessions_home_override)
             .unwrap_or_else(|| self.inner.sessions_home.clone())
+    }
+
+    /// The typed scope over this Core's Agent home, resolved exactly as
+    /// [`Core::sessions_home`] is.
+    pub fn scope(&self) -> vak_config::scope::AgentScope {
+        vak_config::scope::AgentScope::new(self.sessions_home())
+    }
+
+    /// The typed scope over the data home shared by every Agent.
+    pub fn shared_scope(&self) -> vak_config::scope::SharedScope {
+        vak_config::scope::SharedScope::new(self.shared_data_home())
+    }
+
+    /// The typed scope over this Core's workspace and its project layer.
+    pub fn workspace_scope(&self) -> vak_config::scope::WorkspaceScope {
+        vak_config::scope::WorkspaceScope::new(self.inner.cwd.clone())
     }
 
     /// Rebuildable-artifact directory (SQLite FTS index + WAL sidecars).
@@ -3541,7 +3554,7 @@ impl Core {
         if let Some(agent) = &self.agent_identity
             && agent.id != "vak"
         {
-            let agent_home = self.sessions_home();
+            let agent_home = self.scope().into_root();
             let agent_prompts_dir = prompts::layer_dir(&agent_home);
             let mut agent_layer = prompts::read_layer(&agent_prompts_dir);
             if agent_layer.identity.is_none() {
@@ -3709,20 +3722,20 @@ impl Core {
         let mut tools = vak_tools::brokered_tools(worker, &self.new_documents);
         tools.push(Arc::new(vak_tools::RecallTool));
         tools.push(Arc::new(tools_tasks::TasksTool {
-            sessions_home: self.shared_data_home(),
+            sessions_home: self.shared_scope().into_root(),
             cwd: self.inner.cwd.clone(),
             default_deliver_to: self.default_deliver_to.clone(),
         }));
         if self.effective_commitment() {
             tools.push(Arc::new(tools_commitments::CommitmentsTool {
-                sessions_home: self.sessions_home(),
+                sessions_home: self.scope().into_root(),
                 audience_id: scope.audience_id.clone(),
             }));
         }
         if self.effective_memory_search_enabled() {
             tools.push(Arc::new(session_search::SessionSearchTool {
-                sessions_home: self.sessions_home(),
-                trash_home: self.shared_data_home(),
+                sessions_home: self.scope().into_root(),
+                trash_home: self.shared_scope().into_root(),
                 cwd: self.inner.cwd.clone(),
                 exclude_session_id: scope.session_id.clone(),
                 agent_id: scope.agent_id.clone(),
@@ -3731,28 +3744,28 @@ impl Core {
         }
         if self.effective_memory_write_enabled() {
             tools.push(Arc::new(learning::RememberTool {
-                sessions_home: self.sessions_home(),
+                sessions_home: self.scope().into_root(),
                 cwd: self.inner.cwd.clone(),
                 session_id: scope.session_id.clone(),
             }));
             tools.push(Arc::new(learning::ForgetMemoryTool {
-                sessions_home: self.sessions_home(),
+                sessions_home: self.scope().into_root(),
                 cwd: self.inner.cwd.clone(),
             }));
             tools.push(Arc::new(entities::EntityRecordTool {
-                sessions_home: self.sessions_home(),
+                sessions_home: self.scope().into_root(),
                 cwd: self.inner.cwd.clone(),
             }));
         }
         if self.effective_memory_skill_proposals() {
             tools.push(Arc::new(learning::ProposeSkillTool {
-                sessions_home: self.sessions_home(),
+                sessions_home: self.scope().into_root(),
                 cwd: self.inner.cwd.clone(),
                 session_id: scope.session_id.clone(),
             }));
         }
         tools.push(Arc::new(entities::EntityQueryTool {
-            sessions_home: self.sessions_home(),
+            sessions_home: self.scope().into_root(),
             cwd: self.inner.cwd.clone(),
         }));
         tools.push(Arc::new(data_engine::DataQueryTool));
@@ -4364,7 +4377,7 @@ impl Core {
         };
         let project = vak_config::read_env_file_var(&self.inner.cwd.join(".env"), env).is_some();
         let agent = self.agent_identity.is_some()
-            && vak_config::read_env_file_var(&self.sessions_home().join(".env"), env).is_some();
+            && vak_config::read_env_file_var(&self.scope().env_file(), env).is_some();
         let user = agent || vak_config::read_env_file_var(&self.user_env_file(), env).is_some();
         let process = std::env::var(env)
             .ok()
@@ -4542,8 +4555,7 @@ impl Core {
 
     fn scoped_secret(&self, env_var: &str) -> Option<String> {
         if self.agent_identity.is_some()
-            && let Some(val) =
-                vak_config::read_env_file_var(&self.sessions_home().join(".env"), env_var)
+            && let Some(val) = vak_config::read_env_file_var(&self.scope().env_file(), env_var)
         {
             return Some(val);
         }
@@ -5415,7 +5427,7 @@ impl Core {
             multipliers: self.inner.beliefs.snapshot().multipliers,
         };
         let finops_cfg = self.effective_finops();
-        let home = self.sessions_home();
+        let home = self.scope().into_root();
         let ranked = vak_llm::order_ladder_v2(
             candidates,
             &routing::EvidenceLedger::new(&home).snapshot(),
@@ -5499,7 +5511,7 @@ impl Core {
     ) -> Result<SessionLog, CoreError> {
         let session_id = uuid_like();
         let path = vak_session::SessionPath::new_session_file(
-            &self.sessions_home(),
+            self.scope().root(),
             &self.inner.cwd,
             &session_id,
         );
@@ -6195,7 +6207,7 @@ impl Core {
         // that serve it. Nothing is written until the turn is about to run.
         let turn_authority = self.turn_authority();
         let episode_plan = commitments::plan_episodes(
-            &self.sessions_home(),
+            self.scope().root(),
             &self.inner.config,
             &resolved_intent,
             chrono::Utc::now(),
@@ -6577,7 +6589,7 @@ impl Core {
         // MEA substrate (Phase H): auditor sees the workspace delta between
         // this run's start checkpoint and the live tree.
         {
-            let home = self.sessions_home();
+            let home = self.scope().into_root();
             let seq = self.next_checkpoint_seq(&sid);
             let cwd = self.inner.cwd.clone();
             cfg.workspace_delta = Some(Arc::new(CheckpointDelta {
@@ -6665,7 +6677,7 @@ impl Core {
             // connects when the model calls it.
             let policy = self.channel_policy().unwrap_or_default();
             let context = self.plugin_mcp_invocation_context();
-            let activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
+            let activity_ledger = finops::ActivityLedger::new(self.scope().root());
             let activity_session = session.header().map(|h| h.session_id.clone());
             let activity_trace = run_trace.clone();
             let recorder = Arc::new(
@@ -6820,7 +6832,7 @@ impl Core {
         let turn_standings = self.capability_standings();
         for detail in reach::audit_details(&turn_standings) {
             security_events::record(
-                &self.sessions_home(),
+                self.scope().root(),
                 security_events::EventKind::CapabilityUnreachable,
                 "capability_unreachable",
                 &detail,
@@ -6967,8 +6979,8 @@ impl Core {
             })
             .collect();
         let shared_home = shared_root;
-        let workspace_home = self.inner.cwd.join(".vak");
-        let activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
+        let workspace_home = self.workspace_scope().project_dir();
+        let activity_ledger = finops::ActivityLedger::new(self.scope().root());
         let activity_session = session.header().map(|h| h.session_id.clone());
         let hook_trace = run_trace.clone();
         cfg.hook_recorder = Some(Arc::new(
@@ -7005,7 +7017,7 @@ impl Core {
                 }
             },
         ));
-        let tool_activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
+        let tool_activity_ledger = finops::ActivityLedger::new(self.scope().root());
         let tool_activity_session = session.header().map(|h| h.session_id.clone());
         let tool_trace = run_trace.clone();
         cfg.tool_activity_recorder = Some(Arc::new(
@@ -7087,12 +7099,12 @@ impl Core {
             } else {
                 if let Ok((cp, _stats)) = checkpoints::capture(
                     &self.inner.cwd,
-                    &self.sessions_home(),
+                    self.scope().root(),
                     &h.session_id,
                     seq,
                     &format!("turn: {turn_id}"),
                 ) {
-                    let _ = checkpoints::store(&self.sessions_home(), &cp);
+                    let _ = checkpoints::store(self.scope().root(), &cp);
                 }
             }
         }
@@ -7146,7 +7158,7 @@ impl Core {
                 && same(&previous_text, &prompt_text)
                 && previous.provenance.tier != vak_intent::Tier::General
             {
-                misread::MisreadLedger::new(&self.sessions_home()).record(
+                misread::MisreadLedger::new(self.scope().root()).record(
                     &previous.reading,
                     previous.provenance.tier,
                     previous.provenance.resolver_version,
@@ -7166,7 +7178,7 @@ impl Core {
             .header()
             .map(|header| {
                 commitments::begin_episodes(
-                    &self.sessions_home(),
+                    self.scope().root(),
                     &self.inner.config,
                     &resolved_intent,
                     &episode_plan,
@@ -7198,7 +7210,7 @@ impl Core {
             && !enveloped.is_empty()
         {
             cfg.envelope_check = Some(intent::envelope_check(
-                self.sessions_home(),
+                self.scope().into_root(),
                 enveloped,
                 self.inner.cwd.clone(),
             ));
@@ -7210,7 +7222,7 @@ impl Core {
             // note so the ledger row carries exactly what the model saw.
             let model_visible = match (
                 engagement.posture.context,
-                commitments::prompt_projection(&self.sessions_home(), &episodes),
+                commitments::prompt_projection(self.scope().root(), &episodes),
             ) {
                 (vak_intent::ContextProfile::Full, Some(projection)) => {
                     Some(match resolved_intent.model_visible() {
@@ -7249,11 +7261,11 @@ impl Core {
                 engagement.posture.context,
                 vak_intent::ContextProfile::Working | vak_intent::ContextProfile::Full
             ) && let Some(header) = session.header()
-                && let Ok(list) = checkpoints::list(&self.sessions_home(), &header.session_id)
+                && let Ok(list) = checkpoints::list(self.scope().root(), &header.session_id)
                 && let Some(first) = list.iter().map(|cp| cp.seq).min()
                 && let Ok(delta) = checkpoints::delta_summary(
                     &self.inner.cwd,
-                    &self.sessions_home(),
+                    self.scope().root(),
                     &header.session_id,
                     first,
                     8_192,
@@ -7286,8 +7298,8 @@ impl Core {
                 .unwrap_or_default();
             cfg.approver = Some(std::sync::Arc::new(intent::DeferringApprover::new(
                 cfg.approver.clone(),
-                self.shared_data_home(),
-                self.sessions_home(),
+                self.shared_scope().into_root(),
+                self.scope().into_root(),
                 sid.clone(),
                 episode.commitment_id.clone(),
                 escalation,
@@ -7584,7 +7596,7 @@ impl Core {
                 (None, TurnOutcome::Aborted { .. }) => misread::Outcome::Abandoned,
                 _ => misread::Outcome::Held,
             };
-            misread::MisreadLedger::new(&self.sessions_home()).record(
+            misread::MisreadLedger::new(self.scope().root()).record(
                 &resolved_intent.reading,
                 resolved_intent.provenance.tier,
                 resolved_intent.provenance.resolver_version,
@@ -7635,7 +7647,7 @@ impl Core {
             // double-counting one turn's dispatches.
             for (index, episode) in episodes.iter().enumerate() {
                 commitments::end_episode(
-                    &self.sessions_home(),
+                    self.scope().root(),
                     episode,
                     commitments::classify(&outcome, tool_calls, Vec::new()),
                     if index == 0 { spend } else { 0.0 },
@@ -7653,7 +7665,7 @@ impl Core {
             .cloned()
             .collect();
         if !new_receipts.is_empty() {
-            routing::EvidenceLedger::new(&self.sessions_home())
+            routing::EvidenceLedger::new(self.scope().root())
                 .record_receipts(&new_receipts, Some(&run_trace));
             // Phase R: fold the same dispatches into session beliefs.
             // Domain-weighted doubt accumulates per leg; one success
@@ -7690,7 +7702,7 @@ impl Core {
     }
 
     fn next_checkpoint_seq(&self, session_id: &str) -> u32 {
-        checkpoints::next_seq(&self.sessions_home(), session_id)
+        checkpoints::next_seq(self.scope().root(), session_id)
     }
 
     /// User-invoked compaction (`/compact`): summarize older turns into a
@@ -8362,7 +8374,7 @@ mod channel_mcp_network_tests {
         core.set_sessions_home(home.clone());
         for kind in ["invariant", "procedural"] {
             crate::memory::append_note(
-                &core.sessions_home(),
+                core.scope().root(),
                 &cwd,
                 kind,
                 "steer",
@@ -8841,7 +8853,11 @@ mod learned_rule_tests {
         );
         // ...but it does not cover its own call, so nothing is written.
         assert!(core.learn_from_call("write", &args).is_err());
-        assert!(!dir.path().join(PERMISSIONS_LOCAL_FILE).exists());
+        assert!(
+            !vak_config::scope::WorkspaceScope::new(dir.path())
+                .permissions_local()
+                .exists()
+        );
     }
 
     #[test]
@@ -8888,7 +8904,11 @@ mod learned_rule_tests {
             ),
             vak_permission::Decision::Allow
         ));
-        assert!(dir.path().join(PERMISSIONS_LOCAL_FILE).is_file());
+        assert!(
+            vak_config::scope::WorkspaceScope::new(dir.path())
+                .permissions_local()
+                .is_file()
+        );
     }
 
     #[test]
@@ -8929,7 +8949,11 @@ mod learned_rule_tests {
             core.learn_from_call("bash", &json!({ "command": "git status" }))
                 .is_err()
         );
-        assert!(!dir.path().join(PERMISSIONS_LOCAL_FILE).exists());
+        assert!(
+            !vak_config::scope::WorkspaceScope::new(dir.path())
+                .permissions_local()
+                .exists()
+        );
     }
 
     #[test]
@@ -9322,7 +9346,7 @@ impl Core {
                 skills_proposed: false,
             };
         }
-        let home = self.sessions_home();
+        let home = self.scope().into_root();
         let mut proposals = proposals;
         if !self.channel_tool_allowed("propose_skill") {
             proposals.skill = None;
@@ -9342,12 +9366,14 @@ impl Core {
     /// promotes recurring procedures into immutable invariants, detects conflicts,
     /// and distills structured entity records.
     pub fn consolidate_memory(&self) -> Result<consolidation::ConsolidationReport, String> {
-        consolidation::consolidate_memory(&self.sessions_home(), self.cwd())
+        consolidation::consolidate_memory(self.scope().root(), self.cwd())
     }
 }
 
 fn load_permissions_local(cwd: &std::path::Path) -> Vec<String> {
-    let Ok(text) = std::fs::read_to_string(cwd.join(PERMISSIONS_LOCAL_FILE)) else {
+    let Ok(text) =
+        std::fs::read_to_string(vak_config::scope::WorkspaceScope::new(cwd).permissions_local())
+    else {
         return Vec::new();
     };
     match toml::from_str::<PermissionsLocal>(&text) {
@@ -9398,7 +9424,7 @@ fn config_profile_has_key(path: &std::path::Path, key: &str) -> bool {
 }
 
 fn self_path() -> std::path::PathBuf {
-    std::path::PathBuf::from(".vak/config.toml")
+    vak_config::scope::WorkspaceScope::relative().config_file()
 }
 
 /// Resolve `${NAME}` references in an MCP server env value through
@@ -10872,7 +10898,7 @@ mod spend_gate_persistence_tests {
             Some("shared-anthropic-key".into())
         );
 
-        let agent_home = core.sessions_home();
+        let agent_home = core.scope().into_root();
         vak_config::upsert_env_file(
             &agent_home.join(".env"),
             "ANTHROPIC_API_KEY",

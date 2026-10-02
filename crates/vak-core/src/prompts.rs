@@ -803,7 +803,7 @@ fn parse_seed(text: &str) -> Seed {
 /// Plain files rather than TOML keys because these are prose — they want to
 /// be edited in an editor and reviewed in a diff.
 pub fn layer_dir(root: &Path) -> PathBuf {
-    root.join(".vak").join("prompts")
+    vak_config::scope::WorkspaceScope::new(root).prompts()
 }
 
 /// Read one layer directory. A missing file means "this layer says nothing

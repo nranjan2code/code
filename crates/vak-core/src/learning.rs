@@ -188,7 +188,7 @@ pub fn proposal_provenance(body: &str) -> Option<vak_session::trace::DerivedFrom
 }
 
 fn proposals_dir(home: &Path, cwd: &Path) -> PathBuf {
-    home.join("skill-proposals").join(memory::hash_cwd(cwd))
+    vak_config::scope::AgentScope::new(home).skill_proposals(cwd)
 }
 
 pub struct ProposeSkillTool {
@@ -357,7 +357,7 @@ fn list_proposals_in_dir(dir: &Path, home: &Path, cwd: &Path) -> Vec<SkillPropos
 pub fn list_proposals(home: &Path, cwd: &Path) -> Vec<SkillProposal> {
     let mut proposals = list_proposals_in_dir(&proposals_dir(home, cwd), home, cwd);
     if proposals.is_empty() {
-        let agents_dir = home.join("agents");
+        let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
         if let Ok(entries) = std::fs::read_dir(&agents_dir) {
             for entry in entries.flatten() {
                 let p = entry.path();
@@ -380,7 +380,7 @@ pub fn promote(home: &Path, cwd: &Path, id: &str) -> Result<String, String> {
         .iter()
         .find(|p| p.id == id)
         .ok_or_else(|| format!("no proposal '{id}'"))?;
-    let target_dir = home.join("skills").join(&p.name);
+    let target_dir = vak_config::scope::AgentScope::new(home).skill(&p.name);
     let target = target_dir.join("SKILL.md");
     if target.exists() {
         return Err(format!(
@@ -505,13 +505,16 @@ fn with_duplicate_note(description: &str, dup: Option<&str>) -> String {
 /// (name, instructions) pairs for every discovered project/user skill — the
 /// same roots skills::discover walks, read-only from this side.
 fn accepted_skill_bodies(home: &Path, cwd: &Path) -> Vec<(String, String)> {
-    let mut roots = vec![cwd.join(".vak/skills"), home.join("skills")];
-    let agents_dir = home.join("agents");
+    let mut roots = vec![
+        vak_config::scope::WorkspaceScope::new(cwd).skills(),
+        vak_config::scope::AgentScope::new(home).skills(),
+    ];
+    let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                roots.push(p.join("skills"));
+                roots.push(vak_config::scope::AgentScope::new(p).skills());
             }
         }
     }
@@ -638,7 +641,7 @@ mod tests {
     // ---- submission/review integration ----
 
     fn seed_accepted_skill(home: &Path, name: &str, desc: &str, body: &str) {
-        let dir = home.join("skills").join(name);
+        let dir = vak_config::scope::AgentScope::new(home).skill(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(
             dir.join("SKILL.md"),

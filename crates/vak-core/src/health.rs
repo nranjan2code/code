@@ -39,7 +39,7 @@ pub struct ChannelEntry {
 }
 
 pub fn allowlist_path(sessions_home: &Path) -> PathBuf {
-    sessions_home.join("gateway").join("allowlist.json")
+    vak_config::scope::SharedScope::new(sessions_home).gateway_allowlist()
 }
 
 /// Read the allowlist store. A missing file is "no channels yet", not an
@@ -411,7 +411,7 @@ pub fn retired_plugins_check(core: &Core) -> HealthCheck {
 
 /// Check whether agent workspaces are valid and readable.
 pub fn agent_roster_check(core: &Core) -> HealthCheck {
-    let agents_dir = core.shared_data_home().join("agents");
+    let agents_dir = core.shared_scope().agents_dir();
     if !agents_dir.exists() {
         return HealthCheck {
             label: "agent roster".into(),
@@ -467,11 +467,11 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
         detail: provider_detail,
     });
 
-    let home_ok = std::fs::create_dir_all(core.sessions_home()).is_ok();
+    let home_ok = std::fs::create_dir_all(core.scope().into_root()).is_ok();
     checks.push(HealthCheck {
         label: "sessions home".into(),
         detail: if home_ok {
-            Ok(core.sessions_home().display().to_string())
+            Ok(core.scope().root().display().to_string())
         } else {
             Err("not writable".into())
         },
@@ -513,7 +513,7 @@ pub fn collect(core: &Core, session: Option<&SessionLog>) -> HealthReport {
     }
     checks.push(capability_health_check(core));
     checks.push(gateway_channels_check(
-        &core.shared_data_home(),
+        core.shared_scope().root(),
         core.config().gateway.pending_expiry_days,
     ));
     checks.push(layout_check());
@@ -940,7 +940,7 @@ mod tests {
         assert!(home_check.detail.is_ok());
         assert_eq!(
             home_check.detail.as_ref().ok(),
-            Some(&core.sessions_home().display().to_string())
+            Some(&core.scope().root().display().to_string())
         );
         // Default config carries no warnings and no active session ladder.
         assert!(report.checks.iter().any(|c| c.label == "config warnings"));

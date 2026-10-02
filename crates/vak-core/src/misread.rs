@@ -148,7 +148,7 @@ impl CellAccuracy {
 impl MisreadLedger {
     pub fn new(sessions_home: &Path) -> Self {
         MisreadLedger {
-            path: sessions_home.join("intent-evidence.jsonl"),
+            path: vak_config::scope::AgentScope::new(sessions_home).intent_evidence(),
         }
     }
 

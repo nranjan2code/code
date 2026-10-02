@@ -84,7 +84,7 @@ pub struct ActivityLedger {
 impl ActivityLedger {
     pub fn new(sessions_home: &std::path::Path) -> Self {
         Self {
-            path: sessions_home.join("activity-log.jsonl"),
+            path: vak_config::scope::AgentScope::new(sessions_home).activity_log(),
         }
     }
 
@@ -120,7 +120,7 @@ pub struct FinOpsLedger {
 impl FinOpsLedger {
     pub fn new(sessions_home: &std::path::Path) -> Self {
         FinOpsLedger {
-            path: sessions_home.join("cost-log.jsonl"),
+            path: vak_config::scope::AgentScope::new(sessions_home).cost_log(),
         }
     }
 

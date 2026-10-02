@@ -208,7 +208,7 @@ fn load_agent(
 }
 
 fn read_agents(cwd: &std::path::Path) -> Result<Vec<AgentDefinition>, String> {
-    let path = cwd.join(".vak/agents.json");
+    let path = vak_config::scope::WorkspaceScope::new(cwd).agents_file();
     let Ok(raw) = std::fs::read_to_string(path) else {
         return Ok(Vec::new());
     };

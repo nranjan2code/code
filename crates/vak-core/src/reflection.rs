@@ -328,7 +328,7 @@ pub fn apply(
         // Route through the same review queue as the propose_skill tool by
         // synthesizing its exact output contract.
         let id = uuid::Uuid::now_v7().simple().to_string();
-        let dir = home.join("skill-proposals").join(memory::hash_cwd(cwd));
+        let dir = vak_config::scope::AgentScope::new(home).skill_proposals(cwd);
         std::fs::create_dir_all(&dir).map_err(|e| format!("create proposals dir: {e}"))?;
         let body = format!(
             "---\nname: \"{name}\"\ndescription: \"{desc}\"\n---\n\n{instr}\n\n<!-- proposed-by: {sid} at {ts}; proposal id {id}; source: reflection{turn_part} -->\n",

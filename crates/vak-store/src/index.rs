@@ -18,13 +18,15 @@ impl Store {
         sessions_home: &Path,
     ) -> Result<RebuildStats, StoreError> {
         let mut roots = Vec::new();
-        let direct = sessions_home.join("sessions");
+        let direct = vak_config::scope::AgentScope::new(sessions_home).sessions_root();
         if direct.exists() {
             roots.push((sessions_home.to_path_buf(), direct));
         }
-        if let Ok(agents) = std::fs::read_dir(sessions_home.join("agents")) {
+        if let Ok(agents) =
+            std::fs::read_dir(vak_config::scope::AgentScope::new(sessions_home).agents_dir())
+        {
             for agent in agents.flatten() {
-                let s = agent.path().join("sessions");
+                let s = vak_config::scope::AgentScope::new(agent.path()).sessions_root();
                 if s.exists() {
                     roots.push((agent.path(), s));
                 }
@@ -36,7 +38,7 @@ impl Store {
             .and_then(|p| std::fs::read_dir(p).ok())
         {
             for sibling in siblings.flatten() {
-                let s = sibling.path().join("sessions");
+                let s = vak_config::scope::AgentScope::new(sibling.path()).sessions_root();
                 if s.exists() && !roots.iter().any(|(_, r)| r == &s) {
                     roots.push((sibling.path(), s));
                 }

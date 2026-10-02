@@ -51,7 +51,7 @@ pub struct EvidenceLedger {
 impl EvidenceLedger {
     pub fn new(sessions_home: &Path) -> Self {
         EvidenceLedger {
-            path: sessions_home.join("routing-evidence.jsonl"),
+            path: vak_config::scope::AgentScope::new(sessions_home).routing_evidence(),
         }
     }
 

@@ -43,7 +43,7 @@ fn session_in_scope(
             }
         }
         if !path.exists() {
-            let agents_dir = home.join("agents");
+            let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
             if let Ok(entries) = std::fs::read_dir(&agents_dir) {
                 for entry in entries.flatten() {
                     let p = entry.path();

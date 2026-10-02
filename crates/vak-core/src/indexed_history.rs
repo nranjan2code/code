@@ -15,7 +15,7 @@ impl Core {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        let path = SessionPath::new_session_file(&self.sessions_home(), self.cwd(), session_id);
+        let path = SessionPath::new_session_file(self.scope().root(), self.cwd(), session_id);
         {
             let mut pending = self
                 .inner
@@ -31,7 +31,7 @@ impl Core {
         runtime.spawn_blocking(move || {
             let result = (|| -> Result<(), CoreError> {
                 core.refuse_trashed(&session_id)?;
-                let root = SessionPath::sessions_dir(&core.sessions_home(), core.cwd())
+                let root = SessionPath::sessions_dir(core.scope().root(), core.cwd())
                     .canonicalize()
                     .map_err(SessionError::from)?;
                 let canonical = path.canonicalize().map_err(SessionError::from)?;
@@ -45,11 +45,8 @@ impl Core {
                 let store = vak_store::Store::open(&core.cache_home())?;
                 loop {
                     core.refuse_trashed(&session_id)?;
-                    let stats = store.import_session_chunk(
-                        &core.sessions_home(),
-                        &path,
-                        4 * 1024 * 1024,
-                    )?;
+                    let stats =
+                        store.import_session_chunk(core.scope().root(), &path, 4 * 1024 * 1024)?;
                     if stats.committed_offset >= stats.observed_length || !stats.made_progress {
                         break;
                     }
@@ -137,10 +134,10 @@ impl Core {
             .into());
         }
         self.refuse_trashed(session_id)?;
-        let root = SessionPath::sessions_dir(&self.sessions_home(), self.cwd())
+        let root = SessionPath::sessions_dir(self.scope().root(), self.cwd())
             .canonicalize()
             .map_err(SessionError::from)?;
-        let expected = SessionPath::new_session_file(&self.sessions_home(), self.cwd(), session_id)
+        let expected = SessionPath::new_session_file(self.scope().root(), self.cwd(), session_id)
             .canonicalize()
             .map_err(SessionError::from)?;
         if !expected.starts_with(&root) {
@@ -236,7 +233,7 @@ impl Core {
     ) -> Result<vak_store::history::TurnSearchResult, CoreError> {
         let history = self.scoped_history(session_id)?;
         history.store.import_session_bounded(
-            &self.sessions_home(),
+            self.scope().root(),
             &history.path,
             2 * 1024 * 1024,
         )?;
@@ -292,7 +289,7 @@ impl Core {
     ) -> Result<vak_session::Turn, CoreError> {
         let history = self.scoped_history(session_id)?;
         history.store.import_session_bounded(
-            &self.sessions_home(),
+            self.scope().root(),
             &history.path,
             2 * 1024 * 1024,
         )?;
@@ -393,7 +390,7 @@ mod tests {
                 prompt_layers: vec![],
             },
         };
-        let path = SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &session_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
         let mut log = SessionLog::create(path.clone(), header).unwrap();
         log.append_message(MessageRecord {
             message: vak_llm::Message::user_text("large old body ".repeat(100_000)),
@@ -408,12 +405,12 @@ mod tests {
             .unwrap();
         drop(log);
         let store = vak_store::Store::open(&core.cache_home()).unwrap();
-        store.import_session(&core.sessions_home(), &path).unwrap();
+        store.import_session(core.scope().root(), &path).unwrap();
         (dir, core, session_id, entry.id)
     }
 
     fn close_selected_turn(core: &Core, session_id: &str, turn_id: &str) -> String {
-        let path = SessionPath::new_session_file(&core.sessions_home(), core.cwd(), session_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), session_id);
         let mut log = SessionLog::open(path).unwrap();
         log.append_message(MessageRecord {
             message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
@@ -461,7 +458,7 @@ mod tests {
                 .is_err()
         );
         crate::trash::set(
-            &core.shared_data_home(),
+            core.shared_scope().root(),
             std::slice::from_ref(&session_id),
             true,
         )
@@ -475,7 +472,7 @@ mod tests {
     #[test]
     fn indexed_recall_preserves_tool_blocks_and_regenerates_search_prose() {
         let (_dir, core, session_id, turn_id) = fixture();
-        let path = SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &session_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
         let mut log = SessionLog::open(path).unwrap();
         log.append_message(MessageRecord {
             message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::ToolUse {
@@ -524,7 +521,7 @@ mod tests {
     #[test]
     fn indexed_recall_handles_non_english_subjects() {
         let (_dir, core, session_id, turn_id) = fixture();
-        let path = SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &session_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
         let mut log = SessionLog::open(path).unwrap();
         log.append_message(MessageRecord {
             message: vak_llm::Message::assistant(vec![vak_llm::ContentBlock::text(
@@ -557,7 +554,7 @@ mod tests {
     fn indexed_search_excludes_abandoned_branches_and_stale_addresses() {
         let (_dir, core, session_id, turn_id) = fixture();
         let old_leaf = close_selected_turn(&core, &session_id, &turn_id);
-        let path = SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &session_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
         let mut log = SessionLog::open(path).unwrap();
         log.branch_at(&turn_id).unwrap();
         let leaf = log
@@ -609,14 +606,14 @@ mod tests {
     fn indexed_reads_honor_trash_and_do_not_fall_back_on_missing_index() {
         let (_dir, core, session_id, entry_id) = fixture();
         crate::trash::set(
-            &core.shared_data_home(),
+            core.shared_scope().root(),
             std::slice::from_ref(&session_id),
             true,
         )
         .unwrap();
         assert!(core.read_session_entry(&session_id, &entry_id).is_err());
         crate::trash::set(
-            &core.shared_data_home(),
+            core.shared_scope().root(),
             std::slice::from_ref(&session_id),
             false,
         )
@@ -640,7 +637,7 @@ mod tests {
                 .read_session_entry(&session_id, &entry_id)
                 .is_err()
         );
-        let path = SessionPath::new_session_file(&core.sessions_home(), core.cwd(), &session_id);
+        let path = SessionPath::new_session_file(core.scope().root(), core.cwd(), &session_id);
         std::fs::OpenOptions::new()
             .write(true)
             .open(path)

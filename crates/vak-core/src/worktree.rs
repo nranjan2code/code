@@ -47,7 +47,9 @@ pub fn create(repo: &Path, run_id: &str) -> Result<Worktree, WorktreeError> {
     if !is_git_repo(repo) {
         return Err(WorktreeError::NotARepo);
     }
-    let path = repo.join(".vak/worktrees").join(run_id);
+    let path = vak_config::scope::WorkspaceScope::new(repo)
+        .worktrees()
+        .join(run_id);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

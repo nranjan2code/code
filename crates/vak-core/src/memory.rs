@@ -14,7 +14,7 @@ use chrono::{DateTime, Utc};
 /// FNV-1a 64-bit, matching vak-session's cwd hashing so every per-workspace
 /// store keys off the same identity.
 pub fn hash_cwd(cwd: &Path) -> String {
-    fnv1a(cwd.to_string_lossy().as_bytes())
+    vak_config::scope::workspace_key(cwd)
 }
 
 fn fnv1a(data: &[u8]) -> String {
@@ -58,7 +58,7 @@ pub struct CleanupReport {
 /// Durable note files are never age-pruned: retention is an explicit
 /// forget/amend decision so an old fact cannot disappear silently.
 pub fn cleanup_artifacts(home: &Path, older_than: Duration) -> CleanupReport {
-    let root = home.join("memory");
+    let root = vak_config::scope::AgentScope::new(home).memory_root();
     let Ok(entries) = std::fs::read_dir(&root) else {
         return CleanupReport::default();
     };
@@ -106,12 +106,12 @@ pub fn cleanup_artifacts(home: &Path, older_than: Duration) -> CleanupReport {
 }
 
 fn memory_path(home: &Path, cwd: &Path) -> PathBuf {
-    home.join("memory").join(hash_cwd(cwd)).join("MEMORY.md")
+    vak_config::scope::AgentScope::new(home).memory_notes(cwd)
 }
 
 /// Global profile-tier store, keyed to the user rather than a workspace.
 pub fn profile_path(home: &Path) -> PathBuf {
-    home.join("memory").join("user").join("USER.md")
+    vak_config::scope::AgentScope::new(home).user_memory()
 }
 
 pub fn append_note(

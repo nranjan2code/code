@@ -130,7 +130,7 @@ pub fn search_extended(
     if let Some(parent) = sessions_home.parent().and_then(|p| p.parent()) {
         dirs.push(SessionPath::sessions_dir(parent, cwd));
     }
-    let agents_dir = sessions_home.join("agents");
+    let agents_dir = vak_config::scope::AgentScope::new(sessions_home).agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
@@ -209,16 +209,16 @@ pub fn search_all_extended(
             })
         })
         .collect();
-    let mut session_roots = vec![home.join("sessions")];
+    let mut session_roots = vec![vak_config::scope::AgentScope::new(home).sessions_root()];
     if let Some(parent) = home.parent().and_then(|p| p.parent()) {
-        session_roots.push(parent.join("sessions"));
+        session_roots.push(vak_config::scope::AgentScope::new(parent).sessions_root());
     }
-    let agents_dir = home.join("agents");
+    let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                session_roots.push(p.join("sessions"));
+                session_roots.push(vak_config::scope::AgentScope::new(&p).sessions_root());
             }
         }
     }

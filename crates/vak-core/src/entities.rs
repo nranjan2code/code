@@ -15,8 +15,6 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::memory::hash_cwd;
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EntityRelation {
     pub relation: String,
@@ -40,11 +38,7 @@ pub struct EntityRecord {
 }
 
 pub fn entities_file(home: &Path, cwd: Option<&Path>) -> PathBuf {
-    let sub = match cwd {
-        Some(dir) => hash_cwd(dir),
-        None => "global".to_string(),
-    };
-    home.join("entities").join(sub).join("ENTITIES.jsonl")
+    vak_config::scope::AgentScope::new(home).entities_file(cwd)
 }
 
 /// List all entities in the target workspace (or global if cwd is None).
@@ -264,7 +258,7 @@ impl vak_tools::Tool for EntityRecordTool {
                     .collect::<Vec<_>>()
                     .join("-");
                 if deduped.is_empty() {
-                    format!("ent-{}", hash_cwd(Path::new(name)))
+                    format!("ent-{}", vak_config::scope::workspace_key(Path::new(name)))
                 } else {
                     deduped
                 }

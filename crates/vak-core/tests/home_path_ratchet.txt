@@ -3,10 +3,8 @@
 # Raw home-path uses in production code, measured as blast-radius §0
 # describes (docs/plans/data-architecture-blast-radius.md). A change that
 # removes uses lowers the number here in the same change; nothing raises it.
-# Re-baselined once on 2026-10-01 (213 -> 215, 67 -> 68): the worker-questions
-# commits (1154da84..e1c0d653) landed between the first count and the next
-# push. M3a deletes this file and its test when every count reaches zero.
-sessions_home = 215
-shared_data_home = 84
-vak_literal = 68
-hash_cwd = 13
+# M3a deletes this file and its test when every count reaches zero.
+sessions_home = 166
+shared_data_home = 76
+vak_literal = 41
+hash_cwd = 6

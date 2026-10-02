@@ -117,7 +117,7 @@ fn fnv1a(data: &[u8]) -> String {
 }
 
 pub fn inbox_path(home: &Path) -> PathBuf {
-    home.join("inbox.jsonl")
+    vak_config::scope::AgentScope::new(home).inbox()
 }
 
 /// Append one notification and return it. One formatted buffer + ONE
@@ -213,7 +213,7 @@ impl Drop for DedupeLock {
 }
 
 fn acquire_dedupe_lock(home: &Path) -> Result<DedupeLock, InboxError> {
-    let path = home.join("inbox.dedupe.lock");
+    let path = vak_config::scope::AgentScope::new(home).inbox_dedupe_lock();
     std::fs::create_dir_all(home).map_err(|source| InboxError::Io {
         path: home.to_path_buf(),
         source,

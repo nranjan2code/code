@@ -251,13 +251,16 @@ pub fn discover_with_diagnostics(
     home: &Path,
     plugins: &[(PathBuf, String)],
 ) -> (Vec<Skill>, Vec<SkillDiagnostic>) {
-    let mut roots = vec![(cwd.join(".vak/skills"), None), (home.join("skills"), None)];
-    let agents_dir = home.join("agents");
+    let mut roots = vec![
+        (vak_config::scope::WorkspaceScope::new(cwd).skills(), None),
+        (vak_config::scope::AgentScope::new(home).skills(), None),
+    ];
+    let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                roots.push((p.join("skills"), None));
+                roots.push((vak_config::scope::AgentScope::new(p).skills(), None));
             }
         }
     }
@@ -309,13 +312,16 @@ pub fn discover_all_with_plugins(
     home: &Path,
     plugins: &[(PathBuf, String)],
 ) -> Vec<Skill> {
-    let mut roots = vec![(cwd.join(".vak/skills"), None), (home.join("skills"), None)];
-    let agents_dir = home.join("agents");
+    let mut roots = vec![
+        (vak_config::scope::WorkspaceScope::new(cwd).skills(), None),
+        (vak_config::scope::AgentScope::new(home).skills(), None),
+    ];
+    let agents_dir = vak_config::scope::AgentScope::new(home).agents_dir();
     if let Ok(entries) = std::fs::read_dir(&agents_dir) {
         for entry in entries.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                roots.push((p.join("skills"), None));
+                roots.push((vak_config::scope::AgentScope::new(p).skills(), None));
             }
         }
     }

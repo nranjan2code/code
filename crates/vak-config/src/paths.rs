@@ -99,7 +99,10 @@ pub fn agent_workspace(base: &std::path::Path, agent_id: &str) -> PathBuf {
     if agent_id == "vak" {
         base.to_path_buf()
     } else {
-        base.join(".vak/agents").join(agent_id).join("workspace")
+        base.join(crate::scope::PROJECT_DIR)
+            .join("agents")
+            .join(agent_id)
+            .join("workspace")
     }
 }
 

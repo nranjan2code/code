@@ -64,7 +64,7 @@ pub struct DigestReport {
 }
 
 fn cost_log_path(home: &Path) -> PathBuf {
-    home.join("cost-log.jsonl")
+    vak_config::scope::AgentScope::new(home).cost_log()
 }
 
 /// Stream the cost ledger once, folding priced/unpriced rows inside the
@@ -151,7 +151,7 @@ fn count_fresh_notes(path: &Path, since: chrono::DateTime<chrono::Utc>) -> usize
 /// files plus the global USER.md profile tier.
 fn memory_files(home: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    let root = home.join("memory");
+    let root = vak_config::scope::AgentScope::new(home).memory_root();
     let Ok(read) = std::fs::read_dir(&root) else {
         return out;
     };
@@ -222,7 +222,7 @@ pub fn digest(home: &Path, shared_home: &Path, days: u32) -> DigestReport {
     }
 
     let mut proposals: Vec<PathBuf> = Vec::new();
-    let root = home.join("skill-proposals");
+    let root = vak_config::scope::AgentScope::new(home).skill_proposals_root();
     if let Ok(read) = std::fs::read_dir(&root) {
         for project in read.flatten() {
             let Ok(files) = std::fs::read_dir(project.path()) else {

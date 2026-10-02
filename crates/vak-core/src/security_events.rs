@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 fn security_events_path(home: &Path) -> PathBuf {
-    home.join("security-events.jsonl")
+    vak_config::scope::AgentScope::new(home).security_events()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -19,7 +19,7 @@ pub fn discover(cwd: &Path, home: &Path) -> Vec<CustomCommand> {
     // Standalone inspection preserves the historical local plugin view. Core
     // turn admission never uses this convenience path; it supplies only
     // package roots returned by the enabled-plugin store.
-    if let Ok(entries) = std::fs::read_dir(cwd.join(".vak/plugins")) {
+    if let Ok(entries) = std::fs::read_dir(vak_config::scope::WorkspaceScope::new(cwd).plugins()) {
         for entry in entries.flatten().filter(|entry| entry.path().is_dir()) {
             let Some(name) = entry.file_name().to_str().map(str::to_string) else {
                 continue;
@@ -43,8 +43,14 @@ pub fn discover_with_plugins(
 ) -> Vec<CustomCommand> {
     let mut out = Vec::new();
     let mut roots: Vec<(std::path::PathBuf, String)> = vec![
-        (cwd.join(".vak/plugins"), String::new()),
-        (cwd.join(".vak/commands"), "project".to_string()),
+        (
+            vak_config::scope::WorkspaceScope::new(cwd).plugins(),
+            String::new(),
+        ),
+        (
+            vak_config::scope::WorkspaceScope::new(cwd).commands(),
+            "project".to_string(),
+        ),
         (home.join("commands"), "user".to_string()),
     ];
     roots.dedup();

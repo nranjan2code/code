@@ -82,7 +82,7 @@ pub fn effective(core: &crate::Core) -> Result<Vec<AgentDefinition>, String> {
 }
 
 pub fn path(cwd: &Path) -> PathBuf {
-    cwd.join(".vak").join("agents.json")
+    vak_config::scope::WorkspaceScope::new(cwd).agents_file()
 }
 
 pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
@@ -101,7 +101,7 @@ pub fn load(cwd: &Path) -> Result<Vec<AgentDefinition>, String> {
 /// but is defined in the project layer of `<base>`, so the base is where its
 /// definition is. Any other `cwd` is its own base.
 fn definition_base(cwd: &Path, agent_id: &str) -> PathBuf {
-    let tail = Path::new(".vak")
+    let tail = Path::new(vak_config::scope::PROJECT_DIR)
         .join("agents")
         .join(agent_id)
         .join("workspace");

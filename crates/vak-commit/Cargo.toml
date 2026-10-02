@@ -10,6 +10,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+vak-config = { workspace = true }
 vak-intent = { workspace = true }
 vak-session = { workspace = true }
 

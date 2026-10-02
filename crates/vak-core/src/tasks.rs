@@ -200,7 +200,7 @@ fn next_fire<Tz: TimeZone>(expr: &CronExpr, after: DateTime<Tz>) -> Option<DateT
 }
 
 pub fn tasks_file(sessions_home: &Path) -> PathBuf {
-    sessions_home.join("tasks.json")
+    vak_config::scope::SharedScope::new(sessions_home).tasks()
 }
 
 /// Worktree metadata recorded with the last run. Shape-compatible twin of

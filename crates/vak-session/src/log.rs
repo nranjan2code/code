@@ -2292,25 +2292,12 @@ pub struct SessionPath;
 
 impl SessionPath {
     pub fn sessions_dir(home: &Path, cwd: &Path) -> PathBuf {
-        home.join("sessions").join(hash_cwd(cwd))
+        vak_config::scope::AgentScope::new(home).sessions_dir(cwd)
     }
 
     pub fn new_session_file(home: &Path, cwd: &Path, session_id: &str) -> PathBuf {
         Self::sessions_dir(home, cwd).join(format!("{session_id}.jsonl"))
     }
-}
-
-/// FNV-1a: a fixed hash whose output does not change across Rust releases,
-/// unlike DefaultHasher (SipHash with randomly-seeded-but-toolchain-chosen
-/// parameters). Session directories must remain reachable after toolchain
-/// upgrades.
-fn hash_cwd(cwd: &Path) -> String {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in cwd.to_string_lossy().as_bytes() {
-        h ^= u64::from(*b);
-        h = h.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    format!("{h:016x}")
 }
 
 #[cfg(all(test, unix))]

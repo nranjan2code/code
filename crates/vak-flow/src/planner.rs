@@ -383,9 +383,8 @@ pub async fn plan_and_run(
 
         // Fresh ledger per attempt; definition frozen from the planner output.
         let run_id = vak_session::ids::RunId::new().to_string();
-        let state_path = deps
-            .sessions_home
-            .join("flow-runs")
+        let state_path = vak_config::scope::AgentScope::new(&deps.sessions_home)
+            .flow_runs()
             .join(format!("{}.json", run_id));
         let mut state = FlowState {
             run_id,

@@ -254,6 +254,13 @@ R41, R42). Two guards stop that before M3a:
   increase, naming the largest files, and on a decrease until the ceiling
   is lowered in the same change. M3a deletes both when the counts reach
   zero.
+  M3a slice 1 (2026-10-02) added `vak_config::scope` (`AgentScope`,
+  `SharedScope`, `WorkspaceScope`, `Core::scope()`/`shared_scope()`/
+  `workspace_scope()`) and moved vak-core, vak-config, vak-session,
+  vak-commit, vak-store, vak-flow and vak-agent onto it; the ceilings are
+  now 166, 76, 41 and 6. vak-server, vak, vak-ops, vak-desktop, vak-tray,
+  vak-terminal and the `.vak` guard strings in vak-tools and vak-sandbox
+  are later slices.
 - **Registry split.** The single `agents` entry in
   `crates/vak-core/src/state.rs` is now eighteen `agents/{agent}/…` entries,
   each with its real kind; a new `Document` kind covers the stores the

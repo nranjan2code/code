@@ -40,8 +40,8 @@ pub fn marker_path(cwd: &Path) -> PathBuf {
 }
 
 fn marker_for(path: &Path) -> PathBuf {
-    vak_config::paths::data_home()
-        .join("trusted")
+    vak_config::scope::SharedScope::new(vak_config::paths::data_home())
+        .trusted()
         .join(format!("{:016x}", fnv1a(path.to_string_lossy().as_bytes())))
 }
 

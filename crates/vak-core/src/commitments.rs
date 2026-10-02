@@ -605,11 +605,17 @@ impl Maintenance {
 /// admitted without an Agent.
 pub async fn maintain_all(shared_data_home: &Path) -> Maintenance {
     let mut homes = vec![shared_data_home.to_path_buf()];
-    if let Ok(entries) = std::fs::read_dir(shared_data_home.join("agents")) {
+    if let Ok(entries) =
+        std::fs::read_dir(vak_config::scope::SharedScope::new(shared_data_home).agents_dir())
+    {
         let mut agents: Vec<_> = entries
             .flatten()
             .map(|entry| entry.path())
-            .filter(|path| path.join("commitments.jsonl").is_file())
+            .filter(|path| {
+                vak_config::scope::AgentScope::new(path)
+                    .commitments()
+                    .is_file()
+            })
             .collect();
         agents.sort();
         homes.extend(agents);

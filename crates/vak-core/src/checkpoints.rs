@@ -39,7 +39,13 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
-const IGNORED_DIRS: [&str; 5] = [".git", "target", "node_modules", ".vak", "dist"];
+const IGNORED_DIRS: [&str; 5] = [
+    ".git",
+    "target",
+    "node_modules",
+    vak_config::scope::PROJECT_DIR,
+    "dist",
+];
 
 /// Rebuildable runtime artifacts (the vak-store SQLite index and its WAL
 /// sidecars). Never meaningful workspace content: capturing them into a
@@ -237,7 +243,7 @@ impl IgnoreRules {
 // ---------------------------------------------------------------------------
 
 fn checkpoint_root(sessions_home: &Path) -> PathBuf {
-    sessions_home.join("checkpoints")
+    vak_config::scope::AgentScope::new(sessions_home).checkpoints()
 }
 
 /// "blobs" is a reserved session id: a real session id is `uuid_like()`
