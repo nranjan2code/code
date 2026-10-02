@@ -1188,7 +1188,7 @@ fn child_outcome(
     Some(spec)
 }
 
-/// The id names the child's ledger file, and the file is exclusively locked, so
+/// The id (a full UUIDv7 plus the sequence) names the child's ledger file, and the file is exclusively locked, so
 /// two children with the same id cannot both exist. The id used to be the
 /// clock's nanoseconds alone; tasks launched in the same wave can read the same
 /// value (clock resolution is coarser than the launch rate), and the second
@@ -1197,12 +1197,8 @@ fn child_outcome(
 /// a collision impossible whatever the clock does.
 fn next_child_session_id() -> String {
     static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos();
     let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    format!("child-{nanos}-{sequence}")
+    format!("child-{}-{sequence}", uuid::Uuid::now_v7())
 }
 
 #[cfg(test)]

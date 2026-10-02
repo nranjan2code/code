@@ -1252,6 +1252,8 @@ mod tests {
                 ),
                 profile: profile.clone(),
                 skill_registry: None,
+                trace: None,
+                actor: None,
             };
             let packet = vak_delivery::render(&job).expect("Telegram answer rendering failed");
             assert_eq!(packet.surface, "telegram");

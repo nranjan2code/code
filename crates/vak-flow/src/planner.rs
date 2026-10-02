@@ -382,13 +382,7 @@ pub async fn plan_and_run(
             .await;
 
         // Fresh ledger per attempt; definition frozen from the planner output.
-        let run_id = format!(
-            "plan-{}-{attempt}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
+        let run_id = vak_session::ids::RunId::new().to_string();
         let state_path = deps
             .sessions_home
             .join("flow-runs")

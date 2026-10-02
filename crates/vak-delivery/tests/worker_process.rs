@@ -25,6 +25,8 @@ fn job(id: &str, markdown: &str) -> DeliveryJob {
             posture: DeliveryPosture::default(),
         },
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 

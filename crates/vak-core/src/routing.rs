@@ -105,7 +105,11 @@ impl EvidenceLedger {
     /// Fold a finished run's work receipts into evidence. Attribution is
     /// per attempt: fallback legs record against the leg that actually
     /// served (or failed) -- never against the receipt's final stamp.
-    pub fn record_receipts(&self, receipts: &[vak_llm::WorkReceipt]) {
+    pub fn record_receipts(
+        &self,
+        receipts: &[vak_llm::WorkReceipt],
+        trace: Option<&vak_session::trace::TraceKey>,
+    ) {
         let now = chrono::Utc::now();
         for r in receipts {
             for a in &r.attempts {
@@ -123,8 +127,8 @@ impl EvidenceLedger {
                         model: model.to_string(),
                         outcome: outcome.into(),
                         latency_ms: a.latency_ms,
-                        trace: None,
-                        actor: None,
+                        trace: trace.cloned(),
+                        actor: trace.and_then(|t| t.actor),
                     });
                 }
             }
@@ -526,7 +530,7 @@ mod tests {
             None,
             None,
         );
-        ledger.record_receipts(std::slice::from_ref(&r));
+        ledger.record_receipts(std::slice::from_ref(&r), None);
         let snap = ledger.snapshot();
         assert_eq!(
             snap.get("openai", "gpt-x").unknown,

@@ -995,13 +995,7 @@ async fn run_flow_exec(
             }
         }
     } else {
-        let run_id = format!(
-            "{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_nanos()
-        );
+        let run_id = vak_session::ids::RunId::new().to_string();
         runs_dir.join(format!("{run_id}.json"))
     };
 
@@ -1582,11 +1576,7 @@ async fn run_exec(
 }
 
 fn timestamp_id() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .to_string()
+    uuid::Uuid::now_v7().to_string()
 }
 
 /// Upper bound on one background reflection pass so a stuck auxiliary

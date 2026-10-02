@@ -94,6 +94,7 @@ impl Outbox {
             )));
         }
         let now = epoch_millis();
+        let (trace, actor) = (job.trace.clone(), job.actor);
         let record = OutboxRecord {
             schema_version: 1,
             job,
@@ -103,8 +104,8 @@ impl Outbox {
             updated_at_ms: now,
             packet: None,
             last_error: None,
-            trace: None,
-            actor: None,
+            trace,
+            actor,
         };
         create_record(&path, &record)?;
         Ok(record)
@@ -312,7 +313,39 @@ mod tests {
             content: DeliveryContent::Answer(AnswerDraft::from_markdown("exact **answer**")),
             profile: DeliveryProfile::plain("log"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         }
+    }
+
+    #[test]
+    fn a_job_written_under_a_run_names_it_on_its_record() {
+        use vak_session::ids::{AgentId, PrincipalId, SpaceId, TenantId};
+        use vak_session::trace::{Cause, TraceKey};
+        let actor = PrincipalId::new();
+        let key = TraceKey::root(
+            TenantId::new(),
+            SpaceId::new(),
+            AgentId::new(),
+            Cause::Heartbeat,
+        )
+        .acting(actor, None);
+        let root = std::env::temp_dir().join(format!(
+            "vak-delivery-outbox-trace-{}-{}",
+            std::process::id(),
+            epoch_millis()
+        ));
+        let outbox = Outbox::new(&root);
+        let mut job = test_job();
+        job.trace = Some(key.clone());
+        job.actor = Some(actor);
+        let record = outbox.enqueue(job.clone()).expect("enqueue");
+        assert_eq!(record.trace.as_ref().map(|t| t.run), Some(key.run));
+        assert_eq!(record.actor, Some(actor));
+        let packet = crate::render(&job).expect("render");
+        assert_eq!(packet.trace.as_ref().map(|t| t.run), Some(key.run));
+        assert_eq!(packet.actor, Some(actor));
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

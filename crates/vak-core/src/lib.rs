@@ -4918,10 +4918,7 @@ impl Core {
             if let Ok(profile_json) = serde_json::to_string(&profile) {
                 data.insert("profile".into(), profile_json);
             }
-            let activity_id = now
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| format!("activity-{}", d.as_nanos()))
-                .unwrap_or_else(|_| format!("activity-{}", uuid_like()));
+            let activity_id = format!("activity-{}", uuid_like());
             let _ = session.append_activity(vak_session::ActivityRecord {
                 activity_id,
                 turn: None,
@@ -7156,6 +7153,7 @@ impl Core {
                     misread::Outcome::Restated,
                     None,
                     self.reading_sliced(&previous.reading),
+                    Some(&run_trace),
                 );
             }
         }
@@ -7179,6 +7177,7 @@ impl Core {
                         .conversation
                         .as_ref()
                         .map(|conversation| conversation.audience_id.as_str()),
+                    Some(&run_trace),
                 )
             })
             .unwrap_or_default();
@@ -7592,6 +7591,7 @@ impl Core {
                 outcome,
                 wanted,
                 self.reading_sliced(&resolved_intent.reading),
+                Some(&run_trace),
             );
         }
 
@@ -7639,6 +7639,7 @@ impl Core {
                     episode,
                     commitments::classify(&outcome, tool_calls, Vec::new()),
                     if index == 0 { spend } else { 0.0 },
+                    Some(&run_trace),
                 );
             }
         }
@@ -7652,7 +7653,8 @@ impl Core {
             .cloned()
             .collect();
         if !new_receipts.is_empty() {
-            routing::EvidenceLedger::new(&self.sessions_home()).record_receipts(&new_receipts);
+            routing::EvidenceLedger::new(&self.sessions_home())
+                .record_receipts(&new_receipts, Some(&run_trace));
             // Phase R: fold the same dispatches into session beliefs.
             // Domain-weighted doubt accumulates per leg; one success
             // clears it. Cancelled attempts say nothing.

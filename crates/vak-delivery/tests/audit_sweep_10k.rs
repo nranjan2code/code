@@ -102,6 +102,8 @@ fn answer_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
             posture: DeliveryPosture::default(),
         },
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -685,6 +687,8 @@ fn blue_team_error_paths_never_panic() {
                         posture: DeliveryPosture::default(),
                     },
                     skill_registry: None,
+                    trace: None,
+                    actor: None,
                 };
                 let _ = render(&job);
             }));
@@ -718,6 +722,8 @@ fn blue_team_error_paths_never_panic() {
                     posture: DeliveryPosture::default(),
                 },
                 skill_registry: None,
+                trace: None,
+                actor: None,
             };
             let _ = render(&job);
         }));

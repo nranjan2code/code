@@ -131,11 +131,15 @@ pub fn record(
     body: &str,
     session_id: Option<&str>,
     task_id: Option<&str>,
+    trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
-    record_with_result_and_key(home, kind, title, body, session_id, task_id, None, None)
+    record_with_result_and_key(
+        home, kind, title, body, session_id, task_id, None, None, trace,
+    )
 }
 
 /// Append a notification linked to one immutable presentation result.
+#[allow(clippy::too_many_arguments)]
 pub fn record_with_result(
     home: &Path,
     kind: Kind,
@@ -144,9 +148,10 @@ pub fn record_with_result(
     session_id: Option<&str>,
     task_id: Option<&str>,
     result_id: Option<&str>,
+    trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     record_with_result_and_key(
-        home, kind, title, body, session_id, task_id, result_id, None,
+        home, kind, title, body, session_id, task_id, result_id, None, trace,
     )
 }
 
@@ -163,6 +168,7 @@ pub fn record_with_result_and_key(
     task_id: Option<&str>,
     result_id: Option<&str>,
     dedupe_key: Option<&str>,
+    trace: Option<&vak_session::trace::TraceKey>,
 ) -> Result<Entry, InboxError> {
     let _dedupe_lock = if dedupe_key.is_some() {
         Some(acquire_dedupe_lock(home)?)
@@ -188,8 +194,8 @@ pub fn record_with_result_and_key(
         task_id: task_id.map(str::to_string),
         result_id: result_id.map(str::to_string),
         dedupe_key: dedupe_key.map(str::to_string),
-        trace: None,
-        actor: None,
+        actor: trace.and_then(|t| t.actor),
+        trace: trace.cloned(),
     };
     let line = serde_json::to_string(&entry).map_err(|e| InboxError::Serialize(e.to_string()))?;
     append_line(&path, &line)?;
@@ -369,6 +375,7 @@ mod tests {
             "body a",
             Some("sess-1"),
             None,
+            None,
         )
         .unwrap();
         let b = record(
@@ -378,6 +385,7 @@ mod tests {
             "body b",
             None,
             Some("task-9"),
+            None,
         )
         .unwrap();
 
@@ -397,8 +405,8 @@ mod tests {
     fn ack_is_idempotent_and_shrinks_unread_once() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let e = record(home, Kind::Digest, "daily", "", None, None).unwrap();
-        let other = record(home, Kind::Heartbeat, "beat", "", None, None).unwrap();
+        let e = record(home, Kind::Digest, "daily", "", None, None, None).unwrap();
+        let other = record(home, Kind::Heartbeat, "beat", "", None, None, None).unwrap();
 
         assert!(ack(home, &e.id).unwrap());
         assert!(!ack(home, &e.id).unwrap());
@@ -422,6 +430,7 @@ mod tests {
             "wants write",
             None,
             None,
+            None,
         )
         .unwrap();
         ack(home, &e.id).unwrap();
@@ -437,11 +446,11 @@ mod tests {
     fn corrupt_middle_line_is_skipped_and_counted() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let first = record(home, Kind::Digest, "one", "", None, None).unwrap();
+        let first = record(home, Kind::Digest, "one", "", None, None, None).unwrap();
         let mut raw = std::fs::read_to_string(inbox_path(home)).unwrap();
         raw.push_str("{\"id\": torn line no json\n");
         std::fs::write(inbox_path(home), &raw).unwrap();
-        let last = record(home, Kind::BudgetAlert, "two", "", None, None).unwrap();
+        let last = record(home, Kind::BudgetAlert, "two", "", None, None, None).unwrap();
 
         let scan = unread_scanned(home);
         assert_eq!(scan.corrupt, 1);
@@ -468,6 +477,7 @@ mod tests {
                         Kind::TaskSummary,
                         &format!("{tag}-{i}"),
                         "x",
+                        None,
                         None,
                         None,
                     )
@@ -550,6 +560,7 @@ mod tests {
             Some("task"),
             Some("result-1"),
             Some("surface:chat|result-1|0"),
+            None,
         )
         .unwrap();
         let second = record_with_result_and_key(
@@ -561,6 +572,7 @@ mod tests {
             Some("task"),
             Some("result-1"),
             Some("surface:chat|result-1|0"),
+            None,
         )
         .unwrap();
         assert_eq!(first.id, second.id);

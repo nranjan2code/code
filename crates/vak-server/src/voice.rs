@@ -51,7 +51,7 @@ fn record_voice_dispatch(
         let _ = session.append_receipt(receipt.clone());
     }
     vak_core::routing::EvidenceLedger::new(&core.sessions_home())
-        .record_receipts(std::slice::from_ref(receipt));
+        .record_receipts(std::slice::from_ref(receipt), None);
     if receipt.provider != "local" {
         let source = match receipt.purpose {
             vak_llm::WorkPurpose::SpeechRecognition => "voice_recognition_usage_unavailable",

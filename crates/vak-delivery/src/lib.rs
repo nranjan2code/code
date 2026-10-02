@@ -572,6 +572,11 @@ pub struct DeliveryJob {
     /// having filesystem or network access.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skill_registry: Option<SkillRegistry>,
+    /// The run this job was written under, and who acted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -592,6 +597,10 @@ pub struct DeliveryPacket {
     /// continue using `chunks` or `fallback_markdown`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub presentation: Option<OutputTimeline>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trace: Option<vak_session::trace::TraceKey>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<vak_session::ids::PrincipalId>,
 }
 
 impl DeliveryPacket {
@@ -774,6 +783,8 @@ pub fn render(job: &DeliveryJob) -> Result<DeliveryPacket, DeliveryError> {
         coverage,
         diagnostics,
         presentation,
+        trace: job.trace.clone(),
+        actor: job.actor,
     })
 }
 
@@ -1532,6 +1543,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         }
     }
 
@@ -1617,6 +1630,8 @@ mod tests {
                     posture: DeliveryPosture::default(),
                 },
                 skill_registry: None,
+                trace: None,
+                actor: None,
             };
             let packet = render(&input).expect("specialized output should render");
             assert_eq!(packet.fallback_markdown, source, "surface={surface}");
@@ -1887,6 +1902,8 @@ mod tests {
                 ..DeliveryProfile::plain("test")
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("valid delivery job");
         assert!(packet.chunks.iter().all(|chunk| chunk.chars().count() <= 4));
@@ -1965,6 +1982,8 @@ mod tests {
             },
             profile: DeliveryProfile::plain("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let error = render(&input).expect_err("system content must stay on event stream");
         assert!(error.to_string().contains("control-plane"));
@@ -1991,6 +2010,8 @@ mod tests {
             }),
             profile: DeliveryProfile::plain("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("approval should render");
         assert_eq!(packet.actions.len(), 1);
@@ -2043,6 +2064,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("valid delivery job");
         let text = fallback_text(&packet);
@@ -2084,6 +2107,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("valid delivery job");
         let text = fallback_text(&packet);
@@ -2115,6 +2140,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("valid delivery job");
         let text = fallback_text(&packet);
@@ -2143,6 +2170,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("valid delivery job");
         // For Json markup, the structured fence should NOT be projected
@@ -2179,6 +2208,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&input).expect("valid tool result job");
         let text = fallback_text(&packet);
@@ -2210,6 +2241,8 @@ mod tests {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let result = render(&input);
         // Must not panic on malformed JSON inside the fence

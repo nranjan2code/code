@@ -115,6 +115,8 @@ fn answer_job(
             posture: DeliveryPosture::default(),
         },
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -141,6 +143,8 @@ fn approval_job(_markup: Markup, surface: &str) -> DeliveryJob {
         }),
         profile: plain_profile(surface),
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -156,6 +160,8 @@ fn progress_job(_markup: Markup, surface: &str) -> DeliveryJob {
         }),
         profile: plain_profile(surface),
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -175,6 +181,8 @@ fn tool_result_job(_markup: Markup, surface: &str, is_error: bool) -> DeliveryJo
         }),
         profile: plain_profile(surface),
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -188,6 +196,8 @@ fn text_job(markdown: &str, _markup: Markup, surface: &str) -> DeliveryJob {
         },
         profile: plain_profile(surface),
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 
@@ -345,6 +355,8 @@ fn audit_kind_content_matching() {
                 },
                 profile: plain_profile("test"),
                 skill_registry: None,
+                trace: None,
+                actor: None,
             };
             assert!(render(&job).is_err());
         }));
@@ -370,6 +382,8 @@ fn audit_kind_content_matching() {
                 }),
                 profile: plain_profile("test"),
                 skill_registry: None,
+                trace: None,
+                actor: None,
             };
             assert!(render(&job).is_err());
         }));
@@ -406,6 +420,8 @@ fn audit_kind_content_matching() {
             }),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         assert!(render(&job).is_err());
     }));
@@ -423,6 +439,8 @@ fn audit_kind_content_matching() {
             }),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         assert!(render(&job).is_err());
     }));
@@ -2039,6 +2057,8 @@ fn audit_outbox() {
                 content: DeliveryContent::Answer(answer_draft("# Title\n\nContent.")),
                 profile: plain_profile("test"),
                 skill_registry: None,
+                trace: None,
+                actor: None,
             }
         };
     }
@@ -2292,6 +2312,8 @@ fn audit_worker_protocol() {
             },
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let response_str = process_line(&make_req(&job));
         let response: WorkerResponse = serde_json::from_str(&response_str).expect("deserialize");
@@ -2383,6 +2405,8 @@ fn audit_worker_protocol() {
             content: DeliveryContent::Answer(answer_draft("source")),
             profile,
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let response_str = process_line(&make_req(&job));
         let response: WorkerResponse = serde_json::from_str(&response_str).expect("deserialize");
@@ -2807,6 +2831,8 @@ fn audit_render_errors() {
                 },
                 profile: plain_profile("test"),
                 skill_registry: None,
+                trace: None,
+                actor: None,
             };
             assert!(render(&job).is_err());
         }));
@@ -2826,6 +2852,8 @@ fn audit_render_errors() {
             }),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         assert!(render(&job).is_err());
     }));
@@ -2840,6 +2868,8 @@ fn audit_render_errors() {
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         assert!(render(&job).is_err());
     }));
@@ -2866,6 +2896,8 @@ fn audit_render_errors() {
             }),
             profile,
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         assert!(render(&job).is_err());
     }));
@@ -2886,6 +2918,8 @@ fn audit_render_errors() {
             content: DeliveryContent::Answer(answer_draft("source")),
             profile,
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         assert!(render(&job).is_err());
     }));
@@ -3006,6 +3040,8 @@ fn audit_packet_structure() {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         assert!(!packet.diagnostics.is_empty());
@@ -3040,6 +3076,8 @@ fn audit_packet_structure() {
                 posture: DeliveryPosture::default(),
             },
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         assert!(packet.diagnostics.is_empty());
@@ -3122,6 +3160,8 @@ fn audit_packet_structure() {
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         let timeline = packet.presentation.unwrap();
@@ -3141,6 +3181,8 @@ fn audit_packet_structure() {
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         let timeline = packet.presentation.unwrap();
@@ -3161,6 +3203,8 @@ fn audit_packet_structure() {
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         let timeline = packet.presentation.unwrap();
@@ -3196,6 +3240,8 @@ fn audit_packet_structure() {
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         assert!(packet.fallback_markdown.contains("First."));
@@ -3223,6 +3269,8 @@ fn audit_packet_structure() {
             content: DeliveryContent::Answer(answer),
             profile: plain_profile("test"),
             skill_registry: None,
+            trace: None,
+            actor: None,
         };
         let packet = render(&job).expect("render");
         assert_eq!(packet.fallback_markdown, "Only.");
@@ -3497,6 +3545,8 @@ fn audit_content_kind_markup_matrix() {
                     content,
                     profile: DeliveryProfile::plain("test"),
                     skill_registry: None,
+                    trace: None,
+                    actor: None,
                 };
                 let job = DeliveryJob {
                     profile: DeliveryProfile {

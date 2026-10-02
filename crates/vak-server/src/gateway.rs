@@ -985,7 +985,7 @@ impl GatewayState {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = match id_prefix {
-            Some(prefix) => match map.keys().find(|k| k.starts_with(prefix)).cloned() {
+            Some(prefix) => match map.keys().find(|k| k.ends_with(prefix)).cloned() {
                 Some(k) => k,
                 None => return Err(()),
             },
@@ -2412,7 +2412,7 @@ impl vak_agent::Approver for GatewayApprover {
             args_json: args_json.to_string(),
             reason: reason.to_string(),
         });
-        let short = &id[..8];
+        let short = question_code(&id);
         let announce = format!(
             "Approval requested [{short}]\nTool: {tool}\nArgs: {args_json}\nReason: {reason}\nReply 'yes' or 'no' to decide."
         );
@@ -2640,7 +2640,7 @@ async fn gateway_inbound(
                 // A chat "no" is observable here and nowhere else, so the
                 // durable record of the denial is written at the same beat.
                 if !verdict {
-                    let short = resolved.id.get(..8).unwrap_or(resolved.id.as_str());
+                    let short = question_code(&resolved.id);
                     let _ = vak_core::inbox::record(
                         &state.core.shared_data_home(),
                         vak_core::inbox::Kind::ApprovalDenied,
@@ -2650,6 +2650,7 @@ async fn gateway_inbound(
                             resolved.session_id, resolved.id, resolved.remaining
                         ),
                         Some(&resolved.session_id),
+                        None,
                         None,
                     );
                 }
@@ -3766,6 +3767,7 @@ pub(crate) async fn deliver_and_record_with_result(
         task_id,
         result_id,
         dedupe_key.as_deref(),
+        core.admitted_trace(),
     );
     let cleaned_text = crate::projection::clean_scaffolding(text);
     let mut answer = AnswerDraft::from_markdown(cleaned_text);
@@ -3816,6 +3818,7 @@ async fn deliver_approval_and_record(
         &approval.detail,
         session_id,
         task_id,
+        core.admitted_trace(),
     );
     crate::delivery::deliver(
         core,

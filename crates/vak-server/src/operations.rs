@@ -180,7 +180,7 @@ fn new_record(candidate: IncidentCandidate, now: DateTime<Utc>) -> IncidentRecor
         evidence: candidate.evidence,
         resolution: None,
         trace: None,
-        actor: None,
+        actor: Some(vak_session::trace::local::system_principal()),
     }
 }
 

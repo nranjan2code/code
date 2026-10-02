@@ -334,6 +334,7 @@ async fn record_reply(state: &AppState, cfg: &vak_config::HeartbeatResolved, tex
         &body,
         Some(HEARTBEAT_SESSION_ID),
         None,
+        None,
     );
     if !urgent {
         return;

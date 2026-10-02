@@ -52,6 +52,10 @@ struct OfficeRevision {
     branch_id: String,
     author_id: String,
     author_name: String,
+    /// The principal who made the revision (docs/design/73 §4), beside the
+    /// display fields above.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    actor: Option<vak_session::ids::PrincipalId>,
     created_at: String,
     ops: Vec<vak_ooxml::edit::OfficeOp>,
     /// A PDF room's ops, one step per call: every anchor in a step names the
@@ -171,6 +175,19 @@ fn save(path: &FsPath, room: &OfficeRoom) -> Result<(), ()> {
     result.map_err(|_| ())
 }
 
+/// The principal behind a room edit: the enrolled owner for the operator,
+/// and a participant's grant principal otherwise.
+fn actor_principal(state: &AppState, actor_id: &str) -> vak_session::ids::PrincipalId {
+    if actor_id == "operator" {
+        state
+            .owner_auth
+            .principal()
+            .unwrap_or_else(vak_session::trace::local::local_owner)
+    } else {
+        vak_session::ids::PrincipalId::derived(&format!("participant:{actor_id}"))
+    }
+}
+
 fn authority(
     state: &AppState,
     session_id: &str,
@@ -257,6 +274,7 @@ pub(super) async fn create(
             branch_id: "shared".into(),
             author_id: "operator".into(),
             author_name: "You".into(),
+            actor: Some(actor_principal(&state, "operator")),
             created_at: now,
             ops: Vec::new(),
             pdf_steps: Vec::new(),
@@ -533,6 +551,7 @@ pub(super) async fn mutate(
                 parent_candidate_id: parent_id,
                 merge_parent_candidate_id: None,
                 branch_id,
+                actor: Some(actor_principal(&state, &actor_id)),
                 author_id: actor_id,
                 author_name: actor_name,
                 created_at: chrono::Utc::now().to_rfc3339(),
@@ -730,9 +749,10 @@ async fn create_revision(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+    let actor = Some(actor_principal(state, &actor_id));
     let saved = vak_sandbox::CandidateRecord {
         trace: None,
-        actor: None,
+        actor,
         record_id: format!("candidate-{id}"),
         session_id: parent.session_id.clone(),
         turn_id: parent.turn_id.clone(),
@@ -763,6 +783,7 @@ async fn create_revision(
         parent_candidate_id: parent_id,
         merge_parent_candidate_id: merge_parent,
         branch_id,
+        actor,
         author_id: actor_id,
         author_name: actor_name,
         created_at: chrono::Utc::now().to_rfc3339(),

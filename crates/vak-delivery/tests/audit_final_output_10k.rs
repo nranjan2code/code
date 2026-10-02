@@ -78,6 +78,8 @@ fn make_job(source: &str, markup: Markup, surface: &str) -> DeliveryJob {
             posture: DeliveryPosture::default(),
         },
         skill_registry: None,
+        trace: None,
+        actor: None,
     }
 }
 

@@ -156,6 +156,7 @@ impl MisreadLedger {
         &self.path
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &self,
         reading: &vak_intent::Reading,
@@ -164,6 +165,7 @@ impl MisreadLedger {
         outcome: Outcome,
         wanted: Option<String>,
         sliced: bool,
+        trace: Option<&vak_session::trace::TraceKey>,
     ) {
         let row = MisreadRow {
             ts: chrono::Utc::now(),
@@ -174,8 +176,8 @@ impl MisreadLedger {
             outcome: outcome.as_str().to_string(),
             wanted,
             sliced,
-            trace: None,
-            actor: None,
+            actor: trace.and_then(|t| t.actor),
+            trace: trace.cloned(),
         };
         let Ok(line) = serde_json::to_string(&row) else {
             return;
@@ -363,6 +365,7 @@ mod tests {
             outcome,
             wanted.map(str::to_string),
             true,
+            None,
         );
     }
 
@@ -460,6 +463,7 @@ mod tests {
                 Outcome::Escalated,
                 Some("bash".into()),
                 false,
+                None,
             );
         }
         let cells = ledger.accuracy();
@@ -482,6 +486,7 @@ mod tests {
                 Outcome::Escalated,
                 Some("bash".into()),
                 true,
+                None,
             );
         }
         assert_eq!(ledger.accuracy().len(), 1);

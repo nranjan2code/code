@@ -248,6 +248,62 @@ impl FinOpsLedger {
     }
 }
 
+/// What one Agent or one run spent, summed from cost rows. A row with no
+/// price adds to `unknown_calls`, never to `usd` (absent is unknown).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct CostRollup {
+    pub key: String,
+    pub usd: f64,
+    pub calls: u64,
+    pub unknown_calls: u64,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_tokens: u64,
+}
+
+fn rollup_by<'a>(
+    rows: impl IntoIterator<Item = &'a CostRow>,
+    key: impl Fn(&CostRow) -> Option<String>,
+) -> Vec<CostRollup> {
+    let mut by_key: BTreeMap<String, CostRollup> = BTreeMap::new();
+    for row in rows {
+        let Some(key) = key(row) else { continue };
+        let entry = by_key.entry(key.clone()).or_insert_with(|| CostRollup {
+            key,
+            ..CostRollup::default()
+        });
+        entry.calls += 1;
+        match row.usd {
+            Some(usd) => entry.usd += usd,
+            None => entry.unknown_calls += 1,
+        }
+        entry.input_tokens += row.input_tokens;
+        entry.output_tokens += row.output_tokens;
+        entry.cache_read_tokens += row.cache_read_input_tokens.unwrap_or(0);
+    }
+    let mut out: Vec<CostRollup> = by_key.into_values().collect();
+    out.sort_by(|a, b| b.usd.total_cmp(&a.usd).then_with(|| a.key.cmp(&b.key)));
+    out
+}
+
+/// Spend per Agent, keyed by the trace key's Agent id. Rows written without
+/// a key are grouped under `unattributed` rather than dropped.
+pub fn rollup_by_agent<'a>(rows: impl IntoIterator<Item = &'a CostRow>) -> Vec<CostRollup> {
+    rollup_by(rows, |row| {
+        Some(
+            row.trace
+                .as_ref()
+                .map_or_else(|| "unattributed".to_string(), |t| t.agent.to_string()),
+        )
+    })
+}
+
+/// Spend per run, keyed by the trace key's run id. A row with no key belongs
+/// to no run and is left out.
+pub fn rollup_by_run<'a>(rows: impl IntoIterator<Item = &'a CostRow>) -> Vec<CostRollup> {
+    rollup_by(rows, |row| row.trace.as_ref().map(|t| t.run.to_string()))
+}
+
 /// Process-wide, cross-session admission state for the day cap, shared by
 /// every [`CoreSpendGate`] built from the same `Core`. Closes two gaps a
 /// gate-local `Mutex<f64>` can't: (1) a per-turn gate used to start the
@@ -851,6 +907,57 @@ mod tests {
         assert_eq!(series[1].1, 0.0, "a day with no rows must zero-fill");
         assert_eq!(series[0].0, two_days_ago);
         assert!((series[0].1 - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn spend_rolls_up_per_agent_and_per_run() {
+        use vak_session::ids::{AgentId, SpaceId, TenantId};
+        use vak_session::trace::{Cause, TraceKey};
+        let key = |agent: AgentId| {
+            TraceKey::root(TenantId::new(), SpaceId::new(), agent, Cause::Heartbeat)
+        };
+        let (a, b) = (AgentId::new(), AgentId::new());
+        let (run_a1, run_a2, run_b) = (key(a), key(a), key(b));
+        let row = |trace: Option<&TraceKey>, usd: Option<f64>| CostRow {
+            ts: chrono::Utc::now(),
+            model: "m".into(),
+            provider: "p".into(),
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: None,
+            usd,
+            source: "estimated".into(),
+            session_id: "s".into(),
+            trace: trace.cloned(),
+            actor: None,
+        };
+        let rows = vec![
+            row(Some(&run_a1), Some(1.0)),
+            row(Some(&run_a1.child()), Some(0.5)),
+            row(Some(&run_a2), Some(2.0)),
+            row(Some(&run_b), None),
+            row(None, Some(4.0)),
+        ];
+        let agents = rollup_by_agent(&rows);
+        let of = |k: &str| agents.iter().find(|r| r.key == k).unwrap();
+        assert_eq!(agents.len(), 3);
+        assert!((of(&a.to_string()).usd - 3.5).abs() < 1e-9);
+        assert_eq!(of(&a.to_string()).calls, 3);
+        assert_eq!(of(&b.to_string()).unknown_calls, 1);
+        assert_eq!(of(&b.to_string()).usd, 0.0);
+        assert!((of("unattributed").usd - 4.0).abs() < 1e-9);
+        assert_eq!(agents[0].key, "unattributed", "largest spender first");
+
+        let runs = rollup_by_run(&rows);
+        assert_eq!(runs.len(), 3, "the keyless row belongs to no run");
+        let run = |k: &TraceKey| runs.iter().find(|r| r.key == k.run.to_string()).unwrap();
+        assert!(
+            (run(&run_a1).usd - 1.5).abs() < 1e-9,
+            "a child span is the same run"
+        );
+        assert_eq!(run(&run_a1).calls, 2);
+        assert!((run(&run_a2).usd - 2.0).abs() < 1e-9);
+        assert_eq!(run(&run_b).unknown_calls, 1);
     }
 
     #[test]

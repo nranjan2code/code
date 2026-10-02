@@ -1769,6 +1769,8 @@ async fn replay_operations_outbox(
 /// to show a real shape, short enough that a fixed-length zero-filled
 /// series is cheap to compute on every request.
 const FINOPS_TREND_DAYS: u32 = 14;
+/// Most runs the FinOps view lists, largest spend first.
+const FINOPS_RUN_ROWS: usize = 50;
 
 /// FinOps projection from the append-only cost ledger. Unknown-priced rows
 /// are retained as `unknown_rows`; they are never reported as zero spend.
@@ -1852,6 +1854,8 @@ async fn finops_status(
         .into_iter()
         .map(|(date, usd)| serde_json::json!({ "date": date.to_string(), "usd": usd }))
         .collect();
+    let mut by_run = vak_core::finops::rollup_by_run(day_rows.iter().copied());
+    by_run.truncate(FINOPS_RUN_ROWS);
     let price_overrides = core.effective_finops().price_overrides;
     let mut alerts = recent_budget_alerts(&shared_home, 10);
     if alerts.is_empty() && q.agent.is_some() && core.sessions_home() != shared_home {
@@ -1869,6 +1873,8 @@ async fn finops_status(
         "activity": activity_by_name.into_iter().map(|((kind, name, plugin), (calls, successes, duration_ms))| serde_json::json!({"kind": kind, "name": name, "plugin": plugin, "calls": calls, "successes": successes, "duration_ms": duration_ms})).collect::<Vec<_>>(),
         "by_provider": rollup(by_provider),
         "by_model": rollup(by_model),
+        "by_agent": vak_core::finops::rollup_by_agent(day_rows.iter().copied()),
+        "by_run": by_run,
         "daily": daily,
         "recent_alerts": alerts,
         "price_overrides": price_overrides,
@@ -18742,6 +18748,7 @@ fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
         Some(&task.id),
         None,
         Some(&key),
+        None,
     );
     update_tasks(state, |map| {
         if let Some(t) = map.get_mut(&task.id) {
@@ -18951,6 +18958,7 @@ async fn fire_task(state: &AppState, id: &str, trigger: TaskTrigger) -> Result<S
                             Some(&tid),
                             result_id.as_deref(),
                             dedupe_key.as_deref(),
+                            None,
                         );
                         "inbox"
                     };
@@ -19116,6 +19124,7 @@ async fn fire_script_task(
                         &outcome.text,
                         None,
                         Some(&task.id),
+                        None,
                     );
                 }
             }
@@ -19361,6 +19370,7 @@ pub fn start_scheduler(state: &AppState) {
                         vak_core::inbox::Kind::TaskSummary,
                         "Commitment closed without you",
                         &format!("{id} reached the end of its window or escalation policy."),
+                        None,
                         None,
                         None,
                     );

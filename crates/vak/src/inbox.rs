@@ -334,9 +334,10 @@ mod tests {
     fn unread_all_footer_and_count_math_on_seeded_store() {
         let dir = tempfile::tempdir().unwrap();
         let home = dir.path();
-        let a = inbox::record(home, Kind::Digest, "alpha one", "b", None, None).unwrap();
-        let b = inbox::record(home, Kind::BudgetAlert, "beta two", "b", None, None).unwrap();
-        let _c = inbox::record(home, Kind::Heartbeat, "gamma three", "b", None, None).unwrap();
+        let a = inbox::record(home, Kind::Digest, "alpha one", "b", None, None, None).unwrap();
+        let b = inbox::record(home, Kind::BudgetAlert, "beta two", "b", None, None, None).unwrap();
+        let _c =
+            inbox::record(home, Kind::Heartbeat, "gamma three", "b", None, None, None).unwrap();
 
         assert_eq!(count_line(home), "3 unread");
         assert_eq!(footer(home), "3 unread of 3 total");
@@ -370,6 +371,7 @@ mod tests {
             "body",
             Some("s1"),
             Some("t1"),
+            None,
         )
         .unwrap();
 

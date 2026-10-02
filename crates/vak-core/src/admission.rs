@@ -69,6 +69,13 @@ impl Core {
         self
     }
 
+    /// The key the surface minted for the request this handle serves, if it
+    /// stamped one. Write sites that hold only a `Core` use it to record the
+    /// run they belong to; it is `None` for work no run caused.
+    pub fn admitted_trace(&self) -> Option<&TraceKey> {
+        self.run_admission.trace.as_ref()
+    }
+
     /// Mint the trace key for one admitted request: a fresh run, the
     /// cause its surface implies (or the one the host stamped), and the
     /// principal that acted. `request_id` is the client's idempotency key.

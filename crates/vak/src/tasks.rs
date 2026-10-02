@@ -199,11 +199,7 @@ pub fn build_task_def(
 }
 
 fn timestamp_id() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .to_string()
+    uuid::Uuid::now_v7().to_string()
 }
 
 /// A built-in `tasks add --preset` expansion (docs/design/29-personal-os.md

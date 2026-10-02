@@ -742,6 +742,54 @@ async fn finops_projects_observed_tokens_and_activity_without_zeroing_unknown_co
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn finops_reports_spend_per_agent_and_per_run() {
+    use vak_session::ids::{AgentId, SpaceId, TenantId};
+    use vak_session::trace::{Cause, TraceKey};
+    let srv = spawn_server("").await;
+    let agent = AgentId::new();
+    let key = TraceKey::root(TenantId::new(), SpaceId::new(), agent, Cause::Heartbeat);
+    let row = |trace: Option<TraceKey>, usd: f64| vak_core::finops::CostRow {
+        ts: chrono::Utc::now(),
+        model: "m".into(),
+        provider: "p".into(),
+        input_tokens: 4,
+        output_tokens: 2,
+        cache_read_input_tokens: None,
+        usd: Some(usd),
+        source: "estimated".into(),
+        session_id: "s-roll".into(),
+        trace,
+        actor: None,
+    };
+    let cost = vak_core::finops::FinOpsLedger::new(&srv.home);
+    cost.append(&row(Some(key.clone()), 0.5)).unwrap();
+    cost.append(&row(Some(key.child()), 0.25)).unwrap();
+    cost.append(&row(None, 1.0)).unwrap();
+
+    let body: serde_json::Value = srv
+        .client
+        .get(format!("{}/finops", srv.base))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let agents = body["by_agent"].as_array().unwrap();
+    let mine = agents
+        .iter()
+        .find(|r| r["key"] == agent.to_string())
+        .unwrap();
+    assert!((mine["usd"].as_f64().unwrap() - 0.75).abs() < 1e-9);
+    assert_eq!(mine["calls"], 2);
+    assert!(agents.iter().any(|r| r["key"] == "unattributed"));
+    let runs = body["by_run"].as_array().unwrap();
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0]["key"], key.run.to_string());
+    assert_eq!(runs[0]["calls"], 2);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn finops_platform_scope_uses_shared_home_and_agent_scope_adds_private_home() {
     let srv = spawn_server("").await;
     let now = chrono::Utc::now();

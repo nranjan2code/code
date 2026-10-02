@@ -217,8 +217,9 @@ pub fn begin_episodes(
     session_id: &str,
     cwd: &Path,
     audience_id: Option<&str>,
+    trace: Option<&vak_session::trace::TraceKey>,
 ) -> Vec<EpisodeHandle> {
-    let ledger = CommitmentLedger::new(sessions_home);
+    let ledger = CommitmentLedger::new(sessions_home).with_trace(trace);
     let mut handles = Vec::new();
     for planned in &plan.strands {
         let Some(strand) = intent
@@ -464,8 +465,9 @@ pub fn end_episode(
     handle: &EpisodeHandle,
     advancement: Advancement,
     spend_usd: f64,
+    trace: Option<&vak_session::trace::TraceKey>,
 ) {
-    let ledger = CommitmentLedger::new(sessions_home);
+    let ledger = CommitmentLedger::new(sessions_home).with_trace(trace);
     if let Err(error) = ledger.append(&Event::new(
         &handle.commitment_id,
         EventKind::EpisodeEnded {
@@ -948,6 +950,7 @@ mod tests {
             session_id,
             cwd,
             Some("local"),
+            None,
         )
         .into_iter()
         .next()

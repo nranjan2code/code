@@ -379,7 +379,8 @@ async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
         .find_map(|line| line["text"].as_str().map(str::to_string))
         .unwrap();
     let start = announcement.find('[').unwrap() + 1;
-    let short = announcement[start..start + 8].to_string();
+    let end = announcement[start..].find(']').unwrap() + start;
+    let short = announcement[start..end].to_string();
 
     // A verdict addressed to a nonexistent gate must leave the live gate
     // untouched.
@@ -413,7 +414,7 @@ async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
     assert_eq!(body["state"], "approval_resolved");
     assert_eq!(body["approved"], true);
     assert!(
-        body["gate"].as_str().unwrap().starts_with(&short),
+        body["gate"].as_str().unwrap().ends_with(&short),
         "resolved gate id reported: {body}"
     );
     assert_eq!(body["remaining"], 0);

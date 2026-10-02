@@ -166,13 +166,22 @@ struct LedgerLock {
 /// conversation content, and it must survive any individual session.
 pub struct CommitmentLedger {
     path: PathBuf,
+    trace: Option<vak_session::trace::TraceKey>,
 }
 
 impl CommitmentLedger {
     pub fn new(sessions_home: &Path) -> Self {
         CommitmentLedger {
             path: sessions_home.join("commitments.jsonl"),
+            trace: None,
         }
+    }
+
+    /// Stamp the run's key (and its actor) onto every event this handle
+    /// appends that does not already carry one.
+    pub fn with_trace(mut self, trace: Option<&vak_session::trace::TraceKey>) -> Self {
+        self.trace = trace.cloned();
+        self
     }
 
     pub fn path(&self) -> &Path {
@@ -234,7 +243,15 @@ impl CommitmentLedger {
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let line = serde_json::to_string(event)?;
+        let line = match (&self.trace, &event.trace) {
+            (Some(trace), None) => {
+                let mut stamped = event.clone();
+                stamped.actor = stamped.actor.or(trace.actor);
+                stamped.trace = Some(trace.clone());
+                serde_json::to_string(&stamped)?
+            }
+            _ => serde_json::to_string(event)?,
+        };
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)

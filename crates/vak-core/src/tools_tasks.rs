@@ -34,11 +34,7 @@ fn task_error_message(e: TaskError) -> String {
 }
 
 fn nanos_id() -> String {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .to_string()
+    uuid::Uuid::now_v7().to_string()
 }
 
 fn render_task(t: &TaskDef) -> Value {

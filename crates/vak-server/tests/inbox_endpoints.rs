@@ -249,6 +249,7 @@ async fn ack_is_idempotent_over_http_and_404s_unknown_ids() {
         "",
         None,
         None,
+        None,
     )
     .unwrap();
     let b = vak_core::inbox::record(
@@ -256,6 +257,7 @@ async fn ack_is_idempotent_over_http_and_404s_unknown_ids() {
         vak_core::inbox::Kind::TaskSummary,
         "run",
         "body",
+        None,
         None,
         None,
     )
@@ -291,6 +293,7 @@ async fn unread_count_matches_entries_and_limit_bounds_only_the_list() {
             vak_core::inbox::Kind::Heartbeat,
             &format!("beat-{i}"),
             "",
+            None,
             None,
             None,
         )

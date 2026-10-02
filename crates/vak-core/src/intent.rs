@@ -388,6 +388,7 @@ impl vak_agent::Approver for DeferringApprover {
                     ),
                     Some(&self.session_id),
                     None,
+                    None,
                 );
             }
             Err(error) => {
@@ -397,6 +398,7 @@ impl vak_agent::Approver for DeferringApprover {
                     &format!("Gate denied for {}", self.commitment_id),
                     &format!("{body}\n\ncould not suspend the commitment: {error}"),
                     Some(&self.session_id),
+                    None,
                     None,
                 );
             }

@@ -108,7 +108,7 @@ Kept as the record of what M0 changed.
 **Tests**
 - `home_path_uses_do_not_grow`, `agent_home_subpaths_are_declared`.
 
-## M1 — ids, TraceKey, principals, provenance
+## M1 — ids, TraceKey, principals, provenance — done 2026-10-02
 
 **Code**
 - New `crates/vak-session/src/ids.rs` (with `RunId` and `PrincipalId`
@@ -171,7 +171,13 @@ Kept as the record of what M0 changed.
   `bus_prev_hash_is_hash`.
 - `session_header_names_cause_for_each_surface`,
   `derived_writes_record_provenance`, `records_reference_is_current`,
-  `root_work_account_keyed_by_run_id`.
+  `root_work_account_keyed_by_run_id` (applies when the reliable-work plan's
+  E1 builds the root work account; `RunId` is ready for it).
+
+**Left unchanged on purpose** (no run is in scope at the write; the fields
+stay absent): security events, budget alerts, incident rows (system actor
+only), voice dispatch evidence and cost rows, and inbox entries written by
+schedulers, gate denials and commitment upkeep.
 
 ## M2 — vak-storage
 

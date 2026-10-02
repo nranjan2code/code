@@ -518,6 +518,8 @@ pub(crate) async fn render_response(
         }),
         profile,
         skill_registry: Some(merged_presentation_skills(core)),
+        trace: core.admitted_trace().cloned(),
+        actor: core.admitted_trace().and_then(|trace| trace.actor),
     };
     let mut packet = runtime.render(&job).await?;
     packet.attach_structured_cards(cards);
@@ -546,6 +548,8 @@ pub(crate) async fn deliver(
         content,
         profile: profile.clone(),
         skill_registry: Some(merged_presentation_skills(core)),
+        trace: core.admitted_trace().cloned(),
+        actor: core.admitted_trace().and_then(|trace| trace.actor),
     };
     let record = runtime
         .outbox
@@ -576,6 +580,8 @@ pub(crate) async fn deliver(
                 disposition
             )],
             presentation: None,
+            trace: record.job.trace.clone(),
+            actor: record.job.actor,
         })
     }
 }
@@ -793,13 +799,19 @@ impl ChannelAdapter for LogAdapter {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("create deliveries directory: {error}"))?;
         }
-        let line = serde_json::json!({
+        let mut line = serde_json::json!({
             "ts": chrono::Utc::now().to_rfc3339(),
             "target": packet.target,
             "text": packet.fallback_markdown,
             "job_id": packet.job_id,
             "delivery": packet,
         });
+        if let Some(trace) = &packet.trace {
+            line["trace"] = serde_json::json!(trace);
+        }
+        if let Some(actor) = &packet.actor {
+            line["actor"] = serde_json::json!(actor);
+        }
         let mut buffer = line.to_string();
         buffer.push('\n');
         use std::io::Write;

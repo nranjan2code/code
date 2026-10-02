@@ -44,10 +44,7 @@ impl DockerTaskEnvironment {
         let name = format!(
             "vak-task-{}-{}-{}",
             std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|duration| duration.as_nanos())
-                .unwrap_or_default(),
+            vak_session::ids::ExecutionId::new(),
             TASK_SEQUENCE.fetch_add(1, Ordering::Relaxed)
         );
         let ws = workspace.display().to_string();

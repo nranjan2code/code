@@ -1,0 +1,142 @@
+//! Side ledgers written inside a run carry that run's key and its actor
+//! (docs/design/73 §4); a write with no run in scope carries neither.
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use vak_commit::{CommitmentLedger, Economics, Event, EventKind, spec_from_reading};
+use vak_core::{inbox, misread, routing};
+use vak_session::ids::{AgentId, PrincipalId, SpaceId, TenantId};
+use vak_session::trace::{Cause, TraceKey};
+
+fn key() -> (TraceKey, PrincipalId) {
+    let actor = PrincipalId::new();
+    let key = TraceKey::root(
+        TenantId::new(),
+        SpaceId::new(),
+        AgentId::new(),
+        Cause::Heartbeat,
+    )
+    .acting(actor, None);
+    (key, actor)
+}
+
+fn reading() -> vak_intent::Reading {
+    let request = vak_intent::Request {
+        text: "check the build",
+        ..vak_intent::Request::default()
+    };
+    vak_intent::resolve(
+        &request,
+        &vak_intent::Declared::default(),
+        &vak_intent::Authority::default(),
+        &vak_intent::ResolverConfig::default(),
+    )
+    .intent()
+    .reading
+}
+
+#[test]
+fn inbox_entries_carry_the_run_key_when_one_is_in_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    let (key, actor) = key();
+    let traced = inbox::record(
+        dir.path(),
+        inbox::Kind::Heartbeat,
+        "t",
+        "b",
+        None,
+        None,
+        Some(&key),
+    )
+    .unwrap();
+    assert_eq!(traced.trace.as_ref().map(|t| t.run), Some(key.run));
+    assert_eq!(traced.actor, Some(actor));
+    let bare = inbox::record(
+        dir.path(),
+        inbox::Kind::Heartbeat,
+        "t2",
+        "b",
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(bare.trace.is_none() && bare.actor.is_none());
+}
+
+#[test]
+fn misread_and_routing_rows_carry_the_run_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let (key, actor) = key();
+    let ledger = misread::MisreadLedger::new(dir.path());
+    ledger.record(
+        &reading(),
+        vak_intent::Tier::Signals,
+        vak_intent::RESOLVER_VERSION,
+        misread::Outcome::Held,
+        None,
+        false,
+        Some(&key),
+    );
+    let rows = ledger.rows();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].trace.as_ref().map(|t| t.run), Some(key.run));
+    assert_eq!(rows[0].actor, Some(actor));
+
+    let evidence = routing::EvidenceLedger::new(dir.path());
+    let mut receipt = vak_llm::WorkReceipt::new(vak_llm::WorkPurpose::Execute, "p", "m");
+    receipt.record(
+        vak_llm::AttemptReason::Initial,
+        vak_llm::FailureDomain::Unknown,
+        vak_llm::Settlement::Ok,
+        10,
+        None,
+        None,
+    );
+    evidence.record_receipts(std::slice::from_ref(&receipt), Some(&key));
+    let raw = std::fs::read_to_string(dir.path().join("routing-evidence.jsonl")).unwrap();
+    let row: routing::EvidenceRow = serde_json::from_str(raw.lines().next().unwrap()).unwrap();
+    assert_eq!(row.trace.as_ref().map(|t| t.run), Some(key.run));
+    assert_eq!(row.actor, Some(actor));
+}
+
+#[test]
+fn commitment_events_are_stamped_with_the_ledgers_run_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let (key, actor) = key();
+    let spec = spec_from_reading(
+        "check the build",
+        reading(),
+        Vec::new(),
+        dir.path().to_path_buf(),
+        Economics::default(),
+    );
+    let ledger = CommitmentLedger::new(dir.path()).with_trace(Some(&key));
+    let id = ledger.open_commitment(spec).unwrap();
+    ledger
+        .append(&Event::new(
+            &id,
+            EventKind::EpisodeStarted {
+                episode_id: "e1".into(),
+                session_id: "s1".into(),
+            },
+        ))
+        .unwrap();
+    let events = ledger.events();
+    assert!(events.len() >= 2);
+    for event in &events {
+        assert_eq!(event.trace.as_ref().map(|t| t.run), Some(key.run));
+        assert_eq!(event.actor, Some(actor));
+    }
+    let plain = CommitmentLedger::new(dir.path());
+    plain
+        .append(&Event::new(
+            &id,
+            EventKind::EpisodeStarted {
+                episode_id: "e2".into(),
+                session_id: "s1".into(),
+            },
+        ))
+        .unwrap();
+    assert!(plain.events().last().unwrap().trace.is_none());
+}
