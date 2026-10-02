@@ -9,7 +9,8 @@ use vak_tools::{Tool, ToolContext, bash::BashTool, sandbox_events::SandboxEventS
 async fn nested_data_artifacts_are_reported_from_the_workspace() {
     let workspace = tempfile::tempdir().unwrap();
     let (sink, mut events) = SandboxEventSink::new_with_id("stress-data".into());
-    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
+    let ctx = ToolContext::new(workspace.path().to_path_buf())
+        .with_sandbox_sink(sink.with_owner_session("sandbox-stress"));
     let output = BashTool
         .execute(
             &serde_json::json!({"command": "mkdir -p nested/deeper && printf 'a,b\\n1,2\\n' > nested/deeper/data.csv && pwd"}),
@@ -45,6 +46,28 @@ async fn timeout_keeps_partial_output_and_kills_descendant() {
     assert!(output.is_error);
     assert!(output.content.contains("before"));
     assert!(start.elapsed() < std::time::Duration::from_secs(5));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn successful_shell_exit_stops_background_children() {
+    let workspace = tempfile::tempdir().unwrap();
+    let marker = workspace.path().join("late-write");
+    let ctx = ToolContext::new(workspace.path().to_path_buf());
+    let output = BashTool
+        .execute(
+            &serde_json::json!({
+                "command": format!("(sleep 1; printf late > {}) >/dev/null 2>&1 & exit 0", marker.display())
+            }),
+            &ctx,
+        )
+        .await;
+    assert!(!output.is_error, "{}", output.content);
+    tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+    assert!(
+        !marker.exists(),
+        "background child survived successful return"
+    );
 }
 
 #[tokio::test]
@@ -90,7 +113,8 @@ async fn control_files_are_denied_before_spawn() {
     let workspace = tempfile::tempdir().unwrap();
     std::fs::write(workspace.path().join(".env"), "SECRET=must-not-leak").unwrap();
     let (sink, _events) = SandboxEventSink::new_with_id("stress-control".into());
-    let ctx = ToolContext::new(workspace.path().to_path_buf()).with_sandbox_sink(sink);
+    let ctx = ToolContext::new(workspace.path().to_path_buf())
+        .with_sandbox_sink(sink.with_owner_session("sandbox-stress"));
     let output = BashTool
         .execute(&serde_json::json!({"command": "cat .env"}), &ctx)
         .await;

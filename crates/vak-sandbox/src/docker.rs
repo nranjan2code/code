@@ -198,7 +198,10 @@ impl crate::backend::Sandbox for DockerTaskSandbox {
             "docker exec -w {} {} sh -c {}",
             shell_quote(&self.workspace.display().to_string()),
             shell_quote(self.environment.container_id()),
-            shell_quote(command),
+            shell_quote(&format!(
+                "setsid sh -c {} & child=$!; wait \"$child\"; kill -KILL -- -\"$child\" 2>/dev/null || true",
+                shell_quote(command),
+            )),
         )
     }
 
@@ -224,6 +227,15 @@ impl crate::backend::Sandbox for DockerTaskSandbox {
         )
         .ok()
         .map(|sandbox| Arc::new(sandbox) as Arc<dyn crate::backend::Sandbox>)
+    }
+
+    fn cleanup_after_command(&self, _wrapped_command: &str, cancelled: bool) {
+        if cancelled {
+            // docker exec work is daemon-owned; killing the local CLI cannot
+            // revoke its authority. Destroy the task container on cancellation
+            // so every process in it is stopped. Later commands fail closed.
+            let _ = self.environment.destroy();
+        }
     }
 }
 
@@ -274,6 +286,7 @@ impl DockerSandbox {
 
     /// The command BashTool will run, as `docker run … sh -c <quoted>`.
     pub fn wrap_command(&self, command: &str) -> String {
+        let name = format!("vak-call-{}", vak_session::ids::ExecutionId::new());
         let ws = self.workspace.display().to_string();
         let ro_suffix = match self.mode {
             SandboxMode::ReadOnly => ":ro",
@@ -289,10 +302,11 @@ impl DockerSandbox {
             SandboxMode::WorkspaceWrite | SandboxMode::Off => "",
         };
         format!(
-            "docker run --rm --network none {rootfs}--tmpfs /tmp:rw,nosuid,size=512m \
+            "docker run --rm --name {name} --network none {rootfs}--storage-opt size={STORAGE_CAP} --tmpfs /tmp:rw,nosuid,size=512m \
              --memory {MEMORY_CAP} --cpus {CPUS_CAP} --pids-limit 256 --cap-drop ALL \
              --security-opt no-new-privileges -v {mount} -w {workdir} {image} sh -c {cmd}",
             cmd = shell_quote(command),
+            name = shell_quote(&name),
         )
     }
 }
@@ -320,6 +334,20 @@ impl crate::backend::Sandbox for DockerSandbox {
             &self.workspace,
         )))
     }
+
+    fn cleanup_after_command(&self, wrapped_command: &str, _cancelled: bool) {
+        if let Some(name) = docker_container_name(wrapped_command) {
+            let _ = Command::new("docker").args(["rm", "-f", &name]).output();
+        }
+    }
+}
+
+fn docker_container_name(command: &str) -> Option<String> {
+    let marker = "--name 'vak-call-";
+    let start = command.find(marker)? + "--name '".len();
+    let tail = &command[start..];
+    let end = tail.find('\'')?;
+    Some(tail[..end].to_string())
 }
 
 /// Single-argument POSIX shell quoting, sufficient for the inner layer of
@@ -354,7 +382,8 @@ mod tests {
             Path::new("/tmp/ws"),
         );
         let wrapped = sb.wrap("echo 'hello world' && ls");
-        assert!(wrapped.starts_with("docker run --rm --network none "));
+        assert!(wrapped.starts_with("docker run --rm --name 'vak-call-"));
+        assert!(wrapped.contains("--storage-opt size=4g"));
         assert!(!wrapped.contains("--read-only"));
         assert!(wrapped.contains("-v '/tmp/ws:/tmp/ws'"));
         assert!(wrapped.contains("-w '/tmp/ws'"));
@@ -373,8 +402,16 @@ mod tests {
         let sb = DockerSandbox::new(SandboxMode::ReadOnly, None, Path::new("/tmp/ws"));
         let wrapped = sb.wrap("true");
         assert!(wrapped.contains("'/tmp/ws:/tmp/ws:ro'"));
-        assert!(wrapped.contains("--network none --read-only --tmpfs"));
+        assert!(wrapped.contains("--network none --read-only --storage-opt size=4g --tmpfs"));
         assert!(wrapped.contains("--tmpfs /tmp:rw,nosuid,size=512m"));
         assert!(wrapped.contains(DEFAULT_IMAGE));
+    }
+
+    #[test]
+    fn docker_container_name_is_recovered_for_cleanup() {
+        let sb = DockerSandbox::new(SandboxMode::WorkspaceWrite, None, Path::new("/tmp/ws"));
+        let wrapped = sb.wrap("true");
+        let name = docker_container_name(&wrapped).expect("named one-shot container");
+        assert!(name.starts_with("vak-call-"));
     }
 }

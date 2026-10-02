@@ -56,6 +56,9 @@ impl Tool for ReadTool {
             return ToolOutput::error("missing required parameter: path");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
+        if crate::write::protected_control_path(&path, ctx).is_some() {
+            return ToolOutput::error("sandbox denied reads of workspace control files");
+        }
         if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "read") {
             return ToolOutput::error(refusal);
         }

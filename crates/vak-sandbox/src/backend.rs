@@ -33,6 +33,11 @@ pub trait Sandbox: Send + Sync {
     fn listening_variant(&self) -> Option<Arc<dyn Sandbox>> {
         None
     }
+
+    /// Run backend cleanup after a tool command exits or is cancelled.
+    /// Command-scoped remote backends use this to stop daemon-side work that
+    /// outlives the local client process.
+    fn cleanup_after_command(&self, _wrapped_command: &str, _cancelled: bool) {}
 }
 
 pub fn no_sandbox() -> Option<Arc<dyn Sandbox>> {
@@ -132,14 +137,6 @@ impl Seatbelt {
                 }
             }
         }
-        if allow_host_temp {
-            for path in Self::temp_write_paths() {
-                let path = PathBuf::from(path);
-                if path.exists() && !read_paths.contains(&path) {
-                    read_paths.push(path);
-                }
-            }
-        }
         let write_paths = match mode {
             SandboxMode::WorkspaceWrite => vec![canonical],
             _ => Vec::new(),
@@ -153,25 +150,10 @@ impl Seatbelt {
         }
     }
 
-    /// Extra write allowances that keep real-world tooling working under
-    /// workspace-write: the OS per-user temp/cache areas (macOS TMPDIR lives
-    /// under /var/folders, NOT /tmp) and /tmp itself. Without these, any
-    /// test suite using tempfile/std::env::temp_dir fails under the sandbox
-    /// — found by dogfooding `cargo test` through the agent.
+    /// Host temp roots are deliberately not granted. Bash receives a private
+    /// per-execution TMPDIR inside the workspace scratch tree instead.
     pub fn temp_write_paths() -> Vec<String> {
-        let mut out = vec![
-            "/private/tmp".to_string(),
-            "/private/var/tmp".to_string(),
-            "/private/var/folders".to_string(),
-            "/tmp".to_string(),
-        ];
-        if let Some(tmpdir) = std::env::var_os("TMPDIR") {
-            let p = std::path::PathBuf::from(&tmpdir).display().to_string();
-            if !out.contains(&p) {
-                out.push(p);
-            }
-        }
-        out
+        Vec::new()
     }
 
     pub fn profile(&self) -> String {
@@ -200,14 +182,6 @@ impl Seatbelt {
                         "(allow file-write* (subpath {}))\n",
                         sbpl_quote(&path.display().to_string())
                     ));
-                }
-                if self.allow_host_temp {
-                    for tmp in Self::temp_write_paths() {
-                        p.push_str(&format!(
-                            "(allow file-write* (subpath {}))\n",
-                            sbpl_quote(&tmp)
-                        ));
-                    }
                 }
                 for dev in ["/dev/null", "/dev/urandom"] {
                     p.push_str(&format!(
@@ -280,6 +254,8 @@ impl Sandbox for Seatbelt {
             allow_listen: self.allow_listen,
         }))
     }
+
+    fn cleanup_after_command(&self, _wrapped_command: &str, _cancelled: bool) {}
 
     fn listening_variant(&self) -> Option<Arc<dyn Sandbox>> {
         Some(Arc::new(Seatbelt {

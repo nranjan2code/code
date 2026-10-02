@@ -72,6 +72,9 @@ impl Tool for EditTool {
             return ToolOutput::error("missing required parameter: edits");
         };
         let path = ctx.resolve(std::path::Path::new(path_str));
+        if let Some(refusal) = crate::write::protected_control_path(&path, ctx) {
+            return ToolOutput::error(refusal);
+        }
         if let Some(refusal) = crate::office_apply::text_tool_refusal(&path, "edit") {
             return ToolOutput::error(refusal);
         }
@@ -140,25 +143,7 @@ impl Tool for EditTool {
         } else {
             buf.as_bytes().to_vec()
         };
-        // Temp file + rename: a crash mid-write cannot truncate the target.
-        let tmp = path.with_extension(format!(
-            "{}vak-tmp",
-            path.extension()
-                .map(|e| format!("{}.", e.to_string_lossy()))
-                .unwrap_or_default()
-        ));
-        let write_res = tokio::fs::write(&tmp, &final_bytes).await;
-        let rename_res = match write_res {
-            Ok(()) => {
-                let r = std::fs::rename(&tmp, &path);
-                if r.is_err() {
-                    let _ = std::fs::remove_file(&tmp);
-                }
-                r
-            }
-            Err(e) => Err(e),
-        };
-        if let Err(e) = rename_res {
+        if let Err(e) = crate::write::write_atomic(&path, &final_bytes).await {
             return ToolOutput::error(format!("cannot write {}: {e}", path.display()));
         }
         crate::artifact::emit_file(ctx.sandbox_sink.as_ref(), &path, &ctx.cwd);

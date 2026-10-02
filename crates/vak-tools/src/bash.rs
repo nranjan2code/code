@@ -7,6 +7,7 @@ use tokio::io::AsyncReadExt;
 use crate::{Tool, ToolContext, ToolOutput, artifact::guess_mime_type};
 
 const DEFAULT_TIMEOUT_MS: u64 = 120_000;
+const MAX_TIMEOUT_MS: u64 = 600_000;
 const MAX_CAPTURE: usize = 1 << 20;
 const MAX_SCAN_ENTRIES: usize = 50_000;
 
@@ -31,7 +32,7 @@ impl Tool for BashTool {
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
-                "timeout_ms": {"type": "integer", "minimum": 1000, "description": "Timeout in milliseconds (default 120000)"},
+                "timeout_ms": {"type": "integer", "minimum": 1000, "maximum": 600000, "description": "Timeout in milliseconds (default 120000; maximum 10 minutes)"},
                 "cwd": {"type": "string", "description": "Folder to run in, relative to the workspace root (default: the workspace root)"}
             },
             "required": ["command"]
@@ -50,7 +51,12 @@ impl Tool for BashTool {
         let Some(command) = args.get("command").and_then(|c| c.as_str()) else {
             return ToolOutput::error("missing required parameter: command");
         };
-        if ctx.sandbox_sink.is_some() && references_control_file(command) {
+        if ctx
+            .sandbox_sink
+            .as_ref()
+            .is_some_and(|sink| sink.is_runtime_call())
+            && references_control_file(command)
+        {
             return ToolOutput::error(
                 "sandbox denied access to workspace control files (.env and .vak/config.toml)",
             );
@@ -59,7 +65,7 @@ impl Tool for BashTool {
             .get("timeout_ms")
             .and_then(|t| t.as_u64())
             .unwrap_or(DEFAULT_TIMEOUT_MS)
-            .max(1000);
+            .clamp(1000, MAX_TIMEOUT_MS);
 
         // The command works in the workspace, where `read`/`write`/`edit`
         // work, so what one tool writes the next can read. Running each
@@ -158,6 +164,7 @@ impl Tool for BashTool {
         };
 
         let child_pid = child.id();
+        let command_sandbox = ctx.sandbox.clone();
         let telemetry_cancel = tokio_util::sync::CancellationToken::new();
         let telemetry_token = telemetry_cancel.clone();
         let telemetry_sink = ctx.sandbox_sink.clone();
@@ -205,6 +212,9 @@ impl Tool for BashTool {
                 let _ = telemetry_handle.await;
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
+                if let Some(sandbox) = &command_sandbox {
+                    sandbox.cleanup_after_command(&effective, true);
+                }
                 let out = out_fut.await.unwrap_or_default();
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
@@ -233,6 +243,9 @@ impl Tool for BashTool {
                 let _ = telemetry_handle.await;
                 kill_process_group(&child.id());
                 let _ = child.wait().await;
+                if let Some(sandbox) = &command_sandbox {
+                    sandbox.cleanup_after_command(&effective, true);
+                }
                 let out = out_fut.await.unwrap_or_default();
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;
@@ -260,6 +273,13 @@ impl Tool for BashTool {
                         return ToolOutput::error(format!("wait failed: {e}"));
                     }
                 };
+                // A shell may exit successfully while background children
+                // still share its process group and captured pipes. Ensure no
+                // execution descendants continue after the tool completes.
+                kill_process_group(&child_pid);
+                if let Some(sandbox) = &command_sandbox {
+                    sandbox.cleanup_after_command(&effective, false);
+                }
                 let out = out_fut.await.unwrap_or_default();
                 let err = err_fut.await.unwrap_or_default();
                 let duration_ms = start_instant.elapsed().as_millis() as u64;

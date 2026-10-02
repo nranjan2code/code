@@ -201,7 +201,15 @@ fn is_opaque_command(cmd: &str) -> bool {
         if quote.consume(c, &mut chars) {
             continue;
         }
-        if quote != Quote::None {
+        // Shell substitutions remain active inside double quotes. They can
+        // run arbitrary commands even though the outer command looks like a
+        // single harmless printf/echo invocation.
+        if quote == Quote::Double {
+            match c {
+                '`' => return true,
+                '$' if cmd[i + 1..].starts_with('(') => return true,
+                _ => {}
+            }
             continue;
         }
         match c {
@@ -389,4 +397,27 @@ pub(crate) fn allow_covers(rules: &[Rule], tool: &str, args: &Value) -> bool {
         && units
             .iter()
             .all(|unit| !unit.is_empty() && allows.iter().any(|r| r.matches_unit(unit)))
+}
+
+#[cfg(test)]
+mod opaque_substitution_tests {
+    use super::*;
+
+    #[test]
+    fn quoted_command_substitutions_are_not_covered_by_outer_allow() {
+        let args = serde_json::json!({
+            "command": "printf '%s' \"$(touch hidden-effect)\""
+        });
+        let rule = Rule::parse("+Bash(printf *)").expect("valid allow rule");
+        assert!(!allow_covers(&[rule], "bash", &args));
+    }
+
+    #[test]
+    fn quoted_backtick_substitutions_are_not_covered_by_outer_allow() {
+        let args = serde_json::json!({
+            "command": "printf '%s' \"`touch hidden-effect`\""
+        });
+        let rule = Rule::parse("+Bash(printf *)").expect("valid allow rule");
+        assert!(!allow_covers(&[rule], "bash", &args));
+    }
 }

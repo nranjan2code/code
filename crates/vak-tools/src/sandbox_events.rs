@@ -146,6 +146,12 @@ impl SandboxEventSink {
         &self.execution_id
     }
 
+    /// Whether this tool call was admitted by the runtime and should receive
+    /// the workspace control-file restrictions that model fixtures omit.
+    pub fn is_runtime_call(&self) -> bool {
+        self.owner_session_id.is_some()
+    }
+
     pub fn emit_execution_started(
         &self,
         tool: &str,

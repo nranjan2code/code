@@ -41,13 +41,13 @@ fn seatbelt_read_only_profile_denies_all_writes() {
 }
 
 #[test]
-fn seatbelt_workspace_write_profile_scopes_to_cwd_and_tmp() {
+fn seatbelt_workspace_write_profile_scopes_to_cwd_without_host_temp() {
     let dir = tempdir().unwrap();
     let sb = Seatbelt::new(SandboxMode::WorkspaceWrite, dir.path());
     let p = sb.profile();
     let canonical = dir.path().canonicalize().unwrap();
     assert!(p.contains(&format!("(subpath \"{}\")", canonical.display())));
-    assert!(p.contains("(subpath \"/private/tmp\")"));
+    assert!(!p.contains("(subpath \"/private/tmp\")"));
     assert!(p.contains("(subpath \"/dev/null\")"));
 }
 

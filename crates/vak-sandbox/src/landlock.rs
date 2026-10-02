@@ -120,29 +120,11 @@ impl Landlock {
                 }
             }
         }
-        if allow_host_temp {
-            for path in super::backend::Seatbelt::temp_write_paths() {
-                let path = PathBuf::from(path);
-                if path.exists() && !read_paths.contains(&path) {
-                    read_paths.push(path);
-                }
-            }
-        }
-        let mut write_paths = match mode {
+        let _ = allow_host_temp;
+        let write_paths = match mode {
             SandboxMode::WorkspaceWrite => vec![canonical],
             _ => Vec::new(),
         };
-        // Workspace-write must include OS temp areas or every test suite
-        // using tempfile/std::env::temp_dir dies under the sandbox (found
-        // by dogfooding `cargo test` through the agent).
-        if mode == SandboxMode::WorkspaceWrite && allow_host_temp {
-            for p in super::backend::Seatbelt::temp_write_paths() {
-                let pb = PathBuf::from(p);
-                if !write_paths.contains(&pb) {
-                    write_paths.push(pb);
-                }
-            }
-        }
         Landlock {
             mode,
             read_paths,
@@ -221,35 +203,19 @@ pub fn apply(
     write_paths: &[PathBuf],
     read_only: bool,
 ) -> Result<(), String> {
-    use landlock::{
-        ABI, Access, AccessFs, AccessNet, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
-        path_beneath_rules,
-    };
+    let _ = (read_paths, write_paths, read_only);
 
-    let fs_abi = ABI::V1;
-    let created = Ruleset::default()
-        .handle_access(AccessFs::from_all(fs_abi))
-        .and_then(|r| r.handle_access(AccessNet::from_all(ABI::V4)))
-        .and_then(|r| r.create())
-        .map_err(|e| format!("landlock: {e}"))?;
-    let created = created
-        .add_rules(path_beneath_rules(read_paths, AccessFs::from_read(fs_abi)))
-        .map_err(|e| format!("landlock: {e}"))?;
-    let restricted = if read_only {
-        created.restrict_self()
-    } else {
-        created
-            .add_rules(path_beneath_rules(write_paths, AccessFs::from_all(fs_abi)))
-            .and_then(|r| r.restrict_self())
-    }
-    .map_err(|e| format!("landlock: {e}"))?;
-    match restricted.ruleset {
-        RulesetStatus::FullyEnforced => Ok(()),
-        _ => Err(
-            "landlock: full enforcement unavailable (kernel needs fs ABI v1+, net ABI v4+)"
-                .to_string(),
-        ),
-    }
+    // ABI v3 adds TRUNCATE, which must be handled explicitly or a process can
+    // truncate files outside its granted write paths even when WRITE_FILE is
+    // denied. ABI v4 is the minimum network ABI; it handles TCP connect/bind.
+    let fs_abi = ABI::V3;
+    // This vendored Landlock API reaches ABI v9 (TCP only). UDP has no
+    // restriction right in that API, so claiming a blanket no-network policy
+    // on Linux would be false. Refuse closed until the API supports the
+    // required network ABI rather than silently allowing UDP egress.
+    return Err(format!(
+        "landlock: UDP network denial is unavailable in the pinned Landlock API (fs ABI {fs_abi:?}, network policy requires ABI v10+)"
+    ));
 }
 
 fn shell_quote(s: &str) -> String {
