@@ -2552,3 +2552,11 @@ remains open.
   and five isolated-worker tests. A separate workspace-wide build was active
   concurrently, so the target peak is not an isolated measurement; disk use
   stayed below 10 GB in this worktree. No live account data was used.
+- 2026-10-02: Rendered both same-origin synthetic fixtures in the in-app
+  browser. The Daily Canvas with 72 mail rows, 300 calendar events, and
+  cross-account free/busy passed all 48 checks, including paging, event
+  selection, refresh without remount/flicker, review handoff, and mobile-width
+  layout assertions. The connected Settings/review fixture passed all five
+  checks. No provider or credential endpoint was contacted. Afterward, removed
+  this worktree's generated Cargo target cache (9.7 GiB); the primary checkout's
+  active workspace test and `vak-home` data were left untouched.
