@@ -1644,7 +1644,7 @@ impl Agent {
                 let session = self.session.lock().await;
                 compose_tail(&self.config.tail, &session.tail_sections(None))
             };
-            let base_tail_tokens = profile.estimate_tokens(base_tail.chars().count() as u64);
+            let base_tail_tokens = profile.estimate_tokens(base_tail.len() as u64);
             let preliminary_plan = self
                 .build_working_set_plan(&profile, prefix_tokens, base_tail_tokens)
                 .await;
@@ -1763,6 +1763,8 @@ impl Agent {
         // but the base set's names and order never move, and a genuinely
         // new name is only ever appended at the end.
         let mut turn_plan: Option<vak_session::WorkingSetPlan> = None;
+        let mut compaction_failed = false;
+        let mut logged_plan: Option<String> = None;
         let mut turn_tool_base: Option<Vec<vak_llm::ToolDefinition>> = None;
         loop {
             if cancel.is_cancelled() {
@@ -1854,7 +1856,7 @@ impl Agent {
             load_discovered(&mut tool_defs, discovered);
             let prefix_tokens =
                 profile.estimate_tokens(prefix_chars(&self.config.system_prefix, &tool_defs));
-            let tail_tokens = profile.estimate_tokens(turn_tail.chars().count() as u64);
+            let tail_tokens = profile.estimate_tokens(turn_tail.len() as u64);
 
             let mut plan = match &turn_plan {
                 Some(p) => p.clone(),
@@ -1930,17 +1932,40 @@ impl Agent {
                 };
             }
 
+            // The open turn grows with every step while the plan was frozen at
+            // the first one. When history plus the turn as it now stands no
+            // longer fits the ceiling, re-plan with the turn's real size so
+            // history gives way (§10: "the middle changes, and it is a
+            // replan, not a cut"); the request's earlier shape changes once,
+            // exactly as on an over-length rejection.
+            let mut replanned_mid_turn = false;
+            if turn > 0 && plan.spent.saturating_add(needed_tokens) > profile.prompt_ceiling() {
+                let fresh = self
+                    .build_working_set_plan(&profile, prefix_tokens, tail_tokens)
+                    .await;
+                if fresh.per_turn != plan.per_turn || fresh.packet_range != plan.packet_range {
+                    plan = fresh;
+                    turn_plan = Some(plan.clone());
+                    replanned_mid_turn = true;
+                }
+            }
+
             // Incremental compaction (docs/design/68-context-engine.md §4):
             // the plan collapsed some turns into a packet that no existing
             // `Compaction` entry covers yet. Summarize their CARDS (never
             // raw history) and append one, then re-plan — the packet
             // disappears from the new plan once it is covered.
-            if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone() {
+            if let Some((first_turn_id, last_turn_id)) = plan.packet_range.clone()
+                && !compaction_failed
+            {
                 let needs_compaction = {
                     let session = self.session.lock().await;
                     session.packet_needs_compaction(&first_turn_id, &last_turn_id)
                 };
-                if needs_compaction {
+                'compact: {
+                    if !needs_compaction {
+                        break 'compact;
+                    }
                     let (transcript, transcript_chars) = {
                         let session = self.session.lock().await;
                         session.packet_transcript(&first_turn_id, &last_turn_id)
@@ -1984,16 +2009,33 @@ impl Agent {
                                 .lock()
                                 .await
                                 .append_receipt(ledger.take_receipt());
-                            return TurnOutcome::Failed {
-                                error: LlmError::Network(format!("compaction call failed: {e}")),
-                            };
+                            // The turn does not depend on the summary: without
+                            // it the packeted turns render as cards (no cut).
+                            // Try again on a later turn, not on every step.
+                            compaction_failed = true;
+                            self.record_activity(
+                                vak_session::ActivityKind::Diagnostic,
+                                vak_session::ActivityStatus::Failed,
+                                "compaction-failed".into(),
+                                Some(e.to_string()),
+                                Default::default(),
+                            )
+                            .await;
+                            break 'compact;
                         }
                     };
                     let summary = summary_msg.text_content();
                     if summary.trim().is_empty() {
-                        return TurnOutcome::Failed {
-                            error: LlmError::Network("compaction produced an empty summary".into()),
-                        };
+                        compaction_failed = true;
+                        self.record_activity(
+                            vak_session::ActivityKind::Diagnostic,
+                            vak_session::ActivityStatus::Failed,
+                            "compaction-failed".into(),
+                            Some("the summariser returned nothing".into()),
+                            Default::default(),
+                        )
+                        .await;
+                        break 'compact;
                     }
                     {
                         let mut session = self.session.lock().await;
@@ -2004,9 +2046,15 @@ impl Agent {
                             summary,
                             tokens_before,
                         ) {
-                            return TurnOutcome::Failed {
-                                error: LlmError::Network(format!("compaction write failed: {e}")),
-                            };
+                            compaction_failed = true;
+                            self.record_activity(
+                                vak_session::ActivityKind::Diagnostic,
+                                vak_session::ActivityStatus::Failed,
+                                "compaction-failed".into(),
+                                Some(format!("compaction write failed: {e}")),
+                                Default::default(),
+                            )
+                            .await;
                         }
                     }
                     let after_plan = self
@@ -2044,6 +2092,25 @@ impl Agent {
             // (docs/design/68-context-engine.md §6/§7).
             ledger.receipt.prefix_digest =
                 assemble::prefix_digest(&self.config.system_prefix, &tool_defs);
+            // Model-visible selection must be reconstructable (invariant 1):
+            // the plan that shaped this request is recorded when it changes.
+            {
+                let mut session = self.session.lock().await;
+                let data = plan.to_activity_data(session.tail_id().map(String::as_str));
+                let fingerprint = format!("{data:?}");
+                if logged_plan.as_deref() != Some(fingerprint.as_str()) {
+                    logged_plan = Some(fingerprint);
+                    let _ = session.append_activity(vak_session::ActivityRecord {
+                        activity_id: format!("context-plan-{}", uuid::Uuid::now_v7()),
+                        turn: None,
+                        kind: vak_session::ActivityKind::Diagnostic,
+                        status: vak_session::ActivityStatus::Succeeded,
+                        label: vak_session::CONTEXT_PLAN_LABEL.into(),
+                        detail: None,
+                        data,
+                    });
+                }
+            }
             let base_request = {
                 let session = self.session.lock().await;
                 // `messages` is already the fidelity-selected projection
@@ -2057,6 +2124,11 @@ impl Agent {
                 // never re-homed onto a later step's tool result or nudge
                 // (docs/design/68-context-engine.md §6/§7).
                 attach_tail(&mut messages, &turn_tail, directive_at);
+                if replanned_mid_turn {
+                    // The earlier messages changed shape (§7): a thinking block
+                    // produced under the old shape cannot be replayed.
+                    strip_replayed_thinking(&mut messages);
+                }
                 let session_key = session
                     .header()
                     .map(|header| header.session_id.clone())
@@ -2151,8 +2223,7 @@ impl Agent {
                                 &self.config.system_prefix,
                                 &tool_defs,
                             ));
-                            let new_tail_tokens =
-                                lowered.estimate_tokens(turn_tail.chars().count() as u64);
+                            let new_tail_tokens = lowered.estimate_tokens(turn_tail.len() as u64);
                             plan = self
                                 .build_working_set_plan(
                                     &lowered,
@@ -2332,8 +2403,18 @@ impl Agent {
                 }
                 let _ = session.append_receipt(receipt);
             };
-            self.record_capacity_usage_feedback(&request, &usage, ledger.last_first_token_ms)
-                .await;
+            let (settled_provider, settled_model) = (
+                ledger.receipt.provider.clone(),
+                ledger.receipt.model.clone(),
+            );
+            self.record_capacity_usage_feedback(
+                &request,
+                &usage,
+                ledger.last_first_token_ms,
+                &settled_provider,
+                &settled_model,
+            )
+            .await;
             let response_entry_id = self.append_assistant(&response).await;
             let _ = events.send(AgentEvent::TurnEnd { usage }).await;
 
@@ -3508,7 +3589,12 @@ impl Agent {
             let session = self.session.lock().await;
             let index = session.current_turn_index();
             index.turns.last().and_then(|turn| {
-                (turn.closed && turn.card.is_none()).then(|| {
+                // A turn that ended without a final answer (cancelled, failed,
+                // out of turns) still gets its card, so its outcome is on the
+                // record and it plans like any other turn once a later
+                // directive follows it.
+                let ended = turn.closed || !matches!(outcome, TurnOutcome::Completed { .. });
+                (ended && turn.card.is_none()).then(|| {
                     let narration = turn
                         .final_answer
                         .as_ref()
@@ -3524,7 +3610,7 @@ impl Agent {
         // No profile wired in ⇒ a metadata-only one
         // (docs/design/68-context-engine.md §4).
         let profile = self.effective_capacity_profile();
-        let estimate = move |s: &str| -> u64 { profile.estimate_tokens(s.chars().count() as u64) };
+        let estimate = move |s: &str| -> u64 { profile.estimate_tokens(s.len() as u64) };
         let tokens_full = {
             let mut session = self.session.lock().await;
             let index = session.current_turn_index();
@@ -3535,7 +3621,10 @@ impl Agent {
                 return; // written concurrently between the two locks above
             }
             let card = turn.build_card(outcome_label, narration, &estimate);
-            let tokens_full = card.tokens_full;
+            // The reserve stands in for the turn while it is OPEN, so it is
+            // sized by what that turn carried verbatim, not by the digested
+            // record a later turn sees.
+            let tokens_full = estimate_messages(&turn.current_verbatim(), &estimate);
             let _ = session.append_turn_card(vak_session::types::TurnCardRecord { turn_id, card });
             tokens_full
         };
@@ -4715,12 +4804,28 @@ impl Agent {
         request: &ChatRequest,
         usage: &Usage,
         first_token_latency_ms: Option<u64>,
+        settled_provider: &str,
+        settled_model: &str,
     ) {
+        let primary = self
+            .config
+            .provider_name
+            .clone()
+            .unwrap_or_else(|| self.provider.name().to_string());
+        // Usage from a fallback leg describes another model's tokenizer and
+        // cache; folding it in would skew the primary's profile.
+        if settled_provider != primary || settled_model != request.model {
+            return;
+        }
         let Some(profile) = self.config.capacity.as_mut() else {
             return;
         };
         let before = profile.clone();
-        let chars_sent = chat_request_chars(request);
+        // Count what that leg was sent: a non-Anthropic leg never carries the
+        // deferred tool schemas.
+        let mut sent = request.clone();
+        sent.tools = tools_for_leg(&request.tools, settled_provider);
+        let chars_sent = chat_request_chars(&sent);
         let cache_miss = usage.cache_read_input_tokens.unwrap_or(0) == 0;
         profile.observe_usage(chars_sent, usage, first_token_latency_ms, cache_miss);
         let after = profile.clone();
@@ -5598,7 +5703,7 @@ impl Agent {
                         }
                         let card = turn.card.as_ref()?;
                         Some(serde_json::json!({"turn": n + 1, "turn_id": id,
-                        "match_score": score, "record": card.line(n + 1).chars().take(1600).collect::<String>()}))
+                        "match_score": score, "record": card.line(n + 1)}))
                     })
                     .take(limit)
                     .collect();
@@ -5634,10 +5739,11 @@ impl Agent {
                     )),
                 }
             }
-            RecallRequest::Id { id, range } => match session.evidence(&id) {
-                Some(evidence) => {
-                    ToolRunOutput::Ok(vak_tools::apply_range(&evidence.content, range))
-                }
+            RecallRequest::Id { id, range, chars } => match session.evidence(&id) {
+                Some(evidence) => ToolRunOutput::Ok(match chars {
+                    Some((start, end)) => vak_tools::apply_chars(&evidence.content, start, end),
+                    None => vak_tools::apply_range(&evidence.content, range),
+                }),
                 None => ToolRunOutput::Err(format!(
                     r#"{{"type":"invalid_arguments","message":"no evidence {id}"}}"#
                 )),
@@ -7580,6 +7686,21 @@ async fn authorize(
 enum ToolRunOutput {
     Ok(String),
     Err(String),
+}
+
+fn estimate_messages(messages: &[Message], estimate: &dyn Fn(&str) -> u64) -> u64 {
+    let text: String = messages
+        .iter()
+        .flat_map(|m| m.content.iter())
+        .map(|block| match block {
+            ContentBlock::Text { text } => text.clone(),
+            ContentBlock::ToolUse { input, .. } => input.to_string(),
+            ContentBlock::ToolResult { content, .. } => content.clone(),
+            ContentBlock::Provider { raw, .. } => raw.to_string(),
+            _ => String::new(),
+        })
+        .collect();
+    estimate(&text)
 }
 
 /// Records which route leg an over-length rejection came from, and keeps the

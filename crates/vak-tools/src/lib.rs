@@ -36,7 +36,7 @@ use serde_json::Value;
 pub use context::ToolContext;
 pub use contract::validate_input;
 pub use find_tools::FindToolsTool;
-pub use recall::{RecallRequest, RecallTool, apply_range, parse_recall_args};
+pub use recall::{RecallRequest, RecallTool, apply_chars, apply_range, parse_recall_args};
 pub use sandbox_events::{SandboxEvent, SandboxEventSink};
 pub use webbrowse::WebBrowseTool;
 pub use webfetch::WebFetchTool;

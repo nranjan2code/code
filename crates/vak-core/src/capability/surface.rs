@@ -38,6 +38,8 @@ pub struct ToolSurface {
 ///   disclosure off, or the kernel disabled) loads everything.
 /// * `predicted_cards` names the card tools the request itself reads as
 ///   (`presentation_tools::predicted_card_tools`); other card tools defer.
+/// * `carried` names the tools earlier turns of this session loaded; they
+///   stay loaded (cache stability, docs/design/68 §6).
 ///
 /// Always-loaded and undeclared tools are loaded whatever the prediction:
 /// the first because the model cannot operate without them, the second
@@ -46,14 +48,20 @@ pub fn build_tool_surface(
     tools: &[Arc<dyn vak_tools::Tool>],
     required_domains: &vak_intent::DomainSet,
     predicted_cards: &BTreeSet<String>,
+    carried: &BTreeSet<String>,
 ) -> ToolSurface {
     let required: Option<BTreeSet<Domain>> = (!required_domains.is_unconstrained())
         .then(|| required_domains.iter().map(|d| Domain::parse(d)).collect());
     let mut surface = ToolSurface::default();
     for tool in tools {
         let definition = ToolDefinition::new(tool.name(), tool.description(), tool.schema());
+        // A tool this session already had loaded stays loaded: providers cache
+        // the tools array ahead of everything else, so a set that follows each
+        // turn's reading rewrites the cache from the first byte every turn.
+        // The set only grows, in the tools' fixed order.
         let loaded = match &required {
             None => true,
+            Some(_) if carried.contains(tool.name()) => true,
             Some(_) if tool.always_loaded() => true,
             Some(_) if tool.presents_cards() => predicted_cards.contains(tool.name()),
             Some(required) => Serves::from_labels(tool.serves()).serves_any(required),
@@ -171,7 +179,12 @@ mod tests {
 
     #[test]
     fn unconstrained_domains_load_everything() {
-        let surface = build_tool_surface(&fixture(), &vak_intent::DomainSet::All, &BTreeSet::new());
+        let surface = build_tool_surface(
+            &fixture(),
+            &vak_intent::DomainSet::All,
+            &BTreeSet::new(),
+            &BTreeSet::new(),
+        );
         assert_eq!(surface.core.len(), 5);
         assert!(surface.deferred.is_empty());
         assert!(surface.unpredicted.is_empty());
@@ -182,6 +195,7 @@ mod tests {
         let surface = build_tool_surface(
             &fixture(),
             &vak_intent::DomainSet::only(["web"]),
+            &BTreeSet::new(),
             &BTreeSet::new(),
         );
         assert_eq!(
@@ -202,8 +216,26 @@ mod tests {
             &fixture(),
             &vak_intent::DomainSet::Empty,
             &BTreeSet::from(["emit_chart_card".to_string()]),
+            &BTreeSet::new(),
         );
         assert!(names(&surface.core).contains(&"emit_chart_card"));
+    }
+
+    #[test]
+    fn a_tool_an_earlier_turn_loaded_stays_loaded() {
+        let carried = BTreeSet::from(["bash".to_string()]);
+        let surface = build_tool_surface(
+            &fixture(),
+            &vak_intent::DomainSet::only(["web"]),
+            &BTreeSet::new(),
+            &carried,
+        );
+        assert_eq!(
+            names(&surface.core),
+            vec!["read", "bash", "webfetch", "plugin_thing"],
+            "fixed order, one more loaded"
+        );
+        assert!(!surface.unpredicted.contains("bash"));
     }
 
     /// The catalogue is a function of the admitted tools only, so the cached

@@ -220,8 +220,10 @@ fn build_fixture(dir: &Path, session_id: &str) -> Result<(SessionLog, String), S
 
     // The still-open 31st turn: a directive plus one dispatched tool call
     // and its result, no final answer yet — always verbatim, never planned.
-    log.append_message(user_text("open turn: please check the current status"))
-        .map_err(|e| e.to_string())?;
+    log.append_message(user_text(
+        "open turn: please help with the task directive and the status",
+    ))
+    .map_err(|e| e.to_string())?;
     log.append_message(assistant_tool_call(
         "open-call",
         "bash",
@@ -419,10 +421,13 @@ fn steps_are_append_only_with_a_stable_prefix(dir: &Path) -> Result<bool, String
     if messages_k1.len() < messages_k.len() {
         return Ok(false);
     }
+    // Every block of every earlier message, not just its text: a tool call,
+    // a tool result or a provider block changing between steps is exactly
+    // what breaks the cache and a replayed thinking block.
     Ok(messages_k
         .iter()
         .zip(messages_k1.iter())
-        .all(|(a, b)| a.text_content() == b.text_content()))
+        .all(|(a, b)| serde_json::to_value(a).ok() == serde_json::to_value(b).ok()))
 }
 
 /// A profile with the given usable horizon, for the two-model replay.

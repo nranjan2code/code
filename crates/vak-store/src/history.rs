@@ -92,26 +92,26 @@ pub(crate) fn index_history_record(
 
 /// The bounded discovery projection, regenerated from a verified canonical record.
 pub fn compact_turn_record(record: &vak_session::TurnCardRecord) -> String {
-    let asked = record.card.asked.chars().take(600).collect::<String>();
-    let answer = record
-        .card
-        .answered
-        .narration
-        .chars()
-        .take(800)
-        .collect::<String>();
+    // Bounded by whole words, never by a character count.
+    fn words(text: &str, max: usize) -> String {
+        let all: Vec<&str> = text.split_whitespace().collect();
+        if all.len() <= max {
+            all.join(" ")
+        } else {
+            format!("{}\u{2026}", all[..max].join(" "))
+        }
+    }
+    let asked = words(&record.card.asked, 120);
+    let answer = words(&record.card.answered.narration, 160);
     let titles = record
         .card
         .answered
         .presentations
         .iter()
-        .flat_map(|p| p.title.chars().chain(std::iter::once(' ')))
-        .take(180)
-        .collect::<String>();
+        .map(|p| words(&p.title, 12))
+        .collect::<Vec<_>>()
+        .join(" ");
     format!("Asked: {asked}\nAnswered: {answer}\nOutputs: {titles}")
-        .chars()
-        .take(1600)
-        .collect()
 }
 
 fn is_ancestor(

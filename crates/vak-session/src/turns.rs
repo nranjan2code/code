@@ -196,6 +196,75 @@ pub struct WorkingSetPlan {
     pub spent: u64,
 }
 
+/// Label of the audit activity that records the plan a request was built from.
+pub const CONTEXT_PLAN_LABEL: &str = "context-plan";
+
+/// The planner's rules version recorded with each plan. Bump it with a change
+/// to how a plan is computed, so an old record is read for what it was.
+pub const CONTEXT_PLAN_POLICY_VERSION: u32 = 2;
+
+impl WorkingSetPlan {
+    /// The plan as the `data` of its audit activity: the `Full` turns, the
+    /// packet range, the budget accounting and the ledger leaf it was planned
+    /// at. Every other closed turn is a `Card` by construction, so this is all
+    /// a replay needs (invariant 1); it stays bounded by the `Full` turns, not
+    /// by the length of the conversation.
+    pub fn to_activity_data(
+        &self,
+        leaf: Option<&str>,
+    ) -> std::collections::BTreeMap<String, String> {
+        let full: Vec<&str> = self
+            .per_turn
+            .iter()
+            .filter(|(_, f)| *f == Fidelity::Full)
+            .map(|(id, _)| id.as_str())
+            .collect();
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("section".into(), CONTEXT_PLAN_LABEL.into());
+        data.insert("policy".into(), CONTEXT_PLAN_POLICY_VERSION.to_string());
+        data.insert("leaf".into(), leaf.unwrap_or_default().to_string());
+        data.insert(
+            "full".into(),
+            serde_json::to_string(&full).unwrap_or_default(),
+        );
+        data.insert(
+            "retrieved".into(),
+            serde_json::to_string(&self.retrieved).unwrap_or_default(),
+        );
+        if let Some((first, last)) = &self.packet_range {
+            data.insert("packet_first".into(), first.clone());
+            data.insert("packet_last".into(), last.clone());
+        }
+        data.insert("budget".into(), self.budget.to_string());
+        data.insert("spent".into(), self.spent.to_string());
+        data
+    }
+
+    /// The plan and the leaf it was planned at, from a recorded activity.
+    pub fn from_activity_data(
+        data: &std::collections::BTreeMap<String, String>,
+    ) -> Option<(WorkingSetPlan, String)> {
+        if data.get("section").map(String::as_str) != Some(CONTEXT_PLAN_LABEL) {
+            return None;
+        }
+        let full: Vec<String> = serde_json::from_str(data.get("full")?).ok()?;
+        let retrieved: Vec<String> = serde_json::from_str(data.get("retrieved")?).ok()?;
+        let packet_range = data
+            .get("packet_first")
+            .zip(data.get("packet_last"))
+            .map(|(first, last)| (first.clone(), last.clone()));
+        let plan = WorkingSetPlan {
+            per_turn: full.into_iter().map(|id| (id, Fidelity::Full)).collect(),
+            selected_records: None,
+            packet_range,
+            retrieved,
+            budget: data.get("budget")?.parse().ok()?,
+            spent: data.get("spent")?.parse().ok()?,
+        };
+        Some((plan, data.get("leaf")?.clone()))
+    }
+}
+
 /// The ledger reorganized into turns, built once per request.
 #[derive(Debug, Clone, Default)]
 pub struct TurnIndex {
@@ -1190,7 +1259,21 @@ impl TurnCard {
                     presentation.semantic_type, presentation.title, presentation.id
                 )
             }
-            None => format!("\"{}\"", truncate_words(&self.answered.narration, 12)),
+            // No card was emitted, but the calls it made are still reachable:
+            // a card line names every result a later turn can recall.
+            None => {
+                let evidence: Vec<&str> = self
+                    .did
+                    .iter()
+                    .map(|trace| trace.evidence_id.as_str())
+                    .collect();
+                let narration = truncate_words(&self.answered.narration, 12);
+                if evidence.is_empty() {
+                    format!("\"{narration}\"")
+                } else {
+                    format!("\"{narration}\" [ev:{}]", evidence.join(","))
+                }
+            }
         };
         format!(
             "#{n} asked: {} \u{2192} did: {did_summary} \u{2192} {outcome_part}",

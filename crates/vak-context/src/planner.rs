@@ -150,10 +150,9 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
             } else {
                 0.0
             };
-            let anaphora = if anaphoric
-                && lexical.is_empty()
-                && preceding.as_deref() == Some(turn.id.as_str())
-            {
+            // "that"/"it" point at the last thing whatever else the words
+            // match: a lexical hit on an older turn must not displace it.
+            let anaphora = if anaphoric && preceding.as_deref() == Some(turn.id.as_str()) {
                 1.0
             } else {
                 0.0
@@ -212,42 +211,65 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         .filter(|turn| !full_ids.contains(&turn.id))
         .copied()
         .collect();
-    // Dry run: the minimal number of newest not-full turns that fit under
-    // `budget` at Card cost, exactly as before batching existed. This is
-    // never applied directly — only used to derive how many turns must be
-    // evicted at minimum, which then gets rounded up to a batch.
-    let mut keep_count = 0usize;
-    let mut dry_run_spent = spent;
-    for turn in &not_full {
-        let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
-        if dry_run_spent.saturating_add(cost) <= budget {
-            dry_run_spent += cost;
-            keep_count += 1;
-        } else {
-            break;
+    // The number of newest not-full turns kept as cards under `card_budget`.
+    let keep_under = |card_budget: u64| -> usize {
+        // Dry run: the minimal number that fit at Card cost; only used to
+        // derive how many must be evicted at minimum, then rounded up to a
+        // batch.
+        let mut keep_count = 0usize;
+        let mut dry_run_spent = spent;
+        for turn in &not_full {
+            let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
+            if dry_run_spent.saturating_add(cost) <= card_budget {
+                dry_run_spent += cost;
+                keep_count += 1;
+            } else {
+                break;
+            }
         }
-    }
-    let evict_count = not_full.len() - keep_count;
-    let keep_count = if evict_count == 0 {
-        keep_count
-    } else {
-        let batches = evict_count.saturating_add(PACKET_BATCH_TURNS - 1) / PACKET_BATCH_TURNS;
-        let rounded_evict = batches
-            .saturating_mul(PACKET_BATCH_TURNS)
-            .min(not_full.len());
-        not_full.len() - rounded_evict
+        let evict_count = not_full.len() - keep_count;
+        if evict_count == 0 {
+            keep_count
+        } else {
+            let batches = evict_count.saturating_add(PACKET_BATCH_TURNS - 1) / PACKET_BATCH_TURNS;
+            let rounded_evict = batches
+                .saturating_mul(PACKET_BATCH_TURNS)
+                .min(not_full.len());
+            not_full.len() - rounded_evict
+        }
     };
+    // A stored packet rides in the request too: its size comes out of what the
+    // cards may use, or the request overshoots the budget by the summary.
+    let range_of = |keep: usize| -> Option<(String, String)> {
+        (keep < not_full.len()).then(|| {
+            (
+                not_full[not_full.len() - 1].id.clone(),
+                not_full[keep].id.clone(),
+            )
+        })
+    };
+    let stored_packet_tokens = |range: &(String, String)| -> Option<u64> {
+        input
+            .index
+            .packets
+            .iter()
+            .rev()
+            .find(|p| p.first_turn_id == range.0 && p.last_turn_id == range.1)
+            .map(|p| input.profile.estimate_tokens(p.summary.len() as u64))
+    };
+    let mut keep_count = keep_under(budget);
+    if let Some(tokens) = range_of(keep_count).and_then(|range| stored_packet_tokens(&range)) {
+        keep_count = keep_under(budget.saturating_sub(tokens));
+    }
+    let packet_range = range_of(keep_count);
+    if let Some(tokens) = packet_range.as_ref().and_then(stored_packet_tokens) {
+        spent += tokens;
+    }
 
     let mut per_turn: Vec<(String, Fidelity)> = Vec::new();
-    let mut packet_ids: Vec<String> = Vec::new();
-    for (position, turn) in not_full.iter().enumerate() {
-        if position < keep_count {
-            let cost = turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
-            spent += cost;
-            per_turn.push((turn.id.clone(), Fidelity::Card));
-        } else {
-            packet_ids.push(turn.id.clone());
-        }
+    for turn in not_full.iter().take(keep_count) {
+        spent += turn.card.as_ref().map(|c| c.tokens_card).unwrap_or(0);
+        per_turn.push((turn.id.clone(), Fidelity::Card));
     }
     for id in full_ids {
         per_turn.push((id, Fidelity::Full));
@@ -260,16 +282,6 @@ pub fn plan(input: PlanInput) -> WorkingSetPlan {
         .map(|(i, t)| (t.id.as_str(), i))
         .collect();
     per_turn.sort_by_key(|(id, _)| order.get(id.as_str()).copied().unwrap_or(usize::MAX));
-
-    let packet_range = if packet_ids.is_empty() {
-        None
-    } else {
-        // `packet_ids` was collected oldest-appended-last while walking
-        // newest -> oldest, so the range is (last pushed, first pushed).
-        let first = packet_ids.last().cloned();
-        let last = packet_ids.first().cloned();
-        first.zip(last)
-    };
 
     WorkingSetPlan {
         selected_records: None,
@@ -308,7 +320,7 @@ pub fn plan_selected(input: PlanInput) -> WorkingSetPlan {
             .estimate_tokens(messages_chars(&turn.full_record()));
         let compact = input
             .profile
-            .estimate_tokens(card.addressed_message().chars().count() as u64);
+            .estimate_tokens(card.addressed_message().len() as u64);
         let (fidelity, cost) = if plan.spent.saturating_add(full) <= budget {
             (Fidelity::Full, full)
         } else if plan.spent.saturating_add(compact) <= budget {
@@ -341,7 +353,7 @@ pub fn plan_for_session(
     tail_tokens: u64,
 ) -> WorkingSetPlan {
     let mut index = TurnIndex::from_log(log);
-    index.ensure_cards(&|text| profile.estimate_tokens(text.chars().count() as u64));
+    index.ensure_cards(&|text| profile.estimate_tokens(text.len() as u64));
     // Stored costs were measured when the card was written, possibly with
     // another model/profile. Older cards also counted text_content() alone,
     // omitting tool-call arguments, and costed index_text() as the card even
@@ -990,6 +1002,74 @@ mod tests {
         assert_eq!(last_at(36), Some(15));
         // A third batch confirms the pattern continues, not a one-off.
         assert_eq!(last_at(37), Some(23));
+    }
+
+    #[test]
+    fn anaphora_outranks_a_lexical_hit_on_an_older_turn() {
+        let dir = tempfile::tempdir().unwrap();
+        let (log, ids) = fixture(
+            dir.path(),
+            &[
+                ("Translate the welcome greeting into Hindi", 160, 10, &[]),
+                ("Summarize the quarterly sales report", 180, 10, &[]),
+            ],
+        );
+        let index = TurnIndex::from_log(&log);
+        let profile = profile(200);
+        let result = plan(PlanInput {
+            profile: &profile,
+            index: &index,
+            directive: "Now translate that into Hindi",
+            reading: None,
+            prefix_tokens: 0,
+            tail_tokens: 0,
+            current_turn_tokens: 0,
+        });
+        assert!(
+            result.per_turn.contains(&(ids[1].clone(), Fidelity::Full)),
+            "the referent of \"that\" is the preceding turn: {result:?}"
+        );
+    }
+
+    #[test]
+    fn a_stored_packet_comes_out_of_the_budget_the_cards_may_use() {
+        const NEVER_FULL: u64 = 100_000;
+        let dir = tempfile::tempdir().unwrap();
+        let specs: Vec<(&str, u64, u64, &[&str])> = (0..40)
+            .map(|_| ("filler turn", NEVER_FULL, 50, &[][..]))
+            .collect();
+        let (mut log, _) = fixture(dir.path(), &specs);
+        let profile = profile(1_000);
+        let run = |log: &SessionLog| {
+            let index = TurnIndex::from_log(log);
+            plan(PlanInput {
+                profile: &profile,
+                index: &index,
+                directive: "unrelated",
+                reading: None,
+                prefix_tokens: 0,
+                tail_tokens: 0,
+                current_turn_tokens: 0,
+            })
+        };
+        let bare = run(&log);
+        let (first, last) = bare.packet_range.clone().unwrap();
+        log.append_packet(&first, &last, "m", "s".repeat(2_000), 1)
+            .unwrap();
+        let with = run(&log);
+        let cards = |p: &vak_session::WorkingSetPlan| {
+            p.per_turn
+                .iter()
+                .filter(|(_, f)| *f == Fidelity::Card)
+                .count()
+        };
+        assert!(
+            cards(&with) < cards(&bare),
+            "{} vs {}",
+            cards(&with),
+            cards(&bare)
+        );
+        assert!(with.spent <= with.budget, "{with:?}");
     }
 
     #[test]

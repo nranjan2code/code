@@ -332,9 +332,17 @@ async fn receipts_round_trip_through_disk() {
         .collect();
     assert_eq!(
         kinds,
-        vec!["header", "message", "receipt", "message", "turn-card"],
-        "receipt sits between the prompt and the reply it produced; the turn-close hook \
-         appends the TurnCard once the reply lands"
+        vec![
+            "header",
+            "message",
+            "activity",
+            "receipt",
+            "message",
+            "turn-card"
+        ],
+        "the plan the request was built from is recorded before it is sent; the receipt \
+         sits between the prompt and the reply it produced; the turn-close hook appends \
+         the TurnCard once the reply lands"
     );
     drop(session);
 

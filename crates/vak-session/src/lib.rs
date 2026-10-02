@@ -20,9 +20,9 @@ pub use search::{
     search_all, search_all_extended, search_extended,
 };
 pub use turns::{
-    Answer, Evidence, Fidelity, Packet, PresentationRef, ReadingKey, Step, TraceLine, Turn,
-    TurnCard, TurnIndex, WorkingSetPlan, bash_digest, evidence_digest, evidence_shape,
-    transcript_result,
+    Answer, CONTEXT_PLAN_LABEL, CONTEXT_PLAN_POLICY_VERSION, Evidence, Fidelity, Packet,
+    PresentationRef, ReadingKey, Step, TraceLine, Turn, TurnCard, TurnIndex, WorkingSetPlan,
+    bash_digest, evidence_digest, evidence_shape, transcript_result,
 };
 pub use types::{
     ActivityKind, ActivityRecord, ActivityStatus, AttachedFile, CapabilityDescriptor,

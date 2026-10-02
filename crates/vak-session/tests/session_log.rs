@@ -530,7 +530,7 @@ fn packet_is_rendered_only_for_the_exact_range_the_plan_asks_for() {
     assert_eq!(
         texts(log.derive_with_plan(&packeting)),
         vec![
-            "<context_summary>\nsummary of old turns\n</context_summary>",
+            "<context_summary>\nSummary of turns 1-2; recall({ turn: N }) reopens one.\nsummary of old turns\n</context_summary>",
             "kept",
             "kept-reply",
             "after",
@@ -581,8 +581,10 @@ fn packet_is_rendered_only_for_the_exact_range_the_plan_asks_for() {
         "{rendered:?}"
     );
     assert!(
-        rendered[0].starts_with("<turns>") && rendered[0].contains("old-1"),
-        "{rendered:?}"
+        rendered
+            .last()
+            .is_some_and(|t| t.starts_with("<turns>") && t.contains("old-1")),
+        "the card block follows the Full turns: {rendered:?}"
     );
     assert!(log.packet_needs_compaction(&old1, &old1));
     assert!(!log.packet_needs_compaction(&old1, &old2));

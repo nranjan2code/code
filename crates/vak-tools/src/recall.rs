@@ -38,6 +38,9 @@ pub enum RecallRequest {
     Id {
         id: String,
         range: Option<(u64, u64)>,
+        /// A 0-based character range `[start, end)` over the whole result,
+        /// for reaching inside one line longer than a window shows.
+        chars: Option<(u64, u64)>,
     },
 }
 
@@ -114,7 +117,26 @@ pub fn parse_recall_args(args: &Value) -> Result<RecallRequest, String> {
                     }
                 }
             };
-            Ok(RecallRequest::Id { id, range })
+            let chars = match args.get("chars") {
+                None | Some(Value::Null) => None,
+                Some(chars) => {
+                    let start = chars.get("start").and_then(Value::as_u64);
+                    let end = chars.get("end").and_then(Value::as_u64);
+                    match (start, end) {
+                        (Some(0), Some(0)) => None,
+                        (Some(start), Some(end)) if end > start => Some((start, end)),
+                        _ => {
+                            return Err(
+                                "'chars' requires integer 'start' and a larger 'end'".to_string()
+                            );
+                        }
+                    }
+                }
+            };
+            if range.is_some() && chars.is_some() {
+                return Err("'range' and 'chars' cannot be combined".to_string());
+            }
+            Ok(RecallRequest::Id { id, range, chars })
         }
         _ => Err(if args.get("query").is_some() {
             "'query' must be a non-empty description of the past subject or result to find; omit recall for a fresh or unrelated request, and use an exact turn_id, turn, presentation, or evidence id when available".to_string()
@@ -141,6 +163,33 @@ pub fn apply_range(content: &str, range: Option<(u64, u64)>) -> String {
         return String::new();
     }
     lines[start_idx..end_idx.min(lines.len())].join("\n")
+}
+
+/// Most characters one `chars` recall returns, so the answer fits a request
+/// whole and is never windowed again.
+pub const CHAR_RANGE_MAX: u64 = 29_000;
+
+/// A 0-based character range `[start, end)` of `content`, for the one line a
+/// window could not show. At most [`CHAR_RANGE_MAX`] characters; when more
+/// remains, a closing line names where to continue.
+pub fn apply_chars(content: &str, start: u64, end: u64) -> String {
+    let total = content.chars().count() as u64;
+    if start >= total {
+        return format!("[the result has {total} chars; nothing at {start}]");
+    }
+    let end = end.min(total).min(start.saturating_add(CHAR_RANGE_MAX));
+    let slice: String = content
+        .chars()
+        .skip(start as usize)
+        .take((end - start) as usize)
+        .collect();
+    if end < total {
+        format!(
+            "{slice}\n[chars {start}-{end} of {total}; recall the same id with chars start {end} for the rest]"
+        )
+    } else {
+        slice
+    }
 }
 
 pub struct RecallTool;
@@ -186,6 +235,15 @@ impl Tool for RecallTool {
                 "id": {
                     "type": "string",
                     "description": "Evidence id (as shown in a card line's ev:<id>) to return the full tool result for."
+                },
+                "chars": {
+                    "type": "object",
+                    "description": "Optional 0-based character range [start, end), only meaningful with 'id'; reaches inside one very long line a window cut. At most 29000 characters per call.",
+                    "properties": {
+                        "start": {"type": "integer"},
+                        "end": {"type": "integer"}
+                    },
+                    "required": ["start", "end"]
                 },
                 "range": {
                     "type": "object",
@@ -236,16 +294,45 @@ mod tests {
             parse_recall_args(&json!({"id": "ev1"})).unwrap(),
             RecallRequest::Id {
                 id: "ev1".into(),
-                range: None
+                range: None,
+                chars: None
             }
         );
         assert_eq!(
             parse_recall_args(&json!({"id": "ev1", "range": {"start": 2, "end": 5}})).unwrap(),
             RecallRequest::Id {
                 id: "ev1".into(),
-                range: Some((2, 5))
+                range: Some((2, 5)),
+                chars: None
             }
         );
+    }
+
+    #[test]
+    fn a_character_range_reaches_inside_one_long_line() {
+        assert_eq!(
+            parse_recall_args(&json!({"id": "ev1", "chars": {"start": 2000, "end": 9000}}))
+                .unwrap(),
+            RecallRequest::Id {
+                id: "ev1".into(),
+                range: None,
+                chars: Some((2_000, 9_000))
+            }
+        );
+        assert!(parse_recall_args(&json!({"id": "e", "chars": {"start": 5, "end": 5}})).is_err());
+        assert!(
+            parse_recall_args(&json!({"id": "e", "range": {"start": 1, "end": 2},
+                "chars": {"start": 0, "end": 5}}))
+            .is_err()
+        );
+        let line: String = ('a'..='z').cycle().take(100_000).collect();
+        let first = apply_chars(&line, 2_000, 90_000);
+        assert!(first.starts_with(&line[2_000..2_010]));
+        assert!(first.contains(&format!("chars 2000-{} of 100000", 2_000 + CHAR_RANGE_MAX)));
+        let last = apply_chars(&line, 99_990, 200_000);
+        assert_eq!(last, &line[99_990..]);
+        assert!(apply_chars("héllo wörld", 1, 4).starts_with("éll\n[chars 1-4 of 11"));
+        assert_eq!(apply_chars("héllo wörld", 6, 11), "wörld");
     }
 
     #[test]
@@ -300,7 +387,8 @@ mod tests {
             parse_recall_args(&id_request).unwrap(),
             RecallRequest::Id {
                 id: "ev1".into(),
-                range: None
+                range: None,
+                chars: None
             }
         );
         let mut turn_request = placeholders;

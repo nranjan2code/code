@@ -30,16 +30,30 @@ pub fn window(content: &str, recall_id: Option<&str>, first_line: usize) -> Opti
     }
     let lines: Vec<&str> = content.lines().collect();
     let first_line = first_line.max(1);
+    // Where each line starts in the whole result, so a cut line can name the
+    // character range that returns the rest of it. Only meaningful when
+    // `content` is the evidence from its first line.
+    let mut offset = 0usize;
     let shown: Vec<String> = lines
         .iter()
         .map(|line| {
             let chars = line.chars().count();
+            let start = offset;
+            offset += chars + 1;
             if chars <= LINE_WINDOW_CHARS {
                 (*line).to_string()
             } else {
                 let kept: String = line.chars().take(LINE_WINDOW_CHARS).collect();
+                let hint = match recall_id {
+                    Some(id) if first_line == 1 => format!(
+                        "; recall {{\"id\": \"{id}\", \"chars\": {{\"start\": {}, \"end\": {}}}}} returns it",
+                        start + LINE_WINDOW_CHARS,
+                        start + chars
+                    ),
+                    _ => String::new(),
+                };
                 format!(
-                    "{kept} [line continues for {} more chars]",
+                    "{kept} [line continues for {} more chars{hint}]",
                     chars - LINE_WINDOW_CHARS
                 )
             }
@@ -155,6 +169,21 @@ mod tests {
         let continues = RESULT_WINDOW_CHARS - LINE_WINDOW_CHARS;
         assert!(windowed.contains(&format!("[line continues for {continues} more chars]")));
         assert!(windowed.starts_with("head\n") && windowed.ends_with("\ntail"));
+    }
+
+    #[test]
+    fn a_cut_line_names_the_character_range_that_returns_the_rest() {
+        let long = "x".repeat(RESULT_WINDOW_CHARS);
+        let windowed = window(&format!("head\n{long}\ntail"), Some("call-9"), 1).expect("windowed");
+        let start = "head\n".len() + LINE_WINDOW_CHARS;
+        let end = "head\n".len() + RESULT_WINDOW_CHARS;
+        assert!(
+            windowed.contains(&format!(
+                "recall {{\"id\": \"call-9\", \"chars\": {{\"start\": {start}, \"end\": {end}}}}} returns it"
+            )),
+            "{}",
+            &windowed[..windowed.len().min(2_300)]
+        );
     }
 
     #[test]

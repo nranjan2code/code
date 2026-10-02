@@ -208,3 +208,108 @@ async fn a_fallback_that_carries_the_request_still_lowers_the_primarys_horizon()
         "no replan once a leg answered"
     );
 }
+
+fn answer_with_usage() -> Result<AssistantMessage, LlmError> {
+    Ok(AssistantMessage {
+        content: vec![ContentBlock::text("answer")],
+        stop_reason: StopReason::EndTurn,
+        usage: Usage {
+            input_tokens: 400,
+            output_tokens: 5,
+            ..Default::default()
+        },
+        model: "m".into(),
+        response_id: None,
+    })
+}
+
+async fn calibration_samples(
+    primary: Vec<Result<AssistantMessage, LlmError>>,
+    fallback: Vec<Result<AssistantMessage, LlmError>>,
+) -> u32 {
+    let r = run_profile(primary, fallback).await;
+    r.0.config
+        .capacity
+        .as_ref()
+        .unwrap()
+        .tokens_per_char
+        .samples
+}
+
+async fn run_profile(
+    primary: Vec<Result<AssistantMessage, LlmError>>,
+    fallback: Vec<Result<AssistantMessage, LlmError>>,
+) -> (Agent,) {
+    let dir = tempdir().unwrap();
+    let header = SessionHeader {
+        space: None,
+        run: None,
+        cause: None,
+        agent: None,
+        session_id: "s-cal".into(),
+        created_at: chrono::Utc::now(),
+        cwd: dir.path().to_path_buf(),
+        parent_session_id: None,
+        contract_id: None,
+        work_item_id: None,
+        conversation: None,
+        contract: FrozenContract {
+            app_version: "0.1.0".into(),
+            provider: "primary".into(),
+            model: "big".into(),
+            route_ladder: Vec::new(),
+            route_objective: String::new(),
+            route_annotations: Vec::new(),
+            system_prompt: "sys".into(),
+            permission_mode: "full-access".into(),
+            capabilities: Vec::new(),
+            prompt_layers: Vec::new(),
+        },
+    };
+    let log = SessionLog::create(dir.path().join("s.jsonl"), header).unwrap();
+    let mut cfg = AgentConfig::new("sys");
+    cfg.capacity = Some(CapacityProfile::from_metadata_only(
+        200_000,
+        8_192,
+        "d".into(),
+        std::time::SystemTime::now(),
+    ));
+    cfg.max_retries = 0;
+    let primary_leg = Arc::new(Leg {
+        name: "primary",
+        script: Mutex::new(primary.into()),
+        calls: Arc::new(Mutex::new(0)),
+    });
+    let fallback_leg = Arc::new(Leg {
+        name: "small-fallback",
+        script: Mutex::new(fallback.into()),
+        calls: Arc::new(Mutex::new(0)),
+    });
+    cfg.ladder = vec![(fallback_leg as Arc<dyn Provider>, "tiny".to_string())];
+    cfg.ladder_provider_names = vec!["small-fallback".into()];
+    let mut agent = Agent::new(primary_leg, log, cfg);
+    let (tx, _rx) = mpsc::channel(4096);
+    let _ = agent
+        .run(
+            "hello there",
+            &SteeringQueues::new(),
+            CancellationToken::new(),
+            tx,
+        )
+        .await;
+    std::mem::forget(dir);
+    (agent,)
+}
+
+#[tokio::test]
+async fn usage_from_the_primary_calibrates_it_and_a_fallbacks_does_not() {
+    assert_eq!(
+        calibration_samples(vec![answer_with_usage()], vec![]).await,
+        1
+    );
+    assert_eq!(
+        calibration_samples(vec![down()], vec![answer_with_usage()]).await,
+        0,
+        "a fallback leg's tokenizer is not the primary's"
+    );
+}

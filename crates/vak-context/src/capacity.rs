@@ -299,7 +299,9 @@ impl CapacityProfile {
         self.tokens_per_char.samples > 0
     }
 
-    /// Estimated token count for `chars`, using the measured tokens/char
+    /// Estimated token count for `chars` (UTF-8 bytes throughout the engine:
+    /// `message_chars`, `prefix_chars` and every caller measure bytes, so the
+    /// calibrated ratio and the estimates share one unit), using the measured tokens/char
     /// once calibrated and the fixed bootstrap value only before that.
     pub fn estimate_tokens(&self, chars: u64) -> u64 {
         let tpc = if self.is_calibrated() {
@@ -422,10 +424,9 @@ impl CapacityProfile {
         (self.current_turn_reserve.value.round() as u64).max(measured_so_far)
     }
 
-    /// Whether this profile should be re-probed before being trusted again:
-    /// past its TTL (24h local / 7d hosted), or contradicted metadata.
-    /// `current_metadata_digest` is compared by the caller because only it
-    /// knows the freshly fetched metadata; passing `None` skips that check.
+    /// Whether this profile is past its TTL (24h local / 7d hosted). A
+    /// changed metadata digest is compared by the caller, because only it
+    /// knows the freshly fetched metadata.
     pub fn is_stale(&self, now: SystemTime, local: bool) -> bool {
         let ttl = if local {
             LOCAL_PROFILE_TTL

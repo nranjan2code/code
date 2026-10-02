@@ -544,6 +544,9 @@ struct CoreInner {
     /// respawned more than once per [`Core::CAPACITY_PROBE_MIN_INTERVAL`].
     capacity_probe_attempted:
         Arc<std::sync::Mutex<HashMap<vak_context::capacity::ProfileKey, std::time::Instant>>>,
+    /// Per session, the tool names any of its turns loaded: they stay loaded
+    /// (`capability::build_tool_surface`) so the cached tools array holds.
+    loaded_tools: std::sync::Mutex<HashMap<String, std::collections::BTreeSet<String>>>,
     /// Runtime MCP table override (desktop/TUI management surface).
     mcp_override: std::sync::Mutex<Option<vak_config::McpConfig>>,
     mcp_runtime_pinned: std::sync::atomic::AtomicBool,
@@ -1342,6 +1345,7 @@ impl Core {
             capacity_cache: std::sync::Mutex::new(HashMap::new()),
             capacity_probes: Arc::new(std::sync::Mutex::new(HashMap::new())),
             capacity_probe_attempted: Arc::new(std::sync::Mutex::new(HashMap::new())),
+            loaded_tools: std::sync::Mutex::new(HashMap::new()),
             mcp_override: std::sync::Mutex::new(None),
             mcp_runtime_pinned: std::sync::atomic::AtomicBool::new(false),
             hooks_override: std::sync::Mutex::new(None),
@@ -5105,6 +5109,20 @@ impl Core {
             if let Some(mut profile) = profile {
                 profile.provenance.quantisation = probe_key.quantisation.clone();
                 if let Ok(mut cache) = core.inner.capacity_cache.lock() {
+                    // The probe measured the horizon; what turns taught the
+                    // profile (tokens per char, prefill rate, turn sizes) is
+                    // not thrown away with the old record.
+                    if let Some(old) = cache.get(&probe_key) {
+                        if old.tokens_per_char.samples > 0 {
+                            profile.tokens_per_char = old.tokens_per_char;
+                        }
+                        if old.prefill_tps.samples > 0 {
+                            profile.prefill_tps = old.prefill_tps;
+                        }
+                        if old.current_turn_reserve.samples > 0 {
+                            profile.current_turn_reserve = old.current_turn_reserve;
+                        }
+                    }
                     cache.insert(probe_key.clone(), profile);
                 }
             }
@@ -7042,7 +7060,24 @@ impl Core {
             &prompt_text,
             &vak_delivery::built_in_recipes(),
         );
-        let surface = capability::build_tool_surface(&tools, &loaded_domains, &predicted_cards);
+        let carried = self
+            .inner
+            .loaded_tools
+            .lock()
+            .ok()
+            .and_then(|loaded| loaded.get(&sid).cloned())
+            .unwrap_or_default();
+        let surface =
+            capability::build_tool_surface(&tools, &loaded_domains, &predicted_cards, &carried);
+        if let Ok(mut loaded) = self.inner.loaded_tools.lock() {
+            if loaded.len() >= 512 && !loaded.contains_key(&sid) {
+                loaded.clear();
+            }
+            loaded
+                .entry(sid.clone())
+                .or_default()
+                .extend(surface.core.iter().map(|tool| tool.name.clone()));
+        }
         // `find_tools` is synthetic and never itself deferred. Search spans
         // every admitted tool, not only the deferred subset: weaker/local
         // models often use discovery to relocate an already-loaded broker
@@ -7919,12 +7954,28 @@ impl Core {
         mut session: SessionLog,
         cancel: tokio_util::sync::CancellationToken,
     ) -> (SessionLog, CompactOutcome) {
-        let profile = vak_context::capacity::CapacityProfile::from_metadata_only(
-            self.inner.config.context_window,
-            u64::from(self.inner.config.max_tokens),
-            "compact-session-now".to_string(),
-            std::time::SystemTime::now(),
-        );
+        // The loop plans against the bound model's measured profile; plan the
+        // same way here, or the range this packets differs from the one the
+        // loop asks for and neither reuses the other's packet.
+        let (route_provider, route_model) = (self.effective_provider(), self.effective_model());
+        let bound = self.inner.capacity_cache.lock().ok().and_then(|cache| {
+            cache
+                .iter()
+                .filter(|(key, _)| key.provider == route_provider && key.model == route_model)
+                .map(|(_, profile)| profile.clone())
+                .max_by_key(|profile| profile.provenance.probed_at)
+        });
+        let mut profile = bound.unwrap_or_else(|| {
+            vak_context::capacity::CapacityProfile::from_metadata_only(
+                self.inner.config.context_window,
+                u64::from(self.inner.config.max_tokens),
+                "compact-session-now".to_string(),
+                std::time::SystemTime::now(),
+            )
+        });
+        profile.output_reserve = profile
+            .output_reserve
+            .min(u64::from(self.inner.config.max_tokens));
         let system = self.system_prompt();
         let tool_defs = vak_tools::definitions(&self.agent_tools());
         let prefix_chars = (system.len() as u64)

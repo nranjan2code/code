@@ -28,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "diagnostic".into(),
             std::time::SystemTime::now(),
         );
-        index.ensure_cards(&|text| profile.estimate_tokens(text.chars().count() as u64));
+        index.ensure_cards(&|text| profile.estimate_tokens(text.len() as u64));
         for (number, turn) in index.turns.iter_mut().enumerate() {
             let full_cost =
                 profile.estimate_tokens(vak_context::assemble::messages_chars(&turn.full_record()));

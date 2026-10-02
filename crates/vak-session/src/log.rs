@@ -1520,9 +1520,25 @@ impl SessionLog {
         &self,
         plan: Option<&WorkingSetPlan>,
     ) -> Vec<(String, Message, bool, bool)> {
+        self.derive_with_plan_indexed(plan).0
+    }
+
+    /// The projection and how many of its trailing messages are the open
+    /// turn's own, from the one pass over the ledger that built it.
+    fn derive_with_plan_indexed(
+        &self,
+        plan: Option<&WorkingSetPlan>,
+    ) -> (Vec<(String, Message, bool, bool)>, usize) {
         if let Some(plan) = plan.filter(|plan| plan.selected_records.is_some()) {
-            return self.derive_selected(plan);
+            let open_len = self
+                .current_turn_index()
+                .turns
+                .last()
+                .filter(|turn| !turn.closed)
+                .map_or(0, |turn| turn.current_verbatim().len());
+            return (self.derive_selected(plan), open_len);
         }
+        let mut open_len = 0usize;
         let (_, position_owned, reset_summary) = self.reset_boundary();
         let position: HashMap<&str, usize> = position_owned
             .iter()
@@ -1558,14 +1574,24 @@ impl SessionLog {
             .and_then(|p| p.packet_range.as_ref())
             .and_then(|(first, last)| self.packet_for(first, last));
         if let Some(packet) = &packet {
+            // Name the turns it stands in for, so a detail can be reopened
+            // with recall({ turn }).
+            let number = |id: &str| index.turns.iter().position(|t| t.id == id).map(|i| i + 1);
+            let covers = match (number(&packet.first_turn_id), number(&packet.last_turn_id)) {
+                (Some(first), Some(last)) => {
+                    format!("Summary of turns {first}-{last}; recall({{ turn: N }}) reopens one.\n")
+                }
+                _ => String::new(),
+            };
             let summary_msg = Message::user_text(format!(
-                "<context_summary>\n{}\n</context_summary>",
+                "<context_summary>\n{covers}{}\n</context_summary>",
                 packet.summary
             ));
             out.push((String::new(), summary_msg, true, false));
         }
 
         let mut card_lines: Vec<String> = Vec::new();
+        let mut open_turn_at: Option<usize> = None;
         for (turn_number, turn) in index.turns.iter().enumerate() {
             let turn_pos = position.get(turn.id.as_str()).copied().unwrap_or(0);
             // A turn still open across a reset keeps its directive and its
@@ -1574,8 +1600,10 @@ impl SessionLog {
                 continue;
             }
             if !turn.closed {
+                open_turn_at = Some(out.len());
                 for message in turn.current_verbatim() {
                     out.push((turn.id.clone(), message, false, false));
+                    open_len += 1;
                 }
                 continue;
             }
@@ -1621,13 +1649,17 @@ impl SessionLog {
         }
         if !card_lines.is_empty() {
             let block = format!("<turns>\n{}\n</turns>", card_lines.join("\n"));
-            let insert_at = usize::from(reset_summary.is_some()) + usize::from(packet.is_some());
+            // After the Full turns, just before the open turn: a new card line
+            // changes this block every turn, and everything ahead of it (the
+            // summary and the Full records) stays byte-identical, so the
+            // provider's prefix cache keeps serving it.
+            let insert_at = open_turn_at.unwrap_or(out.len());
             out.insert(
                 insert_at,
                 (String::new(), Message::user_text(block), true, false),
             );
         }
-        out
+        (out, open_len)
     }
 
     /// Reconstruct only addressed closed turns plus the active turn. The host
@@ -1843,18 +1875,13 @@ impl SessionLog {
     /// be, or an earlier-sent message would silently change shape between
     /// requests.
     pub fn derive_with_plan_and_directive(&self, plan: &WorkingSetPlan) -> (Vec<Message>, usize) {
-        let messages = self.derive_with_plan(plan);
-        let index = if plan.selected_records.is_some() {
-            self.current_turn_index()
+        let (tagged, open_len) = self.derive_with_plan_indexed(Some(plan));
+        let messages: Vec<Message> = tagged.into_iter().map(|(_, m, _, _)| m).collect();
+        let directive_at = if open_len == 0 {
+            messages.len()
         } else {
-            TurnIndex::from_log(self)
+            messages.len().saturating_sub(open_len)
         };
-        let directive_at = index
-            .turns
-            .last()
-            .filter(|turn| !turn.closed)
-            .map(|turn| messages.len().saturating_sub(turn.current_verbatim().len()))
-            .unwrap_or(messages.len());
         (messages, directive_at)
     }
 
@@ -2178,13 +2205,9 @@ impl SessionLog {
         }
         thread.push_str("User request timeline across turns:\n");
         for (num, req) in filtered {
-            let preview = if req.len() > 200 {
-                let head = req
-                    .char_indices()
-                    .map(|(idx, _)| idx)
-                    .nth(200)
-                    .unwrap_or_else(|| 200.min(req.len()));
-                format!("{}...", &req[..head])
+            let words: Vec<&str> = req.split_whitespace().collect();
+            let preview = if words.len() > 40 {
+                format!("{}...", words[..40].join(" "))
             } else {
                 req.clone()
             };

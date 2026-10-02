@@ -551,7 +551,7 @@ provider prefix cache hit ~100% (observed: `matched=28964/29063`).
 | Nudges (stop-policy re-dispatch, repair directive, steering) | appended at the tail, never inserted earlier | keeps the prefix stable |
 | `find_tools` additions | appended to the tool list, never reordered | same |
 | Retries / re-dispatch after transient errors | identical bytes | cache hit on the retry |
-| Oversized result mid-turn (next step would exceed the horizon) | the *oldest* current-turn result is digested, the working set is re-planned, cache loss accepted | the only case where the middle changes, and it is a replan, not a cut |
+| Open turn outgrows the plan (history plus the turn as it stands would exceed the ceiling) | history is re-planned smaller with the turn's real size; the open turn stays verbatim; thinking blocks that were produced under the old shape are dropped; cache loss accepted | the only case where the middle changes, and it is a replan, not a cut. A turn whose own prefix, tail and steps exceed the ceiling takes the handoff rescue (§4) |
 
 Parallel tool calls in one step execute concurrently and their results are
 appended in call order.
@@ -874,4 +874,48 @@ recalling history, and to recall only when a specific prior detail is needed.
 An empty recall query is invalid and returns a corrective tool error; it must
 not be dispatched as a broad history search. Focused tool tests cover this
 contract. Live model behavior and million-turn scaling remain unproven; see
+[the repair plan](../plans/context-selection-repair.md).
+
+### Review follow-ups, 2026-10-02
+
+A line-by-line review of the engine against its own contract found the
+following, all fixed with regression tests:
+
+- **Plan.** A zero history budget no longer fails the turn (§4); the ceiling
+  charges output only against the declared window; an over-length rejection
+  belongs to its route leg; the open turn is re-planned against when it grows;
+  a stored packet's size comes out of the card budget; a failed summariser
+  (call, empty summary or write) records `compaction-failed` and the turn
+  carries on with cards, once per turn. `/compact` plans against the bound
+  model's cached profile, as the loop does.
+- **Relevance.** Term weights are inverse document frequency over the
+  conversation's own cards, and a turn needs at least half of the query's
+  subject terms to be a candidate at all. Anaphora promotes the preceding turn
+  even when words also match an older one. The 12,000-token cap on automatic
+  Full history remains a backstop, not the selector.
+- **Projection.** Card lines sit after the Full turns, just before the open
+  turn, so Full records stay byte-identical while cards accumulate. The tool
+  array only grows within a session (`loaded_tools`), so it stops moving the
+  provider's cache with each turn's reading. A closed record drops the
+  assistant's narration between calls, as §10 always said. A packet names the
+  turns it covers; a card line names every evidence id a later turn can
+  `recall`. An intent written before a directive (outcome revision 0) belongs
+  to that directive, whatever state the previous turn ended in, and a turn that
+  ended without a final answer still gets its card (`cancelled`, `failed`,
+  `degraded`).
+- **Recall.** `recall({ id, chars: { start, end } })` returns a character range
+  of a result (at most 29,000 characters), and a window's cut-line note names
+  the range that returns the rest, so a result that is one very long line is
+  reachable. Recall previews and the thread are bounded by words, never by
+  characters.
+- **Measurement.** Every estimate is in UTF-8 bytes. Calibration ignores usage
+  from a fallback leg and counts the tools the settling leg was actually sent.
+  A finished probe keeps the averages the turns taught the profile.
+- **Audit.** The plan behind each request is recorded as a `context-plan`
+  activity (the `Full` turns, packet range, budget, spent, policy version and
+  the ledger leaf); `WorkingSetPlan::from_activity_data` plus
+  `branch_at(leaf)` reproduces the request's history exactly.
+
+Not done: the per-turn rebuilds of the `TurnIndex` (several full passes per
+step) remain O(history); the lifetime-scale index work stays in
 [the repair plan](../plans/context-selection-repair.md).
