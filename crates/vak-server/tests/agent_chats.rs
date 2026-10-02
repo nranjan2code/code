@@ -1,4 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod support;
+
 use axum::{
     Router,
     body::Body,
@@ -16,11 +18,15 @@ use vak_llm::{
 use vak_session::{Entry, EntryPayload, SessionPath};
 
 #[derive(Default)]
-struct Capture(Mutex<Vec<ChatRequest>>);
+struct Capture(Mutex<Vec<ChatRequest>>, crate::support::CapacityKey);
 #[async_trait::async_trait]
 impl Provider for Capture {
     fn name(&self) -> &str {
         "capture"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.1.0.clone()
     }
     async fn stream(
         &self,

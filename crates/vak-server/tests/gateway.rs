@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -13,6 +15,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 use vak_session::{Entry, EntryPayload, SessionPath};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -20,6 +23,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -191,6 +198,7 @@ async fn inbound(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn inbound_wait_roundtrip_reuses_binding() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("gateway hello"),
             text("second reply"),
@@ -315,6 +323,7 @@ async fn inbound_wait_roundtrip_reuses_binding() {
 async fn telegram_reply_is_an_ordered_multi_message_packet() {
     let answer = format!("# Long result\n\n{}", "🧪 result line\n".repeat(700));
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text(&answer)])),
     });
     let (base, token, _home, _server) = spawn_gateway(provider).await;
@@ -353,6 +362,7 @@ async fn telegram_reply_is_an_ordered_multi_message_packet() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn unbind_removes_route_and_404s_after() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("only")])),
     });
     let (base, token, _home, _server) = spawn_gateway(provider).await;
@@ -400,6 +410,7 @@ async fn unbind_removes_route_and_404s_after() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bindings_survive_process_restart() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("first life")])),
     });
     let (base, cwd, server) = spawn_gateway_bare(provider).await;
@@ -427,6 +438,7 @@ async fn bindings_survive_process_restart() {
     let core2 = Core::new(cwd.clone()).unwrap();
     core2.set_sessions_home(cwd.join("home"));
     core2.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("reborn")])),
     }));
     let listener2 = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -500,6 +512,7 @@ fn urlencoding_escape(s: &str) -> String {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn busy_message_is_steered_not_dropped() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call("t1", "bash", serde_json::json!({"command": "sleep 8"})),
             text("done two"),
@@ -604,6 +617,7 @@ async fn busy_message_is_steered_not_dropped() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn busy_free_text_steers_and_only_an_explicit_command_cancels() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call("t1", "bash", serde_json::json!({"command": "sleep 8"})),
             text("never reached"),
@@ -673,6 +687,7 @@ async fn busy_free_text_steers_and_only_an_explicit_command_cancels() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn gateway_disabled_by_default_returns_conflict() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("nope")])),
     });
     let (base, _server) = spawn_plain(provider).await;
@@ -699,6 +714,7 @@ async fn empty_chat_allowlist_denies_by_default() {
     // 0c-02: an empty chat_allowlist must fail closed, not open — no
     // `chat_allowlist_open = true` here, unlike the shared test helpers.
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("should never run")])),
     });
     let dir = tempfile::tempdir().unwrap();
@@ -740,6 +756,7 @@ async fn empty_chat_allowlist_denies_by_default() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cron_task_delivers_summary_to_log_surface() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("task finished cleanly")])),
     });
     let (base, token, cwd, _server) = spawn_gateway(provider).await;

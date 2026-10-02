@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -12,6 +14,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -19,6 +22,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -161,6 +168,7 @@ async fn wait_transcript(client: &reqwest::Client, base: &str, id: &str) -> serd
 async fn public_doctor_page_preserves_authenticated_doctor_api() {
     // Construct the complete router: testing site::routes alone misses API collisions.
     let (base, token, _cwd, server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -203,6 +211,7 @@ async fn public_doctor_page_preserves_authenticated_doctor_api() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn secured_router_enforces_token_and_cors() {
     let (base, token, _cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -364,6 +373,7 @@ async fn persisted_conversation_accepts_followup_and_streams_without_explicit_at
     let resumed = Core::new(cwd.clone()).unwrap();
     resumed.set_sessions_home(cwd.join("home"));
     resumed.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("Follow-up answer")])),
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -456,6 +466,7 @@ async fn sessions_list_hides_abandoned_header_only_drafts() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fs_endpoints_are_confined_to_workspace() {
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -513,6 +524,7 @@ async fn fs_endpoints_are_confined_to_workspace() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mode_switch_and_diff_endpoint() {
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -631,6 +643,7 @@ async fn mode_switch_and_diff_endpoint() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn fs_tree_lists_and_skips_vendored_dirs() {
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -685,6 +698,7 @@ async fn failed_side_turn_does_not_wedge_the_session() {
     // retries, or an explicit cancel — the session handle must become
     // usable again instead of answering "run in progress" forever.
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("main answer"),
             text("side answer"),
@@ -749,6 +763,7 @@ async fn failed_side_turn_does_not_wedge_the_session() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn side_chat_branches_off_and_restores_main_chain() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("main answer"),
             text("side answer"),
@@ -846,6 +861,7 @@ fn git_seed(cwd: &std::path::Path) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bestofn_fans_out_keep_and_discard() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("candidate A"),
             text("candidate B"),
@@ -954,6 +970,7 @@ async fn bestofn_fans_out_keep_and_discard() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn pr_endpoints_surface_structured_results() {
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -1032,6 +1049,7 @@ fn git_seed_main(cwd: &std::path::Path) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("task ran"),
             text("task ran again"),
@@ -1153,6 +1171,7 @@ async fn scheduled_tasks_crud_runnow_and_worktree_churn() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn launch_config_and_process_lifecycle() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     });
     let (base, token, cwd, _server) = spawn_secured(provider).await;
@@ -1267,6 +1286,7 @@ async fn launch_config_and_process_lifecycle() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn checkpoints_list_and_restore_roundtrip() {
     let (base, token, cwd, _srv) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -1858,6 +1878,7 @@ async fn providers_listing_and_key_storage_roundtrip() {
 async fn the_first_task_is_read_only_even_in_a_full_access_workspace() {
     vak_config::paths::isolate_home_for_tests();
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -1927,6 +1948,7 @@ async fn the_first_task_is_read_only_even_in_a_full_access_workspace() {
 async fn a_workspace_review_reports_privileges_without_granting_them() {
     vak_config::paths::isolate_home_for_tests();
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -2089,6 +2111,7 @@ async fn bot_token_storage_roundtrip() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn hooks_roundtrip_preserves_disabled_hooks_instead_of_deleting_them() {
     let (base, token, cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     }))
     .await;
@@ -2214,6 +2237,7 @@ async fn read_frames(res: reqwest::Response, mut done: impl FnMut(&Frame) -> boo
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn one_stream_multiplexes_sessions_and_resumes_each_from_its_cursor() {
     let (base, token, _cwd, _server) = spawn_secured(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("streamed answer")])),
     }))
     .await;

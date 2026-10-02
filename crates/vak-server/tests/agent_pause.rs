@@ -3,6 +3,8 @@
 //! `stop_running` the Agent's live runs are cancelled now, and no other
 //! Agent's are touched.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod support;
+
 use axum::{
     Router,
     body::Body,
@@ -23,12 +25,16 @@ use vak_llm::{
 
 /// Hangs until the run is cancelled, counting how many requests it was sent.
 #[derive(Default)]
-struct Hung(AtomicUsize);
+struct Hung(AtomicUsize, crate::support::CapacityKey);
 
 #[async_trait::async_trait]
 impl Provider for Hung {
     fn name(&self) -> &str {
         "hung"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.1.0.clone()
     }
     async fn stream(
         &self,

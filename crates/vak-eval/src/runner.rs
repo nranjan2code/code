@@ -79,13 +79,19 @@ fn uuid_like() -> String {
 
 /// Serves the case's turns in order; records every request for audit.
 pub struct EvalProvider {
+    /// Unique per instance: capacity gates are process-wide, so cases that
+    /// share one name share each other's cooldowns and held reservations.
+    capacity_key: String,
     turns: Mutex<VecDeque<AssistantMessage>>,
     pub requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
 impl EvalProvider {
     pub fn new(turns: Vec<ScriptedTurn>) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
         EvalProvider {
+            capacity_key: format!("eval-scripted:{}", NEXT.fetch_add(1, Ordering::Relaxed)),
             turns: Mutex::new(turns.into_iter().map(|t| t.to_message()).collect()),
             requests: Arc::new(Mutex::new(Vec::new())),
         }
@@ -96,6 +102,10 @@ impl EvalProvider {
 impl Provider for EvalProvider {
     fn name(&self) -> &str {
         "eval-scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.clone()
     }
 
     async fn stream(

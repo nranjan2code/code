@@ -4,6 +4,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -20,6 +22,7 @@ use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 
 struct Counting {
+    capacity_key: crate::support::CapacityKey,
     dispatches: Arc<AtomicUsize>,
 }
 
@@ -27,6 +30,10 @@ struct Counting {
 impl Provider for Counting {
     fn name(&self) -> &str {
         "counting"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -83,6 +90,7 @@ async fn spawn_server(config_toml: &str) -> Server {
     // broker protocol.
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         dispatches: Arc::new(AtomicUsize::new(0)),
     }));
 

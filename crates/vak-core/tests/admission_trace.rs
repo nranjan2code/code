@@ -4,6 +4,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use vak_core::admission::RunAdmission;
@@ -15,12 +17,18 @@ use vak_session::ConversationContext;
 use vak_session::ids::TriggerId;
 use vak_session::trace::{Cause, local};
 
-struct Echo;
+struct Echo {
+    capacity_key: crate::support::CapacityKey,
+}
 
 #[async_trait::async_trait]
 impl Provider for Echo {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -57,7 +65,9 @@ fn core(dir: &tempfile::TempDir) -> Core {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
-    core.set_provider_instance(Arc::new(Echo));
+    core.set_provider_instance(Arc::new(Echo {
+        capacity_key: crate::support::CapacityKey::default(),
+    }));
     core
 }
 

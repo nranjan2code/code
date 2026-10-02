@@ -5,6 +5,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -20,6 +22,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
 struct Counting {
+    capacity_key: crate::support::CapacityKey,
     dispatches: Arc<AtomicUsize>,
 }
 
@@ -27,6 +30,10 @@ struct Counting {
 impl Provider for Counting {
     fn name(&self) -> &str {
         "counting"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -151,6 +158,7 @@ async fn spawn_full(
     // broker protocol.
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         dispatches: dispatches.clone(),
     }));
 
@@ -449,6 +457,7 @@ async fn missing_worker_delivers_typed_error_not_silence() {
     let core = Core::new_with_trust(cwd, true).unwrap();
     core.set_sessions_home(home.clone());
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         dispatches: Arc::new(AtomicUsize::new(0)),
     }));
     // Deliberately point the worker at something unusable.

@@ -22218,7 +22218,17 @@ mod sandbox_promotion_tests {
     use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
     use vak_llm::{EventStream, LlmError};
 
+    /// A capacity identity no other provider in this process shares: the
+    /// gates are process-wide, so a fixed name lets tests inherit each
+    /// other's cooldowns and held reservations.
+    fn capacity_key() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        format!("test-provider:{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
     struct RevisionProvider {
+        capacity_key: String,
         replies: Mutex<VecDeque<AssistantMessage>>,
     }
 
@@ -22226,6 +22236,10 @@ mod sandbox_promotion_tests {
     impl Provider for RevisionProvider {
         fn name(&self) -> &str {
             "revision-test"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.clone()
         }
 
         async fn stream(
@@ -24061,6 +24075,7 @@ mod sandbox_promotion_tests {
         }
         core.set_tool_worker_exe(worker);
         core.set_provider_instance(Arc::new(RevisionProvider {
+            capacity_key: capacity_key(),
             replies: Mutex::new(VecDeque::from(vec![
                 revision_message(
                     vec![ContentBlock::ToolUse {
@@ -24183,6 +24198,7 @@ mod sandbox_promotion_tests {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         core.set_provider_instance(Arc::new(RevisionProvider {
+            capacity_key: capacity_key(),
             replies: Mutex::new(VecDeque::from(vec![
                 revision_message(
                     vec![ContentBlock::ToolUse {
@@ -25450,12 +25466,27 @@ mod sandbox_promotion_tests {
 mod scheduler_state_tests {
     use super::*;
 
-    struct Answers;
+    /// A capacity identity no other provider in this process shares: the
+    /// gates are process-wide, so a fixed name lets tests inherit each
+    /// other's cooldowns and held reservations.
+    fn capacity_key() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        format!("test-provider:{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
+    struct Answers {
+        capacity_key: String,
+    }
 
     #[async_trait::async_trait]
     impl Provider for Answers {
         fn name(&self) -> &str {
             "answers"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.clone()
         }
 
         async fn stream(
@@ -25533,7 +25564,9 @@ mod scheduler_state_tests {
             .unwrap()
             .with_agent_identity(agent);
         core.set_sessions_home(home.to_path_buf());
-        core.set_provider_instance(Arc::new(Answers));
+        core.set_provider_instance(Arc::new(Answers {
+            capacity_key: capacity_key(),
+        }));
         let mut store = vak_core::tasks::TaskStore::load(home).unwrap();
         for task in tasks {
             store.put(task);

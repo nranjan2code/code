@@ -6,6 +6,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::io::BufRead;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -24,6 +26,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 /// Provider whose final text is settable per-phase and which counts every
 /// dispatch, mirroring the counting mock the scheduler tests use.
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     dispatches: Arc<AtomicUsize>,
     reply: Arc<Mutex<String>>,
 }
@@ -32,6 +35,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -103,6 +110,7 @@ async fn spawn_full_seeded(
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     core.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         dispatches: dispatches.clone(),
         reply: reply.clone(),
     }));

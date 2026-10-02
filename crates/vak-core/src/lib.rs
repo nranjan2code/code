@@ -11154,14 +11154,29 @@ mod capacity_probe_tests {
     use vak_session::SessionLog;
     use vak_session::types::{FrozenContract, SessionHeader};
 
+    /// A capacity identity no other provider in this process shares: the
+    /// gates are process-wide, so a fixed name lets tests inherit each
+    /// other's cooldowns and held reservations.
+    fn capacity_key() -> String {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        format!("test-provider:{}", NEXT.fetch_add(1, Ordering::Relaxed))
+    }
+
     /// Always answers a probe rung by calling `probe_ack` — enough to drive
     /// the horizon ladder to convergence without any network I/O.
-    struct AlwaysFollowsProbe;
+    struct AlwaysFollowsProbe {
+        capacity_key: String,
+    }
 
     #[async_trait::async_trait]
     impl Provider for AlwaysFollowsProbe {
         fn name(&self) -> &str {
             "ollama"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.clone()
         }
 
         async fn stream(
@@ -11269,7 +11284,9 @@ mod capacity_probe_tests {
         // from `model_context`'s direct reqwest call — registering a fake
         // factory here intercepts exactly that seam.
         core.inner.registry.register("ollama", |_auth| {
-            Ok(Arc::new(AlwaysFollowsProbe) as Arc<dyn Provider>)
+            Ok(Arc::new(AlwaysFollowsProbe {
+                capacity_key: capacity_key(),
+            }) as Arc<dyn Provider>)
         });
 
         let loopback_leg = vak_llm::RouteLeg {
@@ -11361,6 +11378,7 @@ mod capacity_probe_tests {
     /// `CacheBehaviour::ProviderReported` end to end through
     /// `capacity_profile_for` without any network I/O.
     struct FollowsProbeAndReportsCacheOnThirdCall {
+        capacity_key: String,
         calls: std::sync::atomic::AtomicU32,
         last_fingerprint: std::sync::Mutex<Option<String>>,
     }
@@ -11369,6 +11387,10 @@ mod capacity_probe_tests {
     impl Provider for FollowsProbeAndReportsCacheOnThirdCall {
         fn name(&self) -> &str {
             "ollama"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.clone()
         }
 
         async fn stream(
@@ -11424,6 +11446,7 @@ mod capacity_probe_tests {
         );
         core.inner.registry.register("ollama", |_auth| {
             Ok(Arc::new(FollowsProbeAndReportsCacheOnThirdCall {
+                capacity_key: capacity_key(),
                 calls: std::sync::atomic::AtomicU32::new(0),
                 last_fingerprint: std::sync::Mutex::new(None),
             }) as Arc<dyn Provider>)

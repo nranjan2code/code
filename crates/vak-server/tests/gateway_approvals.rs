@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -13,6 +15,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -20,6 +23,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -183,6 +190,7 @@ async fn wait_for_delivery(home: &Path, needle: &str, secs: u64) -> bool {
 async fn forwarded_gate_resolves_from_approver_chat() {
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![
                 tool_call(
                     "t1",
@@ -284,6 +292,7 @@ async fn forwarded_gate_resolves_from_approver_chat() {
 async fn unanswered_gate_times_out_and_fails_closed() {
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![
                 tool_call(
                     "t1",
@@ -352,6 +361,7 @@ async fn unanswered_gate_times_out_and_fails_closed() {
 async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![
                 tool_call(
                     "t1",
@@ -455,6 +465,7 @@ async fn addressed_yes_resolves_only_that_gate_and_reports_it() {
 async fn default_policy_denies_without_forwarding() {
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             // Denial feeds an error result back; the completion guard may
             // ask for one more pass, so keep a spare response queued.
             responses: Mutex::new(VecDeque::from(vec![

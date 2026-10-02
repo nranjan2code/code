@@ -3,6 +3,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use vak_core::Core;
@@ -10,12 +12,18 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
-struct Echo;
+struct Echo {
+    capacity_key: crate::support::CapacityKey,
+}
 
 #[async_trait::async_trait]
 impl Provider for Echo {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -51,7 +59,9 @@ async fn checkpoint_label_has_no_prompt() {
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     let home = dir.path().join("home");
     core.set_sessions_home(home.clone());
-    core.set_provider_instance(Arc::new(Echo));
+    core.set_provider_instance(Arc::new(Echo {
+        capacity_key: crate::support::CapacityKey::default(),
+    }));
 
     let session = core.start_session().await.unwrap();
     let sid = session.header().unwrap().session_id.clone();

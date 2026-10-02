@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -78,6 +80,7 @@ fn seed_icloud_fixture(
 }
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -85,6 +88,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -181,6 +188,7 @@ async fn spawn_server(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn http_lifecycle_run_events_transcript() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call("t1", "bash", serde_json::json!({"command": "echo served"})),
             text("all served"),
@@ -319,6 +327,7 @@ async fn http_lifecycle_run_events_transcript() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn operations_center_is_a_real_evidence_projection() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     });
     let (base, _server) = spawn_server(provider, vak_config::PermissionMode::ReadOnly).await;
@@ -1893,6 +1902,7 @@ async fn mail_calendar_candidates_are_owner_scoped_revisioned_and_removed_on_dis
 async fn approval_flow_resolves_over_http() {
     // First turn requests bash (workspace-write => ask); we approve over HTTP.
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call(
                 "t1",
@@ -1988,6 +1998,7 @@ async fn approval_flow_resolves_over_http() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mode_change_revokes_run_waiting_for_approval() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![tool_call(
             "t1",
             "bash",
@@ -2052,11 +2063,17 @@ async fn mode_change_revokes_run_waiting_for_approval() {
 async fn config_endpoint_exposes_route_policy() {
     // Phase R: the desktop Settings panel reads routing policy from
     // /config; the section must exist with resolved defaults.
-    struct Empty;
+    struct Empty {
+        capacity_key: crate::support::CapacityKey,
+    }
     #[async_trait::async_trait]
     impl Provider for Empty {
         fn name(&self) -> &str {
             "empty"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.0.clone()
         }
         async fn stream(
             &self,
@@ -2066,8 +2083,13 @@ async fn config_endpoint_exposes_route_policy() {
             Err(LlmError::Network("unused".into()))
         }
     }
-    let (base, _server) =
-        spawn_server(Arc::new(Empty), vak_config::PermissionMode::FullAccess).await;
+    let (base, _server) = spawn_server(
+        Arc::new(Empty {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+        vak_config::PermissionMode::FullAccess,
+    )
+    .await;
     let client = reqwest::Client::new();
     let cfg: serde_json::Value = client
         .get(format!("{base}/config"))
@@ -2090,11 +2112,17 @@ async fn config_endpoint_exposes_route_policy() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_endpoint_stops_a_running_session() {
     // A provider that hangs until cancelled — mirrors a stalled stream.
-    struct Hung;
+    struct Hung {
+        capacity_key: crate::support::CapacityKey,
+    }
     #[async_trait::async_trait]
     impl Provider for Hung {
         fn name(&self) -> &str {
             "hung"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.capacity_key.0.clone()
         }
         async fn stream(
             &self,
@@ -2116,8 +2144,13 @@ async fn cancel_endpoint_stops_a_running_session() {
         }
     }
 
-    let (base, _server) =
-        spawn_server(Arc::new(Hung), vak_config::PermissionMode::FullAccess).await;
+    let (base, _server) = spawn_server(
+        Arc::new(Hung {
+            capacity_key: crate::support::CapacityKey::default(),
+        }),
+        vak_config::PermissionMode::FullAccess,
+    )
+    .await;
     let client = reqwest::Client::new();
 
     let session_id: String = client
@@ -2189,6 +2222,7 @@ async fn cancel_endpoint_stops_a_running_session() {
 async fn worker_endpoints_scope_and_wire() {
     let (base, _server) = spawn_server(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![text("no children")])),
         }),
         vak_config::PermissionMode::WorkspaceWrite,
@@ -2235,6 +2269,7 @@ async fn worker_endpoints_scope_and_wire() {
 /// Responds after a fixed delay, so a caller has a window to observe the
 /// session as busy before the leg settles.
 struct DelayedThenScripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
     delay: Duration,
 }
@@ -2243,6 +2278,10 @@ struct DelayedThenScripted {
 impl Provider for DelayedThenScripted {
     fn name(&self) -> &str {
         "delayed"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -2297,6 +2336,7 @@ async fn poll_transcript_contains(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn busy_run_is_queued_and_runs_as_a_continuation_leg() {
     let provider = Arc::new(DelayedThenScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("first done"),
             text("second done"),
@@ -2362,6 +2402,7 @@ async fn busy_run_is_queued_and_runs_as_a_continuation_leg() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn busy_steering_is_queued_and_runs_as_a_continuation_leg() {
     let provider = Arc::new(DelayedThenScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             text("first done"),
             text("steered done"),
@@ -2416,6 +2457,7 @@ async fn busy_steering_is_queued_and_runs_as_a_continuation_leg() {
 /// Hangs on its first call (until cancelled), then answers normally on any
 /// later call — models a run that gets stopped and immediately resent.
 struct HungOnceThenScripted {
+    capacity_key: crate::support::CapacityKey,
     hung_once: std::sync::atomic::AtomicBool,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
@@ -2424,6 +2466,10 @@ struct HungOnceThenScripted {
 impl Provider for HungOnceThenScripted {
     fn name(&self) -> &str {
         "hung-once"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -2468,6 +2514,7 @@ impl Provider for HungOnceThenScripted {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn stop_then_resend_runs_the_resend() {
     let provider = Arc::new(HungOnceThenScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         hung_once: std::sync::atomic::AtomicBool::new(false),
         responses: Mutex::new(VecDeque::from(vec![text("resend done")])),
     });
@@ -2535,6 +2582,7 @@ async fn stop_then_resend_runs_the_resend() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn no_wait_when_an_sse_subscriber_is_already_attached() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("fast reply")])),
     });
     let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
@@ -2596,6 +2644,7 @@ async fn no_wait_when_an_sse_subscriber_is_already_attached() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejected_request_writes_no_durable_admission() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::new()),
     });
     let (base, _server) = spawn_server(provider, vak_config::PermissionMode::FullAccess).await;
@@ -2656,6 +2705,7 @@ async fn rejected_request_writes_no_durable_admission() {
 
 /// A provider that answers once and keeps every request it was sent.
 struct Recording {
+    capacity_key: crate::support::CapacityKey,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
 
@@ -2663,6 +2713,10 @@ struct Recording {
 impl Provider for Recording {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -2687,6 +2741,7 @@ impl Provider for Recording {
 async fn a_dropped_file_reaches_the_model_as_a_note_and_the_chat_as_a_file() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = Arc::new(Recording {
+        capacity_key: crate::support::CapacityKey::default(),
         requests: requests.clone(),
     });
     let (base, _server) = spawn_server(provider, vak_config::PermissionMode::WorkspaceWrite).await;

@@ -7,6 +7,8 @@
 #![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +21,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 /// Answers every turn and keeps the last request it was sent.
 #[derive(Default)]
 struct Recording {
+    capacity_key: crate::support::CapacityKey,
     last_request: Mutex<String>,
 }
 
@@ -26,6 +29,10 @@ struct Recording {
 impl Provider for Recording {
     fn name(&self) -> &str {
         "recording"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(

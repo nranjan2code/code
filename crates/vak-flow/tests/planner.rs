@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -53,18 +55,14 @@ fn extract_toml_handles_fenced_raw_and_garbage() {
 struct ScriptedPlanner {
     /// Responses consumed in order across ALL requests (planner + children).
     responses: Mutex<VecDeque<ScriptedResponse>>,
-    /// Never reused, so concurrent tests and a later instance at a freed
-    /// address never share the process-wide capacity gate.
-    capacity_key: String,
+    capacity_key: crate::support::CapacityKey,
 }
 
 impl ScriptedPlanner {
     fn new(responses: impl IntoIterator<Item = ScriptedResponse>) -> Self {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static NEXT: AtomicU64 = AtomicU64::new(0);
         Self {
             responses: Mutex::new(responses.into_iter().collect()),
-            capacity_key: format!("test-planner:{}", NEXT.fetch_add(1, Ordering::Relaxed)),
+            capacity_key: crate::support::CapacityKey::default(),
         }
     }
 }
@@ -81,7 +79,7 @@ impl Provider for ScriptedPlanner {
     }
 
     fn rate_limit_key(&self) -> String {
-        self.capacity_key.clone()
+        self.capacity_key.0.clone()
     }
 
     async fn stream(

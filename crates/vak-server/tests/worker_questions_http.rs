@@ -2,6 +2,8 @@
 //! §4.5): it is listed on the parent session, answerable once, scoped to that
 //! session, and the answer reaches the worker.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod support;
+
 use axum::{
     Router,
     body::Body,
@@ -19,6 +21,7 @@ use vak_llm::{
 };
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
     requests: Mutex<Vec<ChatRequest>>,
 }
@@ -27,6 +30,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
     async fn stream(
         &self,
@@ -104,6 +111,7 @@ async fn a_worker_question_is_listed_answered_once_and_reaches_the_worker() {
     core.set_sessions_home(temp.path().join("sessions-home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             call(
                 "t1",
@@ -242,6 +250,7 @@ async fn a_client_that_cannot_show_questions_ends_the_question_at_once() {
     core.set_sessions_home(temp.path().join("sessions-home"));
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             call("t1", "task", json!({"prompt": "total", "label": "totals"})),
             call("a1", "ask_parent", json!({"question": "Which year?"})),

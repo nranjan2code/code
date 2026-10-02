@@ -8,6 +8,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::{BTreeSet, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -56,6 +58,7 @@ fn declaration(name: &str, kind: CapabilityKind) -> Declaration {
 }
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -63,6 +66,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -151,6 +158,7 @@ async fn an_mcp_server_starts_on_demand_and_its_catalog_reaches_the_next_turn() 
     );
 
     core.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             reply(
                 ContentBlock::ToolUse {

@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,6 +16,7 @@ use vak_session::types::{FrozenContract, MessageRecord, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -21,6 +24,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -138,6 +145,7 @@ async fn session_search_tool_is_available_and_logged() {
     core.set_sessions_home(home.clone());
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call(
                 "t1",

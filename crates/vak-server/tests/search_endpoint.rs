@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -10,12 +12,18 @@ use vak_llm::{EventStream, LlmError, Provider};
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 
-struct Empty;
+struct Empty {
+    capacity_key: crate::support::CapacityKey,
+}
 
 #[async_trait::async_trait]
 impl Provider for Empty {
     fn name(&self) -> &str {
         "empty"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -80,7 +88,9 @@ async fn search_endpoint_returns_ranked_hits() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(home.clone());
-    core.set_provider_instance(Arc::new(Empty));
+    core.set_provider_instance(Arc::new(Empty {
+        capacity_key: crate::support::CapacityKey::default(),
+    }));
     std::mem::forget(dir);
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

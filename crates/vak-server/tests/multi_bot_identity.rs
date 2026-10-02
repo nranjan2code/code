@@ -8,6 +8,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -19,6 +21,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -26,6 +29,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &'static str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
     async fn stream(
         &self,
@@ -78,6 +85,7 @@ async fn spawn_gateway(allowlist: &[&str]) -> String {
     let core = Core::new_with_trust(cwd.clone(), true).unwrap();
     core.set_sessions_home(dir.path().join("home"));
     core.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![text("hello")])),
     }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

@@ -7,6 +7,8 @@
 //! draft with a sensitivity label is held, and a bridge that takes no
 //! files is told where the draft is.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -19,12 +21,20 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
-struct Scripted(Mutex<VecDeque<AssistantMessage>>, Mutex<Vec<ChatRequest>>);
+struct Scripted(
+    Mutex<VecDeque<AssistantMessage>>,
+    Mutex<Vec<ChatRequest>>,
+    crate::support::CapacityKey,
+);
 
 #[async_trait::async_trait]
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.2.0.clone()
     }
 
     async fn stream(
@@ -96,6 +106,7 @@ async fn round_trip(
             message(ContentBlock::text("Updated it."), StopReason::EndTurn),
         ])),
         Mutex::new(Vec::new()),
+        crate::support::CapacityKey::default(),
     ));
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();
@@ -308,6 +319,7 @@ async fn the_telegram_bridge_sends_the_edited_workbook_back() {
             message(ContentBlock::text("Raised it to 150."), StopReason::EndTurn),
         ])),
         Mutex::new(Vec::new()),
+        crate::support::CapacityKey::default(),
     ));
     let dir = tempfile::tempdir().unwrap();
     let cwd = dir.path().to_path_buf();

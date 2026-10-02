@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::Arc;
 use vak_core::learning;
 use vak_core::memory;
@@ -41,11 +43,15 @@ fn non_json_reply_yields_nothing() {
 }
 
 fn scripted(json_reply: &str) -> Arc<dyn vak_llm::Provider> {
-    struct Once(String);
+    struct Once(String, crate::support::CapacityKey);
     #[async_trait::async_trait]
     impl vak_llm::Provider for Once {
         fn name(&self) -> &str {
             "once"
+        }
+
+        fn rate_limit_key(&self) -> String {
+            self.1.0.clone()
         }
         async fn stream(
             &self,
@@ -65,7 +71,10 @@ fn scripted(json_reply: &str) -> Arc<dyn vak_llm::Provider> {
         }
     }
 
-    Arc::new(Once(json_reply.to_string()))
+    Arc::new(Once(
+        json_reply.to_string(),
+        crate::support::CapacityKey::default(),
+    ))
 }
 
 const GOOD_REPLY: &str = r#"{"notes":[{"note":"the deploy pipeline pauses before every rollback window","kind":"decision","tag":"deploys"}],"skill":{"name":"ship-it","description":"Ship with rollbacks guarded","instructions":"Run scripts/ship.sh"}}"#;

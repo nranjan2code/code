@@ -7,6 +7,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc,
@@ -20,12 +22,16 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
-struct Counting(Arc<AtomicUsize>);
+struct Counting(Arc<AtomicUsize>, crate::support::CapacityKey);
 
 #[async_trait::async_trait]
 impl Provider for Counting {
     fn name(&self) -> &str {
         "counting"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.1.0.clone()
     }
 
     async fn stream(
@@ -51,6 +57,7 @@ impl Provider for Counting {
 }
 
 struct GatedProvider {
+    capacity_key: crate::support::CapacityKey,
     calls: Arc<AtomicUsize>,
     started: tokio::sync::mpsc::UnboundedSender<()>,
     release: tokio::sync::Mutex<Option<tokio::sync::oneshot::Receiver<()>>>,
@@ -60,6 +67,10 @@ struct GatedProvider {
 impl Provider for GatedProvider {
     fn name(&self) -> &str {
         "gated"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -231,7 +242,10 @@ async fn serve(ws: &Path, home: &Path) -> Server {
     core.set_permission_mode(vak_config::PermissionMode::FullAccess);
     core.set_tool_worker_exe(PathBuf::from(env!("CARGO_BIN_EXE_vak-tool-worker")));
     let dispatches = Arc::new(AtomicUsize::new(0));
-    core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
+    core.set_provider_instance(Arc::new(Counting(
+        dispatches.clone(),
+        crate::support::CapacityKey::default(),
+    )));
     serve_core(core, dispatches).await
 }
 
@@ -333,7 +347,10 @@ async fn mail_calendar_routine_runs_through_owner_api_and_records_history() {
     ledger.append_connected(account).unwrap();
 
     let dispatches = Arc::new(AtomicUsize::new(0));
-    core.set_provider_instance(Arc::new(Counting(dispatches.clone())));
+    core.set_provider_instance(Arc::new(Counting(
+        dispatches.clone(),
+        crate::support::CapacityKey::default(),
+    )));
     async fn token_refresh(
         axum::extract::State(calls): axum::extract::State<Arc<AtomicUsize>>,
         axum::Form(body): axum::Form<std::collections::HashMap<String, String>>,
@@ -457,6 +474,7 @@ async fn pausing_during_active_task_stops_future_admissions_and_lets_current_run
     let (started_tx, mut started_rx) = tokio::sync::mpsc::unbounded_channel();
     let (release_tx, release_rx) = tokio::sync::oneshot::channel();
     core.set_provider_instance(Arc::new(GatedProvider {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         started: started_tx,
         release: tokio::sync::Mutex::new(Some(release_rx)),

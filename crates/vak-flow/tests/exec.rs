@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +18,7 @@ use vak_tools::bash::BashTool;
 
 /// Serves a fixed sequence per routing key (the first user text).
 struct TaggedScripted {
+    capacity_key: crate::support::CapacityKey,
     routes: Mutex<HashMap<String, VecDeque<AssistantMessage>>>,
 }
 
@@ -34,6 +37,10 @@ impl TaggedScripted {
 impl Provider for TaggedScripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -168,6 +175,7 @@ command = "echo admitted"
         max_turns: Some(2),
     };
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = workspace.path().join("state.json");
@@ -208,6 +216,7 @@ command = "echo escaped > should-not-exist.txt"
 "#;
     let flow = vak_flow::parse_flow(toml).unwrap();
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = workspace.path().join("state.json");
@@ -281,6 +290,7 @@ deps = ["shout"]
         VecDeque::from(vec![text("HELLO")]),
     );
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(routes),
     });
 
@@ -334,6 +344,7 @@ deps = ["boom"]
 "#;
     let flow = vak_flow::parse_flow(toml).unwrap();
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = unique_state_path();
@@ -381,6 +392,7 @@ deps = ["flaky"]
 "#;
     let flow = vak_flow::parse_flow(toml).unwrap();
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = unique_state_path();
@@ -428,6 +440,7 @@ deps = ["first"]
 "#;
     let flow = vak_flow::parse_flow(toml).unwrap();
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = unique_state_path();
@@ -494,6 +507,7 @@ deps = ["build"]
 "#;
     let flow = vak_flow::parse_flow(toml).unwrap();
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = workspace.path().join("state.json");
@@ -551,6 +565,7 @@ accept = ["verify: grep -q v1 artifact.txt"]
 "#;
     let flow = vak_flow::parse_flow(toml).unwrap();
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::CapacityKey::default(),
         routes: Mutex::new(HashMap::new()),
     });
     let state_path = workspace.path().join("state.json");

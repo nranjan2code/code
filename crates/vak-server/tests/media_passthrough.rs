@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::{Arc, Mutex};
 
 use tokio_util::sync::CancellationToken;
@@ -12,6 +14,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 /// Records every request it receives so tests can assert exactly what the
 /// model would have seen.
 struct Recording {
+    capacity_key: crate::support::CapacityKey,
     seen: Arc<Mutex<Vec<ChatRequest>>>,
     reply: String,
 }
@@ -20,6 +23,10 @@ struct Recording {
 impl Provider for Recording {
     fn name(&self) -> &str {
         "recording"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -56,6 +63,7 @@ const PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4n
 async fn gateway_inbound_carries_images_to_the_model() {
     let seen: Arc<Mutex<Vec<ChatRequest>>> = Arc::new(Mutex::new(Vec::new()));
     let core_provider = Arc::new(Recording {
+        capacity_key: crate::support::CapacityKey::default(),
         seen: seen.clone(),
         reply: "I see a tiny red pixel.".into(),
     });

@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -11,6 +13,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -18,6 +21,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -208,6 +215,7 @@ async fn webhook_delivery_posts_run_output() {
     );
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![text("built ok")])),
         }),
         &toml,
@@ -242,6 +250,7 @@ async fn webhook_missing_token_fails_closed() {
     );
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![text("secret output")])),
         }),
         &toml,
@@ -307,6 +316,7 @@ async fn webhook_retries_transient_5xx_and_succeeds() {
     );
     let gw = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![text("retry built ok")])),
         }),
         &toml,
@@ -344,6 +354,7 @@ async fn webhook_retries_transient_5xx_and_succeeds() {
     );
     let gw2 = spawn_with_config(
         Arc::new(Scripted {
+            capacity_key: crate::support::CapacityKey::default(),
             responses: Mutex::new(VecDeque::from(vec![text("never delivered")])),
         }),
         &toml2,

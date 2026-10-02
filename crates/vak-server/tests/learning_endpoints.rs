@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -8,12 +10,18 @@ use vak_llm::stream;
 use vak_llm::types::ChatRequest;
 use vak_llm::{EventStream, LlmError, Provider};
 
-struct Empty;
+struct Empty {
+    capacity_key: crate::support::CapacityKey,
+}
 
 #[async_trait::async_trait]
 impl Provider for Empty {
     fn name(&self) -> &str {
         "empty"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -42,7 +50,9 @@ async fn memory_and_proposal_endpoints() {
     vak_config::paths::isolate_home_for_tests();
     let core = Core::new(cwd.clone()).unwrap();
     core.set_sessions_home(home.clone());
-    core.set_provider_instance(Arc::new(Empty));
+    core.set_provider_instance(Arc::new(Empty {
+        capacity_key: crate::support::CapacityKey::default(),
+    }));
     std::mem::forget(dir);
 
     // Seed one durable note and one pending proposal through the same APIs

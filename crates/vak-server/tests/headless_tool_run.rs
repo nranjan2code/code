@@ -6,6 +6,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +19,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -24,6 +27,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -75,6 +82,7 @@ fn tool_call(id: &str, name: &str, input: serde_json::Value) -> AssistantMessage
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn headless_tool_turn_survives_without_subscribers() {
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call("t1", "glob", serde_json::json!({"pattern": "*.md"})),
             text("found some markdown files"),

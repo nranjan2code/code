@@ -11,6 +11,8 @@
 //! instead of the real user's data home. This file has exactly one test
 //! so that process-wide env mutation cannot race a sibling test.
 
+mod support;
+
 use std::sync::Arc;
 
 use vak_core::Core;
@@ -18,12 +20,18 @@ use vak_llm::stream;
 use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, StopReason, Usage};
 use vak_llm::{EventStream, LlmError, Provider};
 
-struct NoCred;
+struct NoCred {
+    capacity_key: crate::support::CapacityKey,
+}
 
 #[async_trait::async_trait]
 impl Provider for NoCred {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
     async fn stream(
         &self,
@@ -60,7 +68,9 @@ async fn approved_entry_routes_to_its_own_workspace_core() {
     );
     let core = Core::new_with_trust(default_cwd.clone(), true).unwrap();
     core.set_sessions_home(vak_home.path().join("default-home"));
-    core.set_provider_instance(Arc::new(NoCred));
+    core.set_provider_instance(Arc::new(NoCred {
+        capacity_key: crate::support::CapacityKey::default(),
+    }));
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -12,6 +14,7 @@ use vak_llm::types::{AssistantMessage, ChatRequest, ContentBlock, Usage};
 use vak_llm::{EventStream, LlmError, Provider}; // keep types import path stable for future edits
 
 struct Scripted {
+    capacity_key: crate::support::CapacityKey,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -19,6 +22,10 @@ struct Scripted {
 impl Provider for Scripted {
     fn name(&self) -> &str {
         "scripted"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -78,6 +85,7 @@ async fn remember_propose_recall_promote_loop() {
     core.set_sessions_home(home.clone());
     core.set_permission_mode(vak_config::PermissionMode::WorkspaceWrite);
     core.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             // Turn 1 of run A: the model journals a decision and drafts a skill.
             tool_call(
@@ -157,6 +165,7 @@ async fn remember_propose_recall_promote_loop() {
 
     // ---- Run B: recall ranks memory first --------------------------------
     core.set_provider_instance(Arc::new(Scripted {
+        capacity_key: crate::support::CapacityKey::default(),
         responses: Mutex::new(VecDeque::from(vec![
             tool_call(
                 "s1",

@@ -4,6 +4,8 @@
 //! cleanly and never dispatch outside their allowed envelope.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -17,6 +19,7 @@ use vak_llm::{EventStream, LlmError, Provider};
 /// holds the response open until released (to force real overlap between
 /// two concurrent reflection passes).
 struct Counting {
+    capacity_key: crate::support::CapacityKey,
     calls: Arc<AtomicUsize>,
     reply: &'static str,
     fail: bool,
@@ -37,6 +40,10 @@ fn msg(text: &str) -> AssistantMessage {
 impl Provider for Counting {
     fn name(&self) -> &str {
         "counting"
+    }
+
+    fn rate_limit_key(&self) -> String {
+        self.capacity_key.0.clone()
     }
 
     async fn stream(
@@ -82,6 +89,7 @@ async fn reflection_disabled_skips_without_dispatch() {
     let core = core_in(&dir, "[memory]\nreflection = false\n");
     let calls = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         reply: GOOD_REPLY,
         fail: false,
@@ -107,6 +115,7 @@ async fn memory_writes_disabled_skips_without_dispatch() {
     let core = core_in(&dir, "[memory]\nreflection = true\nwrite_enabled = false\n");
     let calls = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         reply: GOOD_REPLY,
         fail: false,
@@ -134,6 +143,7 @@ async fn read_only_reflection_skips_without_writing_memory() {
     );
     let calls = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         reply: GOOD_REPLY,
         fail: false,
@@ -180,6 +190,7 @@ async fn budget_denied_skips_before_any_dispatch() {
         .unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         reply: GOOD_REPLY,
         fail: false,
@@ -213,6 +224,7 @@ async fn concurrent_turns_reflect_once_and_never_duplicate() {
     let calls = Arc::new(AtomicUsize::new(0));
     let hold = Arc::new(tokio::sync::Notify::new());
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         reply: GOOD_REPLY,
         fail: false,
@@ -271,6 +283,7 @@ async fn provider_error_yields_skipped_not_panic() {
     let core = core_in(&dir, "[memory]\nreflection = true\n");
     let calls = Arc::new(AtomicUsize::new(0));
     core.set_provider_instance(Arc::new(Counting {
+        capacity_key: crate::support::CapacityKey::default(),
         calls: calls.clone(),
         reply: GOOD_REPLY,
         fail: true,
