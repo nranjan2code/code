@@ -2944,6 +2944,13 @@ impl Core {
         &self.inner.cwd
     }
 
+    /// Whether any handle besides this one shares this Core's state: a
+    /// running turn, a session handle, or a spawned job. Long-lived
+    /// background loops hold only weak references, so they do not count.
+    pub fn has_other_handles(&self) -> bool {
+        Arc::strong_count(&self.inner) > 1
+    }
+
     /// Bind this turn to the chat it's replying into, as `<surface>:<chat>`
     /// (the same shape `deliver_to` already uses everywhere). Cheap: an
     /// `Arc` bump plus one `String`, so callers can clone-and-set per

@@ -255,9 +255,7 @@ impl CorePool {
             entry.last_active = now;
             return Ok(entry.core.clone());
         }
-        if entries.len() >= self.max {
-            self.evict_oldest_idle_locked(&mut entries);
-        }
+        self.evict_to_cap_locked(&mut entries);
         // Only the instance that is kept gets a loop; a loser of the race
         // above is dropped without ever having asked a provider anything.
         if self.refreshing.load(Ordering::Acquire) {
@@ -273,11 +271,18 @@ impl CorePool {
         Ok(core)
     }
 
+    /// Neither sweep drops an entry something outside the pool still holds.
+    /// Dropping it frees nothing, since the holder keeps the Core alive, and
+    /// the next lookup would build a second Core beside the live one. The
+    /// cap is therefore a bound on Cores nobody holds, and the pool may
+    /// briefly exceed it while more workspaces than that are busy.
     fn evict_idle_locked(&self, entries: &mut HashMap<PoolKey, PooledEntry>, now: Instant) {
         let default = self.default_key();
         let idle = self.idle;
         entries.retain(|key, entry| {
-            *key == default || now.saturating_duration_since(entry.last_active) < idle
+            *key == default
+                || entry.core.has_other_handles()
+                || now.saturating_duration_since(entry.last_active) < idle
         });
     }
 
@@ -309,17 +314,23 @@ impl CorePool {
         before - entries.len()
     }
 
-    /// Cap enforcement: drop the least-recently-active non-default entry.
-    /// The default workspace is never evicted, matching `GatewayState`'s
-    /// old single-`Core` behavior for the gateway's own cwd.
-    fn evict_oldest_idle_locked(&self, entries: &mut HashMap<PoolKey, PooledEntry>) {
+    /// Cap enforcement: make room for one new entry by dropping the
+    /// least-recently-active non-default entries nothing else holds (see
+    /// `evict_idle_locked`), as many as it takes, so a pool that grew past
+    /// the cap while busy shrinks back once those Cores are released. The
+    /// default workspace is never evicted, matching `GatewayState`'s old
+    /// single-`Core` behavior for the gateway's own cwd.
+    fn evict_to_cap_locked(&self, entries: &mut HashMap<PoolKey, PooledEntry>) {
         let default = self.default_key();
-        if let Some(oldest) = entries
-            .iter()
-            .filter(|(key, _)| **key != default)
-            .min_by_key(|(_, entry)| entry.last_active)
-            .map(|(key, _)| key.clone())
-        {
+        while entries.len() >= self.max {
+            let Some(oldest) = entries
+                .iter()
+                .filter(|(key, entry)| **key != default && !entry.core.has_other_handles())
+                .min_by_key(|(_, entry)| entry.last_active)
+                .map(|(key, _)| key.clone())
+            else {
+                break;
+            };
             entries.remove(&oldest);
         }
     }
@@ -611,6 +622,83 @@ mod tests {
             !snapshot
                 .iter()
                 .any(|e| e.permission_override == Some(PermissionMode::ReadOnly))
+        );
+    }
+
+    /// Cap eviction must not orphan a Core that is still in use. A running
+    /// turn holds a clone of its Core; if the cap drops that entry anyway,
+    /// the next message for the workspace builds a second, independent Core
+    /// beside the live one, and whatever runtime state the live one carries
+    /// (here a narrowed permission pin) is silently absent from the new one.
+    /// The held clone stands in for the in-flight turn; the runtime pin is
+    /// the marker that tells the two instances apart.
+    #[test]
+    fn cap_eviction_does_not_replace_a_core_still_in_use() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let busy = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        workspace_with_mode(busy.path(), "full-access");
+        let pool = CorePool::new(test_core(default_dir.path()), 2, Duration::from_secs(1800));
+        let t0 = Instant::now();
+
+        let in_flight = pool.resolve_at(busy.path(), None, t0).unwrap();
+        in_flight.set_permission_mode(PermissionMode::ReadOnly);
+
+        // Second workspace reaches the cap while `in_flight` is still held.
+        pool.resolve_at(other.path(), None, t0 + Duration::from_secs(1))
+            .unwrap();
+
+        let next_message = pool
+            .resolve_at(busy.path(), None, t0 + Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(
+            next_message.effective_permission_mode(),
+            PermissionMode::ReadOnly,
+            "the workspace's next message must reach the live Core, not a \
+             fresh one rebuilt at the workspace's full-access default"
+        );
+
+        // Once nothing holds it, the cap applies to it again.
+        drop(in_flight);
+        drop(next_message);
+        let third = tempfile::tempdir().unwrap();
+        pool.resolve_at(third.path(), None, t0 + Duration::from_secs(3))
+            .unwrap();
+        let paths: Vec<_> = pool
+            .snapshot_at(t0 + Duration::from_secs(3))
+            .into_iter()
+            .map(|e| e.workspace)
+            .collect();
+        assert!(!paths.contains(&canonical(busy.path())));
+    }
+
+    /// The same holds for the idle sweep: a turn that runs longer than the
+    /// idle window must not lose its pool entry partway through.
+    #[test]
+    fn idle_sweep_keeps_a_core_still_in_use() {
+        let default_dir = tempfile::tempdir().unwrap();
+        let busy = tempfile::tempdir().unwrap();
+        let pool = CorePool::new(test_core(default_dir.path()), 8, Duration::from_secs(5));
+        let t0 = Instant::now();
+
+        let in_flight = pool.resolve_at(busy.path(), None, t0).unwrap();
+        let after_idle = t0 + Duration::from_secs(60);
+        pool.resolve_at(default_dir.path(), None, after_idle)
+            .unwrap();
+        assert!(
+            pool.snapshot_at(after_idle)
+                .iter()
+                .any(|e| e.workspace == canonical(busy.path()))
+        );
+
+        drop(in_flight);
+        pool.resolve_at(default_dir.path(), None, after_idle)
+            .unwrap();
+        assert!(
+            !pool
+                .snapshot_at(after_idle)
+                .iter()
+                .any(|e| e.workspace == canonical(busy.path()))
         );
     }
 

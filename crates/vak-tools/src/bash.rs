@@ -330,7 +330,10 @@ pub(crate) fn is_allowed_env_var(key: &str) -> bool {
 }
 
 fn execution_path() -> std::ffi::OsString {
+    #[cfg(target_os = "macos")]
     let mut path = std::env::var_os("PATH").unwrap_or_default();
+    #[cfg(not(target_os = "macos"))]
+    let path = std::env::var_os("PATH").unwrap_or_default();
     #[cfg(target_os = "macos")]
     for candidate in [
         "/opt/homebrew/bin",
