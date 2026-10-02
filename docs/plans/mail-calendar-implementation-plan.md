@@ -1,19 +1,19 @@
 # Plan — secure mail and calendar package
 
-Status: **Stage 0 and Stage 1A Agent/account linking complete; bounded
-Google/Microsoft owner previews, owner-submitted bounded inbox search for all
-three providers, the broker-owned local Agent read tool with clickable
-provider-reverified message citations, and
-the first Stage 2 increment (bounded Agent-vault local drafts with revisioned
-save/delete and disconnect cleanup) are implemented on `codex/mail-calendar`;
-the owner calendar preview now has grouped agenda, day, and week layouts;
-the first Stage 4 increment adds scheduled read-only routines, a bounded,
-encrypted scheduled mail-watch backlog, and calendar event-relative triggers
-through the existing `TaskDef`; the first Stage 3
-increment adds an owner-confirmed, permission-checked, digest-bound plain
-email send and a
-limited timed event create for Google and Microsoft without attendees,
-recurrence, or reminders.
+Status: **Agent-scoped account linking and bounded reads for Google,
+Microsoft, and Apple; owner and Agent previews; local revisioned drafts and
+threaded replies; scheduled and event-relative read-only routines; and
+synthetic regression coverage are implemented on `codex/mail-calendar`.
+Reviewed plain-text sends are supported for Google and Microsoft, as are
+limited timed-event creates; Google also supports ETag-conditional update and
+cancellation for the documented standalone-event profile. Durable
+single-use receipts and exact-marker reconciliation cover sends for Google
+and Microsoft, creates for both, and Google updates and cancellations.
+Current-storage account cleanup is implemented, but full erasure of content
+already copied into append-only session history remains deferred to M7. Live
+provider conformance, the full connected-source-to-Review browser journey,
+complete event-trigger and long-running service recovery acceptance, and
+additional provider action profiles remain open.**
 Calendar and availability previews now support an owner-selected, device-time-
 zone date range up to 30 days, previous/next seven-day navigation, and a visible
 refresh time. Calendar previews now list and select bounded calendar sources
