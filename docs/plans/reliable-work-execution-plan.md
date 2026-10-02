@@ -539,3 +539,11 @@ no AWS configuration, scheduling, version or deployment changes.
   Short-window evidence remains bounded by its five-minute freshness and stale
   daily evidence remains eligible for pruning. This is process-local recovery,
   not durable or cross-process coordination.
+- 2026-10-02: The documented AWS hosting path and installer describe one EC2
+  host running one `vak serve --gateway` systemd user service; the Telegram
+  bridge is a separate forwarding process, not a second inference dispatcher.
+  This supports process-local coordination for that documented topology. It
+  does not establish the live instance's deployed source or cover independent
+  local CLI/service processes, and no cross-process/global quota guarantee is
+  claimed. Reconcile this source-level finding with the deployed revision as
+  part of the remaining E0 audit.
