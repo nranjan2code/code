@@ -27,7 +27,11 @@ impl Provider for Script {
     fn name(&self) -> &str {
         "scripted"
     }
-    async fn stream(&self, _r: ChatRequest, _c: CancellationToken) -> Result<EventStream, LlmError> {
+    async fn stream(
+        &self,
+        _r: ChatRequest,
+        _c: CancellationToken,
+    ) -> Result<EventStream, LlmError> {
         let next = self.0.lock().unwrap().pop_front();
         let (mut sink, rx) = stream::channel(64);
         match next {
@@ -35,7 +39,10 @@ impl Provider for Script {
                 sink.push(stream::StreamEvent::Start { partial: m.clone() });
                 sink.close_message(m).await;
             }
-            None => sink.close_error(LlmError::Parse("script exhausted".into())).await,
+            None => {
+                sink.close_error(LlmError::Parse("script exhausted".into()))
+                    .await
+            }
         }
         Ok(rx)
     }
@@ -93,7 +100,10 @@ async fn run(steps: Vec<Vec<ContentBlock>>) -> SessionLog {
         .into_iter()
         .map(|c| message(c, StopReason::ToolUse))
         .collect();
-    script.push_back(message(vec![ContentBlock::text("done")], StopReason::EndTurn));
+    script.push_back(message(
+        vec![ContentBlock::text("done")],
+        StopReason::EndTurn,
+    ));
     let mut agent = Agent::new(Arc::new(Script(Mutex::new(script))), log, cfg);
     agent.config.mode = vak_permission::Mode::FullAccess;
     agent.config.approval_mode = ApprovalMode::AutoApprove;
@@ -102,7 +112,10 @@ async fn run(steps: Vec<Vec<ContentBlock>>) -> SessionLog {
     let outcome = agent
         .run("go", &SteeringQueues::new(), CancellationToken::new(), tx)
         .await;
-    assert!(matches!(outcome, TurnOutcome::Completed { .. }), "{outcome:?}");
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
     std::mem::forget(dir);
     let session = agent.session.lock().await;
     SessionLog::open_read_only(session.path().to_path_buf()).unwrap()
@@ -115,7 +128,11 @@ fn recorded(log: &SessionLog) -> (Vec<String>, Vec<String>, Vec<String>) {
         for b in m.content {
             match b {
                 ContentBlock::ToolUse { id, .. } => uses.push(id),
-                ContentBlock::ToolResult { tool_use_id, content, .. } => {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } => {
                     results.push(tool_use_id);
                     texts.push(content);
                 }
@@ -138,8 +155,14 @@ async fn a_counter_that_restarts_each_response_gets_distinct_ids() {
     assert_eq!(uses.iter().collect::<HashSet<_>>().len(), 2, "{uses:?}");
     assert_eq!(uses, results, "each result pairs with its own call");
     assert!(texts[0].contains("first") && texts[1].contains("second"));
-    assert_eq!(log.evidence(&uses[0]).unwrap().content.trim(), texts[0].trim());
-    assert_eq!(log.evidence(&uses[1]).unwrap().content.trim(), texts[1].trim());
+    assert_eq!(
+        log.evidence(&uses[0]).unwrap().content.trim(),
+        texts[0].trim()
+    );
+    assert_eq!(
+        log.evidence(&uses[1]).unwrap().content.trim(),
+        texts[1].trim()
+    );
 }
 
 #[tokio::test]

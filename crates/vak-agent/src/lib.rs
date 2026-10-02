@@ -853,6 +853,90 @@ mod grounding_tests {
 }
 
 #[cfg(test)]
+mod tool_id_tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    fn use_block(id: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            id: id.into(),
+            name: "bash".into(),
+            input: serde_json::json!({}),
+        }
+    }
+
+    fn response(ids: &[&str]) -> (AssistantMessage, Vec<PendingToolCall>) {
+        let mut message = AssistantMessage::empty("m");
+        message.content = ids.iter().map(|id| use_block(id)).collect();
+        let calls = ids
+            .iter()
+            .map(|id| PendingToolCall {
+                id: (*id).into(),
+                name: "bash".into(),
+                input: serde_json::json!({}),
+            })
+            .collect();
+        (message, calls)
+    }
+
+    fn ids(message: &AssistantMessage) -> Vec<String> {
+        message
+            .content
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_provider_id_that_is_unique_is_kept() {
+        let (mut message, mut calls) = response(&["toolu_1", "toolu_2"]);
+        assign_unique_tool_use_ids(&mut message, &mut calls, HashSet::new());
+        assert_eq!(ids(&message), ["toolu_1", "toolu_2"]);
+    }
+
+    #[test]
+    fn empty_ids_are_replaced_and_distinct() {
+        let (mut message, mut calls) = response(&["", ""]);
+        assign_unique_tool_use_ids(&mut message, &mut calls, HashSet::new());
+        let got = ids(&message);
+        assert!(got.iter().all(|id| !id.is_empty()));
+        assert_ne!(got[0], got[1]);
+    }
+
+    #[test]
+    fn an_id_reused_from_an_earlier_step_is_replaced() {
+        let used: HashSet<String> = ["call_0".to_string()].into();
+        let (mut message, mut calls) = response(&["call_0", "call_1"]);
+        assign_unique_tool_use_ids(&mut message, &mut calls, used);
+        let got = ids(&message);
+        assert_ne!(got[0], "call_0");
+        assert_eq!(got[1], "call_1");
+    }
+
+    #[test]
+    fn duplicates_within_one_response_are_split() {
+        let (mut message, mut calls) = response(&["dup", "dup"]);
+        assign_unique_tool_use_ids(&mut message, &mut calls, HashSet::new());
+        let got = ids(&message);
+        assert_eq!(got[0], "dup");
+        assert_ne!(got[1], "dup");
+    }
+
+    #[test]
+    fn calls_follow_the_rewritten_ids() {
+        let used: HashSet<String> = ["call_0".to_string()].into();
+        let (mut message, mut calls) = response(&["call_0", ""]);
+        assign_unique_tool_use_ids(&mut message, &mut calls, used);
+        let got = ids(&message);
+        assert_eq!(calls[0].id, got[0]);
+        assert_eq!(calls[1].id, got[1]);
+    }
+}
+
+#[cfg(test)]
 mod tool_loading_tests {
     use super::{load_discovered, tools_for_leg};
     use vak_llm::ToolDefinition;
@@ -2164,6 +2248,12 @@ impl Agent {
                 .into_iter()
                 .map(normalize_tool_call)
                 .collect();
+            let mut calls = calls;
+            {
+                let session = self.session.lock().await;
+                let used = recorded_tool_use_ids(&session);
+                assign_unique_tool_use_ids(&mut response, &mut calls, used);
+            }
 
             outcome_turns += 1;
 
@@ -7412,6 +7502,51 @@ async fn authorize(
 enum ToolRunOutput {
     Ok(String),
     Err(String),
+}
+
+/// Every `tool_use` id already on the session's active chain.
+fn recorded_tool_use_ids(session: &SessionLog) -> std::collections::HashSet<String> {
+    session
+        .chain_to_root()
+        .into_iter()
+        .filter_map(|entry| match &entry.payload {
+            vak_session::EntryPayload::Message(record) => Some(&record.message),
+            _ => None,
+        })
+        .flat_map(|message| message.content.iter())
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, .. } => Some(id.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A call's id is how its result, its digest and `recall` find it again, so
+/// it must be unique within the session. Providers differ: some omit ids
+/// (an empty id) and adapters that synthesise one restart their counter on
+/// every response, so `call_0` or `gemini-call-0` recurs across steps and
+/// turns. A provider's own id is kept when it is non-empty and unseen;
+/// anything else is replaced by a fresh UUIDv7. `calls` are the response's
+/// calls in block order and follow the rewrite.
+fn assign_unique_tool_use_ids(
+    response: &mut AssistantMessage,
+    calls: &mut [PendingToolCall],
+    mut used: std::collections::HashSet<String>,
+) {
+    let mut position = 0;
+    for block in &mut response.content {
+        let ContentBlock::ToolUse { id, .. } = block else {
+            continue;
+        };
+        if id.trim().is_empty() || used.contains(id.as_str()) {
+            *id = format!("call_{}", uuid::Uuid::now_v7());
+        }
+        used.insert(id.clone());
+        if let Some(call) = calls.get_mut(position) {
+            call.id = id.clone();
+        }
+        position += 1;
+    }
 }
 
 fn normalize_response_tool_uses(

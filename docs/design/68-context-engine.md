@@ -180,7 +180,16 @@ they are tail material owned by the assembler. Compaction packets become
 ### 3. EvidenceStore and the `recall` tool
 
 Every tool result is stored in full under an `EvidenceId` (the existing
-receipt/`EvidenceRef::ToolResult` identity). In the request the model sees:
+receipt/`EvidenceRef::ToolResult` identity). That identity is the call's
+`tool_use` id, so it must be unique within the session. Providers differ: some
+omit ids, and adapters that synthesise one restart their counter on every
+response (`call_0`, `gemini-call-0`), which made two calls share an id and
+`recall` and the closed-turn digests read the wrong result. The agent loop
+therefore assigns ids once, before a response is recorded
+(`assign_unique_tool_use_ids`): a provider's id is kept when it is non-empty and
+unseen on the session's chain, anything else becomes `call_<UUIDv7>`, and the
+pending calls follow the rewrite. Ledgers written before this keep their
+earlier ids. In the request the model sees:
 
 - **Current turn:** every result verbatim up to 30,000 characters. A longer
   result is carried as a *window* (`vak_tools::window`): whole lines from its
