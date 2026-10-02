@@ -15,9 +15,10 @@ Google RSVP uses a conditional ETag update, attendee-omission semantics, and
 an opaque private attempt marker; Microsoft and Apple RSVP remain disabled.
 Current-storage account cleanup is implemented, but full erasure of content
 already copied into append-only session history remains deferred to M7. Live
-provider conformance, the full connected-source-to-Review browser journey,
-complete event-trigger and long-running service recovery acceptance, and
-additional provider action profiles remain open.**
+provider conformance, sustained 24-hour service recovery acceptance, and
+additional provider action profiles remain open. The synthetic connected
+Canvas fixture covers inbox-to-reply Review, calendar-event-to-update Review,
+and Google RSVP Review; it closes each Review without dispatching an effect.**
 Calendar and availability previews now support an owner-selected, device-time-
 zone date range up to 30 days, previous/next seven-day navigation, and a visible
 refresh time. Calendar previews now list and select bounded calendar sources
@@ -36,11 +37,13 @@ continuation cursor stored atomically in the encrypted Agent vault. A local
 browser smoke check passed at 1440 × 900 and 390 × 844 with no console warnings
 or errors. The connected-account owner UI path has now passed a same-origin
 synthetic fixture from inbox preview through conversation, source-linked reply,
-exact email-effect Review, calendar preview, timed-event draft, and exact
-calendar-effect Review; the fixture closes both Reviews without confirming.
-Calendar event-trigger setup, paused preview, history, and resume also pass
-there. This does not verify live provider data or effects; full connected
-workspace, conversation, and provider acceptance remain open.
+exact email Review, calendar preview, timed-event draft, and exact calendar
+Review; the fixture closes Reviews without confirming. The Today Canvas
+regression now also follows a selected event into exact update Review and
+exercises RSVP Review, with all provider effect endpoints blocked. Calendar
+event-trigger setup, paused preview, history, and resume also pass. These
+fixtures verify the local connected-account experience, not live provider data
+or effects.
 Apple availability now has a separate CalendarFreeBusy-only path that returns
 busy intervals through CalDAV `free-busy-query`; event detail access remains a
 separate CalendarRead grant. Mixed Apple capabilities remain unverified.
@@ -539,6 +542,12 @@ RSVP staging and Review without contacting a provider, and adapter tests check
 the payload, ETag, notification option, invitation eligibility, and marker.
 Microsoft RSVP stays disabled because Graph's action endpoints document no
 conditional precondition; Apple event effects remain unavailable.
+
+**Implemented increment (2026-10-02):** the connected Today Canvas browser
+fixture now opens exact Review from a selected Google calendar event update.
+It verifies the source event, saved revision, final action label, and absence
+of an update dispatch; all 51 daily Canvas acceptance checks pass against
+synthetic connected accounts. No provider or credential endpoint is contacted.
 
 **Security correction (2026-09-30):** Google Calendar previews now redact the
 title, location, description, and attendee count of private events, matching

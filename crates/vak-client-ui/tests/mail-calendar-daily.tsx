@@ -434,6 +434,21 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && draft?.action?.kind === "update_event"
     && !settingsOpen()
     && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event|respond-event)$/.test(path));
+  document.querySelector<HTMLButtonElement>(".mail-calendar-canvas-workspace .mail-calendar-editor .btn.danger")?.click();
+  let eventReview: HTMLElement | undefined;
+  await waitFor(() => {
+    eventReview = [...document.querySelectorAll<HTMLElement>(".sheet[role='dialog'][aria-modal='true']")]
+      .find((dialog) => dialog.textContent?.includes("Update this event"));
+    return !!eventReview;
+  });
+  const eventUpdateReviewIsExact = !!eventReview
+    && eventReview.textContent?.includes("google sample event 1") === true
+    && eventReview.textContent?.includes("Review update: calendar event") === true
+    && eventReview.textContent?.includes("Only saved revision 1") === true
+    && !requests.some((path) => /\/candidates\/[^/]+\/update-event$/.test(path));
+  [...(eventReview?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((button) => button.getAttribute("aria-label") === "Close" || button.textContent?.trim() === "Cancel")?.click();
+  await waitFor(() => !document.querySelector(".sheet[role='dialog'][aria-modal='true']"));
   gridEvents[1]?.click();
   await waitFor(() => document.querySelector(".daily-mail-calendar-event-detail h4")?.textContent?.includes("google sample event 2") === true);
   [...document.querySelectorAll<HTMLButtonElement>(".daily-mail-calendar-event-detail button")]
@@ -640,6 +655,7 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens Canvas drafts without a provider effect"),
+    check(eventUpdateReviewIsExact, "The connected synthetic event flows from its calendar card into exact update Review without dispatching a provider effect"),
     check(rsvpStaysLocal, "Google RSVP actions are staged as Agent-scoped local drafts and open Canvas Review without contacting the provider"),
     check(rsvpReviewIsExact, `Google RSVP Review shows the exact invitation, response, organizer notification, and final action without dispatching it (${rsvpReviewDiagnostics})`),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (${manualRefreshDiagnostics})`),

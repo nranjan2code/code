@@ -147,10 +147,13 @@ Read before changing behaviour in these areas:
   Vakyartha. The owner preview projects bounded From, To,
   and Cc fields for all three providers and never exposes Bcc. Synthetic load
   tests cover 5,000 listed Gmail messages and 1,000 calendar events while
-  enforcing the preview limits. Live provider checks, source-to-Review browser
-  acceptance, full conversation workspace, and the 24-hour service recovery
-  test remain open. Current 4.x session history cannot be selectively erased,
-  so account-deletion erasure remains incomplete. Calendar event-relative
+  enforcing the preview limits. Google RSVP is additionally available for
+  complete standalone invitations through conditional ETag updates and exact
+  Review. The synthetic connected-account Canvas fixture covers source-to-
+  Review for a reply, a Google event update, and RSVP, with provider effects
+  blocked. Apple conversation workspaces, live provider checks, and the 24-hour
+  service recovery test remain open. Current 4.x session history cannot be
+  selectively erased, so account-deletion erasure remains incomplete. Calendar event-relative
   routines use the existing `TaskDef` cadence, a bounded provider poll, opaque
   encrypted Agent-vault occurrence keys, and brokered reads of matching events;
   Google and Graph calendar reads follow bounded continuation pages with
