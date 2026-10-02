@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, Match, Show, Switch } from "solid-js";
-import { editorPath } from "../store";
+import { activeId, editorPath } from "../store";
 import * as api from "../api";
 import CodeEditor from "./CodeEditor";
 
@@ -23,12 +23,13 @@ export default function EditorPane() {
 
   createEffect(() => {
     const p = editorPath();
-    if (!p) return;
+    const sid = activeId();
+    if (!p || !sid) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     api
-      .readFile(p)
+      .readFile(p, sid)
       .then((res) => {
         if (cancelled) return;
         setPath(p);
@@ -46,11 +47,12 @@ export default function EditorPane() {
 
   const save = async () => {
     const p = path();
-    if (!p || saving()) return;
+    const sid = activeId();
+    if (!p || !sid || saving()) return;
     // Conflict check: someone (agent or terminal) may have written the file
     // since we opened it. Refetch and warn instead of clobbering.
     try {
-      const fresh = await api.readFile(p);
+      const fresh = await api.readFile(p, sid);
       if (fresh.content !== savedContent()) {
         const overwrite = window.confirm(
           `"${p}" changed on disk since you opened it.\nOverwrite with your version?`,
@@ -58,7 +60,7 @@ export default function EditorPane() {
         if (!overwrite) return;
       }
       setSaving(true);
-      await api.writeFile(p, content());
+      await api.writeFile(p, content(), sid);
       setSavedContent(content());
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));

@@ -472,10 +472,20 @@ async fn fs_endpoints_are_confined_to_workspace() {
     .await;
     let client = client_with(&token);
 
+    let created: serde_json::Value = client
+        .post(format!("{base}/sessions"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let sid = created["session_id"].as_str().unwrap().to_string();
+
     // Write inside the workspace.
     let put = client
         .put(format!("{base}/fs/file"))
-        .json(&serde_json::json!({"path": "notes/hello.txt", "content": "hi"}))
+        .json(&serde_json::json!({"path": "notes/hello.txt", "content": "hi", "session": sid}))
         .send()
         .await
         .unwrap();
@@ -488,7 +498,7 @@ async fn fs_endpoints_are_confined_to_workspace() {
     );
 
     let got: serde_json::Value = client
-        .get(format!("{base}/fs/file?path=notes/hello.txt"))
+        .get(format!("{base}/fs/file?path=notes/hello.txt&session={sid}"))
         .send()
         .await
         .unwrap()
@@ -500,25 +510,33 @@ async fn fs_endpoints_are_confined_to_workspace() {
     // Traversal escape is rejected.
     let escape_put = client
         .put(format!("{base}/fs/file"))
-        .json(&serde_json::json!({"path": "../evil.txt", "content": "nope"}))
+        .json(&serde_json::json!({"path": "../evil.txt", "content": "nope", "session": sid}))
         .send()
         .await
         .unwrap();
     assert_eq!(escape_put.status(), 403);
 
     let escape_get = client
-        .get(format!("{base}/fs/file?path=/etc/hostname"))
+        .get(format!("{base}/fs/file?path=/etc/hostname&session={sid}"))
         .send()
         .await
         .unwrap();
     assert_eq!(escape_get.status(), 403);
 
     let missing = client
-        .get(format!("{base}/fs/file?path=no/such.txt"))
+        .get(format!("{base}/fs/file?path=no/such.txt&session={sid}"))
         .send()
         .await
         .unwrap();
     assert_eq!(missing.status(), 404);
+
+    // A read that names no conversation has no workspace to read from.
+    let unnamed = client
+        .get(format!("{base}/fs/file?path=notes/hello.txt"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unnamed.status(), 400);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

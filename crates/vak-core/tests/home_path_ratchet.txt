@@ -6,5 +6,5 @@
 # M3a deletes this file and its test when every count reaches zero.
 sessions_home = 131
 shared_data_home = 50
-vak_literal = 35
+vak_literal = 33
 hash_cwd = 5

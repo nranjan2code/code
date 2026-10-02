@@ -1539,10 +1539,12 @@ export default function Settings() {
 
   const openWorkspaceConfig = async () => {
     const relative = ".vak/config.toml";
+    const sid = activeId();
+    if (!sid) return;
     try {
-      await api.readFile(relative);
+      await api.readFile(relative, sid);
     } catch {
-      await api.writeFile(relative, `permission_mode = "workspace-write"\n`);
+      await api.writeFile(relative, `permission_mode = "workspace-write"\n`, sid);
     }
     openInEditor(relative);
     setSettingsOpen(false);

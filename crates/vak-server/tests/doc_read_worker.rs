@@ -198,6 +198,14 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
             ]),
         ),
     ];
+    let session_id = core
+        .start_session()
+        .await
+        .unwrap()
+        .header()
+        .unwrap()
+        .session_id
+        .clone();
     let (app, token) = vak_server::secured_router(core);
     for (index, (name, ops)) in cases.iter().enumerate() {
         let output = apply
@@ -400,7 +408,9 @@ async fn real_office_drafts_are_downloadable_and_rag_readable() {
             .oneshot(
                 Request::builder()
                     .method("GET")
-                    .uri(format!("/fs/file/raw?path={accepted_name}"))
+                    .uri(format!(
+                        "/fs/file/raw?path={accepted_name}&session={session_id}"
+                    ))
                     .header("authorization", format!("Bearer {token}"))
                     .body(Body::empty())
                     .unwrap(),

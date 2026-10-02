@@ -644,7 +644,7 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
         ? await api.readSandboxCandidateFileBytes(sessionId, saved.version_id, saved.path)
         : executionId && sessionId
           ? await api.readExecutionArtifactBytes(sessionId, executionId, value)
-          : await api.readFileBytes(value, sessionId);
+          : await api.readFileBytes(value, sessionId ?? (() => { throw new Error("Open a conversation to save its files."); })());
       await host.saveFile(artifact.name || value.split("/").pop() || "file", bytes, mime);
     } catch (error) {
       setProblem(`Could not download: ${error instanceof Error ? error.message : String(error)}`);

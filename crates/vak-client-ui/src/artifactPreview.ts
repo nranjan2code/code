@@ -32,7 +32,7 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
 
 /** Resolve assets against the file, never the client app's origin. Reads still
  * cross the authenticated, workspace-confined filesystem endpoint. */
-export async function artifactPreviewHtml(path: string, html: string, reader: ArtifactPreviewReader = api): Promise<string> {
+export async function artifactPreviewHtml(path: string, html: string, reader: ArtifactPreviewReader): Promise<string> {
   const document = new DOMParser().parseFromString(html, "text/html");
   document.querySelectorAll("base").forEach((element) => element.remove());
   const resolve = (value: string, parent = path) => {

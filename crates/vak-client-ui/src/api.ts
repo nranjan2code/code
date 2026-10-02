@@ -1376,11 +1376,11 @@ export interface FileResponse {
 
 /** The query naming a workspace file: in the conversation's own workspace
  *  (its Agent's folder) when one is named, otherwise the server's. */
-function workspaceQuery(path: string, session?: string): string {
-  return `path=${encodeURIComponent(path)}${session ? `&session=${encodeURIComponent(session)}` : ""}`;
+function workspaceQuery(path: string, session: string): string {
+  return `path=${encodeURIComponent(path)}&session=${encodeURIComponent(session)}`;
 }
 
-export function readFile(path: string, session?: string): Promise<FileResponse> {
+export function readFile(path: string, session: string): Promise<FileResponse> {
   return req(`/fs/file?${workspaceQuery(path, session)}`);
 }
 
@@ -1395,7 +1395,11 @@ async function rawRefusal(response: Response): Promise<ApiError> {
 
 /** Reads a conversation's workspace files: what a Canvas or a result card
  *  shows of a file an Agent saved in its folder. */
-export function workspaceReader(session?: string): { readFile(path: string): Promise<FileResponse>; readFileRaw(path: string): Promise<string> } {
+export function workspaceReader(session: string | null | undefined): { readFile(path: string): Promise<FileResponse>; readFileRaw(path: string): Promise<string> } {
+  if (!session) {
+    const none = () => Promise.reject(new Error("Open a conversation to read its files."));
+    return { readFile: none, readFileRaw: none };
+  }
   return {
     readFile: (path) => readFile(path, session),
     readFileRaw: (path) => readFileRaw(path, session),
@@ -1413,14 +1417,14 @@ export async function readExecutionArtifactRaw(sessionId: string, executionId: s
 }
 
 /** Authenticated raw bytes for browser-native artifact viewers/downloads. */
-export async function readFileRaw(path: string, session?: string): Promise<string> {
+export async function readFileRaw(path: string, session: string): Promise<string> {
   const response = await authFetch(`/fs/file/raw?${workspaceQuery(path, session)}`);
   if (!response.ok) throw await rawRefusal(response);
   return URL.createObjectURL(await response.blob());
 }
 
 /** A workspace file's bytes and type, for saving a copy. */
-export async function readFileBytes(path: string, session?: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
+export async function readFileBytes(path: string, session: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
   const response = await authFetch(`/fs/file/raw?${workspaceQuery(path, session)}`);
   if (!response.ok) throw await rawRefusal(response);
   return {
@@ -1441,8 +1445,8 @@ export async function readSandboxCandidateFileBytes(sessionId: string, candidate
   return { bytes: new Uint8Array(await response.arrayBuffer()), mime: response.headers.get("Content-Type") ?? "application/octet-stream" };
 }
 
-export function writeFile(path: string, content: string): Promise<unknown> {
-  return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content }) });
+export function writeFile(path: string, content: string, session: string): Promise<unknown> {
+  return req("/fs/file", { method: "PUT", body: JSON.stringify({ path, content, session }) });
 }
 
 export type WorkspaceCheckPlan = { id: string; label: string; command: string };

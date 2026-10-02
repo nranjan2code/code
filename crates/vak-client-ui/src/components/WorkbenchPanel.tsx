@@ -392,10 +392,10 @@ export default function WorkbenchPanel() {
     const source = artifactSource(path);
     const readFile = (file: string) => source?.sessionId
       ? api.readExecutionArtifact(source.sessionId, source.executionId, file)
-      : api.readFile(file);
+      : api.readFile(file, activeId() ?? "");
     const readRaw = (file: string) => source?.sessionId
       ? api.readExecutionArtifactRaw(source.sessionId, source.executionId, file)
-      : api.readFileRaw(file);
+      : api.readFileRaw(file, activeId() ?? "");
     try {
       if (isOfficePath(path)) {
         // The Office view reads the file through the server's worker; the
@@ -633,7 +633,7 @@ export default function WorkbenchPanel() {
       ? Promise.resolve({ content: null })
       : api.readSandboxCandidateFile(prepared.session_id, prepared.candidate.candidate_id, path);
     void Promise.allSettled([
-      api.readFile(candidatePath(prepared.candidate.destination_root, path)),
+      api.readFile(candidatePath(prepared.candidate.destination_root, path), prepared.session_id),
       afterRequest,
     ]).then(([before, after]) => {
       if (disposed) return;

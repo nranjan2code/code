@@ -18,8 +18,8 @@
 //! - `POST /sessions/:id/checkpoints/:seq/restore` → rewind the workspace
 //! - `POST /sessions/:id/archive` {archived} → toggle sidebar visibility
 //! - `GET  /skills`                       → discovered skills (name + description)
-//! - `GET  /fs/file?path=`                → read a file confined to cwd
-//! - `PUT  /fs/file` {path, content}      → write a file confined to cwd
+//! - `GET  /fs/file?path=&session=`       → read a file confined to the session's workspace
+//! - `PUT  /fs/file` {path, content, session} → write a file confined to the session's workspace
 //! - `POST /config/mode` {mode}           → switch permission mode at runtime
 //! - `PUT  /config/key` {provider, key}   → store a provider credential (0600)
 //! - `DELETE /config/key` {provider}      → revoke a stored credential
@@ -11036,18 +11036,16 @@ struct FileQuery {
     session: Option<String>,
 }
 
-/// The file a read names. Named by a conversation, it is read from that
-/// conversation's workspace, an Agent's own folder, at exactly that path: a
-/// file that is not there is not found, never looked for elsewhere. Without a
-/// conversation it is the server's workspace (`resolve_confined_file`).
+/// The file a read names: always in a conversation's workspace, an Agent's
+/// own folder, at exactly that path. A file that is not there is not found,
+/// never looked for elsewhere, and a read that names no conversation is
+/// refused: there is no workspace to read it from.
 fn resolve_read_path(
     state: &AppState,
     session: Option<&str>,
     input: &str,
 ) -> Result<std::path::PathBuf, StatusCode> {
-    let Some(session) = session else {
-        return resolve_confined_file(state, input).ok_or(StatusCode::FORBIDDEN);
-    };
+    let session = session.ok_or(StatusCode::BAD_REQUEST)?;
     let root = sandbox_session_workspace(state, session).ok_or(StatusCode::NOT_FOUND)?;
     let path = confined_path(&root, input.trim()).ok_or(StatusCode::FORBIDDEN)?;
     if path.is_file() {
@@ -11062,6 +11060,8 @@ fn read_refusal(status: StatusCode) -> axum::response::Response {
     use axum::response::IntoResponse;
     let message = if status == StatusCode::FORBIDDEN {
         "path outside workspace"
+    } else if status == StatusCode::BAD_REQUEST {
+        "name the conversation whose workspace holds the file"
     } else {
         "file not found"
     };
@@ -11102,88 +11102,6 @@ fn confined_path(cwd: &std::path::Path, input: &str) -> Option<std::path::PathBu
             }
         }
     }
-}
-
-fn resolve_confined_file(state: &AppState, input: &str) -> Option<std::path::PathBuf> {
-    let clean = input
-        .trim()
-        .trim_end_matches(['.', ',', ';', ':', '!', '?', ')', ']', '\'', '"']);
-    let active = state.active_core();
-
-    // 1. Direct workspace check
-    if let Some(p) =
-        confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean))
-        && p.exists()
-    {
-        return Some(p);
-    }
-
-    // 2. Quarantine scratch check: if file is in .vak/scratch/<subdirs>
-    for cwd in [active.cwd(), state.core.cwd()] {
-        let scratch_dir = cwd.join(".vak").join("scratch");
-        if scratch_dir.is_dir() {
-            let rel = clean
-                .strip_prefix("./")
-                .unwrap_or(clean)
-                .strip_prefix(".vak/scratch/")
-                .unwrap_or_else(|| clean.strip_prefix("scratch/").unwrap_or(clean));
-
-            let direct = scratch_dir.join(rel);
-            if direct.is_file()
-                && let Some(canon) = confined_path(cwd, &direct.display().to_string())
-            {
-                return Some(canon);
-            }
-
-            // Search execution subdirectories under .vak/scratch (including agent-scoped .vak/scratch/<agent_id>/<exec_id>)
-            if let Ok(entries) = std::fs::read_dir(&scratch_dir) {
-                for entry in entries.flatten() {
-                    if entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        let sub_path = entry.path().join(rel);
-                        if sub_path.is_file()
-                            && let Some(canon) = confined_path(cwd, &sub_path.display().to_string())
-                        {
-                            return Some(canon);
-                        }
-                        if let Ok(sub_entries) = std::fs::read_dir(entry.path()) {
-                            for sub in sub_entries.flatten() {
-                                if sub.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                                    let nested = sub.path().join(rel);
-                                    if nested.is_file()
-                                        && let Some(canon) =
-                                            confined_path(cwd, &nested.display().to_string())
-                                    {
-                                        return Some(canon);
-                                    }
-                                    if let Some(filename) = std::path::Path::new(rel).file_name() {
-                                        let by_name = sub.path().join(filename);
-                                        if by_name.is_file()
-                                            && let Some(canon) =
-                                                confined_path(cwd, &by_name.display().to_string())
-                                        {
-                                            return Some(canon);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if let Some(filename) = std::path::Path::new(rel).file_name() {
-                            let by_name = entry.path().join(filename);
-                            if by_name.is_file()
-                                && let Some(canon) =
-                                    confined_path(cwd, &by_name.display().to_string())
-                            {
-                                return Some(canon);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Fallback: standard confined_path even if not yet on disk (needed for write_file)
-    confined_path(active.cwd(), clean).or_else(|| confined_path(state.core.cwd(), clean))
 }
 
 /// A file the Office loop reads, drafts, reviews and shares: the Open XML
@@ -11496,10 +11414,15 @@ fn raw_mime_for(path: &std::path::Path) -> &'static str {
 struct WriteBody {
     path: String,
     content: String,
+    /// The conversation whose workspace the file is written in.
+    session: String,
 }
 
 async fn write_file(State(state): State<AppState>, Json(body): Json<WriteBody>) -> StatusCode {
-    let Some(path) = resolve_confined_file(&state, &body.path) else {
+    let Some(root) = sandbox_session_workspace(&state, &body.session) else {
+        return StatusCode::NOT_FOUND;
+    };
+    let Some(path) = confined_path(&root, body.path.trim()) else {
         return StatusCode::FORBIDDEN;
     };
     // Refuse to overwrite a file this endpoint could never have rendered
@@ -22633,10 +22556,10 @@ mod sandbox_promotion_tests {
         let (status, body) = read_status(&state, "counter.html", Some("agent-session")).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(body.contains("made by the agent"), "{body}");
-        // Without the conversation the server's workspace is read, which never had it.
+        // Without a conversation there is no workspace to read from.
         assert_eq!(
             read_status(&state, "counter.html", None).await.0,
-            StatusCode::NOT_FOUND
+            StatusCode::BAD_REQUEST
         );
         for elsewhere in [
             "other.html",
@@ -23475,7 +23398,7 @@ mod sandbox_promotion_tests {
         let response = read_file_raw(
             State(state),
             axum::extract::Query(FileQuery {
-                session: None,
+                session: Some("session-structured".into()),
                 path: "daily.xlsx".into(),
             }),
         )
@@ -23669,7 +23592,7 @@ mod sandbox_promotion_tests {
         let response = read_file_raw(
             State(state.clone()),
             axum::extract::Query(FileQuery {
-                session: None,
+                session: Some("session-1".into()),
                 path: "report.pdf".into(),
             }),
         )
@@ -23683,7 +23606,7 @@ mod sandbox_promotion_tests {
         let response = read_office_projection(
             State(state.clone()),
             axum::extract::Query(OfficeProjectionQuery {
-                session: None,
+                session: Some("session-1".into()),
                 path: "report.pdf".into(),
                 from: 0,
                 view: None,
@@ -23704,6 +23627,7 @@ mod sandbox_promotion_tests {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
         core.set_sessions_home(dir.path().join("home"));
+        seed_session_at(&core, "canvas-session", dir.path());
         let state = AppState::new(core);
         pin_test_tool_worker(&state.core);
         tokio::fs::write(dir.path().join("q3.docx"), vak_ooxml::fixtures::docx())
@@ -23725,7 +23649,7 @@ mod sandbox_promotion_tests {
         let read = |path: &str, from: usize, view: Option<&str>| {
             let state = state.clone();
             let query = OfficeProjectionQuery {
-                session: None,
+                session: Some("canvas-session".into()),
                 path: path.into(),
                 from,
                 view: view.map(str::to_string),
@@ -23758,7 +23682,7 @@ mod sandbox_promotion_tests {
         let response = read_office_projection(
             State(state.clone()),
             axum::extract::Query(OfficeProjectionQuery {
-                session: None,
+                session: Some("canvas-session".into()),
                 path: "q3.docx".into(),
                 from: 0,
                 view: None,
