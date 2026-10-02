@@ -108,25 +108,69 @@ pub fn frozen_from_capabilities(
         .collect()
 }
 
+/// A leading run of `/skill:<name>` tokens: every named skill's block, in the
+/// order typed and without repeats, and the rest of the message. `None` when
+/// the message does not start with an invocation; an unnamed or unadmitted
+/// skill anywhere in the run is an error naming it.
+pub fn skill_chain(
+    input: &str,
+    skills: &[FrozenSkill],
+) -> Result<Option<(Vec<String>, String)>, String> {
+    let mut rest = input.trim_start();
+    let mut blocks = Vec::new();
+    let mut loaded: Vec<&str> = Vec::new();
+    while let Some(after) = rest.strip_prefix("/skill:") {
+        let (name, tail) = match after.split_once(char::is_whitespace) {
+            Some((name, tail)) => (name, tail.trim_start()),
+            None => (after, ""),
+        };
+        let Some(skill) = skills.iter().find(|skill| skill.name == name) else {
+            return Err(format!(
+                r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
+                json_string(name)
+            ));
+        };
+        if !loaded.contains(&name) {
+            blocks.push(skill.load()?);
+            loaded.push(name);
+        }
+        rest = tail;
+    }
+    Ok((!blocks.is_empty()).then(|| (blocks, rest.trim().to_string())))
+}
+
+/// The plain sentence for an invocation naming a skill the agent does not have.
+pub fn not_available_message(name: &str) -> String {
+    format!(
+        "There is no skill named \"{name}\" available to this agent. Type / to see the skills and commands you can use."
+    )
+}
+
+/// The first skill named in a leading `/skill:` run that is not in `available`,
+/// so a run can be refused with a clear reason before it starts.
+pub fn first_unavailable_skill(input: &str, available: &[String]) -> Option<String> {
+    let mut rest = input.trim_start();
+    while let Some(after) = rest.strip_prefix("/skill:") {
+        let (name, tail) = match after.split_once(char::is_whitespace) {
+            Some((name, tail)) => (name, tail.trim_start()),
+            None => (after, ""),
+        };
+        if !available.iter().any(|skill| skill == name) {
+            return Some(name.to_string());
+        }
+        rest = tail;
+    }
+    None
+}
+
 pub fn expand_invocation(input: &str, skills: &[FrozenSkill]) -> Result<Option<String>, String> {
-    let trimmed = input.trim_start();
-    let Some(rest) = trimmed.strip_prefix("/skill:") else {
-        return Ok(None);
-    };
-    let mut parts = rest.splitn(2, char::is_whitespace);
-    let name = parts.next().unwrap_or_default();
-    let Some(skill) = skills.iter().find(|skill| skill.name == name) else {
-        return Err(format!(
-            r#"{{"type":"capability_not_admitted","kind":"skill","name":{}}}"#,
-            json_string(name)
-        ));
-    };
-    let block = skill.load()?;
-    let args = parts.next().unwrap_or_default().trim();
-    Ok(Some(if args.is_empty() {
-        block
-    } else {
-        format!("{block}\n\n{args}")
+    Ok(skill_chain(input, skills)?.map(|(blocks, rest)| {
+        let blocks = blocks.join("\n\n");
+        if rest.is_empty() {
+            blocks
+        } else {
+            format!("{blocks}\n\n{rest}")
+        }
     }))
 }
 
@@ -679,6 +723,75 @@ mod tests {
         assert!(expanded.contains("Follow the workflow."));
         assert!(expanded.ends_with("fix parser"));
         Ok(())
+    }
+
+    fn frozen_named(dir: &Path, name: &str, body: &str) -> FrozenSkill {
+        let path = dir.join(format!("{name}.md"));
+        std::fs::write(
+            &path,
+            format!("---\nname: {name}\ndescription: d\n---\n{body}"),
+        )
+        .unwrap();
+        let skill = parse(&path).unwrap();
+        let digest = skill.digest().unwrap();
+        FrozenSkill {
+            name: skill.name,
+            description: skill.description,
+            path,
+            digest,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn leading_skills_chain_in_order_without_repeats() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = [
+            frozen_named(dir.path(), "alpha", "ALPHA BODY"),
+            frozen_named(dir.path(), "beta", "BETA BODY"),
+        ];
+        let (blocks, rest) =
+            skill_chain("/skill:beta /skill:alpha /skill:beta do the thing", &skills)
+                .unwrap()
+                .unwrap();
+        assert_eq!(blocks.len(), 2);
+        assert!(blocks[0].contains("BETA BODY") && blocks[1].contains("ALPHA BODY"));
+        assert_eq!(rest, "do the thing");
+        let expanded = expand_invocation("/skill:alpha only", &skills)
+            .unwrap()
+            .unwrap();
+        assert!(expanded.ends_with("only") && expanded.contains("ALPHA BODY"));
+    }
+
+    #[test]
+    fn unavailable_skill_is_found_anywhere_in_the_leading_run() {
+        let have = vec!["alpha".to_string(), "beta".to_string()];
+        assert_eq!(
+            first_unavailable_skill("/skill:alpha /skill:ghost go", &have).as_deref(),
+            Some("ghost")
+        );
+        assert_eq!(
+            first_unavailable_skill("/skill:alpha /skill:beta go", &have),
+            None
+        );
+        assert_eq!(first_unavailable_skill("see /skill:ghost", &have), None);
+    }
+
+    #[test]
+    fn chain_stops_at_the_first_non_skill_and_names_a_missing_skill() {
+        let dir = tempfile::tempdir().unwrap();
+        let skills = [frozen_named(dir.path(), "alpha", "ALPHA BODY")];
+        let (_, rest) = skill_chain("/skill:alpha /oneline /skill:alpha later", &skills)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rest, "/oneline /skill:alpha later");
+        assert!(
+            skill_chain("plain /skill:alpha text", &skills)
+                .unwrap()
+                .is_none()
+        );
+        let error = skill_chain("/skill:alpha /skill:ghost go", &skills).unwrap_err();
+        assert!(error.contains("capability_not_admitted") && error.contains("ghost"));
     }
 
     #[test]

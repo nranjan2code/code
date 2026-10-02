@@ -8,6 +8,15 @@ pub struct ReplComposer {
     pub history_idx: Option<usize>,
     pub slash_palette_open: bool,
     pub selected_slash_cmd: usize,
+    pub extra_commands: Vec<PaletteEntry>,
+}
+
+/// One row of the quick-action palette: a built-in, a custom command or a
+/// skill (`/skill:name`, the server's deterministic invocation).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteEntry {
+    pub name: String,
+    pub description: String,
 }
 
 pub struct SlashCommand {
@@ -27,6 +36,10 @@ pub const AVAILABLE_SLASH_COMMANDS: &[SlashCommand] = &[
     SlashCommand {
         name: "/preview",
         description: "Open live webpage/dev server preview",
+    },
+    SlashCommand {
+        name: "/compact",
+        description: "Summarise older turns to free up context window",
     },
     SlashCommand {
         name: "/clear",
@@ -181,12 +194,17 @@ impl ReplComposer {
         }
     }
 
-    pub fn matching_slash_commands(&self) -> Vec<&'static SlashCommand> {
+    pub fn matching_slash_commands(&self) -> Vec<PaletteEntry> {
         if !self.slash_palette_open {
             return Vec::new();
         }
         AVAILABLE_SLASH_COMMANDS
             .iter()
+            .map(|cmd| PaletteEntry {
+                name: cmd.name.to_string(),
+                description: cmd.description.to_string(),
+            })
+            .chain(self.extra_commands.iter().cloned())
             .filter(|cmd| cmd.name.starts_with(&self.buffer))
             .collect()
     }
@@ -207,10 +225,70 @@ impl ReplComposer {
 
     pub fn complete_selected_slash(&mut self) {
         let matches = self.matching_slash_commands();
-        if let Some(cmd) = matches.get(self.selected_slash_cmd) {
+        if let Some(cmd) = matches.get(self.selected_slash_cmd).cloned() {
             self.buffer = format!("{} ", cmd.name);
             self.cursor_pos = self.buffer.len();
             self.slash_palette_open = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod palette_tests {
+    use super::*;
+
+    fn composer_with(buffer: &str) -> ReplComposer {
+        let mut composer = ReplComposer::new();
+        composer.extra_commands = vec![
+            PaletteEntry {
+                name: "/oneline".into(),
+                description: "Summarise".into(),
+            },
+            PaletteEntry {
+                name: "/skill:debugging".into(),
+                description: "Debug".into(),
+            },
+        ];
+        for c in buffer.chars() {
+            composer.insert_char(c);
+        }
+        composer
+    }
+
+    #[test]
+    fn custom_commands_and_skills_join_the_builtins() {
+        let names = |buffer: &str| -> Vec<String> {
+            composer_with(buffer)
+                .matching_slash_commands()
+                .into_iter()
+                .map(|e| e.name)
+                .collect()
+        };
+        assert!(names("/").contains(&"/theme".to_string()));
+        assert!(names("/").contains(&"/oneline".to_string()));
+        assert_eq!(names("/skill:d"), vec!["/skill:debugging".to_string()]);
+        assert_eq!(names("/one"), vec!["/oneline".to_string()]);
+    }
+
+    #[test]
+    fn plain_text_and_paths_open_no_palette() {
+        assert!(
+            composer_with("read @notes.txt")
+                .matching_slash_commands()
+                .is_empty()
+        );
+        assert!(
+            composer_with("/usr/bin")
+                .matching_slash_commands()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn completing_inserts_the_full_name_and_a_space() {
+        let mut composer = composer_with("/skill:d");
+        composer.complete_selected_slash();
+        assert_eq!(composer.buffer, "/skill:debugging ");
+        assert!(!composer.slash_palette_open);
     }
 }

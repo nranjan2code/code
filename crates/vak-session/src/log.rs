@@ -1930,6 +1930,7 @@ impl SessionLog {
                         .as_ref()
                         .map(|meta| meta.attachments.clone())
                         .unwrap_or_default(),
+                    typed: record.meta.as_ref().and_then(|meta| meta.typed.clone()),
                 }),
                 EntryPayload::Compaction(c) => Some(TranscriptMessage {
                     entry_id: entry.id.clone(),
@@ -1942,6 +1943,7 @@ impl SessionLog {
                     author_id: None,
                     author_name: None,
                     attachments: Vec::new(),
+                    typed: None,
                 }),
                 _ => None,
             })
@@ -1955,7 +1957,7 @@ impl SessionLog {
         self.derive_transcript()
             .into_iter()
             .filter(|item| item.control.is_none())
-            .map(|item| item.message)
+            .map(|item| item.as_typed())
             .collect()
     }
 

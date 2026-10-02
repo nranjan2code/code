@@ -119,6 +119,25 @@ pub fn history_facts(session: &vak_session::SessionLog) -> HistoryFacts {
     }
 }
 
+/// A leading run of `/skill:<name>` is how skills are invoked, not what the
+/// person is asking for: a name like "debugging" would otherwise read as the
+/// request's verb. The reading sees what follows; a bare invocation is read as
+/// typed.
+fn without_skill_invocation(text: &str) -> &str {
+    let mut rest = text.trim_start();
+    while let Some((_, tail)) = rest
+        .strip_prefix("/skill:")
+        .and_then(|after| after.split_once(char::is_whitespace))
+    {
+        rest = tail.trim_start();
+    }
+    if rest.is_empty() || rest.len() == text.trim_start().len() {
+        text
+    } else {
+        rest
+    }
+}
+
 /// Resolve one turn's intent.
 ///
 /// `turn_id` is the id the host minted for this turn (a UUIDv7); strand and
@@ -152,7 +171,7 @@ pub fn resolve_turn(
         }
         // The hold is control, not content: the request is its text.
         Some(vak_intent::Command::UntilDone { text }) => (text, None),
-        _ => (text.to_string(), None),
+        _ => (without_skill_invocation(text).to_string(), None),
     };
     let request = Request {
         text: &text,
@@ -689,5 +708,25 @@ mod tests {
             &BTreeSet::new(),
             &hints
         ));
+    }
+
+    #[test]
+    fn skill_invocation_word_is_not_read_as_the_request() {
+        assert_eq!(
+            without_skill_invocation("/skill:debugging what does this say"),
+            "what does this say"
+        );
+        assert_eq!(
+            without_skill_invocation("/skill:debugging"),
+            "/skill:debugging"
+        );
+        assert_eq!(
+            without_skill_invocation("/skill:debugging   "),
+            "/skill:debugging   "
+        );
+        assert_eq!(
+            without_skill_invocation("fix the /skill:x thing"),
+            "fix the /skill:x thing"
+        );
     }
 }

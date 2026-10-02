@@ -238,17 +238,16 @@ mod tests {
     #[test]
     fn preserves_headings_and_blockquotes_and_lists() {
         let out = markdown_to_discord("# Title\n\n> quoted\n- item\n1. first");
-        assert!(out.contains("<b>"));
-        assert!(out.contains("Title"));
+        assert!(out.contains("# Title"));
         assert!(out.contains("> quoted"));
         assert!(out.contains("- item"));
         assert!(out.contains("1. first"));
     }
 
     #[test]
-    fn rewrites_links_with_a_visible_suppressed_url() {
+    fn keeps_masked_links_for_discord_to_render() {
         let out = markdown_to_discord("[site](https://example.com)");
-        assert_eq!(out, "site (<https://example.com>)");
+        assert_eq!(out, "[site](https://example.com)");
     }
 
     #[test]

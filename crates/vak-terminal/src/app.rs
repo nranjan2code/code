@@ -268,6 +268,11 @@ impl TerminalApp {
         self
     }
 
+    pub fn with_palette_extras(mut self, extras: Vec<crate::repl::PaletteEntry>) -> Self {
+        self.composer.extra_commands = extras;
+        self
+    }
+
     pub fn with_models(mut self, models: Vec<String>) -> Self {
         self.models = models;
         self
@@ -818,6 +823,15 @@ impl TerminalApp {
 
         if cmd == "/theme" {
             self.cycle_theme();
+            return;
+        }
+        if cmd == "/compact" {
+            self.composer.clear();
+            rt.spawn(async move {
+                if let Err(e) = api.compact_session(&session_id).await {
+                    eprintln!("could not compact: {e}");
+                }
+            });
             return;
         }
         if cmd == "/clear" {

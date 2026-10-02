@@ -167,6 +167,33 @@ impl ApiClient {
         serde_json::from_value(json).map_err(|e| ApiError::Parse(e.to_string()))
     }
 
+    /// Custom commands and skills for the quick-action palette. A skill is
+    /// listed as `/skill:name`, the form the server expands deterministically.
+    pub async fn list_palette_extras(&self) -> Vec<crate::repl::PaletteEntry> {
+        let mut entries = Vec::new();
+        if let Ok(json) = self.get_json::<serde_json::Value>("/commands").await {
+            for item in json["commands"].as_array().into_iter().flatten() {
+                if let Some(name) = item["name"].as_str() {
+                    entries.push(crate::repl::PaletteEntry {
+                        name: format!("/{name}"),
+                        description: item["description"].as_str().unwrap_or_default().to_string(),
+                    });
+                }
+            }
+        }
+        if let Ok(json) = self.get_json::<serde_json::Value>("/skills").await {
+            for item in json["skills"].as_array().into_iter().flatten() {
+                if let Some(name) = item["name"].as_str() {
+                    entries.push(crate::repl::PaletteEntry {
+                        name: format!("/skill:{name}"),
+                        description: item["description"].as_str().unwrap_or_default().to_string(),
+                    });
+                }
+            }
+        }
+        entries
+    }
+
     pub async fn list_providers(&self) -> Result<ProviderList, ApiError> {
         let json = self.get_json::<serde_json::Value>("/providers").await?;
         serde_json::from_value(json).map_err(|e| ApiError::Parse(e.to_string()))
@@ -282,6 +309,14 @@ impl ApiClient {
             )
             .await?;
         Ok(())
+    }
+
+    pub async fn compact_session(&self, session_id: &str) -> Result<serde_json::Value, ApiError> {
+        self.post_json(
+            &format!("/sessions/{session_id}/compact"),
+            &serde_json::json!({}),
+        )
+        .await
     }
 
     pub async fn send_steering(&self, session_id: &str, text: &str) -> Result<(), ApiError> {

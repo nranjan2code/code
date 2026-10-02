@@ -1365,6 +1365,24 @@ impl Agent {
         }
     }
 
+    /// Normalises a person's message and, when that changed the text the model
+    /// will see, keeps what they typed in the record's metadata so a client
+    /// shows their words, not the expansion.
+    fn normalize_recorded(
+        &self,
+        message: Message,
+        meta: Option<vak_session::types::MessageMeta>,
+    ) -> Result<(Message, Option<vak_session::types::MessageMeta>), String> {
+        let typed = message.text_content();
+        let normalized = self.normalize_input(message)?;
+        if normalized.text_content() == typed {
+            return Ok((normalized, meta));
+        }
+        let mut meta = meta.unwrap_or_default();
+        meta.typed = Some(typed);
+        Ok((normalized, Some(meta)))
+    }
+
     /// The admitted set before `discovered_tools` is folded in: names,
     /// order and initial `defer` flags this agent was configured with
     /// (plus the conditional `work` tool). Stable across a run, so a
@@ -1491,8 +1509,8 @@ impl Agent {
             message: prompt,
             meta: prompt_meta,
         } = prompt;
-        let prompt = match self.normalize_input(prompt) {
-            Ok(prompt) => prompt,
+        let (prompt, prompt_meta) = match self.normalize_recorded(prompt, prompt_meta) {
+            Ok(normalized) => normalized,
             Err(error) => {
                 return TurnOutcome::Failed {
                     error: LlmError::InvalidRequest(error),
@@ -1799,8 +1817,8 @@ impl Agent {
                     }
                 }
                 for message in steering.drain(DrainMode::OneAtATime) {
-                    let message = match self.normalize_input(message) {
-                        Ok(message) => message,
+                    let (message, steering_meta) = match self.normalize_recorded(message, None) {
+                        Ok(normalized) => normalized,
                         Err(error) => {
                             return TurnOutcome::Failed {
                                 error: LlmError::InvalidRequest(error),
@@ -1820,7 +1838,7 @@ impl Agent {
                     }
                     let _ = session.append_message(MessageRecord {
                         message,
-                        meta: None,
+                        meta: steering_meta,
                     });
                 }
             }

@@ -710,6 +710,7 @@ impl TelegramBridge {
                 let has_surface_chunks = !packet.chunks.is_empty();
                 let mut chunks = card_chunks;
                 chunks.extend(text_chunks);
+                chunks.retain(|chunk| !chunk.trim().is_empty());
                 (chunks, has_surface_chunks)
             })
         });

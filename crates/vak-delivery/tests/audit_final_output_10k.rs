@@ -143,7 +143,10 @@ fn content_headings_output() {
                     }
                     "discord" => {
                         if is_h1(t) {
-                            assert!(text.contains("<b>"), "discord H1 missing <b>: {src}");
+                            assert!(
+                                text.contains("# "),
+                                "discord H1 missing native heading: {src}"
+                            );
                         } else {
                             assert!(!text.is_empty(), "discord H2+ empty: {src}");
                         }

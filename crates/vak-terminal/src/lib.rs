@@ -151,6 +151,8 @@ pub async fn run_terminal(opts: TerminalOptions) -> std::io::Result<i32> {
     // --- Fetch initial control state ---
     let control = api.get_control_state(&session_id).await.unwrap_or_default();
 
+    let palette_extras = api.list_palette_extras().await;
+
     // --- Fetch initial launch servers (for the preview URL) ---
     let launch_servers = api
         .get_launch_servers(&session_id)
@@ -183,6 +185,7 @@ pub async fn run_terminal(opts: TerminalOptions) -> std::io::Result<i32> {
     )
     .with_providers(providers)
     .with_models(models)
+    .with_palette_extras(palette_extras)
     .with_mcp_servers(mcp_servers)
     .with_gateway(gateway)
     .with_config(config)

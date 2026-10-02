@@ -70,14 +70,18 @@ function rankMatch(name: string, description: string, needle: string): number {
 const BUILTIN_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "clear", description: "Clear current prompt draft and pending attachments" },
   { name: "btw", description: "Ask a side question without landing on main session chain" },
+  { name: "compact", description: "Compact session context to free up context window tokens" },
   { name: "status", description: "Check current work without starting or steering a task" },
+  { name: "pause", description: "Pause the running task at the next safe point" },
+  { name: "resume", description: "Resume a paused task" },
+  { name: "stop", description: "Stop the running task and keep its partial work" },
   { name: "diff", description: "Open diff inspector to review code changes" },
   { name: "terminal", description: "Open integrated shell terminal pane" },
   { name: "files", description: "Mention workspace files and attach code (@)" },
   { name: "help", description: "View keyboard shortcuts and command manual (?)" },
 ];
 
-const LOCAL_SLASH_COMMANDS = new Set(["clear", "files", "diff", "terminal", "help"]);
+const LOCAL_SLASH_COMMANDS = new Set(["clear", "files", "diff", "terminal", "help", "compact", "pause", "resume", "stop"]);
 
 type InboxChip = { key: string; name: string; bytes: number; saved?: api.InboxFile; error?: string };
 
@@ -257,21 +261,45 @@ export default function Composer(props: { cwd: string }) {
       .catch((error) => setLookupError(`Commands unavailable: ${error instanceof Error ? error.message : String(error)}`));
   });
 
+  /** Skill tokens already typed before the one being completed. A custom
+   *  command ends a chain (it owns the rest as its arguments), so only skills
+   *  can precede the current token, and every one must be a skill this agent
+   *  has: `/usr` or `/etc/hosts` in ordinary text never opens the palette. */
+  const chainPrefix = (before: string): string | null => {
+    const m = /^((?:\/skill:[\w-]+\s+)*)\/[\w:-]*$/.exec(before);
+    if (!m) return null;
+    const names = new Set(skills().map((k) => k.name));
+    const used = m[1].trim() ? m[1].trim().split(/\s+/) : [];
+    return used.every((token) => names.has(token.slice("/skill:".length))) ? m[1] : null;
+  };
+
   const slashAllRaw = (): SlashOption[] => {
     const value = text();
     if (!ta || ta.selectionStart === 0 || !value.startsWith("/") || value === slashDismissed()) return [];
-    const m = /^\/([\w-]*)$/.exec(value.slice(0, ta.selectionStart));
-    if (!m) return [];
-    const needle = m[1].toLowerCase();
+    const before = value.slice(0, ta.selectionStart);
+    const prefix = chainPrefix(before);
+    if (prefix === null) return [];
+    const chained = prefix.length > 0;
+    const already = new Set(prefix.trim().split(/\s+/).filter(Boolean).map((token) => token.slice("/skill:".length)));
+    const typed = before.slice(prefix.length + 1).toLowerCase();
+    const skillOnly = typed.startsWith("skill:");
+    const needle = skillOnly ? typed.slice("skill:".length) : typed;
 
     const builtin = new Set(BUILTIN_SLASH_COMMANDS.map((c) => c.name));
-    const cmds = (BUILTIN_SLASH_COMMANDS as { name: string; description: string; source?: string }[]).concat(commands()).map((c, order) => ({
-      id: `cmd-${c.name}`, name: c.name, kind: "command" as const, description: c.description, order,
-      group: builtin.has(c.name) && !c.source ? "Built-in" : c.source?.startsWith("plugin:") ? `Plugin · ${c.source.slice(7)}` : "Your commands",
-    }));
-    const sks = skills().map((k, order) => ({
-      id: `skill-${k.name}`, name: k.name, kind: "skill" as const, description: k.description || "Skill", order, group: "Skills",
-    }));
+    const cmds = skillOnly
+      ? []
+      : (BUILTIN_SLASH_COMMANDS as { name: string; description: string; source?: string }[])
+          .filter(() => !chained)
+          .concat(commands())
+          .map((c, order) => ({
+            id: `cmd-${c.name}`, name: c.name, kind: "command" as const, description: c.description, order,
+            group: builtin.has(c.name) && !c.source ? "Built-in" : c.source?.startsWith("plugin:") ? `Plugin · ${c.source.slice(7)}` : "Your commands",
+          }));
+    const sks = skills()
+      .filter((k) => !already.has(k.name))
+      .map((k, order) => ({
+        id: `skill-${k.name}`, name: k.name, kind: "skill" as const, description: k.description || "Skill", order, group: "Skills",
+      }));
     const groupOrder = (g: string) => (g === "Built-in" ? 0 : g === "Your commands" ? 1 : g === "Skills" ? 3 : 2);
     return [...cmds, ...sks]
       .map((o) => ({ o, rank: rankMatch(o.name, o.description, needle) }))
@@ -288,6 +316,13 @@ export default function Composer(props: { cwd: string }) {
   });
 
   const applySlashOption = (option: SlashOption) => {
+    const prefix = chainPrefix(text().slice(0, ta.selectionStart)) ?? "";
+    if (option.kind === "command" && prefix) {
+      const next = `${prefix}/${option.name} `;
+      setText(next);
+      queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
+      return;
+    }
     if (option.kind === "command") {
       if (option.name === "clear") {
         setText("");
@@ -324,11 +359,37 @@ export default function Composer(props: { cwd: string }) {
         queueMicrotask(grow);
         return;
       }
+      if (option.name === "pause" || option.name === "resume" || option.name === "stop") {
+        setText("");
+        queueMicrotask(grow);
+        void sendPrompt(`/${option.name}`);
+        return;
+      }
+      if (option.name === "compact") {
+        setText("");
+        queueMicrotask(grow);
+        const id = activeId();
+        if (!id) {
+          setNotice({ kind: "error", text: "Start a conversation before compacting it." });
+          return;
+        }
+        setNotice({ kind: "info", text: "Compacting this conversation…" });
+        api
+          .compactSession(id)
+          .then((r) => setNotice({
+            kind: "info",
+            text: r.compacted
+              ? `Compacted ${r.summarized_messages ?? 0} messages (about ${r.before_tokens ?? 0} → ${r.after_tokens ?? 0} tokens).`
+              : "Nothing to compact yet.",
+          }))
+          .catch((error) => setNotice({ kind: "error", text: `Could not compact: ${error instanceof Error ? error.message : String(error)}` }));
+        return;
+      }
       const next = `/${option.name} `;
       setText(next);
       queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
     } else {
-      const next = `/skill:${option.name} `;
+      const next = `${prefix}/skill:${option.name} `;
       setText(next);
       queueMicrotask(() => { ta.focus(); ta.setSelectionRange(next.length, next.length); grow(); });
     }

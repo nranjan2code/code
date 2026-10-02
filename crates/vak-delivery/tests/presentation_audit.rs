@@ -2623,9 +2623,9 @@ fn audit_markup_converters() {
     }));
 
     // Discord-specific assertions
-    scenarios.push(tc("discord_link_rewritten_exactly", || {
+    scenarios.push(tc("discord_link_kept_for_discord_to_render", || {
         let out = discord::markdown_to_discord("[text](https://example.com)");
-        assert_eq!(out, "text (<https://example.com>)");
+        assert_eq!(out, "[text](https://example.com)");
     }));
 
     let discord_cases: &[(&str, &str, &str)] = &[
@@ -2633,7 +2633,7 @@ fn audit_markup_converters() {
         ("italic", "*italic*", "*italic*"),
         ("strike", "~~strikethrough~~", "~~strikethrough~~"),
         ("inline_code", "`code`", "`code`"),
-        ("heading", "# Title", "<b>"),
+        ("heading", "# Title", "# Title"),
         ("blockquote", "> quote", "> quote"),
         ("list", "- a\n- b", "- a"),
         ("code_fence", "```rust\nfn() {}\n```", "```rust"),
@@ -2665,9 +2665,9 @@ fn audit_markup_converters() {
         assert!(out.contains("done"));
     }));
 
-    scenarios.push(tc("discord_heading_bold", || {
+    scenarios.push(tc("discord_heading_native", || {
         let out = discord::markdown_to_discord("# Title");
-        assert!(out.contains("<b>"));
+        assert!(out.contains("# Title"));
         assert!(out.contains("Title"));
     }));
 

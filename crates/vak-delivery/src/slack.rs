@@ -399,18 +399,38 @@ pub fn structured_card_blocks(cards: &[crate::StructuredOutput]) -> Vec<serde_js
             break;
         }
         blocks.push(serde_json::json!({"type":"header","text":{"type":"plain_text","text":title.chars().take(150).collect::<String>()}}));
+        let fields: Vec<serde_json::Value> = card
+            .payload
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter(|(key, _)| key.as_str() != "title")
+            .take(10)
+            .map(|(key, value)| {
+                let text = match value {
+                    serde_json::Value::String(text) => text.clone(),
+                    other => other.to_string(),
+                };
+                serde_json::json!({
+                    "type": "plain_text",
+                    "text": format!("{key}\n{text}").chars().take(2000).collect::<String>(),
+                })
+            })
+            .collect();
+        if !fields.is_empty() && blocks.len() < 50 {
+            blocks.push(serde_json::json!({"type":"section","fields":fields}));
+            continue;
+        }
         let source = crate::structured_markdown(card);
         let summary = source
             .split_once("\n\n```json")
             .map_or(source.as_str(), |(summary, _)| summary);
         let mut rest = summary;
         while !rest.is_empty() && blocks.len() < 50 {
-            let end = rest
-                .char_indices()
-                .take_while(|(index, _)| *index < 2800)
-                .map(|(index, _)| index)
-                .last()
-                .unwrap_or(rest.len());
+            let mut end = rest.len().min(2800);
+            while !rest.is_char_boundary(end) {
+                end -= 1;
+            }
             let split = if end < rest.len() {
                 rest[..end]
                     .rfind('\n')
@@ -435,6 +455,34 @@ pub fn structured_card_blocks(cards: &[crate::StructuredOutput]) -> Vec<serde_js
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn structured_card_blocks_always_make_progress() {
+        let card = |summary: &str| crate::StructuredOutput {
+            semantic_type: "note".into(),
+            schema_version: crate::PRESENTATION_SCHEMA_VERSION,
+            skill_id: "core".into(),
+            skill_version: "1".into(),
+            payload: serde_json::json!({ "title": "T", "text": summary }),
+        };
+        for summary in [
+            "a",
+            "ab",
+            "é",
+            "line one\nline two",
+            &"x".repeat(2800),
+            &"é".repeat(5000),
+            &"word\n".repeat(2000),
+        ] {
+            let blocks = structured_card_blocks(&[card(summary)]);
+            assert!(
+                blocks.len() >= 2 && blocks.len() <= 50,
+                "{} blocks for {} bytes",
+                blocks.len(),
+                summary.len()
+            );
+        }
+    }
 
     #[test]
     fn converts_bold_and_italic_conventions() {

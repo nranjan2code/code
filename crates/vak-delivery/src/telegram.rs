@@ -581,6 +581,9 @@ pub fn structured_card_chunks(
     cards: &[crate::StructuredOutput],
     max_chars: Option<usize>,
 ) -> Vec<String> {
+    if cards.is_empty() {
+        return Vec::new();
+    }
     let markdown = cards
         .iter()
         .map(|card| {
@@ -600,11 +603,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn no_cards_means_no_chunks_and_never_a_blank_message() {
+        assert!(structured_card_chunks(&[], Some(3900)).is_empty());
+    }
+
+    #[test]
     fn converts_and_escapes_supported_markdown() {
         let html = markdown_to_html(
             "# Title\n\n**bold** *it* `code` [site](https://x.com/a)\n\n> quoted\n- item",
         );
-        assert!(html.contains("<b>TITLE</b>"));
+        assert!(html.contains("<b>Title</b>"));
         assert!(html.contains("<b>bold</b>"));
         assert!(html.contains("<i>it</i>"));
         assert!(html.contains("<code>code</code>"));

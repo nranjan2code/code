@@ -103,8 +103,14 @@ impl<'a> Widget for ComposerView<'a> {
 
             Clear.render(pal_area, buf);
 
+            let visible = usize::from(pal_h.saturating_sub(2)).max(1);
+            let selected = self
+                .composer
+                .selected_slash_cmd
+                .min(matching.len().saturating_sub(1));
+            let first = (selected + 1).saturating_sub(visible);
             let mut pal_lines = Vec::new();
-            for (idx, cmd) in matching.iter().enumerate() {
+            for (idx, cmd) in matching.iter().enumerate().skip(first).take(visible) {
                 let is_selected = idx == self.composer.selected_slash_cmd;
                 let prefix = if is_selected { " > " } else { "   " };
                 let style = if is_selected {
@@ -114,7 +120,7 @@ impl<'a> Widget for ComposerView<'a> {
                 };
 
                 pal_lines.push(Line::from(vec![
-                    Span::styled(format!("{prefix}{:<10}", cmd.name), style),
+                    Span::styled(format!("{prefix}{:<18}", cmd.name), style),
                     Span::styled(format!(" {}", cmd.description), self.theme.style_card()),
                 ]));
             }
@@ -122,7 +128,11 @@ impl<'a> Widget for ComposerView<'a> {
             let pal_block = Block::default()
                 .borders(Borders::ALL)
                 .border_style(self.theme.style_border_focus())
-                .title(" Quick Action Palette (Enter/Tab) ")
+                .title(format!(
+                    " Quick Action Palette · {}/{} (Enter/Tab) ",
+                    selected + 1,
+                    matching.len()
+                ))
                 .title_style(self.theme.style_accent());
 
             let pal_para = Paragraph::new(pal_lines).block(pal_block);

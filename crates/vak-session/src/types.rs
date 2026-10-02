@@ -301,6 +301,26 @@ pub struct TranscriptMessage {
     pub author_name: Option<String>,
     /// Files attached to this message (`MessageMeta::attachments`).
     pub attachments: Vec<AttachedFile>,
+    /// What the person typed when the runtime rewrote it (`MessageMeta::typed`).
+    pub typed: Option<String>,
+}
+
+impl TranscriptMessage {
+    /// The message as a person should read it: their own words where the
+    /// runtime expanded a command, skill or mention. The model is never fed
+    /// this; it reads `message`.
+    pub fn as_typed(&self) -> Message {
+        let mut message = self.message.clone();
+        if let Some(typed) = &self.typed
+            && let Some(vak_llm::ContentBlock::Text { text }) = message
+                .content
+                .iter_mut()
+                .find(|block| matches!(block, vak_llm::ContentBlock::Text { .. }))
+        {
+            *text = typed.clone();
+        }
+        message
+    }
 }
 
 impl MessageRecord {
@@ -349,6 +369,11 @@ pub struct MessageMeta {
     /// draws the file there instead of that line.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<AttachedFile>,
+    /// What the person typed, when the runtime rewrote it before the model
+    /// saw it (a `/command` or `/skill:` expansion, an `@file` mention). The
+    /// message holds what the model received; a client shows this instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub typed: Option<String>,
 }
 
 /// A file attached to a user message (docs/design/72, "File in"). Its bytes

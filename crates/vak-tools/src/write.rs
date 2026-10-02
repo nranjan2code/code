@@ -110,12 +110,13 @@ pub(crate) fn protected_control_path(path: &std::path::Path, ctx: &ToolContext) 
         return Some("sandbox denied access outside the workspace".into());
     }
     let relative = resolved.strip_prefix(&root).ok()?;
+    let scope = vak_config::scope::WorkspaceScope::relative();
     let text = relative.to_string_lossy().replace('\\', "/");
     if text == ".env"
         || text.starts_with(".env.")
-        || text == ".vak/config.toml"
-        || text == ".vak/permissions.local.toml"
-        || text.starts_with(".vak/config/")
+        || relative == scope.config_file()
+        || relative == scope.permissions_local()
+        || relative.starts_with(scope.project_dir().join("config"))
     {
         Some("sandbox denied writes to workspace control files".into())
     } else {

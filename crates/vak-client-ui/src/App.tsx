@@ -694,6 +694,31 @@ export async function sendPrompt(
     return;
   }
 
+  const control = /^\/(pause|resume|stop)$/i.exec(text.trim())?.[1].toLowerCase();
+  if (control) {
+    try {
+      if (control === "stop") {
+        if (isRunning(id)) {
+          stopRun();
+          appendSystem(id, "Stopping…");
+        } else {
+          appendSystem(id, "Nothing is running to stop.");
+        }
+      } else if (!isRunning(id)) {
+        appendSystem(id, `Nothing is running to ${control}.`);
+      } else if (control === "pause") {
+        await api.pauseRun(id);
+        appendSystem(id, "Paused. Type /resume to continue.");
+      } else {
+        await api.resumeRun(id);
+        appendSystem(id, "Resumed.");
+      }
+    } catch (e) {
+      appendSystem(id, `Could not ${control}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+    return;
+  }
+
   const thisGoal = goalAppliesTo(id);
   setArmedGoal(null);
   appendUser(id, text, attachments?.files);

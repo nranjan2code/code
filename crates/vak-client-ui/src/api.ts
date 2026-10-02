@@ -1106,6 +1106,12 @@ export function planChange(
   });
 }
 
+export interface CompactResult { compacted: boolean; before_tokens?: number; after_tokens?: number; summarized_messages?: number }
+
+export function compactSession(id: string): Promise<CompactResult> {
+  return req(`/sessions/${id}/compact`, { method: "POST" });
+}
+
 export function runSide(id: string, question: string): Promise<void> {
   return req(`/sessions/${id}/side`, {
     method: "POST",

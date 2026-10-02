@@ -18,6 +18,7 @@ pub mod data_engine;
 pub mod digest;
 pub mod discovery;
 pub mod entities;
+pub mod file_mentions;
 pub mod files;
 pub mod finops;
 pub mod health;
@@ -6608,8 +6609,9 @@ impl Core {
         cfg.max_work_items = work_config.max_items;
         cfg.max_work_revisions = work_config.max_revisions;
         let capabilities = turn_capabilities.descriptors.clone();
+        let mention_root = self.inner.cwd.clone();
         cfg.input_normalizer = Some(Arc::new(move |message| {
-            normalize_capability_message(message, &capabilities)
+            normalize_capability_message(message, &capabilities, &mention_root)
         }));
         cfg.model = model.clone();
         cfg.tools = self.agent_tools();
@@ -9440,6 +9442,7 @@ pub fn build_hooks(config: &vak_config::Config) -> Result<Vec<vak_hooks::HookDef
 fn normalize_capability_message(
     mut message: vak_llm::Message,
     capabilities: &[CapabilityDescriptor],
+    workspace: &std::path::Path,
 ) -> Result<vak_llm::Message, String> {
     let Some(vak_llm::ContentBlock::Text { text }) = message
         .content
@@ -9448,12 +9451,35 @@ fn normalize_capability_message(
     else {
         return Ok(message);
     };
+    // Mentions resolve in what the person typed, before a command or skill
+    // body is spliced in, so template text is never rewritten.
+    *text = file_mentions::resolve_file_mentions(text, workspace);
     let frozen_skills = skills::frozen_from_capabilities(capabilities);
-    let expanded = skills::expand_invocation(text, &frozen_skills)?
-        .or_else(|| custom_commands::expand_capability_invocation(capabilities, text));
-    if let Some(expanded) = expanded {
-        *text = expanded;
-    }
+    // A leading run of skills loads each one; a custom command may follow
+    // them and takes the rest as its arguments. Anything else is the task.
+    let chain = skills::skill_chain(text, &frozen_skills).map_err(|error| {
+        let missing = error
+            .split("\"name\":\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next());
+        match missing {
+            Some(name) if error.contains("capability_not_admitted") => {
+                skills::not_available_message(name)
+            }
+            _ => error,
+        }
+    })?;
+    let (skill_blocks, remainder) = match chain {
+        Some((blocks, rest)) => (Some(blocks.join("\n\n")), rest),
+        None => (None, text.clone()),
+    };
+    let body = custom_commands::expand_capability_invocation(capabilities, &remainder)
+        .unwrap_or(remainder);
+    *text = match skill_blocks {
+        Some(blocks) if body.trim().is_empty() => blocks,
+        Some(blocks) => format!("{blocks}\n\n{body}"),
+        None => body,
+    };
     Ok(message)
 }
 

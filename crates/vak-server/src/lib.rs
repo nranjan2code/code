@@ -946,6 +946,7 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/launch/logs", get(launch_logs))
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
+        .route("/sessions/{id}/compact", post(compact_session))
         .route("/sessions/{id}/cancel", post(cancel_run))
         .route("/sessions/{id}/pause", post(pause_run))
         .route("/sessions/{id}/resume", post(resume_run))
@@ -5055,7 +5056,7 @@ mod provider_unavailable_tests {
 /// queued steering message never claims to be.
 enum TurnStart {
     /// The person's message as recorded, with its metadata (attached files).
-    Message(vak_session::MessageRecord),
+    Message(Box<vak_session::MessageRecord>),
     Managed(String),
     Auto(String),
     Goal {
@@ -5067,10 +5068,10 @@ enum TurnStart {
 
 impl TurnStart {
     fn message(message: vak_llm::Message) -> Self {
-        TurnStart::Message(vak_session::MessageRecord {
+        TurnStart::Message(Box::new(vak_session::MessageRecord {
             message,
             meta: None,
-        })
+        }))
     }
 
     /// The message this leg would present — used both to seed the preview
@@ -5099,7 +5100,7 @@ impl TurnStart {
             TurnStart::Message(m) => {
                 core.run_turn_with_message(
                     session,
-                    m,
+                    *m,
                     cancel,
                     Some(approver),
                     None,
@@ -5489,6 +5490,19 @@ async fn run_prompt(
         )
             .into_response();
     }
+    let available: Vec<String> = handle
+        .core
+        .skills()
+        .into_iter()
+        .map(|skill| skill.name)
+        .collect();
+    if let Some(missing) = vak_core::skills::first_unavailable_skill(&body.prompt, &available) {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Json(serde_json::json!({ "error": vak_core::skills::not_available_message(&missing) })),
+        )
+            .into_response();
+    }
     let shows_questions = body.can_show_questions;
     let request_id = body.request_id.clone();
     if let Some(request_id) = request_id.as_deref()
@@ -5580,7 +5594,7 @@ async fn run_prompt(
             blocks.push(vak_llm::ContentBlock::text(note));
             attachments.push(file);
         }
-        TurnStart::Message(vak_session::MessageRecord {
+        TurnStart::Message(Box::new(vak_session::MessageRecord {
             message: vak_llm::Message {
                 role: vak_llm::Role::User,
                 content: blocks,
@@ -5589,7 +5603,7 @@ async fn run_prompt(
                 attachments,
                 ..Default::default()
             }),
-        })
+        }))
     };
     let restricted = matches!(
         start,
@@ -5830,6 +5844,55 @@ fn intervention_of(text: &str) -> (vak_intent::InterventionKind, String) {
         }
         None => (vak_intent::InterventionKind::Steer, text.to_string()),
     }
+}
+
+/// `/compact`: summarise the older turns of an idle session now, with the same
+/// incremental mechanism the loop uses. A session whose log a run currently
+/// owns answers 409 rather than waiting behind it.
+async fn compact_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> axum::response::Response {
+    let Some(handle) = state.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let taken = handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
+    let Some(log) = taken else {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "a run is using this conversation; compact it when the run finishes" })),
+        )
+            .into_response();
+    };
+    let (log, outcome) = handle
+        .core
+        .compact_session_now(log, CancellationToken::new())
+        .await;
+    *handle
+        .session
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(log);
+    if let Some(error) = outcome.error {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": error })),
+        )
+            .into_response();
+    }
+    Json(match outcome.report {
+        Some(report) => serde_json::json!({
+            "compacted": true,
+            "before_tokens": report.before_tokens,
+            "after_tokens": report.after_tokens,
+            "summarized_messages": report.summarized_messages,
+        }),
+        None => serde_json::json!({ "compacted": false }),
+    })
+    .into_response()
 }
 
 async fn send_steering(
@@ -8036,7 +8099,7 @@ pub(crate) fn transcript_json(s: &SessionLog) -> serde_json::Value {
             })
         })
         .collect();
-    let messages: Vec<&vak_llm::Message> = visible.iter().map(|item| &item.message).collect();
+    let messages: Vec<vak_llm::Message> = visible.iter().map(|item| item.as_typed()).collect();
     serde_json::json!({
         "count": transcript.len(),
         "usage": s.total_usage(),

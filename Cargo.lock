@@ -7573,6 +7573,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "toml 0.8.2",
+ "vak-config",
  "vak-llm",
  "vak-ooxml",
  "vak-pdf",

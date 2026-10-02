@@ -3339,7 +3339,7 @@ mod tests {
         );
         assert!(first.items.iter().any(|item| matches!(
             &item.content,
-            OutputContent::Structured { ref output } if output.semantic_type == "link.preview"
+            OutputContent::Structured { output } if output.semantic_type == "link.preview"
         )));
     }
 
