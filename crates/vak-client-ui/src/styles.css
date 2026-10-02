@@ -37,6 +37,24 @@
   --term-muted: #94a3b8;
   --term-faint: #475569;
   --term-err: #f87171;
+  /* The eight ANSI colours and their bright forms, tuned to the brand's
+     status hues and readable on --term-bg. */
+  --term-black: #64748b;
+  --term-red: #f08a8a;
+  --term-green: #7cc39a;
+  --term-yellow: #f5b04a;
+  --term-blue: #8fb3e0;
+  --term-magenta: #b9c1fa;
+  --term-cyan: #9fd0d8;
+  --term-white: #e2e8f0;
+  --term-bright-black: var(--term-muted);
+  --term-bright-red: #f5a8a8;
+  --term-bright-green: #a5dbbb;
+  --term-bright-yellow: #f9c97c;
+  --term-bright-blue: #b3cdee;
+  --term-bright-magenta: #d3d8fc;
+  --term-bright-cyan: #c0e4ea;
+  --term-bright-white: #ffffff;
   --bg: #f7f7f8;
   --surface: #ffffff;
   --surface-raised: #ffffff;

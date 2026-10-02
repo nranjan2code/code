@@ -64,23 +64,24 @@ function renderAnsiToHtml(rawText: string): string {
   let openSpans = 0;
 
   const colorMap: Record<string, string> = {
-    "30": "#64748b",
-    "31": "#f87171",
-    "32": "#4ade80",
-    "33": "#facc15",
-    "34": "#60a5fa",
-    "35": "#c084fc",
-    "36": "#22d3ee",
-    "37": "#e2e8f0",
-    "90": "#94a3b8",
-    "91": "#fca5a5",
-    "92": "#86efac",
-    "93": "#fde047",
-    "94": "#93c5fd",
-    "95": "#d8b4fe",
-    "96": "#67e8f9",
-    "97": "#ffffff",
+    "30": "var(--term-black)",
+    "31": "var(--term-red)",
+    "32": "var(--term-green)",
+    "33": "var(--term-yellow)",
+    "34": "var(--term-blue)",
+    "35": "var(--term-magenta)",
+    "36": "var(--term-cyan)",
+    "37": "var(--term-white)",
+    "90": "var(--term-bright-black)",
+    "91": "var(--term-bright-red)",
+    "92": "var(--term-bright-green)",
+    "93": "var(--term-bright-yellow)",
+    "94": "var(--term-bright-blue)",
+    "95": "var(--term-bright-magenta)",
+    "96": "var(--term-bright-cyan)",
+    "97": "var(--term-bright-white)",
   };
+
 
   function escapeHtml(str: string): string {
     return str

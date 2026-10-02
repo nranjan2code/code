@@ -150,22 +150,22 @@ export default function TerminalPane(props: { sessionId: string | null }) {
  * in the app, and it stayed foreign in every theme.
  */
 function terminalTheme() {
-  const read = (token: string, fallback: string) =>
-    getComputedStyle(document.documentElement).getPropertyValue(token).trim() || fallback;
+  const style = getComputedStyle(document.documentElement);
+  const read = (token: string, fallback: string) => style.getPropertyValue(token).trim() || style.getPropertyValue(fallback).trim();
   return {
-    background: read("--bg", "#0f1120"),
-    foreground: read("--text-soft", "#bdbfd3"),
-    cursor: read("--accent", "#a3adf7"),
-    cursorAccent: read("--bg", "#0f1120"),
-    selectionBackground: read("--surface-active", "#2c3149"),
-    black: read("--surface-raised", "#1e2236"),
-    red: read("--red", "#f08a8a"),
-    green: read("--green", "#7cc39a"),
-    yellow: read("--yellow", "#f5b04a"),
-    blue: read("--blue", "#8fb3e0"),
-    magenta: read("--accent-bright", "#b9c1fa"),
-    cyan: read("--blue", "#8fb3e0"),
-    white: read("--text", "#ecebf5"),
-    brightBlack: read("--faint", "#8b8880"),
+    background: read("--bg", "--term-bg"),
+    foreground: read("--text-soft", "--term-fg"),
+    cursor: read("--accent", "--term-fg"),
+    cursorAccent: read("--bg", "--term-bg"),
+    selectionBackground: read("--surface-active", "--term-line"),
+    black: read("--surface-raised", "--term-black"),
+    red: read("--red", "--term-red"),
+    green: read("--green", "--term-green"),
+    yellow: read("--yellow", "--term-yellow"),
+    blue: read("--blue", "--term-blue"),
+    magenta: read("--accent-bright", "--term-magenta"),
+    cyan: read("--blue", "--term-cyan"),
+    white: read("--text", "--term-white"),
+    brightBlack: read("--faint", "--term-bright-black"),
   };
 }
