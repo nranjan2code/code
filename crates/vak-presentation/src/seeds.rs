@@ -94,6 +94,21 @@ const UNIVERSAL: &[(&str, &str)] = &[
 
 // These are the payload families of the built-in emit tools. Every seed must
 // bind the shape the tool actually validates; a title-only seed is not a card.
+const SIGNAL: &[(&str, &str)] = &[
+    ("chart", "chart"),
+    ("trend", "trend"),
+    ("timeseries", "timeseries"),
+    ("bar-chart", "bar_chart"),
+    ("metric-chart", "metric_chart"),
+    ("comparison-chart", "comparison_chart"),
+    ("telemetry-chart", "telemetry.chart"),
+    ("telemetry-metric", "telemetry.metric"),
+    ("weather", "weather"),
+    ("link-preview", "link.preview"),
+    ("image", "media.image"),
+    ("video", "media.video"),
+    ("audio", "media.audio"),
+];
 const TABLE_TYPES: &[&str] = &[
     "coding.benchmark",
     "coding.dependencies",
@@ -248,7 +263,13 @@ fn seed(id: &str, accepts: &str) -> StoredPresentation {
         "budget" | "finance_summary" | "invoice_summary" | "inventory" => Primitive::Table,
         "steps" | "lesson" | "event_plan" | "care_plan" => Primitive::Steps,
         "progress" | "status" => Primitive::Progress,
-        "metric" | "benchmark" => Primitive::Metric,
+        "metric" | "benchmark" | "telemetry.metric" | "weather" => Primitive::Metric,
+        "chart" | "trend" | "timeseries" | "bar_chart" | "metric_chart" | "comparison_chart"
+        | "telemetry.chart" => Primitive::Chart,
+        "link.preview" => Primitive::LinkPreview,
+        "media.image" => Primitive::Image,
+        "media.video" => Primitive::Video,
+        "media.audio" => Primitive::Audio,
         "recipe" | "recipe_summary" | "lifestyle.recipe" => Primitive::Recipe,
         "research_brief" | "news" => Primitive::Research,
         "preview" | "ui.preview" => Primitive::UiPreview,
@@ -432,6 +453,7 @@ pub fn built_in_seed_pack() -> Vec<StoredPresentation> {
         .iter()
         .chain(CODING.iter())
         .chain(UNIVERSAL.iter())
+        .chain(SIGNAL.iter())
         .map(|(id, accepts)| seed(id, accepts))
         .collect()
 }
@@ -445,7 +467,7 @@ mod tests {
     #[test]
     fn seed_pack_is_rich_disabled_and_validated_by_host_types() {
         let pack = built_in_seed_pack();
-        assert_eq!(pack.len(), 75);
+        assert_eq!(pack.len(), 88);
         assert!(pack.iter().all(|record| !record.enabled));
         assert!(
             pack.iter()
@@ -521,7 +543,8 @@ mod tests {
                     || matches!(
                         kind,
                         "metric" | "ui.preview" | "coding.diff" | "test.report" | "terminal.view"
-                    ),
+                    )
+                    || SIGNAL.iter().any(|(_, accepts)| *accepts == kind),
                 "{} has no complete payload family",
                 seed.spec.id
             );

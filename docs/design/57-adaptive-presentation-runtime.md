@@ -42,7 +42,7 @@ Paper, alongside the existing technical palettes. They are host-owned token
 sets: renderer behavior, permissions, voice, and presentation data remain
 unchanged when a theme changes.
 
-The host exposes a declarative built-in starter pack of 75 disabled definitions:
+The host exposes a declarative built-in starter pack of 88 disabled definitions:
 45 everyday layouts, 10 coding-flow layouts, and 20 universal interaction
 shapes (`EVERYDAY`/`CODING`/`UNIVERSAL` in `crates/vak-presentation/src/seeds.rs`;
 the count is pinned by `seed_pack_is_rich_disabled_and_validated_by_host_types`).
@@ -165,14 +165,14 @@ session tests. The first P3-style generic scenario is also now
 landed as the validated `plan.timeline` semantic type and desktop/browser
 timeline card; it retains the existing exact Markdown/channel fallback.
 
-All 75 built-in definitions are registered and selected by default in every
+All 88 built-in definitions are registered and selected by default in every
 build. They bind the complete validated shape of their emit tool, including
 collection children where the renderer needs them. Explicit user and workspace
 activations take precedence. Deactivation records a durable scoped suppression
 so the default cannot silently reactivate a pack; activating it clears that
 suppression. A failed compilation leaves the existing structured card in place.
 The same effective library is loaded when a historical session is reopened.
-Conformance tests exercise selection and compilation for all 75 definitions
+Conformance tests exercise selection and compilation for all 88 definitions
 against emitted payload shapes. Real browser review has covered timeline,
 table, research, and recipe; the remaining visual combinations still need
 human inspection. Packs can be searched, activated, deactivated, imported,
