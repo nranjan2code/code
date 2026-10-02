@@ -5,6 +5,8 @@
 //! they are covered here the same way the other repair-nudge regressions
 //! are — a scripted provider driving `Agent::run` end to end.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +25,7 @@ use vak_session::types::{
 use vak_session::{SessionLog, TurnIndex};
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -33,7 +36,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -57,6 +60,7 @@ impl Provider for Scripted {
 /// A provider whose first N calls reject with `LlmError::Context`, then
 /// succeeds — for the over-length replan (§5).
 struct OverLengthThenOk {
+    capacity_key: String,
     context_errors_remaining: Mutex<u32>,
     final_answer: Mutex<Option<AssistantMessage>>,
 }
@@ -68,7 +72,7 @@ impl Provider for OverLengthThenOk {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -177,6 +181,7 @@ async fn three_consecutive_drift_events_end_the_turn_degraded() {
         .unwrap();
 
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(vec![
             text("Paris is the capital."),
             text("Paris is the capital."),
@@ -248,6 +253,7 @@ async fn a_verbatim_repeat_of_a_past_answer_is_treated_as_drift_and_redone() {
         .unwrap();
 
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(vec![
             text("Paris is the capital."),
             text("Tokyo has about 14 million people."),
@@ -282,6 +288,7 @@ async fn over_length_rejection_lowers_the_horizon_and_retries_once() {
         SessionLog::create(dir.path().join("s.jsonl"), header("overlength", dir.path())).unwrap();
 
     let provider = Arc::new(OverLengthThenOk {
+        capacity_key: crate::support::capacity_key(),
         context_errors_remaining: Mutex::new(1),
         final_answer: Mutex::new(Some(text("recovered after replan"))),
     });
@@ -330,6 +337,7 @@ async fn a_second_consecutive_over_length_rejection_fails_the_turn() {
     .unwrap();
 
     let provider = Arc::new(OverLengthThenOk {
+        capacity_key: crate::support::capacity_key(),
         // Never runs out: every call rejects.
         context_errors_remaining: Mutex::new(u32::MAX),
         final_answer: Mutex::new(None),

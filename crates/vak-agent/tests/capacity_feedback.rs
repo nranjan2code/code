@@ -7,6 +7,8 @@
 //! by `Agent::complete_with_reliability`'s own stream-consuming loop and
 //! threaded through `StepLedger::last_first_token_ms`.
 
+mod support;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,7 +32,9 @@ use vak_session::{SessionLog, SessionPath};
 /// measures is unambiguously non-zero, and reports no `prefill_ms` of its
 /// own (unlike Ollama) so the only way `prefill_tps` gets a sample is via
 /// the caller-measured wall-clock latency.
-struct SlowNoPrefillMs;
+struct SlowNoPrefillMs {
+    capacity_key: String,
+}
 
 #[async_trait::async_trait]
 impl Provider for SlowNoPrefillMs {
@@ -39,7 +43,7 @@ impl Provider for SlowNoPrefillMs {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -103,7 +107,9 @@ async fn non_ollama_provider_still_gets_a_prefill_tps_sample_from_wall_clock_lat
     let dir = tempdir().unwrap();
     let (home, path) = session_paths(dir.path());
     std::fs::create_dir_all(&home).unwrap();
-    let provider: Arc<dyn Provider> = Arc::new(SlowNoPrefillMs);
+    let provider: Arc<dyn Provider> = Arc::new(SlowNoPrefillMs {
+        capacity_key: crate::support::capacity_key(),
+    });
     let header = SessionHeader {
         space: None,
         run: None,

@@ -4,6 +4,8 @@
 //! surface nobody is watching ends the call at once.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +23,7 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::read::ReadTool;
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
@@ -32,7 +35,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -167,6 +170,7 @@ async fn run_with_worker_question(
     .unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
     let scripted = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(vec![
             call(
                 "t1",

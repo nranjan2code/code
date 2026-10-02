@@ -4,6 +4,8 @@
 //! frozen candidate legs on typed failures; ceiling/receipts/endurance
 //! are shared across legs; walking the ladder is contract execution.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -36,12 +38,17 @@ fn text_msg(t: &str) -> AssistantMessage {
 
 /// Always fails with a network error (blind failure domain).
 struct AlwaysNetwork {
+    capacity_key: String,
     calls: AtomicU32,
 }
 
-struct PanickingProvider;
+struct PanickingProvider {
+    capacity_key: String,
+}
 
-struct TerminalQuota;
+struct TerminalQuota {
+    capacity_key: String,
+}
 
 #[async_trait::async_trait]
 impl Provider for TerminalQuota {
@@ -50,7 +57,7 @@ impl Provider for TerminalQuota {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -75,7 +82,7 @@ impl Provider for PanickingProvider {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -94,7 +101,7 @@ impl Provider for AlwaysNetwork {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -111,6 +118,7 @@ impl Provider for AlwaysNetwork {
 }
 
 struct Scripted {
+    capacity_key: String,
     responses: std::sync::Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -121,7 +129,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -198,6 +206,7 @@ fn setup_with_primary(
 fn setup(ladder: Vec<(Arc<dyn Provider>, String)>) -> (Agent, tempfile::TempDir) {
     setup_with_primary(
         Arc::new(AlwaysNetwork {
+            capacity_key: crate::support::capacity_key(),
             calls: AtomicU32::new(0),
         }),
         ladder,
@@ -214,6 +223,7 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
 
 fn fallback_provider() -> Arc<Scripted> {
     Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: std::sync::Mutex::new(VecDeque::from(vec![text_msg("answered via fallback")])),
     })
 }
@@ -257,7 +267,9 @@ async fn primary_failure_walks_to_fallback_and_receipt_records_it() {
 async fn provider_panic_is_contained_and_fallback_completes() {
     let fb = fallback_provider();
     let (mut agent, _dir) = setup_with_primary(
-        Arc::new(PanickingProvider),
+        Arc::new(PanickingProvider {
+            capacity_key: crate::support::capacity_key(),
+        }),
         vec![(fb as Arc<dyn Provider>, "fallback-model".to_string())],
     );
 
@@ -277,7 +289,9 @@ async fn provider_panic_is_contained_and_fallback_completes() {
 async fn terminal_quota_walks_to_fallback_without_retry_storm() {
     let fb = fallback_provider();
     let (mut agent, _dir) = setup_with_primary(
-        Arc::new(TerminalQuota),
+        Arc::new(TerminalQuota {
+            capacity_key: crate::support::capacity_key(),
+        }),
         vec![(fb as Arc<dyn Provider>, "fallback-model".to_string())],
     );
 
@@ -297,6 +311,7 @@ async fn terminal_quota_walks_to_fallback_without_retry_storm() {
 async fn all_legs_exhausted_fails_closed_within_ceiling() {
     // Fallback also fails (script empty => Parse error, non-retryable).
     let dead_fb = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: std::sync::Mutex::new(VecDeque::new()),
     });
     let (mut agent, _dir) = setup(vec![(

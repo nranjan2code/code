@@ -7,6 +7,8 @@
 //! stable prefix is surfaced as a `prefix-changed` activity exactly when the
 //! digest actually changes.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -28,6 +30,7 @@ use vak_tools::bash::BashTool;
 /// Records every request it receives (for tail/cache inspection) and
 /// replays a fixed queue of responses.
 struct Recording {
+    capacity_key: String,
     requests: Mutex<Vec<ChatRequest>>,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
@@ -35,6 +38,7 @@ struct Recording {
 impl Recording {
     fn new(responses: Vec<AssistantMessage>) -> Self {
         Recording {
+            capacity_key: crate::support::capacity_key(),
             requests: Mutex::new(Vec::new()),
             responses: Mutex::new(responses.into_iter().collect()),
         }
@@ -52,7 +56,7 @@ impl Provider for Recording {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-context-tail:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(

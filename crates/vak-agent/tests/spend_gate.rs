@@ -4,6 +4,8 @@
 //! permanently with a typed budget message unless the approver accepts
 //! the one-time raise Ask; unattended (no approver) always aborts.
 
+mod support;
+
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, Ordering};
 
@@ -33,7 +35,9 @@ fn text_msg(t: &str) -> AssistantMessage {
     }
 }
 
-struct Success;
+struct Success {
+    capacity_key: String,
+}
 
 #[async_trait::async_trait]
 impl Provider for Success {
@@ -42,7 +46,7 @@ impl Provider for Success {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -128,7 +132,16 @@ fn setup(
     cfg.spend_gate = Some(gate);
     cfg.retry_base_backoff_ms = 1;
     cfg.run_retry_base_backoff_ms = 1;
-    (Agent::new(Arc::new(Success), log, cfg), dir)
+    (
+        Agent::new(
+            Arc::new(Success {
+                capacity_key: crate::support::capacity_key(),
+            }),
+            log,
+            cfg,
+        ),
+        dir,
+    )
 }
 
 async fn run(agent: &mut Agent) -> TurnOutcome {
@@ -256,7 +269,13 @@ async fn budget_approval_raises_cap_for_rest_of_run() {
     }));
     cfg.spend_gate = Some(gate.clone() as Arc<dyn SpendGate>);
     cfg.retry_base_backoff_ms = 1;
-    let mut agent = Agent::new(Arc::new(Success), log, cfg);
+    let mut agent = Agent::new(
+        Arc::new(Success {
+            capacity_key: crate::support::capacity_key(),
+        }),
+        log,
+        cfg,
+    );
 
     let (ev_tx, mut ev_rx) = mpsc::channel(256);
     tokio::spawn(async move { while ev_rx.recv().await.is_some() {} });

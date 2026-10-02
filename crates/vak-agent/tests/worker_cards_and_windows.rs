@@ -4,6 +4,8 @@
 //! over-long tool result is recorded whole behind the window its request
 //! carries (docs/design/68-context-engine.md §3, §10).
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -24,6 +26,7 @@ use vak_tools::context::ToolContext;
 use vak_tools::{PresentationCard, Tool, ToolOutput};
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
     requests: Mutex<Vec<ChatRequest>>,
 }
@@ -35,7 +38,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -59,6 +62,7 @@ impl Provider for Scripted {
 
 fn scripted(responses: Vec<AssistantMessage>) -> Arc<Scripted> {
     Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(responses)),
         requests: Mutex::new(Vec::new()),
     })

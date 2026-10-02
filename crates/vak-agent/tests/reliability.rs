@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -22,6 +24,7 @@ enum Step {
 }
 
 struct Scripted {
+    capacity_key: String,
     steps: Mutex<VecDeque<Step>>,
 }
 
@@ -32,7 +35,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-reliability-scripted:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -106,6 +109,7 @@ fn build(
     std::mem::forget(dir);
     Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             steps: Mutex::new(steps.into_iter().collect()),
         }),
         log,
@@ -209,14 +213,14 @@ async fn retry_budget_exhaustion_fails_with_last_error() {
 async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
     // A provider whose stream never completes: the deadline must fire.
     let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    struct Hung(Arc<std::sync::atomic::AtomicBool>);
+    struct Hung(Arc<std::sync::atomic::AtomicBool>, String);
     #[async_trait::async_trait]
     impl Provider for Hung {
         fn name(&self) -> &str {
             "hung"
         }
         fn rate_limit_key(&self) -> String {
-            format!("test-reliability-hung:{:p}", self)
+            self.1.clone()
         }
         async fn stream(
             &self,
@@ -270,7 +274,11 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
     cfg.request_timeout = Some(std::time::Duration::from_millis(300));
     cfg.run_retry_attempts = 0;
     std::mem::forget(dir);
-    let mut agent = Agent::new(Arc::new(Hung(cancelled.clone())), log, cfg);
+    let mut agent = Agent::new(
+        Arc::new(Hung(cancelled.clone(), crate::support::capacity_key())),
+        log,
+        cfg,
+    );
 
     let start = Instant::now();
     let outcome = agent
@@ -303,6 +311,7 @@ async fn watchdog_deadline_converts_hung_step_into_retryable_failure() {
 /// every call and every attempt-cancellation it actually observed, so a
 /// test can tell a per-attempt child token from the run's own.
 struct HungThenGood {
+    capacity_key: String,
     hangs_remaining: Mutex<u32>,
     attempts: Arc<std::sync::atomic::AtomicU32>,
     attempt_cancellations: Arc<std::sync::atomic::AtomicU32>,
@@ -315,7 +324,7 @@ impl Provider for HungThenGood {
         "hung"
     }
     fn rate_limit_key(&self) -> String {
-        format!("test-reliability-hung-then-good:{:p}", self)
+        self.capacity_key.clone()
     }
     async fn stream(&self, _r: ChatRequest, c: CancellationToken) -> Result<EventStream, LlmError> {
         self.attempts
@@ -415,6 +424,7 @@ async fn hung_provider_with_retries_gets_bounded_attempts_then_fails_with_deadli
     .unwrap();
     let attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let provider = Arc::new(HungThenGood {
+        capacity_key: crate::support::capacity_key(),
         hangs_remaining: Mutex::new(u32::MAX),
         attempts: attempts.clone(),
         attempt_cancellations: Arc::new(std::sync::atomic::AtomicU32::new(0)),
@@ -460,12 +470,14 @@ async fn a_hung_leg_falls_back_to_a_working_ladder_leg() {
     )
     .unwrap();
     let hung_provider = Arc::new(HungThenGood {
+        capacity_key: crate::support::capacity_key(),
         hangs_remaining: Mutex::new(u32::MAX),
         attempts: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         attempt_cancellations: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         good: Mutex::new(None),
     });
     let good_provider: Arc<dyn Provider> = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         steps: Mutex::new(VecDeque::from(vec![Step::Text("from the fallback".into())])),
     });
     let mut cfg = AgentConfig::new("sys");
@@ -507,6 +519,7 @@ async fn run_level_endurance_re_attempts_after_a_hung_step() {
     .unwrap();
     let attempts = Arc::new(std::sync::atomic::AtomicU32::new(0));
     let provider = Arc::new(HungThenGood {
+        capacity_key: crate::support::capacity_key(),
         // Hangs on the first step-level attempt only; the run-level
         // re-attempt's own first (and only) provider call succeeds.
         hangs_remaining: Mutex::new(1),
@@ -552,6 +565,7 @@ async fn user_cancel_during_a_hung_attempt_gives_aborted() {
     )
     .unwrap();
     let provider = Arc::new(HungThenGood {
+        capacity_key: crate::support::capacity_key(),
         hangs_remaining: Mutex::new(u32::MAX),
         attempts: Arc::new(std::sync::atomic::AtomicU32::new(0)),
         attempt_cancellations: Arc::new(std::sync::atomic::AtomicU32::new(0)),

@@ -3,6 +3,8 @@
 //! Goal mode + audited completion + regression obligations +
 //! reset-with-handoff (docs/design/42-managed-work-contracts.md).
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 
@@ -51,6 +53,7 @@ fn tool_msg() -> AssistantMessage {
 
 /// Scripted responses consumed FIFO; empty queue => parse error.
 struct Scripted {
+    capacity_key: String,
     responses: std::sync::Mutex<VecDeque<AssistantMessage>>,
     requests: std::sync::Mutex<Vec<ChatRequest>>,
 }
@@ -58,6 +61,7 @@ struct Scripted {
 impl Scripted {
     fn new(responses: Vec<AssistantMessage>) -> Arc<Self> {
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: std::sync::Mutex::new(responses.into_iter().collect()),
             requests: std::sync::Mutex::new(Vec::new()),
         })
@@ -71,7 +75,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-goal-mode:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(

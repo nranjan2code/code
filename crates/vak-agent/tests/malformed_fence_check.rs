@@ -9,6 +9,8 @@
 //! turn-loop `continue` mechanism the grounding-check repair uses — this
 //! is a new trigger condition on existing infrastructure, not a new system.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -28,6 +30,7 @@ use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -38,7 +41,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -113,6 +116,7 @@ async fn build_agent(
 
     Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(responses)),
         }),
         log,

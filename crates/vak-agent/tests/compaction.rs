@@ -6,6 +6,8 @@
 //! REAL turns (each producing a genuine `TurnCard` at close) rather than
 //! seeding raw messages directly.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -26,6 +28,7 @@ use vak_session::types::{EntryPayload, FrozenContract, SessionHeader};
 /// answer, cycling once exhausted (each turn here is a single no-tool-call
 /// step, so the same short pool of answers covers many turns).
 struct TaggedScripted {
+    capacity_key: String,
     steps: Mutex<VecDeque<AssistantMessage>>,
     seen_systems: Arc<Mutex<Vec<String>>>,
 }
@@ -46,7 +49,7 @@ impl Provider for TaggedScripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -128,6 +131,7 @@ async fn a_tiny_horizon_eventually_triggers_incremental_compaction() {
 
     let seen = Arc::new(Mutex::new(Vec::new()));
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::capacity_key(),
         steps: Mutex::new(VecDeque::from(vec![text(
             "a padded no-tool-call answer with enough filler text to accumulate real tokens over several turns of conversation",
         )])),
@@ -228,6 +232,7 @@ async fn no_usable_horizon_fails_closed_when_handoff_is_disabled() {
     let log = SessionLog::create(dir.path().join("s.jsonl"), header("over", dir.path())).unwrap();
 
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::capacity_key(),
         steps: Mutex::new(VecDeque::from(vec![text("never reached")])),
         seen_systems: Arc::new(Mutex::new(Vec::new())),
     });

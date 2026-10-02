@@ -4,6 +4,8 @@
 //! dispatch lands as a typed ledger entry on every exit path; the ceiling
 //! fails closed without another paid call.
 
+mod support;
+
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -38,7 +40,9 @@ fn text_msg(t: &str) -> AssistantMessage {
 
 /// Always fails with a rate-limit error: informed transience feeding
 /// retries/endurance but never tripping the breaker.
-struct AlwaysRateLimited;
+struct AlwaysRateLimited {
+    capacity_key: String,
+}
 
 #[async_trait::async_trait]
 impl Provider for AlwaysRateLimited {
@@ -47,7 +51,7 @@ impl Provider for AlwaysRateLimited {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -67,6 +71,7 @@ impl Provider for AlwaysRateLimited {
 
 /// Succeeds after N failed dispatches (network resets).
 struct FailThenSucceed {
+    capacity_key: String,
     remaining_failures: AtomicU32,
 }
 
@@ -77,7 +82,7 @@ impl Provider for FailThenSucceed {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -99,7 +104,9 @@ impl Provider for FailThenSucceed {
 }
 
 /// Aborts mid-stream with partial output.
-struct AbortMidStream;
+struct AbortMidStream {
+    capacity_key: String,
+}
 
 #[async_trait::async_trait]
 impl Provider for AbortMidStream {
@@ -108,7 +115,7 @@ impl Provider for AbortMidStream {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -191,6 +198,7 @@ async fn run(agent: &mut Agent) -> TurnOutcome {
 async fn success_step_writes_execute_receipt_and_projection_ignores_it() {
     let (mut agent, _dir, _home) = setup_with(
         Arc::new(FailThenSucceed {
+            capacity_key: crate::support::capacity_key(),
             remaining_failures: AtomicU32::new(1),
         }),
         |_| {},
@@ -223,11 +231,16 @@ async fn success_step_writes_execute_receipt_and_projection_ignores_it() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ceiling_exhaustion_fails_closed_with_failure_receipt() {
-    let (mut agent, _dir, _home) = setup_with(Arc::new(AlwaysRateLimited), |cfg| {
-        cfg.max_retries = 1;
-        cfg.run_retry_attempts = 0;
-        cfg.dispatch_ceiling = 2;
-    });
+    let (mut agent, _dir, _home) = setup_with(
+        Arc::new(AlwaysRateLimited {
+            capacity_key: crate::support::capacity_key(),
+        }),
+        |cfg| {
+            cfg.max_retries = 1;
+            cfg.run_retry_attempts = 0;
+            cfg.dispatch_ceiling = 2;
+        },
+    );
     let outcome = run(&mut agent).await;
     match outcome {
         TurnOutcome::Failed { error } => {
@@ -254,7 +267,12 @@ async fn ceiling_exhaustion_fails_closed_with_failure_receipt() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn mid_stream_abort_records_cancelled_settlement_and_keeps_partial() {
-    let (mut agent, _dir, _home) = setup_with(Arc::new(AbortMidStream), |_| {});
+    let (mut agent, _dir, _home) = setup_with(
+        Arc::new(AbortMidStream {
+            capacity_key: crate::support::capacity_key(),
+        }),
+        |_| {},
+    );
     let outcome = run(&mut agent).await;
     assert!(matches!(outcome, TurnOutcome::Aborted { .. }));
 
@@ -279,6 +297,7 @@ async fn mid_stream_abort_records_cancelled_settlement_and_keeps_partial() {
 async fn receipts_round_trip_through_disk() {
     let (mut agent, dir, _home) = setup_with(
         Arc::new(FailThenSucceed {
+            capacity_key: crate::support::capacity_key(),
             remaining_failures: AtomicU32::new(0),
         }),
         |_| {},

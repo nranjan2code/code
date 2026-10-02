@@ -4,6 +4,8 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -22,6 +24,7 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::{Tool, ToolContext, ToolOutput};
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -32,7 +35,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -150,6 +153,7 @@ async fn one_run_one_trace_id() {
 
     let seen = Arc::new(Mutex::new(Vec::new()));
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(vec![
             call("p1", "probe", serde_json::json!({})),
             call(

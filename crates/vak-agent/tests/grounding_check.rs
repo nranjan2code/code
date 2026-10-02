@@ -12,6 +12,8 @@
 //! the tool `search` as web-serving, and separately prove the name is
 //! irrelevant in both directions.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -33,6 +35,7 @@ use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -43,7 +46,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-grounding-check:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -175,6 +178,7 @@ async fn build_agent_with_check(
 
     Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(responses)),
         }),
         log,
@@ -441,6 +445,7 @@ async fn session_search_of_the_users_own_notes_is_not_flagged() {
 
     let mut agent = Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(vec![
                 AssistantMessage {
                     content: vec![ContentBlock::ToolUse {

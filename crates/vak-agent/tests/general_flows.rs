@@ -5,6 +5,8 @@
 //! exercised through research, writing, planning, and data-analysis flows
 //! instead of code tasks.
 
+mod support;
+
 use std::collections::{HashMap, VecDeque};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -28,6 +30,7 @@ use vak_tools::read::ReadTool;
 use vak_tools::write::WriteTool;
 
 struct Scripted {
+    capacity_key: String,
     responses: std::sync::Mutex<VecDeque<AssistantMessage>>,
     requests: std::sync::Mutex<Vec<ChatRequest>>,
 }
@@ -39,7 +42,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -132,6 +135,7 @@ fn setup(
     )
     .unwrap();
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: std::sync::Mutex::new(responses.into_iter().collect()),
         requests: std::sync::Mutex::new(Vec::new()),
     });
@@ -436,6 +440,7 @@ async fn compaction_during_long_research_session() {
             .unwrap();
     }
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: std::sync::Mutex::new(VecDeque::from(vec![
             text_msg(
                 "Summary: prior research condensed; key climate and energy findings retained for the brief.",

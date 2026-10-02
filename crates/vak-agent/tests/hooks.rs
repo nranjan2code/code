@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -18,6 +20,7 @@ use vak_session::types::{FrozenContract, SessionHeader};
 use vak_tools::bash::BashTool;
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -28,7 +31,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -113,6 +116,7 @@ fn build(responses: Vec<AssistantMessage>, hooks: Option<Vec<HookDef>>) -> Agent
     std::mem::forget(dir);
     Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(responses.into_iter().collect()),
         }),
         log,

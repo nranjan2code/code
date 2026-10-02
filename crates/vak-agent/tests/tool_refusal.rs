@@ -10,6 +10,8 @@
 //! delivering call writes no second draft, and a card previewing the
 //! delivered file is not shown.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,6 +31,7 @@ use vak_session::{SessionLog, SessionPath};
 struct Scripted(
     Mutex<VecDeque<AssistantMessage>>,
     Arc<Mutex<Vec<ChatRequest>>>,
+    String,
 );
 
 #[async_trait]
@@ -38,7 +41,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.2.clone()
     }
 
     async fn stream(
@@ -149,7 +152,11 @@ async fn a_text_edit_of_a_word_file_is_refused_without_asking_anyone() {
     }
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut agent = Agent::new(
-        Arc::new(Scripted(Mutex::new(script), requests.clone())),
+        Arc::new(Scripted(
+            Mutex::new(script),
+            requests.clone(),
+            crate::support::capacity_key(),
+        )),
         log,
         cfg,
     );
@@ -251,7 +258,11 @@ async fn the_repair_directive_is_recorded_as_control_not_as_the_persons_words() 
     }
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut agent = Agent::new(
-        Arc::new(Scripted(Mutex::new(script), requests.clone())),
+        Arc::new(Scripted(
+            Mutex::new(script),
+            requests.clone(),
+            crate::support::capacity_key(),
+        )),
         log,
         cfg,
     );
@@ -435,7 +446,11 @@ async fn requests_after_a_draft(delivers: bool, final_text: &str) -> usize {
     }
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut agent = Agent::new(
-        Arc::new(Scripted(Mutex::new(script), requests.clone())),
+        Arc::new(Scripted(
+            Mutex::new(script),
+            requests.clone(),
+            crate::support::capacity_key(),
+        )),
         log,
         cfg,
     );
@@ -559,7 +574,11 @@ async fn a_repeated_draft_writes_nothing_and_a_preview_of_the_draft_is_not_shown
     ]);
     let requests = Arc::new(Mutex::new(Vec::new()));
     let mut agent = Agent::new(
-        Arc::new(Scripted(Mutex::new(script), requests.clone())),
+        Arc::new(Scripted(
+            Mutex::new(script),
+            requests.clone(),
+            crate::support::capacity_key(),
+        )),
         log,
         cfg,
     );

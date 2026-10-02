@@ -6,6 +6,8 @@
 //! is cancelled.
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -35,6 +37,7 @@ enum Child {
 /// Parent and worker run concurrently, so one shared script would interleave
 /// unpredictably: requests are routed by system prompt instead.
 struct Routed {
+    capacity_key: String,
     parent: Mutex<VecDeque<AssistantMessage>>,
     child: Mutex<Child>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
@@ -47,7 +50,7 @@ impl Provider for Routed {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -172,6 +175,7 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
     .unwrap();
     let requests = Arc::new(Mutex::new(Vec::new()));
     let provider = Arc::new(Routed {
+        capacity_key: crate::support::capacity_key(),
         parent: Mutex::new(VecDeque::from(parent_script)),
         child: Mutex::new(child),
         requests: requests.clone(),

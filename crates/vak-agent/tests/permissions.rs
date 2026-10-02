@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
@@ -44,6 +46,7 @@ fn text_msg(t: &str) -> AssistantMessage {
 }
 
 struct MultiScripted {
+    capacity_key: String,
     msgs: std::sync::Mutex<std::collections::VecDeque<AssistantMessage>>,
 }
 
@@ -54,7 +57,7 @@ impl Provider for MultiScripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -114,6 +117,7 @@ fn multi_setup(
     cfg.stop_policy = None;
     std::mem::forget(dir);
     let provider = MultiScripted {
+        capacity_key: crate::support::capacity_key(),
         msgs: std::sync::Mutex::new(responses.into_iter().collect()),
     };
     Agent::new(Arc::new(provider), log, cfg)

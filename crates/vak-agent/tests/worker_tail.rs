@@ -9,6 +9,8 @@
 //! `context_tail.rs`; this test only checks that a WORKER's own request
 //! carries it too.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -29,6 +31,7 @@ use vak_tools::read::ReadTool;
 /// responses — shared between the parent agent and its spawned child, so
 /// both turns' requests land in one inspectable list, in dispatch order.
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
 }
@@ -40,7 +43,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -133,6 +136,7 @@ async fn spawned_worker_request_carries_the_parent_turns_tail() {
 
     let requests = Arc::new(Mutex::new(Vec::new()));
     let scripted = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         responses: Mutex::new(VecDeque::from(vec![
             task_call("t1", "find the answer"),
             text_msg("child final answer"),

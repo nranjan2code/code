@@ -3,6 +3,8 @@
 //! Doom-loop guard: the third identical (tool, args) call in one run is
 //! re-routed through approval instead of executing silently.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -21,6 +23,7 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::bash::BashTool;
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -31,7 +34,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -118,6 +121,7 @@ async fn third_identical_call_is_blocked_with_reason() {
 
     let mut agent = Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(vec![
                 bash_call("a", "echo same"),
                 bash_call("b", "echo same"),
@@ -219,6 +223,7 @@ async fn different_args_are_not_counted_together() {
 
     let mut agent = Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(vec![
                 bash_call("a", "echo one"),
                 bash_call("b", "echo two"),

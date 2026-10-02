@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::sync::{Arc, Mutex};
 
 use tokio::sync::mpsc;
@@ -95,6 +97,7 @@ fn credential_circuits_are_independent_within_one_provider() {
 }
 
 struct Scripted {
+    capacity_key: String,
     calls: Arc<Mutex<u32>>,
     fail_with: LlmError,
 }
@@ -106,7 +109,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -178,6 +181,7 @@ fn build_agent(
 async fn second_run_fails_fast_when_circuit_is_open() {
     let calls = Arc::new(Mutex::new(0u32));
     let provider = Arc::new(Scripted {
+        capacity_key: crate::support::capacity_key(),
         calls: calls.clone(),
         // Blind network loss: the only class that trips the breaker.
         fail_with: LlmError::Network("provider unreachable".into()),

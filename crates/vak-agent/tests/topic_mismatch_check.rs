@@ -11,6 +11,8 @@
 //! had nothing to say; the card's own content was simply unrelated to both
 //! the question and the evidence.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
@@ -32,6 +34,7 @@ use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
 }
 
@@ -42,7 +45,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -226,6 +229,7 @@ async fn build_agent(
 
     Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(responses)),
         }),
         log,

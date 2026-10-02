@@ -5,6 +5,8 @@
 //! read-only. Real trigger: "Vak wants to use emit_metric_card — this needs
 //! your approval" shown under a card that had already rendered.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,7 +25,7 @@ use vak_session::{SessionLog, SessionPath};
 use vak_tools::context::ToolContext;
 use vak_tools::{Tool, ToolOutput};
 
-struct Scripted(Mutex<VecDeque<AssistantMessage>>);
+struct Scripted(Mutex<VecDeque<AssistantMessage>>, String);
 
 #[async_trait]
 impl Provider for Scripted {
@@ -32,7 +34,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-card-permission:{:p}", self)
+        self.1.clone()
     }
 
     async fn stream(
@@ -149,22 +151,25 @@ async fn run_calls(mode: Mode, tool: &'static str, presents: bool, calls: usize)
         runs: runs.clone(),
     })];
     let mut agent = Agent::new(
-        Arc::new(Scripted(Mutex::new({
-            let mut script: VecDeque<AssistantMessage> = (0..calls)
-                .map(|n| {
-                    msg(
-                        vec![ContentBlock::ToolUse {
-                            id: format!("c{n}"),
-                            name: tool.into(),
-                            input: serde_json::json!({}),
-                        }],
-                        StopReason::ToolUse,
-                    )
-                })
-                .collect();
-            script.push_back(msg(vec![ContentBlock::text("done")], StopReason::EndTurn));
-            script
-        }))),
+        Arc::new(Scripted(
+            Mutex::new({
+                let mut script: VecDeque<AssistantMessage> = (0..calls)
+                    .map(|n| {
+                        msg(
+                            vec![ContentBlock::ToolUse {
+                                id: format!("c{n}"),
+                                name: tool.into(),
+                                input: serde_json::json!({}),
+                            }],
+                            StopReason::ToolUse,
+                        )
+                    })
+                    .collect();
+                script.push_back(msg(vec![ContentBlock::text("done")], StopReason::EndTurn));
+                script
+            }),
+            crate::support::capacity_key(),
+        )),
         log,
         cfg,
     );
@@ -289,17 +294,20 @@ async fn a_failed_card_does_not_hold_back_a_complete_answer() {
     cfg.tools = vec![Arc::new(StrictCardTool)];
     let answer = "Copper trades at about $6.70 per pound, according to the exchange quote.";
     let mut agent = Agent::new(
-        Arc::new(Scripted(Mutex::new(VecDeque::from([
-            msg(
-                vec![ContentBlock::ToolUse {
-                    id: "c0".into(),
-                    name: "emit_metric_card".into(),
-                    input: serde_json::json!({"metric_data": [1, 2]}),
-                }],
-                StopReason::ToolUse,
-            ),
-            msg(vec![ContentBlock::text(answer)], StopReason::EndTurn),
-        ])))),
+        Arc::new(Scripted(
+            Mutex::new(VecDeque::from([
+                msg(
+                    vec![ContentBlock::ToolUse {
+                        id: "c0".into(),
+                        name: "emit_metric_card".into(),
+                        input: serde_json::json!({"metric_data": [1, 2]}),
+                    }],
+                    StopReason::ToolUse,
+                ),
+                msg(vec![ContentBlock::text(answer)], StopReason::EndTurn),
+            ])),
+            crate::support::capacity_key(),
+        )),
         log,
         cfg,
     );

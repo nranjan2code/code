@@ -6,6 +6,8 @@
 //! market perform last week" that was a markdown table plus bullets, with the
 //! `emit_*_card` tools offered and unused.
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -29,6 +31,7 @@ use vak_tools::{Tool, ToolOutput};
 type Requests = Arc<Mutex<Vec<Vec<String>>>>;
 
 struct Scripted {
+    capacity_key: String,
     responses: Mutex<VecDeque<AssistantMessage>>,
     /// The tool names each request actually declared.
     requests: Requests,
@@ -41,7 +44,7 @@ impl Provider for Scripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -172,6 +175,7 @@ async fn build_agent(
     let requests = Requests::default();
     let agent = Agent::new(
         Arc::new(Scripted {
+            capacity_key: crate::support::capacity_key(),
             responses: Mutex::new(VecDeque::from(responses)),
             requests: requests.clone(),
         }),

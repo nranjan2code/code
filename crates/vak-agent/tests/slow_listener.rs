@@ -8,6 +8,8 @@
 //! and a long reasoning reply waited on it until the step watchdog although
 //! the provider had finished.
 
+mod support;
+
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -24,7 +26,9 @@ use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 
 /// Streams two thousand reasoning pieces, then the answer.
-struct LongReasoning;
+struct LongReasoning {
+    capacity_key: String,
+}
 
 #[async_trait]
 impl Provider for LongReasoning {
@@ -33,7 +37,7 @@ impl Provider for LongReasoning {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -115,7 +119,13 @@ async fn a_slow_listener_does_not_pace_a_long_reply() {
     .unwrap();
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
-    let mut agent = Agent::new(Arc::new(LongReasoning), log, cfg);
+    let mut agent = Agent::new(
+        Arc::new(LongReasoning {
+            capacity_key: crate::support::capacity_key(),
+        }),
+        log,
+        cfg,
+    );
 
     // 20ms per event: pacing the two thousand pieces would take 40s.
     let (events, mut rx) = tokio::sync::mpsc::channel(64);

@@ -1,5 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+mod support;
+
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -21,6 +23,7 @@ use vak_tools::bash::BashTool;
 /// Routes scripted responses by the trailing user-message tag so parallel
 /// children are deterministic regardless of request interleaving.
 struct TaggedScripted {
+    capacity_key: String,
     routes: Mutex<HashMap<String, VecDeque<AssistantMessage>>>,
 }
 
@@ -44,7 +47,7 @@ impl Provider for TaggedScripted {
     }
 
     fn rate_limit_key(&self) -> String {
-        format!("test-provider:{:p}", self)
+        self.capacity_key.clone()
     }
 
     async fn stream(
@@ -251,6 +254,7 @@ async fn disjoint_writers_run_parallel_conflicting_writer_serializes() {
     );
 
     let provider = Arc::new(TaggedScripted {
+        capacity_key: crate::support::capacity_key(),
         routes: Mutex::new(routes),
     });
 
