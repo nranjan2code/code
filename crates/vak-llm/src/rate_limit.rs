@@ -1622,8 +1622,37 @@ impl RateLimitGate {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::RateLimitGate;
+    use super::{RateLimitGate, TrafficSnapshot};
     use std::time::Duration;
+
+    #[test]
+    fn traffic_snapshot_serialization_exposes_aggregate_fields_only() {
+        let snapshot = TrafficSnapshot {
+            state: "queued",
+            active: 2,
+            queued: 3,
+            retry_after_secs: Some(4),
+            observed_routes: 1,
+            scope: "this service process",
+        };
+        let value = serde_json::to_value(snapshot).unwrap();
+        let object = value.as_object().unwrap();
+        assert_eq!(
+            object.keys().map(String::as_str).collect::<Vec<_>>(),
+            [
+                "active",
+                "observed_routes",
+                "queued",
+                "retry_after_secs",
+                "scope",
+                "state",
+            ]
+        );
+        assert!(!value.to_string().contains("provider"));
+        assert!(!value.to_string().contains("model"));
+        assert!(!value.to_string().contains("account"));
+        assert!(!value.to_string().contains("key"));
+    }
 
     #[tokio::test]
     async fn same_capacity_key_shares_cooldown_and_cancel_ends_wait() {
