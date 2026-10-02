@@ -120,6 +120,7 @@ impl Message {
             .collect::<Vec<_>>()
             .join("\n")
     }
+
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

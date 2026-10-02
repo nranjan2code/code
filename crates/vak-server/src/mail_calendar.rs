@@ -3409,6 +3409,7 @@ fn record_account_event(
 }
 
 #[cfg(test)]
+#[cfg_attr(not(feature = "test-support"), allow(unused_imports))]
 mod tests {
     use super::{
         OAUTH_CALLBACK_COOKIE, due_calendar_occurrence_keys, is_loopback_request,
@@ -3852,6 +3853,8 @@ mod tests {
         assert!(tasks["other-agent"].enabled);
     }
 
+    // Needs the loopback OAuth endpoint, which exists only with `test-support`.
+    #[cfg(feature = "test-support")]
     #[tokio::test]
     async fn expired_routine_tokens_refresh_or_pause_before_use() {
         vak_config::paths::isolate_home_for_tests();
