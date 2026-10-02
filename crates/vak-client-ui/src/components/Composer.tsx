@@ -63,6 +63,8 @@ const BUILTIN_SLASH_COMMANDS: { name: string; description: string }[] = [
   { name: "help", description: "View keyboard shortcuts and command manual (?)" },
 ];
 
+const LOCAL_SLASH_COMMANDS = new Set(["clear", "files", "diff", "terminal", "help"]);
+
 type InboxChip = { key: string; name: string; bytes: number; saved?: api.InboxFile; error?: string };
 
 /** The same bound a channel inlines text under; anything larger, and every
@@ -90,6 +92,7 @@ export default function Composer(props: { cwd: string }) {
   const [skills, setSkills] = createSignal<SkillInfo[]>([]);
   const [commands, setCommands] = createSignal<api.CustomCommand[]>([]);
   const [slashPicked, setSlashPicked] = createSignal(0);
+  const [slashDismissed, setSlashDismissed] = createSignal<string | null>(null);
   // Image attachments: picked or pasted, sent as base64 vision blocks.
   const [pendingFiles, setPendingFiles] = createSignal<{ name: string; mime: string; data: string }[]>([]);
   // Other files: saved to the workspace inbox as soon as they are added; the
@@ -241,8 +244,9 @@ export default function Composer(props: { cwd: string }) {
   });
 
   const slashMatches = (): SlashOption[] => {
-    if (!ta || ta.selectionStart === 0 || !text().startsWith("/")) return [];
-    const m = /^\/([\w-]*)$/.exec(text().slice(0, ta.selectionStart));
+    const value = text();
+    if (!ta || ta.selectionStart === 0 || !value.startsWith("/") || value === slashDismissed()) return [];
+    const m = /^\/([\w-]*)$/.exec(value.slice(0, ta.selectionStart));
     if (!m) return [];
     const needle = m[1].toLowerCase();
 
@@ -340,7 +344,6 @@ export default function Composer(props: { cwd: string }) {
     }
     setMention(mn);
     setPicked(0);
-    setCandidates([]);
   };
 
   // keep candidate list reactive with the query
@@ -447,14 +450,15 @@ export default function Composer(props: { cwd: string }) {
         setSlashPicked((p) => Math.max(p - 1, 0));
         return;
       }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+      const typedInFull = slashList.some((o) => `/${o.name}` === text().trim() && !(o.kind === "command" && LOCAL_SLASH_COMMANDS.has(o.name)));
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey && !typedInFull)) {
         e.preventDefault();
         applySlashOption(slashList[Math.min(slashPicked(), slashList.length - 1)]);
         return;
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        setText("");
+        setSlashDismissed(text());
         return;
       }
     } else {
