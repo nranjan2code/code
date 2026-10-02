@@ -148,9 +148,9 @@ completion pass is shipped per `29-personal-os.md`, with enterprise deferred.
 
 The maintainer started it on 2026-09-25 with M0, which is done and shipped
 in 5.0.0. On 2026-10-01 the maintainer locked plan revision 3 (decisions
-L6–L12), and the two 5.x guards landed the same day. M1 slices 1 and 2 and
-M2 slices 1 and 2 are on main (plan §4 lists what remains of each); nothing
-in them is behaviour yet, because no caller uses them. No session starts a
+L6–L12), and the two 5.x guards landed the same day. M1 slices 1 to 4a and
+M2 slices 1 and 2 are on main (plan §4 lists what remains of each); slice 4a
+makes the trace key real at admission (invariant 40). No session starts a
 later step unasked.
 
 **What it is.** One architecture for everything Vak writes:
@@ -964,6 +964,23 @@ in progress, and the rest of V4 follows it.
     merges must detect overlapping operations and conservatively refuse
     positional Word merges when inserts/deletes could move anchors. Agent
     candidates enter a room only through verified lineage from the same base.
+
+40. **Every unit of work has a trace key, minted once where it is admitted**
+    (docs/design/73-data-architecture-and-lifecycle.md §4, plan M1). A run
+    gets a `RunId` and a `TraceKey` carrying tenant, space, Agent, the
+    `actor` and, for Agent work, `on_behalf_of`, from `Core::mint_trace`
+    (`vak-core/src/admission.rs`), with the `Cause` its surface implies;
+    nothing downstream re-derives it from ambient state. The key travels by
+    value: `AgentConfig.trace`, a child span per tool call
+    (`ToolContext.trace`, `TraceKey::child`, the only span constructor), the
+    broker worker, `SandboxEventSink`, the bus envelope, and every durable
+    row, span and envelope written under it, which names its actor
+    (`Traced`, `every_ledger_row_type_is_traced`). A delegated child is its
+    own run caused by the parent's call (`TraceKey::delegate`). The actor is
+    the real one: the owner, a channel sender the gateway resolved, the
+    Agent, or the system, never text a client supplied; derived writes record
+    `derived_from`. A write site with no key in scope leaves the additive
+    fields absent rather than inventing one, and never infers an author.
 
 ## Code rules
 

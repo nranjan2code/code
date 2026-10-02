@@ -361,6 +361,10 @@ pub struct AgentConfig {
     pub approver: Option<Arc<dyn Approver>>,
     pub approval_mode: ApprovalMode,
     pub sandbox: Option<Arc<dyn vak_tools::sandbox::Sandbox>>,
+    /// The run's trace key, minted at admission. Each tool call runs under a
+    /// child span of it, and it reaches the broker worker and the sandbox
+    /// records the call writes. `None` for a fixture that has no real run.
+    pub trace: Option<vak_session::trace::TraceKey>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<RevocationCheck>,
     pub presentation_check: Option<PresentationCheck>,
@@ -549,6 +553,7 @@ impl AgentConfig {
             approver: None,
             approval_mode: ApprovalMode::Ask,
             sandbox: None,
+            trace: None,
             hooks: None,
             revocation_check: None,
             presentation_check: None,
@@ -5719,6 +5724,7 @@ impl Agent {
                                 hook_recorder.as_ref(),
                                 tool_activity_recorder.as_ref(),
                                 sandbox.as_ref(),
+                                self.config.trace.as_ref(),
                                 &self.call_yields,
                                 cancel,
                                 events,
@@ -5801,6 +5807,7 @@ impl Agent {
                 let hook_recorder = hook_recorder.clone();
                 let tool_activity_recorder = tool_activity_recorder.clone();
                 let agent_id = agent_id.clone();
+                let trace = self.config.trace.clone();
                 let yields = self.call_yields.clone();
                 join.spawn(async move {
                     let r = execute_one(
@@ -5814,6 +5821,7 @@ impl Agent {
                         hook_recorder.as_ref(),
                         tool_activity_recorder.as_ref(),
                         sandbox.as_ref(),
+                        trace.as_ref(),
                         &yields,
                         &cancel,
                         &events,
@@ -6643,6 +6651,7 @@ async fn execute_one(
     hook_recorder: Option<&HookRecorder>,
     tool_activity_recorder: Option<&ToolActivityRecorder>,
     sandbox: Option<&Arc<dyn vak_tools::sandbox::Sandbox>>,
+    trace: Option<&vak_session::trace::TraceKey>,
     yields: &CallYields,
     cancel: &CancellationToken,
     events: &mpsc::Sender<AgentEvent>,
@@ -6723,7 +6732,11 @@ async fn execute_one(
         Some(tool) => {
             let (sandbox_sink, mut sandbox_rx) =
                 vak_tools::SandboxEventSink::new_with_id(call.id.clone());
-            let sandbox_sink = sandbox_sink.with_owner_session(session_id.to_string());
+            let mut sandbox_sink = sandbox_sink.with_owner_session(session_id.to_string());
+            let call_trace = trace.map(vak_session::trace::TraceKey::child);
+            if let Some(key) = &call_trace {
+                sandbox_sink = sandbox_sink.with_trace(key.clone());
+            }
             let events_tx = events.clone();
             let forwarder = tokio::spawn(async move {
                 while let Some(sb_ev) = sandbox_rx.recv().await {
@@ -6737,7 +6750,7 @@ async fn execute_one(
                 sandbox: sandbox.cloned(),
                 sandbox_sink: Some(sandbox_sink),
                 agent_id: agent_id.map(|s| s.to_string()),
-                trace: None,
+                trace: call_trace,
                 new_documents: Vec::new(),
             };
             let tool = tool.clone();

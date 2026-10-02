@@ -170,6 +170,10 @@ async fn run_heartbeat_turn(
         // so it never advertises a capability this turn cannot use.
         .map(|c| {
             c.with_surface(vak_core::Surface::Background)
+                .with_run_admission(
+                    vak_core::admission::RunAdmission::default()
+                        .cause(vak_session::trace::Cause::Heartbeat),
+                )
                 .with_approver_answerable(false)
         })
         .map_err(|e| format!("heartbeat core failed: {e}"))?;
@@ -251,10 +255,11 @@ async fn create_persistent_session(core: &Core) -> Result<SessionLog, String> {
         core.cwd(),
         HEARTBEAT_SESSION_ID,
     );
+    let admitted = core.mint_trace(None);
     let header = SessionHeader {
         space: None,
-        run: None,
-        cause: None,
+        run: Some(admitted.run),
+        cause: Some(admitted.cause),
         agent: Some(vak_core::vak_agent_identity()),
         session_id: HEARTBEAT_SESSION_ID.to_string(),
         created_at: chrono::Utc::now(),

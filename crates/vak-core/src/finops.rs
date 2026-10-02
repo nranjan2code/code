@@ -303,6 +303,8 @@ pub struct CoreSpendGate {
     run_spent_usd: Mutex<f64>,
     raised_once: AtomicBool,
     day_budget: Arc<Mutex<DayBudget>>,
+    /// The trace of the turn now spending, stamped onto the rows it writes.
+    trace: Mutex<Option<vak_session::trace::TraceKey>>,
 }
 
 impl CoreSpendGate {
@@ -326,6 +328,7 @@ impl CoreSpendGate {
     ) -> Self {
         CoreSpendGate {
             ledger: FinOpsLedger::new(sessions_home),
+            trace: Mutex::new(None),
             max_run_usd: Mutex::new(finops.max_run_usd),
             max_day_usd: Mutex::new(finops.max_day_usd),
             overrides: Mutex::new(finops.price_overrides.clone()),
@@ -385,6 +388,30 @@ impl CoreSpendGate {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         vak_config::finops::estimate_cost_usd(model, usage, &overrides)
+    }
+
+    /// Name the turn that is about to spend. A gate outlives its turns, so
+    /// each one sets its own key before it dispatches.
+    pub(crate) fn set_trace(&self, trace: Option<vak_session::trace::TraceKey>) {
+        *self
+            .trace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = trace;
+    }
+
+    fn current_trace(
+        &self,
+    ) -> (
+        Option<vak_session::trace::TraceKey>,
+        Option<vak_session::ids::PrincipalId>,
+    ) {
+        let trace = self
+            .trace
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let actor = trace.as_ref().and_then(|t| t.actor);
+        (trace, actor)
     }
 }
 
@@ -483,6 +510,7 @@ impl SpendGate for CoreSpendGate {
             day.reserved_usd = (day.reserved_usd - usd).max(0.0);
             day.baseline_usd += usd;
         }
+        let (trace, actor) = self.current_trace();
         let row = CostRow {
             ts: chrono::Utc::now(),
             model: model.to_string(),
@@ -493,8 +521,8 @@ impl SpendGate for CoreSpendGate {
             usd,
             source: "estimated".to_string(),
             session_id: session_id.to_string(),
-            trace: None,
-            actor: None,
+            trace: trace.clone(),
+            actor,
         };
         if let Err(e) = self.ledger.append(&row) {
             // The ledger write itself is still best-effort — the receipt
@@ -517,8 +545,8 @@ impl SpendGate for CoreSpendGate {
             duration_ms: (latency_ms > 0).then_some(latency_ms),
             session_id: Some(session_id.to_string()),
             plugin: None,
-            trace: None,
-            actor: None,
+            actor,
+            trace,
         });
     }
 }

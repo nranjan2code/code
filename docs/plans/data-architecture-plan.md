@@ -273,12 +273,23 @@ Landed (main, 2026-10-01): slice 1 (typed ids, `TraceKey` and `Cause`,
 additive `space`/`run`/`cause` on `SessionHeader`, `TestScope`) and slice 2
 (a `Traced` trait with additive `trace`/`actor` on 12 side-ledger row types,
 `derived_from` on memory notes, entities and skill proposals, checkpoint
-labels carrying the turn id). Every write site still sets the key to `None`.
-Remaining: slice 3 (`ToolContext.trace`, the broker protocol bump,
-`SandboxEventSink` and sandbox records, the bus envelope and real
-`prev_hash`), slice 4 (real `RunId` and `PrincipalId` through admission,
-`InboundRequest` and delivery packets, the typed-id replacements, the data
-dictionary, FinOps per Agent and per run, AGENTS.md changes).
+labels carrying the turn id), slice 3 (`ToolContext.trace`, the broker
+protocol bump, `SandboxEventSink` and sandbox records, the bus envelope and
+real `prev_hash`). Slice 4a makes the key real where work is admitted:
+`Core::mint_trace` (`vak-core/src/admission.rs`) mints a `RunId` and builds
+the `TraceKey` per admitted turn with the cause its surface implies
+(`User`, `Channel`, `Schedule`, manual `Trigger`, `Heartbeat`, `Revision`,
+`Delegation` for `task` children); `SessionHeader.run` and `.cause` are set
+at creation (`space` stays `None` until a Space has an id); principals are
+the owner (persisted additively in the owner record), the channel sender,
+the Agent and the system; and the key reaches the agent loop, each tool
+call's context, the broker worker, `SandboxEventSink`, the cost, activity
+and sandbox rows, `execute_script` and the hub's bus emit. The four sandbox
+record types are `Traced`.
+Remaining: slice 4b (typed-id replacements, the data dictionary, FinOps per
+Agent and per run) and the write sites with no key in scope yet (operations
+incidents, coworking messages, outbox jobs and delivery packets, inbox,
+security events, misread and routing evidence, Office room revisions).
 
 - **Typed ids** in `vak-session/src/ids.rs`; **`TraceKey` and `Cause`** in
   `trace.rs` (doc 73 §4). `TraceKey::child` is the only way to make a span.

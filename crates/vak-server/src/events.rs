@@ -131,12 +131,21 @@ impl EventHub {
     /// When a `ServerBus` is attached, the event is also published to the
     /// distributed fabric via a spawned tokio task (fire-and-forget).
     pub fn emit(&self, event: SystemEvent) {
+        self.emit_traced(event, None);
+    }
+
+    /// As [`EventHub::emit`], carrying the run's trace key to the bus
+    /// envelope so the announcement joins the run's trace.
+    pub fn emit_traced(&self, event: SystemEvent, trace: Option<vak_session::trace::TraceKey>) {
         let _ = self.tx.send(event.clone());
         if let Some(bus) = &self.bus {
             let session_id = event_session_id(&event);
             let bus = bus.clone();
             tokio::spawn(async move {
-                if let Err(e) = bus.emit(&event, session_id.as_deref()).await {
+                if let Err(e) = bus
+                    .emit_traced(&event, session_id.as_deref(), trace.as_ref())
+                    .await
+                {
                     eprintln!("vak-server: ServerBus emit failed: {e}");
                 }
             });
@@ -227,12 +236,21 @@ impl EventHub {
         });
     }
 
-    pub fn emit_gateway_inbound(&self, surface: &str, who: &str, preview: &str) {
-        self.emit(SystemEvent::GatewayInbound {
-            surface: surface.to_string(),
-            who: who.to_string(),
-            preview: preview.to_string(),
-        });
+    pub fn emit_gateway_inbound(
+        &self,
+        surface: &str,
+        who: &str,
+        preview: &str,
+        trace: Option<vak_session::trace::TraceKey>,
+    ) {
+        self.emit_traced(
+            SystemEvent::GatewayInbound {
+                surface: surface.to_string(),
+                who: who.to_string(),
+                preview: preview.to_string(),
+            },
+            trace,
+        );
     }
 
     pub fn emit_agent_summary(&self, summary: &str, detail: Option<String>) {

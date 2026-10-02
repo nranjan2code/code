@@ -788,10 +788,19 @@ impl TaskTool {
                 }]
             })
             .unwrap_or_default();
+        // The child is its own run, caused by this call of the parent's.
+        let child_trace = ctx.trace.as_ref().map(|parent| {
+            let tool_use_id = ctx
+                .sandbox_sink
+                .as_ref()
+                .map_or("", |sink| sink.execution_id());
+            let child_agent = child_identity.as_ref().map_or("vak", |a| a.id.as_str());
+            parent.delegate(child_agent, tool_use_id)
+        });
         let header = SessionHeader {
             space: None,
-            run: None,
-            cause: None,
+            run: child_trace.as_ref().map(|t| t.run),
+            cause: child_trace.as_ref().map(|t| t.cause.clone()),
             agent: child_identity.clone().or_else(|| Some(vak_core_identity())),
             session_id: session_id.clone(),
             created_at: chrono::Utc::now(),
@@ -887,6 +896,7 @@ impl TaskTool {
         cfg.approval_mode = self.deps.approval_mode;
         cfg.approver = self.deps.approver.clone();
         cfg.sandbox = self.deps.sandbox.clone();
+        cfg.trace = child_trace;
 
         let agent = Agent::new(self.deps.provider.clone(), log, cfg);
         let steering = Arc::new(SteeringQueues::new());

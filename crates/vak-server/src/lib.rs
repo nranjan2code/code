@@ -1742,7 +1742,9 @@ async fn replay_operations_outbox(
                     }
                     .to_string(),
                 },
-                persisted: false, trace: None, actor: None,
+                persisted: false,
+                trace: Some(request_trace(&state, "ops-replay")),
+                actor: Some(request_actor(&state)),
             };
             receipt.persisted =
                 operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
@@ -2195,8 +2197,8 @@ async fn ops_action(
             detail: verification_detail.to_string(),
         },
         persisted: false,
-        trace: None,
-        actor: None,
+        trace: Some(request_trace(&state, "ops-action")),
+        actor: Some(request_actor(&state)),
     };
     receipt.persisted = operations::record_action(&state.core.sessions_home(), &receipt).is_ok();
     let receipt_json = serde_json::to_value(&receipt).unwrap_or_else(|_| serde_json::json!({}));
@@ -4027,6 +4029,22 @@ pub(crate) fn register_handle(
                 .header()
                 .and_then(|header| header.conversation.clone()),
         );
+    // A person at a browser or API client acts as the enrolled owner; a
+    // channel or unattended handle already carries its own actor.
+    let core = core.with_admitted_trace(None);
+    let core = if matches!(
+        core.surface(),
+        vak_core::Surface::Web | vak_core::Surface::Server | vak_core::Surface::Unknown
+    ) {
+        core.with_default_actor(
+            state
+                .owner_auth
+                .principal()
+                .unwrap_or_else(vak_session::trace::local::local_owner),
+        )
+    } else {
+        core
+    };
     let durable_home = core.sessions_home();
     let latest_intent = session.chain_to_root().iter().rev().find_map(|entry| {
         if let vak_session::EntryPayload::Intent(record) = &entry.payload {
@@ -8391,8 +8409,8 @@ async fn create_coworking_invitation(
         token_hash: coworking::token_hash(&token),
         created_at: now.to_rfc3339(),
         expires_at: (now + chrono::Duration::hours(i64::from(body.expires_in_hours))).to_rfc3339(),
-        trace: None,
-        actor: None,
+        trace: Some(request_trace(&state, "coworking-grant")),
+        actor: Some(request_actor(&state)),
     };
     match coworking::invite(
         &coworking::store_path(&state.core.sessions_home()),
@@ -11710,8 +11728,8 @@ async fn export_sandbox_candidate(
                 }
             };
             let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
-                trace: None,
-                actor: None,
+                trace: Some(request_trace(&state, "candidate-export")),
+                actor: Some(request_actor(&state)),
                 record_id: format!("candidate-{id}"),
                 session_id,
                 turn_id,
@@ -12297,8 +12315,8 @@ async fn narrow_sandbox_candidate_office(
         }
     };
     let record = vak_sandbox::DurableRecord::Candidate(vak_sandbox::CandidateRecord {
-        trace: None,
-        actor: None,
+        trace: Some(request_trace(&state, "candidate-narrow")),
+        actor: Some(request_actor(&state)),
         record_id: format!("candidate-{id}"),
         session_id: saved.session_id.clone(),
         turn_id: saved.turn_id.clone(),
@@ -12797,6 +12815,11 @@ async fn dispatch_candidate_revision(
         Ok(core) => core
             .with_agent_identity(Some(agent_identity))
             .with_surface(vak_core::Surface::Background)
+            .with_run_admission(vak_core::admission::RunAdmission::default().cause(
+                vak_session::trace::Cause::Revision {
+                    candidate: saved.candidate.candidate_id.clone(),
+                },
+            ))
             .with_approver_answerable(false)
             .with_task_copy_boundary()
             .with_new_documents(new_documents),
@@ -12961,8 +12984,13 @@ async fn dispatch_candidate_revision(
                         match vak_sandbox::candidate_digest(&candidate) {
                             Ok(candidate_digest) => {
                                 let record = vak_sandbox::CandidateRecord {
-                                    trace: None,
-                                    actor: None,
+                                    trace: Some(request_trace_for(
+                                        &state,
+                                        vak_session::trace::Cause::Revision {
+                                            candidate: saved.candidate.candidate_id.clone(),
+                                        },
+                                    )),
+                                    actor: Some(request_actor(&state)),
                                     record_id: format!("candidate-{id}"),
                                     session_id: saved.session_id.clone(),
                                     turn_id: saved.turn_id.clone(),
@@ -13272,7 +13300,8 @@ async fn promote_sandbox_candidate(
         receipt.integration.target_checks = checks;
     }
     let record = vak_sandbox::DurableRecord::Promotion(vak_sandbox::PromotionRecord {
-        trace: None,
+        trace: Some(request_trace(&state, "promotion")),
+        actor: Some(request_actor(&state)),
         record_id: format!("promotion-{}", receipt.candidate_id),
         session_id,
         result_id: saved.result_id,
@@ -13453,7 +13482,13 @@ async fn run_sandbox_workspace_check(
                 .into_response();
         }
     }
-    let outcome = execute_script(&state.core, &candidate.destination_root, &check.command).await;
+    let outcome = execute_script(
+        &state.core,
+        &candidate.destination_root,
+        &check.command,
+        Some(request_trace(&state, "promotion-check")),
+    )
+    .await;
     let candidate_after_check = candidate;
     let promotion_root = sandbox_promotions_root(&state);
     let expected_digest = promotion.receipt.integration.applied_state_digest.clone();
@@ -17600,6 +17635,9 @@ async fn start_bestofn(
             None,
             None,
             true,
+            vak_session::trace::Cause::User {
+                request_id: format!("best-of-n:{}", uuid::Uuid::now_v7()),
+            },
         )
         .await
         {
@@ -17638,6 +17676,41 @@ async fn start_bestofn(
     (StatusCode::OK, Json(serde_json::json!({ "runs": runs }))).into_response()
 }
 
+/// The enrolled owner, or the person at this machine when none is: the
+/// principal a request made directly of this server acts as.
+pub(crate) fn request_actor(state: &AppState) -> vak_session::ids::PrincipalId {
+    state
+        .owner_auth
+        .principal()
+        .unwrap_or_else(vak_session::trace::local::local_owner)
+}
+
+/// The trace for work a person asked of this server directly: a fresh run
+/// whose cause is `what`, acting as [`request_actor`].
+pub(crate) fn request_trace(state: &AppState, what: &str) -> vak_session::trace::TraceKey {
+    request_trace_for(
+        state,
+        vak_session::trace::Cause::User {
+            request_id: format!("{what}:{}", uuid::Uuid::now_v7()),
+        },
+    )
+}
+
+pub(crate) fn request_trace_for(
+    state: &AppState,
+    cause: vak_session::trace::Cause,
+) -> vak_session::trace::TraceKey {
+    state
+        .core
+        .clone()
+        .with_run_admission(
+            vak_core::admission::RunAdmission::default()
+                .cause(cause)
+                .actor(request_actor(state)),
+        )
+        .mint_trace(None)
+}
+
 /// One isolated run inside `wt`: child Core + session + registered handle +
 /// fired turn. Shared by best-of-N and the task scheduler. `model_pin`
 /// (docs/design/29-personal-os.md P2) overrides the child's provider/model
@@ -17653,6 +17726,7 @@ async fn spawn_isolated_run(
     agent_id: Option<&str>,
     agent_revision: Option<u64>,
     start_turn: bool,
+    cause: vak_session::trace::Cause,
 ) -> Result<String, String> {
     let identity = if let Some(agent_id) = agent_id {
         let profiles = agents::effective(&state.active_core())?;
@@ -17679,6 +17753,7 @@ async fn spawn_isolated_run(
         .map(|c| {
             c.with_agent_identity(identity)
                 .with_surface(vak_core::Surface::Background)
+                .with_run_admission(vak_core::admission::RunAdmission::default().cause(cause))
                 // Unattended, and stamped BEFORE `start_session` composes and
                 // freezes the prompt. Stamping afterwards would be too late:
                 // the prompt would already have advertised a gated capability
@@ -18549,7 +18624,7 @@ async fn delete_task(State(state): State<AppState>, Path(id): Path<String>) -> S
 
 /// Fire a task immediately (also resets its schedule).
 async fn run_task_now(State(state): State<AppState>, Path(id): Path<String>) -> StatusCode {
-    match fire_task(&state, &id).await {
+    match fire_task(&state, &id, TaskTrigger::Manual).await {
         Ok(_) => return StatusCode::ACCEPTED,
         Err(NotFired::Gone) => return StatusCode::NOT_FOUND,
         Err(NotFired::Refused) => return StatusCode::UNPROCESSABLE_ENTITY,
@@ -18677,7 +18752,29 @@ fn refuse_task(state: &AppState, task: &TaskDef, reason: String) -> NotFired {
     NotFired::Refused
 }
 
-async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
+/// Why a task is being fired now: its schedule came due, or a person asked
+/// for it. The first is a `Schedule` cause, the second a manual `Trigger`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskTrigger {
+    Schedule,
+    Manual,
+}
+
+fn task_cause(task: &TaskDef, trigger: TaskTrigger) -> vak_session::trace::Cause {
+    let now = chrono::Utc::now();
+    match trigger {
+        TaskTrigger::Schedule => vak_session::trace::Cause::Schedule {
+            schedule: task.id.clone(),
+            slot: now.to_rfc3339(),
+        },
+        TaskTrigger::Manual => vak_session::trace::Cause::Trigger {
+            trigger: vak_session::ids::TriggerId::derived(&task.id),
+            request_id: format!("manual:{}", uuid::Uuid::now_v7()),
+        },
+    }
+}
+
+async fn fire_task(state: &AppState, id: &str, trigger: TaskTrigger) -> Result<String, NotFired> {
     let Some(snapshot) = state
         .tasks
         .lock()
@@ -18704,7 +18801,7 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
         .map(str::trim)
         .filter(|s| !s.is_empty());
     if let Some(script) = script {
-        return fire_script_task(state, &snapshot, script)
+        return fire_script_task(state, &snapshot, script, task_cause(&snapshot, trigger))
             .await
             .ok_or(NotFired::Busy);
     }
@@ -18764,6 +18861,7 @@ async fn fire_task(state: &AppState, id: &str) -> Result<String, NotFired> {
         snapshot.agent_id.as_deref(),
         snapshot.agent_revision,
         false,
+        task_cause(&snapshot, trigger),
     )
     .await
     .map_err(|error| {
@@ -18916,7 +19014,12 @@ struct ScriptOutcome {
     text: String,
 }
 
-async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> ScriptOutcome {
+async fn execute_script(
+    core: &Core,
+    cwd: &std::path::Path,
+    script: &str,
+    trace: Option<vak_session::trace::TraceKey>,
+) -> ScriptOutcome {
     let bash = core.agent_tools().into_iter().find(|t| t.name() == "bash");
     let Some(bash) = bash else {
         return ScriptOutcome {
@@ -18930,7 +19033,7 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
         sandbox: core.agent_sandbox(),
         sandbox_sink: None,
         agent_id: core.agent_identity().map(|a| a.id.clone()),
-        trace: None,
+        trace,
         new_documents: Vec::new(),
     };
     let args = serde_json::json!({ "command": script, "timeout_ms": SCRIPT_TIMEOUT_MS });
@@ -18951,7 +19054,12 @@ async fn execute_script(core: &Core, cwd: &std::path::Path, script: &str) -> Scr
 /// Run one watchdog tick: execute, record, deliver. Empty stdout on
 /// success stays silent (zero tokens, zero noise); any failure delivers a
 /// typed error alert even without a configured target.
-async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Option<String> {
+async fn fire_script_task(
+    state: &AppState,
+    task: &TaskDef,
+    script: &str,
+    cause: vak_session::trace::Cause,
+) -> Option<String> {
     // One execution at a time per watchdog: a scheduler tick and run-now
     // must never double-fire (or double-deliver) the same tick.
     if !state
@@ -18968,7 +19076,12 @@ async fn fire_script_task(state: &AppState, task: &TaskDef, script: &str) -> Opt
             current.last_delivery_state = Some("pending".into());
         }
     });
-    let outcome = execute_script(&state.core, &task.cwd, script).await;
+    let trace = state
+        .core
+        .clone()
+        .with_run_admission(vak_core::admission::RunAdmission::default().cause(cause))
+        .mint_trace(None);
+    let outcome = execute_script(&state.core, &task.cwd, script, Some(trace)).await;
     let mut delivery_state = "inbox";
     // Deliver FIRST: once the summary is visible on the task, its delivery
     // attempt has already been made. With zero transports configured the
@@ -19133,7 +19246,7 @@ async fn scheduler_tick(state: &AppState) {
     // A cron slot is spent only by a run that started: a refused or busy
     // task keeps its slot and is tried again next tick.
     for id in due {
-        if fire_task(state, &id).await.is_ok() {
+        if fire_task(state, &id, TaskTrigger::Schedule).await.is_ok() {
             advance_marker(state, &id);
         }
     }
@@ -19183,7 +19296,7 @@ async fn catch_up_missed_tasks(state: &AppState) {
             .collect()
     };
     for id in due {
-        if fire_task(state, &id).await.is_ok() {
+        if fire_task(state, &id, TaskTrigger::Schedule).await.is_ok() {
             advance_marker(state, &id);
         }
     }
@@ -19771,7 +19884,8 @@ fn append_preview_preparation(
 ) -> Result<(), String> {
     let record =
         vak_sandbox::DurableRecord::PreviewPreparation(vak_sandbox::PreviewPreparationRecord {
-            trace: None,
+            trace: Some(request_trace(state, "preview-preparation")),
+            actor: Some(request_actor(state)),
             record_id: format!("preview-preparation-{}", uuid::Uuid::now_v7()),
             session_id: saved.session_id.clone(),
             result_id: saved.result_id.clone(),
@@ -24405,7 +24519,7 @@ mod scheduler_state_tests {
             Some(vak),
         );
         load_tasks(&state);
-        let session = fire_task(&state, "for-writer")
+        let session = fire_task(&state, "for-writer", TaskTrigger::Schedule)
             .await
             .unwrap_or_else(|_| panic!("the routine starts"));
 

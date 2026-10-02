@@ -2,6 +2,7 @@
 //! the agent loop behind one entry point. TUI, server, and exec mode are
 //! thin consumers of this crate.
 
+pub mod admission;
 pub mod agent_definitions;
 pub mod agent_network;
 pub mod backup;
@@ -679,6 +680,8 @@ pub struct Core {
     prompt_role: Option<String>,
     agent_identity: Option<vak_session::types::AgentIdentity>,
     conversation_context: Option<vak_session::types::ConversationContext>,
+    /// Cause and actor the surface stamped for the runs this handle admits.
+    run_admission: admission::RunAdmission,
     /// Prompt layers the caller supplies rather than the filesystem: the
     /// gateway's bot and chat tiers. `Arc` because `Core` is cloned per
     /// turn and this is almost always empty.
@@ -1367,6 +1370,7 @@ impl Core {
             prompt_role: None,
             agent_identity: Some(vak_agent_identity()),
             conversation_context: None,
+            run_admission: admission::RunAdmission::default(),
             prompt_overlays: Arc::new(Vec::new()),
             approver_answerable: true,
         }
@@ -5529,10 +5533,11 @@ impl Core {
                 self.surface.slug(),
             ))
         });
+        let admission_trace = self.mint_trace(None);
         let header = SessionHeader {
             space: None,
-            run: None,
-            cause: None,
+            run: Some(admission_trace.run),
+            cause: Some(admission_trace.cause.clone()),
             agent: self.agent_identity.clone(),
             session_id,
             created_at: chrono::Utc::now(),
@@ -6166,6 +6171,14 @@ impl Core {
             }
         };
         let mut cfg = AgentConfig::new(frozen_system_prompt.clone());
+        // The run's identity, minted once here and carried by value from now
+        // on (docs/design/73 §4).
+        let run_trace = self.mint_trace(
+            prompt_meta
+                .as_ref()
+                .and_then(|meta| meta.request_id.as_deref()),
+        );
+        cfg.trace = Some(run_trace.clone());
 
         // ---- intent resolution (docs/design/47-commitment-kernel.md) ----
         // Runs before anything reads a knob it governs. Everything derived
@@ -6561,6 +6574,7 @@ impl Core {
         if let Some(ceiling) = engagement.limits.spend_ceiling_usd {
             turn_gate.narrow_run_cap(ceiling);
         }
+        turn_gate.set_trace(Some(run_trace.clone()));
         cfg.spend_gate = Some(turn_gate);
 
         // MEA substrate (Phase H): auditor sees the workspace delta between
@@ -6656,6 +6670,7 @@ impl Core {
             let context = self.plugin_mcp_invocation_context();
             let activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
             let activity_session = session.header().map(|h| h.session_id.clone());
+            let activity_trace = run_trace.clone();
             let recorder = Arc::new(
                 move |server: &str, tool: &str, success: bool, duration_ms: u64| {
                     let plugin = context
@@ -6670,8 +6685,8 @@ impl Core {
                         duration_ms: Some(duration_ms),
                         session_id: activity_session.clone(),
                         plugin,
-                        trace: None,
-                        actor: None,
+                        actor: activity_trace.actor,
+                        trace: Some(activity_trace.child()),
                     });
                     for (store, plugin, trace_id) in &context {
                         if server.starts_with(&format!("plugin.{plugin}.")) {
@@ -6958,6 +6973,7 @@ impl Core {
         let workspace_home = self.inner.cwd.join(".vak");
         let activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
         let activity_session = session.header().map(|h| h.session_id.clone());
+        let hook_trace = run_trace.clone();
         cfg.hook_recorder = Some(Arc::new(
             move |hook: &vak_hooks::HookDef, success: bool, duration_ms: u64| {
                 let plugin_name = plugin_hooks
@@ -6972,8 +6988,8 @@ impl Core {
                     duration_ms: Some(duration_ms),
                     session_id: activity_session.clone(),
                     plugin: plugin_name,
-                    trace: None,
-                    actor: None,
+                    actor: hook_trace.actor,
+                    trace: Some(hook_trace.child()),
                 });
                 if let Some((plugin, _)) = plugin_hooks
                     .iter()
@@ -6994,6 +7010,7 @@ impl Core {
         ));
         let tool_activity_ledger = finops::ActivityLedger::new(&self.sessions_home());
         let tool_activity_session = session.header().map(|h| h.session_id.clone());
+        let tool_trace = run_trace.clone();
         cfg.tool_activity_recorder = Some(Arc::new(
             move |name: &str, args: &serde_json::Value, success: bool, duration_ms: u64| {
                 let plugin = name
@@ -7018,8 +7035,8 @@ impl Core {
                     duration_ms: Some(duration_ms),
                     session_id: tool_activity_session.clone(),
                     plugin,
-                    trace: None,
-                    actor: None,
+                    actor: tool_trace.actor,
+                    trace: Some(tool_trace.child()),
                 });
             },
         ));

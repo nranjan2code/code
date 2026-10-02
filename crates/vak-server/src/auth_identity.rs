@@ -17,6 +17,7 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+use vak_session::ids::PrincipalId;
 use webauthn_rs::prelude::{
     Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
     RegisterPublicKeyCredential, Uuid, Webauthn, WebauthnBuilder,
@@ -51,8 +52,17 @@ enum Pending {
 struct OwnerRecord {
     version: u8,
     id: Uuid,
+    /// The owner as a principal (`prn_`), stamped on everything the owner
+    /// does. Absent in a record written before it existed: `read` fills it
+    /// from `id`, and the next write persists it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    principal: Option<PrincipalId>,
     passkeys: Vec<Passkey>,
     recovery_hashes: Vec<String>,
+}
+
+fn principal_for(id: Uuid) -> PrincipalId {
+    PrincipalId::from_uuid(id).unwrap_or_else(|| PrincipalId::derived(&id.to_string()))
 }
 
 impl OwnerAuth {
@@ -89,8 +99,11 @@ impl OwnerAuth {
         let path = self.root.join("owner.json");
         match fs::read(path) {
             Ok(bytes) => {
-                let owner: OwnerRecord = serde_json::from_slice(&bytes)
+                let mut owner: OwnerRecord = serde_json::from_slice(&bytes)
                     .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+                if owner.principal.is_none() {
+                    owner.principal = Some(principal_for(owner.id));
+                }
                 if owner.version != 1 {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
@@ -125,6 +138,11 @@ impl OwnerAuth {
             let _ = fs::remove_file(&temp);
         }
         result
+    }
+
+    /// The enrolled owner as a principal, or `None` before enrollment.
+    pub(crate) fn principal(&self) -> Option<PrincipalId> {
+        self.read().ok().flatten().and_then(|owner| owner.principal)
     }
 
     pub(crate) fn enrolled(&self) -> io::Result<bool> {
@@ -385,6 +403,7 @@ pub(crate) async fn enroll_finish(
     let owner = OwnerRecord {
         version: 1,
         id: owner_id,
+        principal: Some(principal_for(owner_id)),
         passkeys: vec![passkey],
         recovery_hashes: codes.iter().map(|code| recovery_hash(code)).collect(),
     };
@@ -796,4 +815,41 @@ pub(crate) async fn revoke_all_sessions(
         Json(serde_json::json!({"ok": true})),
     )
         .into_response()
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_owner_record_without_a_principal_gets_one_and_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = OwnerAuth::new(dir.path().to_path_buf());
+        assert_eq!(auth.principal(), None, "no owner enrolled yet");
+
+        let id = Uuid::now_v7();
+        std::fs::create_dir_all(dir.path().join("auth")).unwrap();
+        std::fs::write(
+            dir.path().join("auth/owner.json"),
+            serde_json::json!({
+                "version": 1,
+                "id": id,
+                "passkeys": [],
+                "recovery_hashes": [],
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let principal = auth.principal().expect("an enrolled owner is a principal");
+        assert_eq!(principal, principal_for(id));
+        assert_eq!(auth.principal(), Some(principal), "stable across reads");
+
+        let owner = auth.read().unwrap().unwrap();
+        auth.write(&owner).unwrap();
+        let text = std::fs::read_to_string(dir.path().join("auth/owner.json")).unwrap();
+        assert!(text.contains(&principal.to_string()), "persisted: {text}");
+        assert_eq!(auth.principal(), Some(principal));
+    }
 }

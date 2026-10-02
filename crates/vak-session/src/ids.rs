@@ -51,6 +51,28 @@ macro_rules! typed_id {
             pub fn parse(s: &str) -> Result<Self, IdError> {
                 parse_body($prefix, s).map(Self)
             }
+
+            /// A stable id derived from `seed`, still a full UUIDv7. For the
+            /// identities an install has before it has a record to persist
+            /// one in (its local tenant, the built-in Agent, the system, a
+            /// channel sender): the same seed is the same id on every run,
+            /// and the seed is never recoverable from the id.
+            pub fn derived(seed: &str) -> Self {
+                use sha2::{Digest, Sha256};
+                let mut h = Sha256::new();
+                h.update($prefix.as_bytes());
+                h.update([0u8]);
+                h.update(seed.as_bytes());
+                let digest = h.finalize();
+                let mut bytes = [0u8; 10];
+                bytes.copy_from_slice(&digest[..10]);
+                Self(uuid::Builder::from_unix_timestamp_millis(0, &bytes).into_uuid())
+            }
+
+            /// Adopt an existing UUIDv7 (an owner record's id) as this id.
+            pub fn from_uuid(u: uuid::Uuid) -> Option<Self> {
+                (u.get_version_num() == 7).then_some(Self(u))
+            }
         }
 
         impl Default for $name {
@@ -160,6 +182,18 @@ mod tests {
         let simple = format!("ses_{}", uuid::Uuid::now_v7().simple());
         assert!(SessionId::parse(&simple).is_err());
         assert!(serde_json::from_str::<SessionId>("\"nope\"").is_err());
+    }
+
+    #[test]
+    fn derived_ids_are_stable_valid_and_distinct() {
+        let a = AgentId::derived("vak");
+        assert_eq!(a, AgentId::derived("vak"));
+        assert_ne!(a, AgentId::derived("other"));
+        assert_eq!(AgentId::parse(&a.to_string()).unwrap(), a);
+        assert_ne!(
+            PrincipalId::derived("x").to_string()[4..],
+            AgentId::derived("x").to_string()[4..]
+        );
     }
 
     #[test]

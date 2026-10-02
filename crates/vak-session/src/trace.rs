@@ -149,6 +149,76 @@ impl TraceKey {
     }
 }
 
+impl TraceKey {
+    /// The same key, naming who acted and for whom.
+    pub fn acting(mut self, actor: PrincipalId, on_behalf_of: Option<PrincipalId>) -> Self {
+        self.actor = Some(actor);
+        self.on_behalf_of = on_behalf_of;
+        self
+    }
+
+    /// The key of a run delegated from this one by the tool call
+    /// `tool_use_id`: a new run whose cause names this run, acting as the
+    /// child Agent on behalf of whoever this run acted for.
+    pub fn delegate(&self, child_agent: &str, tool_use_id: &str) -> Self {
+        let mut key = TraceKey::root(
+            self.tenant,
+            self.space,
+            local::agent(child_agent),
+            Cause::Delegation {
+                parent_run: self.run,
+                tool_use_id: tool_use_id.to_string(),
+            },
+        );
+        key.actor = Some(local::agent_principal(child_agent));
+        key.on_behalf_of = self.actor.or(self.on_behalf_of);
+        key
+    }
+}
+
+/// The identities an install has before Tenant and Space records exist
+/// (data-architecture plan, M3b). Each is derived from a stable seed, so it
+/// is the same on every run and in every process, and is replaced by a
+/// persisted id when the record that owns it lands.
+pub mod local {
+    use crate::ids::{AgentId, PrincipalId, SpaceId, TenantId};
+    use std::path::Path;
+
+    pub fn tenant() -> TenantId {
+        TenantId::derived("local")
+    }
+
+    /// The workspace's Space, bound by its path until a Space has an id of
+    /// its own.
+    pub fn space(cwd: &Path) -> SpaceId {
+        SpaceId::derived(&cwd.to_string_lossy())
+    }
+
+    pub fn agent(agent_id: &str) -> AgentId {
+        AgentId::derived(agent_id)
+    }
+
+    pub fn agent_principal(agent_id: &str) -> PrincipalId {
+        PrincipalId::derived(&format!("agent:{agent_id}"))
+    }
+
+    pub fn system_principal() -> PrincipalId {
+        PrincipalId::derived("system")
+    }
+
+    /// The person at this machine's own CLI or desktop, who holds no
+    /// browser identity.
+    pub fn local_owner() -> PrincipalId {
+        PrincipalId::derived("owner:local")
+    }
+
+    /// A channel sender, named by the transport, chat and sender the gateway
+    /// resolved.
+    pub fn channel_sender(surface: &str, chat: &str, sender: &str) -> PrincipalId {
+        PrincipalId::derived(&format!("sender:{surface}:{chat}:{sender}"))
+    }
+}
+
 /// A durable ledger row that carries the trace key and the acting principal
 /// it was written under. Both are optional and additive (invariant 29): a
 /// write site with no real key yet leaves them `None`.

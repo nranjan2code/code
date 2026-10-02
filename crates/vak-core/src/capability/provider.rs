@@ -35,6 +35,7 @@ struct CapabilityCoreContext {
     prompt_role: Option<String>,
     agent_identity: Option<vak_session::types::AgentIdentity>,
     conversation_context: Option<vak_session::types::ConversationContext>,
+    run_admission: crate::admission::RunAdmission,
     prompt_overlays: Arc<Vec<crate::prompts::LayerInput>>,
     approver_answerable: bool,
 }
@@ -51,6 +52,7 @@ impl WeakCapabilityProvider {
                 prompt_role: core.prompt_role.clone(),
                 agent_identity: core.agent_identity.clone(),
                 conversation_context: core.conversation_context.clone(),
+                run_admission: core.run_admission.clone(),
                 prompt_overlays: core.prompt_overlays.clone(),
                 approver_answerable: core.approver_answerable,
             },
@@ -67,6 +69,7 @@ impl WeakCapabilityProvider {
             prompt_role: self.context.prompt_role.clone(),
             agent_identity: self.context.agent_identity.clone(),
             conversation_context: self.context.conversation_context.clone(),
+            run_admission: self.context.run_admission.clone(),
             prompt_overlays: self.context.prompt_overlays.clone(),
             approver_answerable: self.context.approver_answerable,
         })

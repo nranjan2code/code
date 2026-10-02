@@ -2748,7 +2748,37 @@ async fn gateway_inbound(
             bot_id: body.bot_id.clone(),
         }),
     };
-    let core = core.with_conversation_context(Some(conversation_context));
+    let request_id = body
+        .request_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| format!("gateway-{}", uuid::Uuid::now_v7()));
+    // The run's cause and actor are what the gateway resolved: the endpoint
+    // the message arrived on, and the sender behind it (docs/design/73 §4).
+    let endpoint = match body.bot_id.as_deref().filter(|id| !id.trim().is_empty()) {
+        Some(bot) => format!("{}:{}:{bot}", body.surface.trim(), body.chat.trim()),
+        None => format!("{}:{}", body.surface.trim(), body.chat.trim()),
+    };
+    let sender = body.sender.as_deref().map(str::trim).unwrap_or_default();
+    let admission = vak_core::admission::RunAdmission::default()
+        .cause(vak_session::trace::Cause::Channel {
+            endpoint,
+            request_id: request_id.clone(),
+        })
+        .actor(vak_session::trace::local::channel_sender(
+            body.surface.trim(),
+            body.chat.trim(),
+            sender,
+        ));
+    let core = core
+        .with_conversation_context(Some(conversation_context))
+        .with_run_admission(admission.clone());
+    // One key for the request: the bus announcement below and the run it
+    // starts share it, so they are one trace.
+    let admitted = core.mint_trace(None);
+    let core = core.with_run_admission(admission.trace(admitted.clone()));
 
     let handle = match resolve_session(&state, &core, &key).await {
         Ok(h) => h,
@@ -2761,13 +2791,6 @@ async fn gateway_inbound(
         }
     };
 
-    let request_id = body
-        .request_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| format!("gateway-{}", uuid::Uuid::now_v7()));
     let already_admitted = handle
         .admissions
         .lock()
@@ -2867,7 +2890,9 @@ async fn gateway_inbound(
         .filter(|s| !s.is_empty())
         .unwrap_or("unknown");
     let preview: String = expanded_text.chars().take(80).collect();
-    state.hub.emit_gateway_inbound(&body.surface, who, &preview);
+    state
+        .hub
+        .emit_gateway_inbound(&body.surface, who, &preview, Some(admitted));
     // Only an explicit command is control; everything else a person types
     // while the run is busy is steering text (docs/design/47, control
     // plane). "Stop using semicolons" steers; "/stop" or a bare "stop"

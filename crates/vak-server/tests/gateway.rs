@@ -231,6 +231,23 @@ async fn inbound_wait_roundtrip_reuses_binding() {
     let agent_home = vak_config::paths::agent_home_at(&home.join("home"), "vak");
     let ledger = SessionPath::new_session_file(&agent_home, &home, &sid);
     let raw_ledger = std::fs::read_to_string(ledger).unwrap();
+    // Admission names the run and its cause (docs/design/73 §4): the header
+    // records the channel endpoint and request, and the cost the turn spent
+    // is stamped with the same run.
+    let header: serde_json::Value =
+        serde_json::from_str(raw_ledger.lines().next().unwrap()).unwrap();
+    assert_eq!(header["cause"]["kind"], "channel");
+    assert_eq!(header["cause"]["endpoint"], "webhook:ci");
+    assert_eq!(header["cause"]["request_id"], "gateway-req-1");
+    let run = header["run"].as_str().unwrap().to_string();
+    assert!(run.starts_with("run_"), "{run}");
+    let cost = std::fs::read_to_string(home.join("home/cost-log.jsonl")).unwrap();
+    let row: serde_json::Value = serde_json::from_str(cost.lines().last().unwrap()).unwrap();
+    assert_eq!(row["trace"]["run"], run.as_str(), "one request, one run");
+    assert!(
+        row["actor"].as_str().unwrap().starts_with("prn_"),
+        "the channel sender is the actor: {row}"
+    );
     assert!(raw_ledger.lines().any(|line| {
         serde_json::from_str::<Entry>(line)
             .ok()
