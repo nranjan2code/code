@@ -17,6 +17,12 @@ impl SpendReservationId {
     }
 }
 
+impl Default for SpendReservationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct SpendCheck<'a> {
     pub model: &'a str,
     /// Serving provider of the current frozen-ladder leg. Empty when the

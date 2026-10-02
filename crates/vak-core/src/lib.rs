@@ -2673,7 +2673,7 @@ impl Core {
         }
         let scope = self.shared_scope();
         let sessions_home = scope.root();
-        let day_budget = finops::shared_day_budget(&sessions_home);
+        let day_budget = finops::shared_day_budget(sessions_home);
         let gate = Arc::new(finops::CoreSpendGate::with_shared_day_budget(
             // `self.sessions_home()`, not the raw `inner.sessions_home`
             // field — the latter ignores `set_sessions_home` (the SDK
@@ -2681,7 +2681,7 @@ impl Core {
             // the ledger would silently keep writing to the original
             // location. The reflection call site already got this right;
             // the per-turn call site this replaces did not.
-            &sessions_home,
+            sessions_home,
             &finops,
             day_budget,
         ));
