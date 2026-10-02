@@ -124,6 +124,17 @@ called it, not to the detached probe task. The ladder itself:
    Measured: single samples over inert prose gave 7k, 14k and 48k for one
    model within an hour; majority-of-three over turn-shaped filler gave 64k
    six times out of six.
+   Each rung is sized from the tokens-per-char the previous rung actually
+   cost: the provider's whole billed prompt over every character that request
+   carried (system prompt, tool schemas, and message text, tool calls and
+   tool results; `observed_tokens_per_char`). Counting message text alone
+   overstated the ratio about 1.75 times, so a rung labelled 32k carried about
+   18k tokens and the measured horizon was inflated by the same factor.
+   A probe that is cancelled (a real turn wants the model), or never gets a
+   verdict, measured nothing and caches nothing: its fallback horizon would
+   otherwise replace the bound profile by timestamp, and a rung cut off after
+   one sample is never recorded as a failure. A ladder cut short by a
+   transport failure is kept as a lower bound with `needs_reprobe` set.
 3. Cache rung: two identical requests back to back; if the provider reports
    cached tokens (`prompt_tokens_details.cached_tokens`,
    `cache_read_input_tokens`) or the second is ≥5× faster, `cache =
@@ -293,6 +304,11 @@ Properties:
   docs/design/42), the rescue for a profile with no usable horizon: turns
   behind it are marked `behind_reset` in the `TurnIndex`, never planned and
   never listed as covered, though `recall({ turn })` still reaches them.
+- An over-length rejection belongs to the route leg that raised it
+  (`StepLedger::context_rejected_leg`). Only the primary's lowers the
+  primary's profile, whether a later leg then answered, failed or was
+  rejected too; a fallback's rejection says something about its own window
+  and leaves the primary's alone.
 - If a request is still rejected as over-length (provider 400 / context
   error), that is a `CapacityProfile` contradiction: `verified_window` is set
   to the rejected size, the working set is re-planned, and the turn retries

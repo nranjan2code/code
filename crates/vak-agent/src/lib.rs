@@ -2099,7 +2099,20 @@ impl Agent {
                         .complete_with_reliability(&request, &cancel, &events, true, &mut ledger)
                         .await
                     {
-                        Ok(r) => break r,
+                        Ok(r) => {
+                            // The primary rejected the request and a later leg
+                            // carried it: the next turn must not start from the
+                            // same window.
+                            if ledger.context_rejected_leg == Some(0) {
+                                self.lower_horizon_for_rejection(
+                                    &profile,
+                                    &request,
+                                    "the primary route rejected the request as too long".into(),
+                                )
+                                .await;
+                            }
+                            break r;
+                        }
                         Err(LlmError::Aborted { partial }) => {
                             let _ = self
                                 .session
@@ -2125,24 +2138,15 @@ impl Agent {
                                 )),
                             };
                         }
-                        Err(LlmError::Context(reason)) if !context_replan_used => {
+                        // Only the primary's rejection says anything about the
+                        // primary's window; a fallback leg's is that leg's own.
+                        Err(LlmError::Context(reason))
+                            if !context_replan_used && ledger.context_rejected_leg == Some(0) =>
+                        {
                             context_replan_used = true;
-                            let request_tokens =
-                                profile.estimate_tokens(chat_request_chars(&request));
-                            let mut lowered = profile.clone();
-                            lowered.observe_over_length(request_tokens);
-                            self.config.capacity = Some(lowered.clone());
-                            let mut data = self.capacity_activity_data(&lowered);
-                            data.insert("reason".into(), reason.clone());
-                            data.insert("request_tokens".into(), request_tokens.to_string());
-                            self.record_activity(
-                                vak_session::ActivityKind::CapacityFeedback,
-                                vak_session::ActivityStatus::Succeeded,
-                                "Capacity horizon lowered by an over-length rejection".into(),
-                                Some(reason),
-                                data,
-                            )
-                            .await;
+                            let lowered = self
+                                .lower_horizon_for_rejection(&profile, &request, reason)
+                                .await;
                             let new_prefix_tokens = lowered.estimate_tokens(prefix_chars(
                                 &self.config.system_prefix,
                                 &tool_defs,
@@ -4736,6 +4740,40 @@ impl Agent {
         .await;
     }
 
+    /// Lowers the primary route's horizon after it rejected `request` as too
+    /// long and records the change. Sized by what the primary leg is actually
+    /// sent: a non-Anthropic leg never carries the deferred tool schemas.
+    async fn lower_horizon_for_rejection(
+        &mut self,
+        profile: &CapacityProfile,
+        request: &ChatRequest,
+        reason: String,
+    ) -> CapacityProfile {
+        let route_provider = self
+            .config
+            .provider_name
+            .clone()
+            .unwrap_or_else(|| self.provider.name().to_string());
+        let mut sent = request.clone();
+        sent.tools = tools_for_leg(&request.tools, &route_provider);
+        let request_tokens = profile.estimate_tokens(chat_request_chars(&sent));
+        let mut lowered = profile.clone();
+        lowered.observe_over_length(request_tokens);
+        self.config.capacity = Some(lowered.clone());
+        let mut data = self.capacity_activity_data(&lowered);
+        data.insert("reason".into(), reason.clone());
+        data.insert("request_tokens".into(), request_tokens.to_string());
+        self.record_activity(
+            vak_session::ActivityKind::CapacityFeedback,
+            vak_session::ActivityStatus::Succeeded,
+            "Capacity horizon lowered by an over-length rejection".into(),
+            Some(reason),
+            data,
+        )
+        .await;
+        lowered
+    }
+
     /// Folds an explicit-instruction failure (required card not emitted,
     /// required tool not called, a stop-policy block — the runtime already
     /// classifies each) into `self.config.capacity` (§1 "Horizon
@@ -4957,6 +4995,8 @@ impl Agent {
         legs.extend(self.config.ladder.iter().cloned());
         let mut leg_req = request.clone();
         let mut last_err: Option<LlmError> = None;
+        let mut primary_context: Option<LlmError> = None;
+        ledger.context_rejected_leg = None;
 
         'legs: for (li, (provider_arc, model)) in legs.iter().enumerate() {
             leg_req.model = model.clone();
@@ -5101,6 +5141,7 @@ impl Agent {
                         // A known window that cannot admit this request is a
                         // route-local admission failure. Walk the already
                         // planned ladder before returning it to endurance.
+                        note_leg_failure(ledger, &mut primary_context, li, &error);
                         last_err = Some(error);
                         continue 'legs;
                     }
@@ -5136,6 +5177,7 @@ impl Agent {
                             {
                                 gate.release_dispatch(id);
                             }
+                            note_leg_failure(ledger, &mut primary_context, li, &error);
                             last_err = Some(error);
                             continue 'legs;
                         }
@@ -5440,12 +5482,19 @@ impl Agent {
                             {
                                 breaker.record_failure_key(&breaker_key);
                             }
+                            note_leg_failure(ledger, &mut primary_context, li, &e);
                             last_err = Some(e);
                             continue 'legs;
                         }
                     }
                 }
             }
+        }
+        // The primary's own over-length rejection outranks whatever a later
+        // leg failed with: the request does not fit the primary, and that is
+        // what the turn has to react to.
+        if let Some(error) = primary_context {
+            return Err(error);
         }
         Err(last_err.unwrap_or_else(|| LlmError::Network("route ladder exhausted".into())))
     }
@@ -7531,6 +7580,26 @@ async fn authorize(
 enum ToolRunOutput {
     Ok(String),
     Err(String),
+}
+
+/// Records which route leg an over-length rejection came from, and keeps the
+/// primary's rejection so it can be returned even when a later leg fails for
+/// another reason.
+fn note_leg_failure(
+    ledger: &mut StepLedger,
+    primary_context: &mut Option<LlmError>,
+    leg: usize,
+    error: &LlmError,
+) {
+    if !matches!(error, LlmError::Context(_)) {
+        return;
+    }
+    if leg == 0 {
+        *primary_context = Some(error.clone());
+        ledger.context_rejected_leg = Some(0);
+    } else if ledger.context_rejected_leg != Some(0) {
+        ledger.context_rejected_leg = Some(leg);
+    }
 }
 
 /// Every `tool_use` id already on the session's active chain.

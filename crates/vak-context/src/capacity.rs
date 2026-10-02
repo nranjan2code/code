@@ -642,6 +642,18 @@ pub fn probe_request(
     request
 }
 
+/// Tokens per character a probe request actually cost: the provider's whole
+/// billed prompt over every character that request carried (system prompt,
+/// tool schemas, and the text, tool-call and tool-result blocks of its
+/// messages), so the next rung lands near its target. Counting only the
+/// message text left the tool calls and results out of the denominator and
+/// overstated the ratio about 1.75 times, so every rung carried a little over
+/// half the tokens it was labelled with. `None` when either side is zero.
+pub fn observed_tokens_per_char(request: &vak_llm::ChatRequest, prompt_tokens: u64) -> Option<f64> {
+    let chars = crate::assemble::chat_request_chars(request);
+    (chars > 0 && prompt_tokens > 0).then(|| prompt_tokens as f64 / chars as f64)
+}
+
 /// The stand-in retrieval tool the filler turns "called"; defined on the
 /// request so every provider accepts the replayed pairs.
 fn probe_lookup_tool() -> vak_llm::ToolDefinition {
@@ -1003,6 +1015,32 @@ mod tests {
             .sum();
         assert!(total_chars as f64 >= 1_000.0 / 0.25 * 0.5);
         assert!(total_chars as f64 <= 1_000.0 / 0.25 * 2.0);
+    }
+
+    #[test]
+    fn a_rung_calibrated_from_a_whole_request_lands_on_its_target() {
+        // A tokenizer that costs a flat 0.3 tokens per character of everything sent.
+        let true_tpc = 0.3_f64;
+        let mut hint = 0.25_f64;
+        for target in [8_000_u64, 16_000, 32_000, 64_000] {
+            let request = probe_request(target, hint, "m");
+            let billed = (crate::assemble::chat_request_chars(&request) as f64 * true_tpc) as u64;
+            hint = observed_tokens_per_char(&request, billed).unwrap();
+            assert!((hint - true_tpc).abs() < 0.01, "{hint}");
+        }
+        let request = probe_request(64_000, hint, "m");
+        let billed = crate::assemble::chat_request_chars(&request) as f64 * true_tpc;
+        assert!(
+            (billed - 64_000.0).abs() / 64_000.0 < 0.1,
+            "rung carries {billed} tokens against a 64000 label"
+        );
+    }
+
+    #[test]
+    fn calibration_needs_both_a_request_and_a_billed_prompt() {
+        let request = probe_request(1_000, 0.25, "m");
+        assert!(observed_tokens_per_char(&request, 0).is_none());
+        assert!(observed_tokens_per_char(&vak_llm::ChatRequest::new("m"), 100).is_none());
     }
 
     #[test]

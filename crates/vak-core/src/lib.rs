@@ -5088,7 +5088,7 @@ impl Core {
         let leg = leg.clone();
         let probe_key = key.clone();
         tokio::spawn(async move {
-            let mut profile = core
+            let profile = core
                 .run_capacity_probe(
                     &leg,
                     provider_client,
@@ -5101,9 +5101,11 @@ impl Core {
                     &token,
                 )
                 .await;
-            profile.provenance.quantisation = probe_key.quantisation.clone();
-            if let Ok(mut cache) = core.inner.capacity_cache.lock() {
-                cache.insert(probe_key.clone(), profile);
+            if let Some(mut profile) = profile {
+                profile.provenance.quantisation = probe_key.quantisation.clone();
+                if let Ok(mut cache) = core.inner.capacity_cache.lock() {
+                    cache.insert(probe_key.clone(), profile);
+                }
             }
             if let Ok(mut probes) = core.inner.capacity_probes.lock() {
                 probes.remove(&probe_key);
@@ -5116,14 +5118,15 @@ impl Core {
     /// `cancel`. A rung the provider rejects with a context-length error
     /// (`LlmError::Context`) counts as a failed rung; any other transport
     /// error stops the ladder early rather than fabricating more rungs, and
-    /// the ladder's result-so-far becomes the profile.
+    /// the ladder's result-so-far becomes the profile. `None` when the probe was
+    /// cancelled or never got a verdict: nothing was measured.
     async fn run_capacity_probe(
         &self,
         leg: &vak_llm::RouteLeg,
         provider_client: Arc<dyn Provider>,
         metadata: ProbeMetadata,
         cancel: &CancellationToken,
-    ) -> vak_context::capacity::CapacityProfile {
+    ) -> Option<vak_context::capacity::CapacityProfile> {
         let ProbeMetadata {
             declared_window,
             output_reserve,
@@ -5140,6 +5143,8 @@ impl Core {
         // (no rung has reported one yet), in which case no rung is skipped.
         let mut prefill_tps_hint = 0.0_f64;
 
+        // A transport failure ended the ladder before it settled.
+        let mut incomplete = false;
         while let Some(target) = ladder.next_rung() {
             if cancel.is_cancelled() {
                 signals.push("probe cancelled before convergence".into());
@@ -5157,11 +5162,6 @@ impl Core {
             }
             let request =
                 vak_context::capacity::probe_request(target, tokens_per_char_hint, &leg.model);
-            let sent_chars: u64 = request
-                .messages
-                .iter()
-                .map(|m| m.text_content().len() as u64)
-                .sum();
             // One completion from a sampling model is one coin flip; a rung
             // is decided by the majority of up to PROBE_SAMPLES_PER_RUNG
             // identical requests (identical on purpose: the prefix is
@@ -5222,9 +5222,11 @@ impl Core {
                 match outcome {
                     Ok(message) => {
                         admission.settle(&message.usage);
-                        if sent_chars > 0 && message.usage.input_tokens > 0 {
-                            tokens_per_char_hint =
-                                message.usage.prompt_tokens() as f64 / sent_chars as f64;
+                        if let Some(observed) = vak_context::capacity::observed_tokens_per_char(
+                            &request,
+                            message.usage.prompt_tokens(),
+                        ) {
+                            tokens_per_char_hint = observed;
                         }
                         if first_prefill_ms.is_none() {
                             first_prefill_ms = message.usage.prefill_ms;
@@ -5251,6 +5253,7 @@ impl Core {
             if let Some(e) = transport_error {
                 signals.push(format!("rung {target} probe failed: {e}"));
                 break;
+                incomplete = true;
             }
             if let Some(msg) = rejected {
                 signals.push(format!("rung {target} rejected: {msg}"));
@@ -5263,7 +5266,9 @@ impl Core {
                 ladder.report(target, false, false);
                 continue;
             }
-            if passes + fails == 0 {
+            // Neither verdict reached a majority: the rung was interrupted
+            // (the probe was cancelled mid-rung), so it decides nothing.
+            if passes < needed && fails < needed {
                 break;
             }
             let followed = passes >= needed;
@@ -5280,6 +5285,14 @@ impl Core {
         }
 
         let verified_window = ladder.verified_window();
+        // An interrupted probe (a real turn wants the model) or one that never
+        // got a verdict from the provider has measured nothing. Caching its
+        // fallback horizon would replace the bound profile with a guess that
+        // outranks it by timestamp, and a single finished rung would then
+        // count as fresh for a day.
+        if cancel.is_cancelled() || rungs.is_empty() {
+            return None;
+        }
         let horizon = ladder.result().unwrap_or_else(|| {
             let largest_followed = rungs
                 .iter()
@@ -5348,7 +5361,10 @@ impl Core {
             }
         };
 
-        vak_context::capacity::CapacityProfile::from_probe(
+        if cancel.is_cancelled() {
+            return None;
+        }
+        let mut profile = vak_context::capacity::CapacityProfile::from_probe(
             declared_window,
             verified_window,
             horizon,
@@ -5361,7 +5377,11 @@ impl Core {
                 metadata_digest,
                 quantisation: None,
             },
-        )
+        );
+        // A ladder cut short by a transport failure is a lower bound, not a
+        // measurement: keep it, and try again.
+        profile.needs_reprobe = incomplete;
+        Some(profile)
     }
 
     /// Streams `request` and reports the wall-clock time from just before
@@ -11520,6 +11540,142 @@ mod capacity_probe_tests {
         vak_config::clear_override("VAK_OLLAMA_BASE_URL");
     }
 }
+
+    /// Answers the first probe request only once the test has handed it the
+    /// probe's cancellation token, then cancels the probe (a real turn
+    /// arriving) and, if asked, still follows the instruction.
+    struct InterruptedProbe {
+        token: Arc<std::sync::Mutex<Option<CancellationToken>>>,
+        follow_before_dying: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl Provider for InterruptedProbe {
+        fn name(&self) -> &str {
+            "ollama"
+        }
+
+        async fn stream(
+            &self,
+            _request: ChatRequest,
+            cancel: CancellationToken,
+        ) -> Result<vak_llm::EventStream, LlmError> {
+            let token = loop {
+                if let Some(token) = self.token.lock().unwrap().clone() {
+                    break token;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            };
+            token.cancel();
+            if !self.follow_before_dying {
+                cancel.cancelled().await;
+                return Err(LlmError::Aborted { partial: None });
+            }
+            let (mut sink, rx) = vak_llm::stream::channel(4);
+            sink.close_message(AssistantMessage {
+                content: vec![ContentBlock::ToolUse {
+                    id: "probe-1".into(),
+                    name: "probe_ack".into(),
+                    input: serde_json::json!({"ok": true}),
+                }],
+                stop_reason: StopReason::ToolUse,
+                usage: Usage {
+                    input_tokens: 4_000,
+                    output_tokens: 5,
+                    ..Default::default()
+                },
+                model: "fake-ollama-model".into(),
+                response_id: None,
+            })
+            .await;
+            Ok(rx)
+        }
+    }
+
+    /// An interrupted probe measured nothing: it must leave the bound profile
+    /// as it was, not cache a fallback horizon that outranks it by timestamp.
+    async fn interrupted_probe_leaves_the_bound_profile(follow_before_dying: bool) {
+        super::isolate_global_config();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        let unused_port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        vak_config::set_override(
+            "VAK_OLLAMA_BASE_URL",
+            format!("http://127.0.0.1:{unused_port}/v1"),
+        );
+        let token_slot = Arc::new(std::sync::Mutex::new(None));
+        let provider_slot = token_slot.clone();
+        core.inner.registry.register("ollama", move |_auth| {
+            Ok(Arc::new(InterruptedProbe {
+                token: provider_slot.clone(),
+                follow_before_dying,
+            }) as Arc<dyn Provider>)
+        });
+        let leg = vak_llm::RouteLeg {
+            provider: "ollama".into(),
+            model: "fake-ollama-model".into(),
+            dialect: vak_llm::EndpointDialect::default(),
+            credential_id: None,
+        };
+        let mut session = SessionLog::create(dir.path().join("s.jsonl"), header()).unwrap();
+        let bound = core.capacity_profile_for(&leg, &mut session).await;
+        core.maybe_start_capacity_probe(&leg).await;
+        let key = vak_context::capacity::ProfileKey {
+            provider: "ollama".into(),
+            model: "fake-ollama-model".into(),
+            quantisation: None,
+        };
+        let token = core
+            .inner
+            .capacity_probes
+            .lock()
+            .unwrap()
+            .get(&key)
+            .cloned()
+            .expect("the probe is registered");
+        *token_slot.lock().unwrap() = Some(token);
+        for _ in 0..400 {
+            if core.inner.capacity_probes.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(
+            core.inner.capacity_probes.lock().unwrap().is_empty(),
+            "the probe ended"
+        );
+        let cached = core
+            .inner
+            .capacity_cache
+            .lock()
+            .unwrap()
+            .get(&key)
+            .cloned()
+            .expect("the bound profile is still cached");
+        assert!(
+            cached.provenance.rungs.is_empty(),
+            "{:?}",
+            cached.provenance.rungs
+        );
+        assert_eq!(
+            cached.instruction_horizon.tokens, bound.instruction_horizon.tokens,
+            "the horizon is what the bind gave it, not a probe's fallback"
+        );
+        vak_config::clear_override("VAK_OLLAMA_BASE_URL");
+    }
+
+    #[tokio::test]
+    async fn a_probe_cancelled_before_any_verdict_caches_nothing() {
+        interrupted_probe_leaves_the_bound_profile(false).await;
+    }
+
+    #[tokio::test]
+    async fn a_rung_cancelled_after_one_sample_is_not_recorded_as_a_failure() {
+        interrupted_probe_leaves_the_bound_profile(true).await;
+    }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]

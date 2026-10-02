@@ -281,6 +281,12 @@ pub struct StepLedger {
     /// own prefill duration the way Ollama does). `None` until a dispatch
     /// succeeds; overwritten by each new attempt, never accumulated.
     pub last_first_token_ms: Option<u64>,
+    /// When the last dispatch ended in (or walked past) an over-length
+    /// rejection, the index of the route leg that rejected it (0 is the
+    /// primary), the primary taking precedence. The rejection says something
+    /// about that leg's window and no other's, so only the primary's may lower
+    /// the primary's capacity profile. Reset at the start of each dispatch.
+    pub context_rejected_leg: Option<usize>,
 }
 
 impl StepLedger {
@@ -289,6 +295,7 @@ impl StepLedger {
             budget: DispatchBudget::new(ceiling),
             receipt: WorkReceipt::new(purpose, provider, model),
             last_first_token_ms: None,
+            context_rejected_leg: None,
         }
     }
 
