@@ -21,6 +21,7 @@ use vak_permission::PermissionEngine;
 use vak_session::types::{FrozenContract, SessionHeader};
 use vak_session::{SessionLog, SessionPath};
 use vak_tools::read::ReadTool;
+use vak_tools::write::WriteTool;
 use vak_tools::{Tool, ToolContext};
 
 /// What a worker's model does.
@@ -127,6 +128,7 @@ struct Harness {
     agent: Agent,
     registry: Arc<WorkerRegistry>,
     requests: Arc<Mutex<Vec<ChatRequest>>>,
+    cwd: std::path::PathBuf,
 }
 
 fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
@@ -180,7 +182,7 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
         trust_project: false,
         tail: Default::default(),
         model: "test-model".into(),
-        tools: vec![Arc::new(ReadTool)],
+        tools: vec![Arc::new(ReadTool), Arc::new(WriteTool)],
         capabilities: Vec::new(),
         hooks: None,
         revocation_check: None,
@@ -219,18 +221,21 @@ fn harness(parent_script: Vec<AssistantMessage>, child: Child) -> Harness {
     cfg.tools = vec![
         task.clone(),
         Arc::new(WorkersTool::new(registry.clone(), parent_id.clone())),
+        Arc::new(WriteTool),
     ];
     cfg.workers = Some(registry.clone());
     cfg.permission = Some(Arc::new(
-        PermissionEngine::from_rule_strings(&["+task".to_string()]).unwrap(),
+        PermissionEngine::from_rule_strings(&["+task".to_string(), "+write".to_string()]).unwrap(),
     ));
     cfg.approver = Some(Arc::new(vak_agent::AutoApprove));
+    let cwd = dir.path().to_path_buf();
     std::mem::forget(dir);
     Harness {
         task,
         agent: Agent::new(provider, log, cfg),
         registry,
         requests,
+        cwd,
     }
 }
 
@@ -302,13 +307,23 @@ async fn a_parent_starts_lists_waits_for_and_reads_a_background_worker() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn a_background_worker_must_be_read_only() {
+async fn a_background_writer_must_name_what_it_may_change() {
     let mut h = harness(
         vec![
             call(
                 "t1",
                 "task",
                 serde_json::json!({"prompt": "edit it", "background": true}),
+            ),
+            call(
+                "t2",
+                "task",
+                serde_json::json!({"prompt": "edit it", "background": true, "paths": ["."]}),
+            ),
+            call(
+                "t3",
+                "task",
+                serde_json::json!({"prompt": "edit it", "background": true, "paths": ["../x"]}),
             ),
             text("it failed"),
             text("it failed"),
@@ -318,11 +333,124 @@ async fn a_background_worker_must_be_read_only() {
     );
     let _ = run(&mut h.agent).await;
     let results = tool_results(&h.requests.lock().unwrap());
-    assert!(
-        results.iter().any(|r| r.contains("must be read-only")),
-        "{results:?}"
-    );
+    for expected in [
+        "needs paths",
+        "not the whole workspace",
+        "not a path inside the workspace",
+    ] {
+        assert!(
+            results.iter().any(|r| r.contains(expected)),
+            "{expected}: {results:?}"
+        );
+    }
     assert_eq!(h.registry.background_live("parent-bg"), 0);
+}
+
+fn writer_task(label: &str, paths: serde_json::Value) -> AssistantMessage {
+    call(
+        "t1",
+        "task",
+        serde_json::json!({"prompt": "write it", "label": label, "background": true, "paths": paths}),
+    )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_background_writer_changes_only_what_it_leased() {
+    let mut h = harness(
+        vec![
+            writer_task("scribe", serde_json::json!(["out"])),
+            call("w1", "workers", serde_json::json!({"action": "wait"})),
+            text("parent done"),
+        ],
+        Child::Script(VecDeque::from(vec![
+            call(
+                "c1",
+                "write",
+                serde_json::json!({"path": "out/a.txt", "content": "A"}),
+            ),
+            call(
+                "c2",
+                "write",
+                serde_json::json!({"path": "other.txt", "content": "B"}),
+            ),
+            text("wrote it"),
+        ])),
+    );
+    let outcome = run(&mut h.agent).await;
+    assert!(
+        matches!(outcome, TurnOutcome::Completed { .. }),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(h.cwd.join("out/a.txt")).unwrap(),
+        "A",
+        "a write inside the lease lands"
+    );
+    assert!(
+        !h.cwd.join("other.txt").exists(),
+        "a write outside the lease never happens"
+    );
+    let results = tool_results(&h.requests.lock().unwrap());
+    assert!(
+        results
+            .iter()
+            .any(|r| r.contains("outside this worker's write lease")),
+        "the worker is told why: {results:?}"
+    );
+    assert_eq!(
+        h.registry.background_live("parent-bg"),
+        0,
+        "the lease ends with the worker"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_parent_is_held_off_leased_paths_until_the_worker_ends() {
+    let mut h = harness(
+        vec![
+            writer_task("scribe", serde_json::json!(["out"])),
+            call(
+                "p1",
+                "write",
+                serde_json::json!({"path": "out/mine.txt", "content": "P"}),
+            ),
+            call(
+                "p2",
+                "write",
+                serde_json::json!({"path": "free.txt", "content": "F"}),
+            ),
+            call(
+                "p3",
+                "task",
+                serde_json::json!({"prompt": "second", "background": true, "paths": ["out/sub"]}),
+            ),
+            call("w1", "workers", serde_json::json!({"action": "list"})),
+            text("done"),
+            text("done"),
+            text("done"),
+        ],
+        Child::Hangs,
+    );
+    let _ = run(&mut h.agent).await;
+    let results = tool_results(&h.requests.lock().unwrap());
+    assert!(
+        results.iter().any(|r| r.contains("holds a write lease")),
+        "the parent's write to a leased path is refused: {results:?}"
+    );
+    assert!(!h.cwd.join("out/mine.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(h.cwd.join("free.txt")).unwrap(),
+        "F",
+        "a path nobody holds is still the parent's to write"
+    );
+    assert!(
+        results
+            .iter()
+            .filter(|r| r.contains("holds a write lease"))
+            .count()
+            >= 2,
+        "a second writer cannot take an overlapping lease either: {results:?}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

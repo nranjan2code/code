@@ -1421,8 +1421,9 @@ crates/vak-agent     loop, steering queues (full user messages: text +
                      breaker + stop gate (premature-completion guard,
                      which also holds a parent back from finishing with
                      background workers running), worker questions
-                     (`questions.rs`) and the `workers` tool
-                     (`workers_tool.rs`), docs/design/84-worker-questions-and-control.md,
+                     (`questions.rs`), the `workers` tool
+                     (`workers_tool.rs`) and the write leases of background
+                     writers (`write_lease.rs`), docs/design/84-worker-questions-and-control.md,
                      spend-gate seam (docs/design/15-reliability.md), frozen-ladder
                      leg walk (docs/design/15-reliability.md), goal mode + audited
                      completion + regression obligations + handoff reset

@@ -15,6 +15,7 @@ pub mod stop_policy;
 pub mod task;
 pub mod workers_tool;
 pub mod workspace;
+pub mod write_lease;
 
 // The context engine (docs/design/68-context-engine.md) is its own crate;
 // the loop here only orchestrates it: probe, plan, assemble, dispatch,
@@ -5765,6 +5766,10 @@ impl Agent {
                             out.push((call.id, ToolRunOutput::Err("cancelled".into())));
                             continue;
                         }
+                        if let Some(reason) = self.lease_refusal(&session_id, &call) {
+                            out.push((call.id, ToolRunOutput::Err(reason)));
+                            continue;
+                        }
                         let managed_item = (self.config.work_mode == WorkMode::Managed
                             && call.name != "work")
                             .then(|| call.name.clone());
@@ -5888,6 +5893,10 @@ impl Agent {
                     Some(c) => c.clone(),
                     None => continue,
                 };
+                if let Some(reason) = self.lease_refusal(&session_id, &call) {
+                    authz[idx] = Err(reason);
+                    continue;
+                }
                 let tools = self.config.tools.clone();
                 let cancel = cancel.clone();
                 let events = events.clone();
@@ -5934,6 +5943,23 @@ impl Agent {
             }
         }
         ordered.into_iter().flatten().collect()
+    }
+
+    /// A call that would touch paths a live background writer holds is
+    /// refused until that worker ends. Checked as each call is about to run,
+    /// so a lease taken earlier in the same batch applies.
+    fn lease_refusal(&self, session_id: &str, call: &PendingToolCall) -> Option<String> {
+        let registry = self.config.workers.as_ref()?;
+        let claims = self
+            .config
+            .tools
+            .iter()
+            .find(|tool| tool.name() == call.name)?
+            .claims(&call.input);
+        let holder = registry.lease_conflict(session_id, &claims)?;
+        Some(format!(
+            "background worker '{holder}' holds a write lease on paths this call would touch; wait for it or stop it with the workers tool, then retry"
+        ))
     }
 
     async fn execute_work_call(&self, args: &serde_json::Value) -> ToolRunOutput {

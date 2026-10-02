@@ -1,7 +1,7 @@
 # 84 — Worker questions, live worker control, and pause-now
 Status: in progress. Built: M3 (pause and stop now, §7), M1 (a worker's
 question: the board, `ask_parent`, the HTTP list and answer endpoints and the
-events, §4) and M2 (read-only background tasks, the `workers` tool and the
+events, §4) and M2 (background tasks, read-only or leased writers, the `workers` tool and the
 stop-gate join, §5). M4 is partly built: the web and desktop client's
 question card, the gateway forward to the approver chat, the `vak exec`
 terminal prompt and the admin console's read-only view. It extends `docs/design/64-agent-owned-platform.md` (Agent lifecycle),
@@ -197,12 +197,33 @@ change that gives one is `task({ background: true })`: it returns the worker's
 id at once and the child keeps running on its own tokio task. Foreground stays
 the default and is unchanged.
 
-**Background workers are read-only.** A background writer would change files
-outside the resource claims that keep a parent's own work and its other
-workers apart, because the claims last only for the duration of the `task`
-call. Read-only workers (research, exploration, review) are the main use, so
-the first version allows only those and refuses `background` without
-`readonly: true`. Lifting this needs claims that live as long as the worker.
+**A background writer holds a lease.** A foreground `task` call holds its
+resource claims only while it runs, so the parent cannot touch the same files
+meanwhile. A background worker outlives its call, so for a writer the claims
+become a *write lease* the registry holds until the worker ends (it lives on
+the worker's registry entry, so any end of the worker releases it). A
+background `task` without `readonly: true` must name `paths`: workspace-
+relative files or folders, never the whole workspace, never `..`.
+
+- **The worker is fenced.** Its tools are the read-only set plus `write` and
+  `edit`, each wrapped so a path outside the lease is refused (compared by path
+  component, and again through the filesystem so a symlink or a not-yet-created
+  file under a link cannot lead out). `bash` and every other effectful tool are
+  withheld, because they cannot be confined to a path. The permission engine,
+  the sandbox and the approver still decide each write exactly as for any
+  worker.
+- **The parent is held off.** Just before each call runs, the loop compares its
+  claims with the parent's live leases and refuses a conflicting call with the
+  worker's id and "wait for it or stop it". Because a shell command claims
+  everything, `bash` waits for every live writer; `read`, `grep` and the
+  `workers` tool never conflict. The check runs per call, so a lease taken
+  earlier in the same batch applies.
+- **Leases do not overlap.** A second writer (or a foreground writer) whose
+  paths overlap a live lease is refused the same way.
+- **Ending leaves what was written.** Each file write is whole, but a writer
+  stopped or cancelled between two files leaves the first changed and the
+  second not. That is why the stop gate sends a parent back to wait before its
+  turn ends (§5.2).
 
 ### 5.2 Lifetime: a background worker never outlives its parent turn
 
@@ -314,7 +335,7 @@ the person sees lists what each stopped run had already done, from the ledger.
 | Phase | Scope | Exit tests |
 |---|---|---|
 | M1 (built, surfaces in M4) | `QuestionBoard`, `ask_parent` for foreground workers, HTTP list and answer endpoints, event, fail-closed rules, ledger records | a worker's question is answered by the person and appears in the child's ledger; unanswerable returns at once; timeout leaves a late answer resolving nothing; the 4th question is refused; an answer never approves a gated call |
-| M2 (built) | `task { background }`, progress tracking, the `workers` tool, `WorkersRunning` stop-gate reason, parent-model `reply` | an Agent lists and messages its own worker mid-run; another session's worker is unknown; a parent cannot finish with a running worker until it waits or the budget is spent; cap enforced |
+| M2 (built, writers added later) | `task { background }` (read-only, or a writer with a path lease), progress tracking, the `workers` tool, `WorkersRunning` stop-gate reason, parent-model `reply` | an Agent lists and messages its own worker mid-run; another session's worker is unknown; a parent cannot finish with a running worker until it waits or the budget is spent; cap enforced |
 | M3 (built) | `POST /agents/{id}/pause` with `stop_running`, `resume`, the activity and security event | pausing with stop_running cancels live runs of that Agent only, keeps partial output, rejects pending gates and questions; without it, a running turn finishes and the next is refused |
 | M4 (built: client card, gateway, CLI and admin view) | client question card, gateway forward, CLI prompt, admin read-only view | each surface answers a question; a non-approver chat cannot; silence means no |
 
@@ -324,7 +345,7 @@ text for the answer-is-not-permission rule once M1 lands).
 
 ## 10. Open questions for the maintainer
 
-1. Background writers: allow them once claims can outlive the `task` call?
+1. Background writers: built as leased, fenced writers (§5.1). Open: should a writer be able to run `bash` inside its lease once there is a way to confine a command to a path?
 2. Is a person-only answer enough for foreground workers, or should the
    parent model also be woken to answer mid-task (which would mean the
    parent must run while its own tool call is blocked)? This design says no.

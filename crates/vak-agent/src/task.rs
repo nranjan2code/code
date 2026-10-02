@@ -243,6 +243,9 @@ pub struct WorkerHandle {
     pub parent_session_id: String,
     /// Started with `task { background: true }`: the parent did not wait.
     pub background: bool,
+    /// The paths a background writer may change, held until it ends. Empty
+    /// for a worker that holds no lease.
+    pub write_scopes: Vec<String>,
     pub progress: Arc<Mutex<WorkerProgress>>,
 }
 
@@ -395,6 +398,23 @@ impl WorkerRegistry {
                 .filter(|h| h.parent_session_id == parent && h.background)
                 .count()
         })
+    }
+
+    /// The live background writer of `parent` whose lease `claims` would
+    /// touch, if any. A lease lasts as long as its worker.
+    pub fn lease_conflict(
+        &self,
+        parent: &str,
+        claims: &vak_tools::ResourceClaims,
+    ) -> Option<String> {
+        let map = self.inner.lock().ok()?;
+        map.iter()
+            .filter(|(_, h)| h.parent_session_id == parent && !h.write_scopes.is_empty())
+            .find(|(_, h)| {
+                let lease = crate::write_lease::lease_claims(&h.write_scopes);
+                lease.conflicts(claims) || claims.conflicts(&lease)
+            })
+            .map(|(id, _)| id.clone())
     }
 
     /// Record how a background worker ended and wake anyone waiting.
@@ -553,7 +573,7 @@ impl Tool for TaskTool {
                 "agent": {"type": "string", "description": "Optional saved Agent name or id. Applies its identity and working style without changing permissions."},
                 "label": {"type": "string", "description": "Short label shown in the UI"},
                 "readonly": {"type": "boolean", "description": "If true, the worker gets only read/glob/grep and may run concurrently with other tasks", "default": false},
-                "background": {"type": "boolean", "description": "Read-only workers only. Return at once with the worker's id and keep it running while you continue; use the workers tool to check, message, wait for or stop it. It is cancelled if you finish your turn without waiting for it.", "default": false},
+                "background": {"type": "boolean", "description": "Return at once with the worker's id and keep it running while you continue; use the workers tool to check, message, wait for or stop it. It is cancelled if you finish your turn without waiting for it. A background worker that is not readonly must name paths: it may change only those, and you may not touch them until it ends.", "default": false},
                 "paths": {"type": "array", "items": {"type": "string"}, "description": "Path scopes (globs) this task will write to; tasks with disjoint scopes run in parallel, overlapping scopes are serialized"},
                 "contract_id": {"type": "string", "description": "Managed contract this child is executing"},
                 "work_item_id": {"type": "string", "description": "Managed work item assigned to this child"}
@@ -630,32 +650,60 @@ impl TaskTool {
             .get("readonly")
             .and_then(|r| r.as_bool())
             .unwrap_or(false);
+        let mut write_scopes: Vec<String> = Vec::new();
         if args
             .get("background")
             .and_then(|b| b.as_bool())
             .unwrap_or(false)
         {
-            // A background writer would change files outside the claims that
-            // keep the parent's own work and its other workers apart.
-            if !readonly {
-                return ToolOutput::error(
-                    "background workers must be read-only: set readonly to true, or run this task without background",
-                );
-            }
-            let live = self.deps.registry.as_ref().map_or(0, |registry| {
-                registry.background_live(&self.deps.parent_session_id)
-            });
-            if live >= MAX_BACKGROUND_WORKERS {
+            let Some(registry) = self.deps.registry.as_ref() else {
+                return ToolOutput::error("background workers are not available here");
+            };
+            if registry.background_live(&self.deps.parent_session_id) >= MAX_BACKGROUND_WORKERS {
                 return ToolOutput::error(format!(
                     "{MAX_BACKGROUND_WORKERS} background workers are already running; wait for one with the workers tool first"
                 ));
             }
-            if self.deps.registry.is_none() {
-                return ToolOutput::error("background workers are not available here");
+            // A background writer keeps a lease on the paths it may change
+            // for as long as it runs (docs/design/84 §5.1).
+            if !readonly {
+                let named: Vec<String> = args
+                    .get("paths")
+                    .and_then(|p| p.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                write_scopes = match crate::write_lease::normalize_scopes(&named) {
+                    Ok(scopes) => scopes,
+                    Err(reason) => return ToolOutput::error(reason),
+                };
+                if let Some(holder) = registry.lease_conflict(
+                    &self.deps.parent_session_id,
+                    &crate::write_lease::lease_claims(&write_scopes),
+                ) {
+                    return ToolOutput::error(format!(
+                        "those paths are already leased to background worker '{holder}'; wait for it or stop it first"
+                    ));
+                }
             }
         }
         let child_outcome = child_outcome(prompt, readonly, self.deps.outcome.as_ref());
-        let child_tools: Vec<Arc<dyn Tool>> = if readonly {
+        let child_tools: Vec<Arc<dyn Tool>> = if !write_scopes.is_empty() {
+            // File tools fenced to the lease; nothing that cannot be fenced.
+            let mut tools = self.deps.read_only_tools.clone();
+            for name in crate::write_lease::WRITER_TOOLS {
+                if let Some(tool) = self.deps.tools.iter().find(|tool| tool.name() == *name) {
+                    tools.push(Arc::new(crate::write_lease::ScopedWriteTool::new(
+                        tool.clone(),
+                        write_scopes.clone(),
+                    )));
+                }
+            }
+            tools
+        } else if readonly {
             self.deps.read_only_tools.clone()
         } else {
             self.deps.tools.clone()
@@ -918,6 +966,7 @@ impl TaskTool {
                     cancel: cancel.clone(),
                     parent_session_id: self.deps.parent_session_id.clone(),
                     background,
+                    write_scopes: write_scopes.clone(),
                     progress: progress.clone(),
                 },
             );
@@ -1309,6 +1358,7 @@ mod registry_tests {
                 cancel: cancel.clone(),
                 parent_session_id: "parent-a".into(),
                 background: false,
+                write_scopes: Vec::new(),
                 progress: Default::default(),
             },
         );
@@ -1344,6 +1394,7 @@ mod registry_tests {
                     cancel: CancellationToken::new(),
                     parent_session_id: parent.into(),
                     background: false,
+                    write_scopes: Vec::new(),
                     progress: Default::default(),
                 },
             );
@@ -1359,6 +1410,57 @@ mod registry_tests {
         assert_eq!(a[0].id, "c1");
         assert_eq!(reg.active_for("pB")[0].id, "c2");
         assert!(reg.active_for("pC").is_empty());
+    }
+
+    #[test]
+    fn a_lease_is_the_workers_for_as_long_as_it_is_registered() {
+        let registry = WorkerRegistry::new();
+        registry.register(
+            "w1".into(),
+            WorkerHandle {
+                label: "scribe".into(),
+                agent_id: None,
+                agent_revision: None,
+                started_at: std::time::Instant::now(),
+                steering: Arc::new(SteeringQueues::new()),
+                cancel: CancellationToken::new(),
+                parent_session_id: "p".into(),
+                background: true,
+                write_scopes: vec!["out".into()],
+                progress: Default::default(),
+            },
+        );
+        let touching = |path: &str| vak_tools::ResourceClaims {
+            exclusive: false,
+            read_only: false,
+            paths: vec![path.into()],
+        };
+        assert_eq!(
+            registry.lease_conflict("p", &touching("out/x")).as_deref(),
+            Some("w1")
+        );
+        assert_eq!(registry.lease_conflict("p", &touching("src/x")), None);
+        assert_eq!(
+            registry.lease_conflict("someone-else", &touching("out/x")),
+            None,
+            "another session's writer is not this session's business"
+        );
+        let shell = vak_tools::ResourceClaims {
+            exclusive: true,
+            read_only: false,
+            paths: Vec::new(),
+        };
+        assert_eq!(
+            registry.lease_conflict("p", &shell).as_deref(),
+            Some("w1"),
+            "a command that could touch anything waits"
+        );
+        let read = vak_tools::ResourceClaims {
+            exclusive: false,
+            read_only: true,
+            paths: Vec::new(),
+        };
+        assert_eq!(registry.lease_conflict("p", &read), None);
     }
 }
 
