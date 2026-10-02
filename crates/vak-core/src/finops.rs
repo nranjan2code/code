@@ -357,6 +357,9 @@ pub struct CoreSpendGate {
     max_day_usd: Mutex<Option<f64>>,
     overrides: Mutex<BTreeMap<String, vak_config::PriceEntry>>,
     run_spent_usd: Mutex<f64>,
+    /// Estimated cost admitted but not yet settled. Without this reservation,
+    /// concurrent dispatches can all pass against the same stale run total.
+    run_reserved_usd: Mutex<f64>,
     raised_once: AtomicBool,
     day_budget: Arc<Mutex<DayBudget>>,
     /// The trace of the turn now spending, stamped onto the rows it writes.
@@ -389,6 +392,7 @@ impl CoreSpendGate {
             max_day_usd: Mutex::new(finops.max_day_usd),
             overrides: Mutex::new(finops.price_overrides.clone()),
             run_spent_usd: Mutex::new(0.0),
+            run_reserved_usd: Mutex::new(0.0),
             raised_once: AtomicBool::new(false),
             day_budget,
         }
@@ -483,8 +487,12 @@ impl SpendGate for CoreSpendGate {
             .max_run_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let run_spent = *self
+        let run_spent = self
             .run_spent_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut run_reserved = self
+            .run_reserved_usd
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let max_day_usd = *self
@@ -503,10 +511,11 @@ impl SpendGate for CoreSpendGate {
         };
         if let Some(cap) = max_run_usd
             && !self.raised_once.load(Ordering::SeqCst)
-            && run_spent + est > cap
+            && *run_spent + *run_reserved + est > cap
         {
             return Err(format!(
-                "run budget ${cap:.2} would be exceeded by this dispatch (+${est:.2}, ${run_spent:.2} already spent)"
+                "run budget ${cap:.2} would be exceeded by this dispatch (+${est:.2}, ${:.2} spent and ${:.2} reserved)",
+                *run_spent, *run_reserved
             ));
         }
         let max_day_usd = *self
@@ -529,6 +538,9 @@ impl SpendGate for CoreSpendGate {
             // Reserve immediately so a concurrent authorize() racing this
             // one sees the commitment before either dispatch settles.
             day.reserved_usd += est;
+        }
+        if max_run_usd.is_some() && !self.raised_once.load(Ordering::SeqCst) {
+            *run_reserved += est;
         }
         Ok(())
     }
@@ -555,6 +567,11 @@ impl SpendGate for CoreSpendGate {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             *spent += usd;
+            let mut reserved = self
+                .run_reserved_usd
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *reserved = (*reserved - usd).max(0.0);
             let mut day = self
                 .day_budget
                 .lock()
@@ -1091,6 +1108,27 @@ mod tests {
         assert!(
             second.is_err(),
             "the second concurrent dispatch must see the first one's reservation"
+        );
+    }
+
+    /// A run cap must include admitted estimates, not only usage from calls
+    /// that have already settled. Parallel tool/child dispatches share this
+    /// gate and therefore serialize their admission against one run total.
+    #[tokio::test]
+    async fn concurrent_authorize_calls_cannot_jointly_exceed_the_run_cap() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+
+        let first = gate.authorize(&check("claude-sonnet")).await;
+        let second = gate.authorize(&check("claude-sonnet")).await;
+        assert!(first.is_ok(), "{first:?}");
+        assert!(
+            second.is_err(),
+            "the second dispatch must see the first dispatch's run reservation"
         );
     }
 
