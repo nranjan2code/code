@@ -15,6 +15,7 @@ version = "0.1.0"
 edition = "2024"
 
 [[bin]]
+name = "vak-bash-sandbox-audit-probe"
 path = "main.rs"
 
 [dependencies]

@@ -306,7 +306,13 @@ impl TurnIndex {
                     // Core resolves admission before appending the new directive.
                     // An intent following a final answer belongs to the NEXT turn,
                     // never to the already settled preceding turn.
-                    if let Some(turn) = turns.last_mut()
+                    // Revision zero is the admission baseline, written before
+                    // the directive it serves: it belongs to the NEXT turn
+                    // whatever state the last one ended in (a cancelled or
+                    // failed turn has no final answer, and used to take it).
+                    let admission = record.outcome.as_ref().is_some_and(|o| o.revision == 0);
+                    if !admission
+                        && let Some(turn) = turns.last_mut()
                         && !turn.raw_tail.last().is_some_and(|message| {
                             message.role == Role::Assistant
                                 && !message
@@ -444,35 +450,48 @@ impl TurnIndex {
         }
     }
 
+    /// Ranks closed turns by how much of the query's subject their card
+    /// carries. A term counts by how rare it is across the conversation's own
+    /// cards (inverse document frequency), so a word every card shares says
+    /// nothing, and a turn must carry at least half of the query's subject
+    /// terms to be a candidate at all: one coincidental word out of several is
+    /// not topical relevance. Highest score first; ties break by turn id.
     pub fn search(&self, query: &str) -> Vec<(String, f64)> {
-        // Function words and temporal qualifiers do not identify a topic.
-        // Otherwise "what is the current weather" matches every earlier
-        // "what is the current stock market" and admits its full evidence.
         let terms = history_query_terms(query);
         let phrase = crate::search::normalize_impl(query);
         if terms.is_empty() || phrase.is_empty() {
             return Vec::new();
         }
-        let mut scored: Vec<(String, f64)> = self
+        let documents: Vec<(&Turn, String, HashSet<String>)> = self
             .turns
             .iter()
             .filter_map(|turn| {
-                let card = turn.card.as_ref()?;
-                let text = card.index_text();
-                let normalized = crate::search::normalize_impl(&text);
+                let text = turn.card.as_ref()?.index_text();
                 let words: HashSet<String> = history_query_terms(&text).into_iter().collect();
-                let matched: Vec<String> = terms
-                    .iter()
-                    .filter(|term| words.contains(*term))
-                    .cloned()
-                    .collect();
-                if matched.is_empty() {
+                Some((turn, text, words))
+            })
+            .collect();
+        let total = documents.len() as f64;
+        let idf = |term: &String| {
+            let containing = documents
+                .iter()
+                .filter(|(_, _, words)| words.contains(term))
+                .count() as f64;
+            (1.0 + (total - containing + 0.5) / (containing + 0.5)).ln()
+        };
+        let mut scored: Vec<(String, f64)> = documents
+            .iter()
+            .filter_map(|(turn, text, words)| {
+                let matched: Vec<&String> =
+                    terms.iter().filter(|term| words.contains(*term)).collect();
+                if matched.is_empty() || matched.len() * 2 < terms.len() {
                     return None;
                 }
-                let entities = crate::search::extract_entities(&text);
-                let score =
-                    crate::search::score_normalized(&normalized, &matched, &phrase, &entities);
-                (score > 0.0).then(|| (turn.id.clone(), score as f64))
+                let mut score: f64 = matched.iter().map(|term| idf(term)).sum();
+                if crate::search::normalize_impl(text).contains(&phrase) {
+                    score += 1.0;
+                }
+                (score > 0.0).then(|| (turn.id.clone(), score))
             })
             .collect();
         scored.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
@@ -584,7 +603,9 @@ impl Turn {
                 .content
                 .iter()
                 .filter(|block| match block {
-                    ContentBlock::Thinking { .. } => false,
+                    // Process, not information ("Let me search..."): on a small
+                    // model it is the prose pattern the next turn imitates.
+                    ContentBlock::Thinking { .. } | ContentBlock::Text { .. } => false,
                     ContentBlock::ToolUse { id, .. } => answered.contains(id.as_str()),
                     _ => true,
                 })
@@ -1010,7 +1031,7 @@ fn first_sentence_by_words(text: &str, max_words: usize) -> String {
     if trimmed.split_whitespace().count() <= max_words {
         return trimmed.to_string();
     }
-    first_sentence(trimmed).to_string()
+    truncate_words(first_sentence(trimmed), max_words)
 }
 
 fn truncate_words(text: &str, max_words: usize) -> String {

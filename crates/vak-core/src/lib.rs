@@ -6604,6 +6604,8 @@ impl Core {
         cfg.retry_base_backoff_ms = self.inner.config.retry_base_backoff_ms;
         cfg.run_retry_attempts = self.inner.config.run_retry_attempts;
         cfg.run_retry_base_backoff_ms = self.inner.config.run_retry_base_backoff_ms;
+        cfg.dispatch_ceiling = (cfg.max_retries.saturating_add(1))
+            .saturating_mul(cfg.run_retry_attempts.saturating_add(1));
         cfg.request_timeout = if self.inner.config.request_timeout_secs == 0 {
             None
         } else {
@@ -6700,6 +6702,7 @@ impl Core {
             quantisation: capacity.provenance.quantisation.clone(),
         });
         cfg.capacity = Some(capacity);
+        cfg.declared_window = cfg.capacity.as_ref().map_or(0, |p| p.declared_window);
         let sp = &self.inner.config.stop_policy;
         cfg.stop_policy = if sp.enabled {
             Some(vak_agent::StopPolicy {
@@ -6830,6 +6833,9 @@ impl Core {
                 cfg.ladder_provider_names.push(leg.provider.clone());
             }
         }
+        cfg.dispatch_ceiling = cfg
+            .dispatch_ceiling
+            .saturating_mul(u32::try_from(cfg.ladder.len().saturating_add(1)).unwrap_or(u32::MAX));
 
         let mut tools = self.scoped_tools(&ToolScope {
             session_id: session
@@ -6931,6 +6937,10 @@ impl Core {
         if turn_capabilities.tool_names.contains("task")
             && let Some(parent_id) = session.header().map(|h| h.session_id.clone())
         {
+            // Worker turns are bound before they run. In particular, they
+            // inherit the measured profile and per-turn fallback ladder;
+            // standalone worker defaults must never widen the parent's cap.
+            cfg.hooks = Some(Arc::new(turn_capabilities.hooks.clone()));
             let managed_projection = session.work_projection().ok().flatten();
             let managed_contract_id = managed_projection
                 .as_ref()
@@ -6979,6 +6989,13 @@ impl Core {
                 input_normalizer: cfg.input_normalizer.clone(),
                 read_only_tools,
                 max_turns: self.effective_max_turns(),
+                capacity: cfg.capacity.clone(),
+                capacity_key: cfg.capacity_key.clone(),
+                max_output: cfg.max_output,
+                declared_window: cfg.declared_window,
+                ladder: cfg.ladder.clone(),
+                ladder_provider_names: cfg.ladder_provider_names.clone(),
+                provider_name: cfg.provider_name.clone(),
                 max_retries: cfg.max_retries,
                 retry_base_backoff_ms: cfg.retry_base_backoff_ms,
                 request_timeout: cfg.request_timeout,

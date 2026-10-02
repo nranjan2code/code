@@ -10,9 +10,9 @@ after cancellation and timeout, and a glob allow rule authorizing hidden shell
 substitution. The gaps affect promises in `AGENTS.md` and `docs/design/24-agent-security.md`.
 
 Audited source at HEAD `e46c41783259c729b50e7877b8c24403c0d9353b`, plus the
-working tree. I did not change runtime source. The probe source and this report
-are the only audit artifacts added here. Existing working-tree changes were
-present and left intact.
+working tree. I did not change runtime source. The report, probe, and its
+reproduction script are the audit artifacts added here. Existing
+working-tree changes were present and left intact.
 
 ## Findings
 
@@ -151,7 +151,7 @@ disk, output, and time.
 ## Verification and limits
 
 - `cargo test -p vak-tools --test sandbox --test sandbox_stress -p vak-permission --tests` passed: 214 tests; 2 network-dependent tests were ignored. This validates existing coverage, not the gaps above.
-- `docs/research/bash-sandbox-audit-2026-10-02/probe.rs` is the real-worker repro source. It confirmed the allow-rule execution, control-file bypass, sibling temp access, worker-cancellation leak, background-process lifetime, Docker temporary-symlink overwrite, Docker `cwd` loss, one-shot Docker timeout leak, retained-task cancellation leak, and successful Docker task creation.
+- `docs/research/bash-sandbox-audit-2026-10-02/run.sh --docker` runs the real-worker repros; omit `--docker` to skip the daemon checks. The probe confirmed the allow-rule execution, control-file bypass, sibling temp access, worker-cancellation leak, background-process lifetime, Docker temporary-symlink overwrite, Docker `cwd` loss, one-shot Docker timeout leak, retained-task cancellation leak, and successful Docker task creation.
 - A separate disposable Amazon Linux container confirmed the Landlock ABI v1 `truncate(2)` gap. It had no network, dropped capabilities, `no-new-privileges`, and touched only a synthetic container file. Docker containers created by the broker probe were removed afterward.
 - The host was macOS arm64. I did not run the Rust Landlock runner on host Linux, probe its UDP egress, test a true OS-level fork bomb, inspect real credentials, or validate every supported kernel/filesystem combination. No real user file was read or modified by the probes.
 
