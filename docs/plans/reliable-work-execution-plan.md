@@ -531,3 +531,11 @@ no AWS configuration, scheduling, version or deployment changes.
   `set_sessions_home` cannot accidentally share or separate the wrong budget.
   An integration test verifies same-home Core instances share reservations and
   a different effective home remains isolated.
+- 2026-10-02: Bounded provider-gate pruning now retains fresh daily quota
+  observations, future per-bucket resets, and unsettled reservations. Previously
+  a burst that grew the registry beyond 512 entries could evict a daily-only
+  sample after the 15-minute idle window, before its 24-hour freshness expired;
+  a returning request could then bypass that still-live learned constraint.
+  Short-window evidence remains bounded by its five-minute freshness and stale
+  daily evidence remains eligible for pruning. This is process-local recovery,
+  not durable or cross-process coordination.

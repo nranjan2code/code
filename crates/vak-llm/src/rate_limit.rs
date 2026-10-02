@@ -278,6 +278,34 @@ fn has_fresh_exhausted_capacity(state: &State, now: tokio::time::Instant) -> boo
             )))
 }
 
+fn has_live_capacity_state(state: &State, now: tokio::time::Instant) -> bool {
+    let recent = |observed: Option<tokio::time::Instant>, max_age: Duration| {
+        observed.is_some_and(|at| now.duration_since(at) <= max_age)
+    };
+    state.active > 0
+        || state.queued > 0
+        || state.until.is_some_and(|until| until > now)
+        || state
+            .last_used_at
+            .is_some_and(|used| now.duration_since(used) < Duration::from_secs(900))
+        || state.reservations.values().any(|r| r.expires_at > now)
+        || [
+            state.reset_at,
+            state.requests_reset_at,
+            state.input_reset_at,
+            state.output_reset_at,
+            state.daily_reset_at,
+            state.daily_input_reset_at,
+            state.daily_output_reset_at,
+            state.daily_requests_reset_at,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|reset| reset > now)
+        || recent(state.last_observed_at, Duration::from_secs(300))
+        || recent(state.daily_observed_at, Duration::from_secs(24 * 60 * 60))
+}
+
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct TrafficSnapshot {
     pub state: &'static str,
@@ -797,12 +825,7 @@ impl RateLimitGate {
                 let s = state
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                s.active > 0
-                    || s.queued > 0
-                    || s.until.is_some_and(|until| until > now)
-                    || s.last_used_at
-                        .is_some_and(|used| now.duration_since(used) < Duration::from_secs(900))
-                    || s.reset_at.is_some_and(|reset| reset > now)
+                has_live_capacity_state(&s, now)
             });
         }
         if let Some(state) = gates.get(&key).cloned() {
@@ -1634,7 +1657,7 @@ impl RateLimitGate {
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::{RateLimitGate, TrafficSnapshot};
+    use super::{RateLimitGate, State, TrafficSnapshot, has_live_capacity_state};
     use std::time::Duration;
 
     #[test]
@@ -1664,6 +1687,42 @@ mod tests {
         assert!(!value.to_string().contains("model"));
         assert!(!value.to_string().contains("account"));
         assert!(!value.to_string().contains("key"));
+    }
+
+    #[tokio::test]
+    async fn registry_pruning_retains_fresh_daily_capacity_evidence() {
+        let now = tokio::time::Instant::now();
+        let mut state = State {
+            last_used_at: Some(now - Duration::from_secs(16 * 60)),
+            daily_observed_at: Some(now - Duration::from_secs(20 * 60 * 60)),
+            daily_requests_remaining: Some(0),
+            ..State::default()
+        };
+        assert!(has_live_capacity_state(&state, now));
+
+        state.daily_observed_at = Some(now - Duration::from_secs(25 * 60 * 60));
+        state.daily_requests_remaining = None;
+        assert!(!has_live_capacity_state(&state, now));
+    }
+
+    #[tokio::test]
+    async fn registry_pruning_retains_unsettled_capacity_reservations() {
+        let now = tokio::time::Instant::now();
+        let mut state = State {
+            last_used_at: Some(now - Duration::from_secs(16 * 60)),
+            ..State::default()
+        };
+        state.reservations.insert(
+            1,
+            super::Reservation {
+                combined_tokens: 10,
+                input_tokens: 8,
+                output_tokens: 2,
+                requests: 1,
+                expires_at: now + Duration::from_secs(60),
+            },
+        );
+        assert!(has_live_capacity_state(&state, now));
     }
 
     #[tokio::test]
