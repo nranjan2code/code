@@ -197,6 +197,10 @@ change that gives one is `task({ background: true })`: it returns the worker's
 id at once and the child keeps running on its own tokio task. Foreground stays
 the default and is unchanged.
 
+One cap of eight live workers applies to foreground and background tasks
+combined. The registry checks and registers under one lock, so concurrent
+task calls cannot race past the limit.
+
 **A background writer holds a lease.** A foreground `task` call holds its
 resource claims only while it runs, so the parent cannot touch the same files
 meanwhile. A background worker outlives its call, so for a writer the claims

@@ -26,8 +26,8 @@ pub use questions::{AskParentTool, PendingQuestion, QuestionBoard};
 pub use spend::{SpendCheck, SpendGate, SpendReservationId};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
 pub use task::{
-    ActiveWorker, ChildPrompt, FinishedWorker, MAX_BACKGROUND_WORKERS, TaskDeps, TaskTool,
-    WorkerHandle, WorkerRegistry,
+    ActiveWorker, ChildPrompt, FinishedWorker, MAX_WORKERS, TaskDeps, TaskTool, WorkerHandle,
+    WorkerRegistry,
 };
 use vak_context::assemble::{
     attach_tail, cache_breakpoints, capacity_feedback_delta, chat_request_chars, compose_tail,

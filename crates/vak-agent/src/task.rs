@@ -68,6 +68,9 @@ pub struct TaskDeps {
     pub tail: crate::TailInput,
     pub model: String,
     pub tools: Vec<Arc<dyn Tool>>,
+    /// Parent's progressive tool surface, already split into loaded and
+    /// deferred definitions for this turn.
+    pub tool_definitions: Vec<vak_llm::ToolDefinition>,
     pub capabilities: Vec<CapabilityDescriptor>,
     pub hooks: Option<Arc<Vec<vak_hooks::HookDef>>>,
     pub revocation_check: Option<crate::RevocationCheck>,
@@ -270,7 +273,7 @@ pub struct WorkerProgress {
 }
 
 /// The most background workers one parent may have running at once.
-pub const MAX_BACKGROUND_WORKERS: usize = 8;
+pub const MAX_WORKERS: usize = 8;
 
 const PROGRESS_TOOLS_KEPT: usize = 5;
 
@@ -359,10 +362,30 @@ impl WorkerRegistry {
         &self.questions
     }
 
+    #[cfg(test)]
     pub(crate) fn register(&self, id: String, handle: WorkerHandle) {
         if let Ok(mut map) = self.inner.lock() {
             map.insert(id, handle);
         }
+    }
+
+    fn try_register(&self, id: String, handle: WorkerHandle) -> Result<(), String> {
+        let mut map = self
+            .inner
+            .lock()
+            .map_err(|_| "worker registry is unavailable".to_string())?;
+        if map
+            .values()
+            .filter(|worker| worker.parent_session_id == handle.parent_session_id)
+            .count()
+            >= MAX_WORKERS
+        {
+            return Err(format!(
+                "{MAX_WORKERS} workers are already running; wait for one with the workers tool first"
+            ));
+        }
+        map.insert(id, handle);
+        Ok(())
     }
 
     fn unregister(&self, id: &str) {
@@ -673,11 +696,6 @@ impl TaskTool {
             let Some(registry) = self.deps.registry.as_ref() else {
                 return ToolOutput::error("background workers are not available here");
             };
-            if registry.background_live(&self.deps.parent_session_id) >= MAX_BACKGROUND_WORKERS {
-                return ToolOutput::error(format!(
-                    "{MAX_BACKGROUND_WORKERS} background workers are already running; wait for one with the workers tool first"
-                ));
-            }
             // A background writer keeps a lease on the paths it may change
             // for as long as it runs (docs/design/84 §5.1).
             if !readonly {
@@ -917,8 +935,9 @@ impl TaskTool {
         // it is told about it. Without a registry (deterministic fixtures)
         // there is no board to ask on.
         let mut child_tools = child_tools;
+        let mut child_only_definitions = Vec::new();
         if let Some(registry) = &self.deps.registry {
-            child_tools.push(Arc::new(crate::questions::AskParentTool::new(
+            let ask_parent = Arc::new(crate::questions::AskParentTool::new(
                 registry.clone(),
                 session_id.clone(),
                 label.clone(),
@@ -929,13 +948,29 @@ impl TaskTool {
                     .is_some_and(|a| a.answers_questions()),
                 self.deps.events.clone(),
                 self.deps.approver.clone(),
-            )));
+            ));
+            child_only_definitions.push(vak_llm::ToolDefinition::new(
+                ask_parent.name(),
+                ask_parent.description(),
+                ask_parent.schema(),
+            ));
+            child_tools.push(ask_parent);
         }
 
         let mut cfg = AgentConfig::new(child_system_prompt.clone());
         cfg.model = self.deps.model.clone();
         cfg.tail = self.deps.tail.clone();
-        cfg.tool_definitions = Some(vak_tools::definitions(&child_tools));
+        let child_tool_names: std::collections::BTreeSet<_> =
+            child_tools.iter().map(|tool| tool.name()).collect();
+        let mut definitions: Vec<_> = self
+            .deps
+            .tool_definitions
+            .iter()
+            .filter(|definition| child_tool_names.contains(definition.name.as_str()))
+            .cloned()
+            .collect();
+        definitions.extend(child_only_definitions);
+        cfg.tool_definitions = Some(definitions);
         cfg.tools = child_tools;
         cfg.hooks = self.deps.hooks.clone();
         cfg.revocation_check = self.deps.revocation_check.clone();
@@ -976,7 +1011,7 @@ impl TaskTool {
             .unwrap_or(false);
         let progress = Arc::new(Mutex::new(WorkerProgress::default()));
         let registry_guard = if let Some(registry) = &self.deps.registry {
-            registry.register(
+            if let Err(reason) = registry.try_register(
                 session_id.clone(),
                 WorkerHandle {
                     label: label.clone(),
@@ -990,7 +1025,9 @@ impl TaskTool {
                     write_scopes: write_scopes.clone(),
                     progress: progress.clone(),
                 },
-            );
+            ) {
+                return ToolOutput::error(reason);
+            }
             Some(RegistryGuard {
                 registry: registry.clone(),
                 id: session_id.clone(),
@@ -1275,6 +1312,40 @@ fn next_child_session_id() -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod registry_tests {
     use super::*;
+
+    #[test]
+    fn worker_cap_is_atomic_and_shared_by_foreground_and_background() {
+        let registry = Arc::new(WorkerRegistry::new());
+        let workers: Vec<_> = (0..MAX_WORKERS + 4)
+            .map(|index| {
+                let registry = registry.clone();
+                std::thread::spawn(move || {
+                    registry.try_register(
+                        format!("child-{index}"),
+                        WorkerHandle {
+                            label: format!("worker-{index}"),
+                            agent_id: None,
+                            agent_revision: None,
+                            started_at: std::time::Instant::now(),
+                            steering: Arc::new(SteeringQueues::new()),
+                            cancel: CancellationToken::new(),
+                            parent_session_id: "parent".into(),
+                            background: index % 2 == 0,
+                            write_scopes: Vec::new(),
+                            progress: Default::default(),
+                        },
+                    )
+                })
+            })
+            .collect();
+        let admitted = workers
+            .into_iter()
+            .map(|worker| worker.join().expect("worker registration thread"))
+            .filter(Result::is_ok)
+            .count();
+        assert_eq!(admitted, MAX_WORKERS);
+        assert_eq!(registry.active_for("parent").len(), MAX_WORKERS);
+    }
 
     fn parent_contract(text: &str) -> vak_intent::OutcomeSpec {
         let request = vak_intent::Request {

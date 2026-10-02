@@ -6999,6 +6999,7 @@ impl Core {
                 role_prompts,
                 model: model.clone(),
                 tools: tools.clone(),
+                tool_definitions: cfg.tool_definitions.clone().unwrap_or_default(),
                 capabilities: turn_capabilities.descriptors.clone(),
                 hooks: cfg.hooks.clone(),
                 revocation_check: cfg.revocation_check.clone(),

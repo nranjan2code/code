@@ -351,6 +351,11 @@ this turn (`vak_core::capability::surface`, docs/design/41-capability-registry.m
 - **Skills**: listed once in the prompt (name and description); a body is
   loaded through `skill` on demand, never inlined.
 
+Workers use the same loaded and deferred definitions as their parent turn,
+filtered to tools the child actually has. The child-only `ask_parent` schema
+is added separately. This keeps a worker's stable tool prefix from expanding
+to every admitted schema merely because it is a separate Agent.
+
 ### 6. RequestAssembler: stable prefix, moving tail
 
 The code is authoritative for section order: `compose_tail` emits

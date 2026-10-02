@@ -137,6 +137,8 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
 
     let mut cfg = AgentConfig::new("sys");
     cfg.model = "test-model".into();
+    cfg.max_output = 512;
+    cfg.declared_window = 8_000;
     cfg.tools = vec![Arc::new(TaskTool::new(TaskDeps {
         parent_agent_identity: None,
         role_prompts: Default::default(),
@@ -147,6 +149,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         tail: Default::default(),
         model: "test-model".into(),
         tools: vec![Arc::new(ReadTool)],
+        tool_definitions: Vec::new(),
         capabilities: Vec::new(),
         hooks: None,
         revocation_check: None,
@@ -157,8 +160,8 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
         max_turns: 5,
         capacity: None,
         capacity_key: None,
-        max_output: 0,
-        declared_window: 0,
+        max_output: 512,
+        declared_window: 8_000,
         ladder: Vec::new(),
         ladder_provider_names: Vec::new(),
         provider_name: None,
@@ -226,6 +229,7 @@ async fn worker_roundtrip_with_shared_scripted_provider() {
     assert_eq!(tool_result.0, "child final answer");
 
     let reqs = requests.lock().unwrap();
+    assert!(reqs.iter().all(|request| request.max_tokens == 512));
     assert!(
         reqs.len() >= 3,
         "parent call + child call(s) + parent continuation expected, got {}",
