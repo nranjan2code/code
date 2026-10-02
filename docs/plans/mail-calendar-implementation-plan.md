@@ -440,6 +440,20 @@ explain relevant notification and recurrence effects. Apple iCloud external
 effects stay disabled if broad app-specific-password authority cannot be
 contained to the confirmed operation.
 
+**Microsoft Graph conditional-write boundary:** Graph v1.0's [event update
+contract](https://learn.microsoft.com/en-us/graph/api/event-update?view=graph-rest-1.0)
+documents only `Authorization` as a request header; the [event resource
+contract](https://learn.microsoft.com/en-us/graph/api/resources/event?view=graph-rest-1.0)
+describes `changeKey` as identifying a version, but does not document it as a
+conditional update token. A read-before-write comparison is subject to a race
+and is not a substitute. Keep Microsoft event update and cancellation disabled
+until an official v1.0 conditional-write contract is verified. Graph's
+[accept](https://learn.microsoft.com/en-us/graph/api/event-accept?view=graph-rest-1.0),
+[tentatively accept](https://learn.microsoft.com/en-us/graph/api/event-tentativelyaccept?view=graph-rest-1.0),
+and [decline](https://learn.microsoft.com/en-us/graph/api/event-decline?view=graph-rest-1.0)
+actions likewise document no precondition header. Do not admit RSVP until
+stale-review and ambiguous-outcome handling have a verified contract.
+
 **Exit:** one reviewed payload causes at most one blind dispatch; an ambiguous
 timeout never retries blindly. Edited candidates, changed permissions,
 expired approvals, spoofed recipient fields, recurring-series changes, and
