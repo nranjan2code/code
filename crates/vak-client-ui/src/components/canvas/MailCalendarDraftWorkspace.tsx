@@ -9,8 +9,8 @@ const PAGE_SIZE = 8;
 const parseAddresses = (value: string) => value.split(/[;,]/).map((part) => part.trim()).filter(Boolean).map((address) => ({ address, display_name: null }));
 const formatAddresses = (addresses: Array<{ address: string; display_name: string | null }>) => addresses.map(({ address, display_name }) => display_name ? `${display_name} <${address}>` : address).join(", ") || "None";
 const localInput = (date: Date) => new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-const actionName = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "Email" : action.kind === "cancel_event" ? "Event cancellation" : "Calendar event";
-const actionVerb = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "send" : action.kind === "cancel_event" ? "cancel" : action.kind === "update_event" ? "update" : "create";
+const actionName = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "Email" : action.kind === "cancel_event" ? "Event cancellation" : action.kind === "respond_to_event" ? "Invitation response" : "Calendar event";
+const actionVerb = (action: MailCalendarDraftAction) => action.kind === "send_mail" ? "send" : action.kind === "cancel_event" ? "cancel" : action.kind === "respond_to_event" ? "respond" : action.kind === "update_event" ? "update" : "create";
 
 export default function MailCalendarDraftWorkspace(props: { agentId: string; openCandidate?: api.MailCalendarCandidate | null; focusReply?: boolean; inlineReply?: boolean; onCloseInlineReply?: () => void; onCandidateOpened?: (candidate: api.MailCalendarCandidate) => void }) {
   const [expanded, setExpanded] = createSignal(false);
@@ -105,14 +105,16 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
   };
 
   const reconcileCalendarEvent = async (candidate: MailCalendarCandidate) => {
-    if ((candidate.action.kind !== "create_event" && candidate.action.kind !== "update_event" && candidate.action.kind !== "cancel_event") || !candidate.candidate_digest) return;
+    if ((candidate.action.kind !== "create_event" && candidate.action.kind !== "update_event" && candidate.action.kind !== "cancel_event" && candidate.action.kind !== "respond_to_event") || !candidate.candidate_digest) return;
     setBusy(true); setError(""); setNote("");
     try {
       const result = await api.reconcileMailCalendarEventCandidate(props.agentId, candidate.id, candidate.revision, candidate.candidate_digest);
       setNote(result.matched
         ? candidate.action.kind === "cancel_event"
           ? "The provider confirms this event was cancelled. The action is now marked confirmed."
-          : candidate.action.kind === "update_event"
+          : candidate.action.kind === "respond_to_event"
+            ? "The provider confirms this invitation response. The action is now marked confirmed."
+            : candidate.action.kind === "update_event"
             ? "The provider confirms this event was updated. The action is now marked confirmed."
             : "The provider confirms this event was created. The action is now marked confirmed."
         : "No matching event is visible yet. The outcome remains unknown, and this action cannot be retried.");
@@ -137,7 +139,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
   };
 
   const actionForEditor = (): MailCalendarDraftAction | null => {
-    if (selected()?.action.kind === "cancel_event") return selected()!.action;
+    if (selected()?.action.kind === "cancel_event" || selected()?.action.kind === "respond_to_event") return selected()!.action;
     const current = selected()?.action;
     if (current?.kind === "send_mail" || (!current && editorKind() === "mail")) {
       return { kind: "send_mail", draft: {
@@ -156,7 +158,11 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
     return { kind: "create_event", draft };
   };
 
-  const [editorKind, setEditorKind] = createSignal<"mail" | "calendar" | null>(null);
+  const [editorKind, setEditorKind] = createSignal<"mail" | "calendar" | "response" | null>(null);
+  const selectedResponse = () => {
+    const action = selected()?.action;
+    return action?.kind === "respond_to_event" ? action.response : null;
+  };
   const selectedReply = () => {
     const current = selected();
     return current?.action.kind === "send_mail" && !!current.action.draft.reply_to_message_id;
@@ -164,7 +170,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
   const newMail = () => { setEditorKind("mail"); startDraft("mail"); };
   const newEvent = () => { setEditorKind("calendar"); startDraft("calendar"); };
   const beginOpen = (candidate: MailCalendarCandidate) => {
-    setEditorKind(candidate.action.kind === "send_mail" ? "mail" : candidate.action.kind === "cancel_event" ? null : "calendar");
+    setEditorKind(candidate.action.kind === "send_mail" ? "mail" : candidate.action.kind === "cancel_event" ? null : candidate.action.kind === "respond_to_event" ? "response" : "calendar");
     openCandidate(candidate);
   };
 
@@ -179,10 +185,13 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
     if (action.kind === "send_mail" && (!account.capabilities.includes("mail_send") || (action.draft.reply_to_message_id && !account.capabilities.includes("mail_read")))) {
       setError("This account no longer has the access required to send this message."); return;
     }
-    if ((action.kind === "create_event" || action.kind === "update_event" || action.kind === "cancel_event") && !account.capabilities.includes("calendar_write")) {
+    if ((action.kind === "create_event" || action.kind === "update_event" || action.kind === "cancel_event" || action.kind === "respond_to_event") && !account.capabilities.includes("calendar_write")) {
       setError("This account no longer has calendar-write access."); return;
     }
-    if ((action.kind === "update_event" || action.kind === "cancel_event") && account.provider !== "google") {
+    if (action.kind === "respond_to_event" && (!account.capabilities.includes("calendar_read") || account.provider !== "google")) {
+      setError("Google RSVP needs both calendar read and calendar write access."); return;
+    }
+    if ((action.kind === "update_event" || action.kind === "cancel_event" || action.kind === "respond_to_event") && account.provider !== "google") {
       setError("Calendar updates and cancellations are currently supported only for Google events."); return;
     }
     if (action.kind === "update_event" && (action.draft.all_day || action.draft.attendee_addresses.length || action.draft.recurrence || action.draft.occurrence_id)) {
@@ -209,19 +218,21 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
       {(() => {
         const mail = action.kind === "send_mail" ? action : null;
         const event = action.kind === "create_event" || action.kind === "update_event" ? action : null;
+        const response = action.kind === "respond_to_event" ? action : null;
         return <>
       <dl><dt>Account</dt><dd>{account.provider}{account.identity_masked ? ` · ${account.identity_masked}` : ""}</dd>
         <Show when={mail}>{(value) => <><dt>From</dt><dd>{mailContext?.sender} · connected account default sender</dd><dt>Outgoing Reply-To</dt><dd>Not set</dd><Show when={value().draft.reply_to_message_id}><dt>Source From</dt><dd>{mailContext?.source_from || "Not provided by the provider"}</dd><dt>Source Reply-To</dt><dd>{mailContext?.source_reply_to || "Not provided by the provider"}</dd></Show><dt>To</dt><dd>{formatAddresses(value().draft.to)}</dd><dt>Cc</dt><dd>{formatAddresses(value().draft.cc)}</dd><dt>Bcc</dt><dd>{formatAddresses(value().draft.bcc)}</dd><dt>Subject</dt><dd>{value().draft.subject || "(no subject)"}</dd></>}</Show>
         <Show when={event}>{(value) => <><dt>Event</dt><dd>{value().draft.title}</dd><dt>Starts</dt><dd>{new Date(value().draft.starts_at).toLocaleString()}</dd><dt>Ends</dt><dd>{new Date(value().draft.ends_at).toLocaleString()}</dd><dt>Location</dt><dd>{value().draft.location || "None"}</dd><dt>Attendees</dt><dd>{value().draft.attendee_addresses.map((item) => item.address).join(", ") || "None"}</dd></>}</Show>
         <Show when={action.kind === "cancel_event"}><dt>Event</dt><dd>{candidate.source_refs[0]?.label || "Selected event"}</dd><dt>Scope</dt><dd>This event only</dd></Show>
+        <Show when={response}><dt>Invitation</dt><dd>{candidate.source_refs[0]?.label || "Selected invitation"}</dd><dt>Your response</dt><dd>{response?.response === "accept" ? "Accept" : response?.response === "tentative" ? "Maybe" : "Decline"}</dd><dt>Notification</dt><dd>Google will notify the organizer</dd></Show>
       </dl>
       <Show when={mail}>{(value) => <><strong>Full message</strong><pre>{value().draft.body_text || "(empty message)"}</pre></>}</Show>
       <Show when={event}>{(value) => <><strong>Full description</strong><pre>{value().draft.description || "(no description)"}</pre></>}</Show>
-      <p>Only saved revision {candidate.revision} will be used. The server rechecks its digest, source version, and account permission before the provider call.</p>
+      <p>Only saved revision {candidate.revision} will be used. The server rechecks its digest, source version, and account permission before the provider call. An RSVP changes only your response and sends a notification to the organizer.</p>
         </>;
       })()}
     </div>;
-    const finalLabel = action.kind === "send_mail" ? "Send this exact email" : action.kind === "create_event" ? "Create this event" : action.kind === "update_event" ? "Update this event" : "Cancel this event";
+    const finalLabel = action.kind === "send_mail" ? "Send this exact email" : action.kind === "create_event" ? "Create this event" : action.kind === "update_event" ? "Update this event" : action.kind === "cancel_event" ? "Cancel this event" : `Send RSVP: ${action.response === "accept" ? "accept" : action.response === "tentative" ? "maybe" : "decline"}`;
     setReview({
       title: `Review ${actionVerb(action)}: ${actionName(action).toLowerCase()}`,
       description: "Check every field below. The provider change happens only after you choose the final action.",
@@ -233,7 +244,8 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
           const result = action.kind === "send_mail" ? await api.sendMailCalendarCandidate(...args)
             : action.kind === "create_event" ? await api.createMailCalendarEventCandidate(...args)
               : action.kind === "update_event" ? await api.updateMailCalendarEventCandidate(...args)
-                : await api.cancelMailCalendarEventCandidate(...args);
+                : action.kind === "cancel_event" ? await api.cancelMailCalendarEventCandidate(...args)
+                  : await api.respondMailCalendarEventCandidate(...args);
           const state = result.receipt?.state ?? result.state ?? "unknown";
           setNote(state === "provider_accepted" ? "The provider accepted the request. This does not confirm delivery." : state === "failed" ? "The provider rejected the request. Create a fresh draft before trying again." : "The outcome is unknown. Do not retry this candidate; check the provider first.");
           await refresh(props.agentId);
@@ -256,7 +268,7 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
         ...(previous ? { candidate_id: previous.id, expected_revision: previous.revision } : {}),
         ...(previous ? {} : { source_refs: selected()?.source_refs ?? [] }), action,
       });
-      setSelected(result.candidate); setEditorKind(result.candidate.action.kind === "send_mail" ? "mail" : "calendar");
+      setSelected(result.candidate); setEditorKind(result.candidate.action.kind === "send_mail" ? "mail" : result.candidate.action.kind === "respond_to_event" ? "response" : "calendar");
       setNote("Saved in this Agent’s encrypted work area. Nothing was sent or changed on the provider.");
       await refresh(props.agentId);
     } catch (cause) {
@@ -310,14 +322,15 @@ export default function MailCalendarDraftWorkspace(props: { agentId: string; ope
       <Show when={error()}><p role="alert" class="daily-mail-calendar-warning">{error()}</p></Show>
       <Show when={note()}><p role="status" class="settings-hint">{note()}</p></Show>
       <Show when={!props.inlineReply}><Show when={candidates().length === 0 && !loading()}><p class="settings-hint">No saved drafts yet.</p></Show>
-      <div class="mail-calendar-drafts"><For each={visibleCandidates()}>{(candidate) => <article class="mail-calendar-draft-row"><div><strong>{candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.kind === "cancel_event" ? candidate.source_refs[0]?.label || "Event cancellation" : candidate.action.draft.title || "Calendar draft"}</strong><span>{actionName(candidate.action)} · {accountLabel(candidate.account_id)} · revision {candidate.revision}{candidate.action_state ? ` · ${candidate.action_state.replaceAll("_", " ")}` : " · local draft"}</span></div><div class="settings-actions"><Show when={(candidate.action.kind === "create_event" || candidate.action.kind === "update_event" || candidate.action.kind === "cancel_event") && (candidate.action_state === "unknown" || candidate.action_state === "dispatching")}><button type="button" class="settings-button" disabled={!!busy()} onClick={() => void reconcileCalendarEvent(candidate)}>Check provider result</button></Show><Show when={candidate.action.kind === "send_mail" && (candidate.action_state === "unknown" || candidate.action_state === "dispatching")}><button type="button" class="settings-button" disabled={!!busy()} onClick={() => void reconcileMailSend(candidate)}>Check provider result</button></Show><button type="button" class="settings-button" disabled={busy() || !!candidate.action_state} onClick={() => candidate.action.kind === "cancel_event" ? buildReview(candidate) : beginOpen(candidate)}>{candidate.action.kind === "cancel_event" ? "Review cancellation" : "Open draft"}</button><button type="button" class="settings-button danger" disabled={busy() || !!candidate.action_state} onClick={() => deleteCandidate(candidate)}>Delete</button></div></article>}</For></div>
+      <div class="mail-calendar-drafts"><For each={visibleCandidates()}>{(candidate) => <article class="mail-calendar-draft-row"><div><strong>{candidate.action.kind === "send_mail" ? candidate.action.draft.subject || "Email draft" : candidate.action.kind === "cancel_event" ? candidate.source_refs[0]?.label || "Event cancellation" : candidate.action.kind === "respond_to_event" ? candidate.source_refs[0]?.label || "Invitation response" : candidate.action.draft.title || "Calendar draft"}</strong><span>{actionName(candidate.action)} · {accountLabel(candidate.account_id)} · revision {candidate.revision}{candidate.action_state ? ` · ${candidate.action_state.replaceAll("_", " ")}` : " · local draft"}</span></div><div class="settings-actions"><Show when={(candidate.action.kind === "create_event" || candidate.action.kind === "update_event" || candidate.action.kind === "cancel_event" || candidate.action.kind === "respond_to_event") && (candidate.action_state === "unknown" || candidate.action_state === "dispatching")}><button type="button" class="settings-button" disabled={!!busy()} onClick={() => void reconcileCalendarEvent(candidate)}>Check provider result</button></Show><Show when={candidate.action.kind === "send_mail" && (candidate.action_state === "unknown" || candidate.action_state === "dispatching")}><button type="button" class="settings-button" disabled={!!busy()} onClick={() => void reconcileMailSend(candidate)}>Check provider result</button></Show><button type="button" class="settings-button" disabled={busy() || !!candidate.action_state} onClick={() => candidate.action.kind === "cancel_event" ? buildReview(candidate) : beginOpen(candidate)}>{candidate.action.kind === "cancel_event" ? "Review cancellation" : "Open draft"}</button><button type="button" class="settings-button danger" disabled={busy() || !!candidate.action_state} onClick={() => deleteCandidate(candidate)}>Delete</button></div></article>}</For></div>
       <Show when={candidates().length > PAGE_SIZE}><nav class="daily-mail-calendar-pagination" aria-label="Draft pages"><button type="button" class="settings-button" disabled={page() === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Previous</button><span>Page {page() + 1} of {pageCount()} · {candidates().length} drafts</span><button type="button" class="settings-button" disabled={page() + 1 >= pageCount()} onClick={() => setPage((value) => Math.min(pageCount() - 1, value + 1))}>Next</button></nav></Show></Show>
       <Show when={editorKind()}>
-        <div class="mail-calendar-editor"><div class="settings-preview-heading"><strong>{selectedReply() ? "Reply draft" : editorKind() === "calendar" ? "Calendar event draft" : "Email draft"}</strong><button type="button" class="settings-button" disabled={busy()} onClick={() => { setSelected(null); setEditorKind(null); if (props.inlineReply) { setExpanded(false); props.onCloseInlineReply?.(); } }}>Close draft</button></div>
+        <div class="mail-calendar-editor"><div class="settings-preview-heading"><strong>{selectedReply() ? "Reply draft" : editorKind() === "response" ? "Invitation response" : editorKind() === "calendar" ? "Calendar event draft" : "Email draft"}</strong><button type="button" class="settings-button" disabled={busy()} onClick={() => { setSelected(null); setEditorKind(null); if (props.inlineReply) { setExpanded(false); props.onCloseInlineReply?.(); } }}>Close draft</button></div>
           <Show when={editorKind() === "mail"}><label>To<input type="text" value={to()} onInput={(event) => setTo(event.currentTarget.value)} /></label><label>Cc<input type="text" value={cc()} onInput={(event) => setCc(event.currentTarget.value)} /></label><label>Bcc<input type="text" value={bcc()} onInput={(event) => setBcc(event.currentTarget.value)} /></label><label>Subject<input type="text" value={subject()} onInput={(event) => setSubject(event.currentTarget.value)} /></label><label>{selectedReply() ? "Reply message" : "Message"}<textarea ref={replyMessageField} aria-label={selectedReply() ? "Reply message" : "Message"} rows={8} value={body()} onInput={(event) => setBody(event.currentTarget.value)} /></label></Show>
           <Show when={editorKind() === "calendar"}><label>Event title<input type="text" value={title()} onInput={(event) => setTitle(event.currentTarget.value)} /></label><div class="mail-calendar-work-actions"><label>Starts<input type="datetime-local" value={starts()} onInput={(event) => setStarts(event.currentTarget.value)} /></label><label>Ends<input type="datetime-local" value={ends()} onInput={(event) => setEnds(event.currentTarget.value)} /></label></div><label>Location<input type="text" value={location()} onInput={(event) => setLocation(event.currentTarget.value)} /></label><label>Description<textarea rows={5} value={description()} onInput={(event) => setDescription(event.currentTarget.value)} /></label></Show>
+          <Show when={selectedResponse()}><p class="settings-hint">Your response: <strong>{selectedResponse() === "accept" ? "Accept" : selectedResponse() === "tentative" ? "Maybe" : "Decline"}</strong>. Google will notify the organizer. The attendee list remains unchanged.</p></Show>
           <Show when={selected()?.source_refs.length}><p class="settings-hint">Based on: {selected()?.source_refs.map((item) => item.label || "Selected source").join(", ")}</p></Show>
-          <div class="settings-actions"><button type="button" class="settings-button" disabled={busy()} onClick={() => setReview({ title: "Preview this saved draft", description: "This local preview does not contact the provider.", confirmLabel: "Close preview", reviewContent: <pre class="mail-calendar-review-payload">{JSON.stringify(actionForEditor(), null, 2)}</pre>, onConfirm: () => undefined })}>Preview draft</button><button type="button" class="btn primary" disabled={busy()} onClick={() => void save()}>{busy() ? "Saving…" : selected() ? "Save new revision" : "Save draft"}</button><Show when={selected()}>{(candidate) => <button type="button" class="btn danger" disabled={busy() || !candidate().candidate_digest || !!candidate().action_state} onClick={() => buildReview(candidate())}>Review exact provider action</button>}</Show></div>
+          <div class="settings-actions"><button type="button" class="settings-button" disabled={busy()} onClick={() => setReview({ title: "Preview this saved draft", description: "This local preview does not contact the provider.", confirmLabel: "Close preview", reviewContent: <pre class="mail-calendar-review-payload">{JSON.stringify(actionForEditor(), null, 2)}</pre>, onConfirm: () => undefined })}>Preview draft</button><Show when={editorKind() !== "response"}><button type="button" class="btn primary" disabled={busy()} onClick={() => void save()}>{busy() ? "Saving…" : selected() ? "Save new revision" : "Save draft"}</button></Show><Show when={selected()}>{(candidate) => <button type="button" class="btn danger" disabled={busy() || !candidate().candidate_digest || !!candidate().action_state} onClick={() => buildReview(candidate())}>{candidate().action.kind === "respond_to_event" ? "Review RSVP" : "Review exact provider action"}</button>}</Show></div>
           <Show when={revisionConflict() && selected()}>{(candidate) => <div class="settings-actions"><button type="button" class="settings-button" disabled={busy()} onClick={async () => { await refresh(props.agentId); const latest = candidates().find((item) => item.id === candidate().id); if (latest) beginOpen(latest); setRevisionConflict(false); }}>Discard edits and load latest</button><button type="button" class="settings-button" disabled={busy()} onClick={() => void save(true)}>Save edits as a separate draft</button></div>}</Show>
           <p class="settings-hint">Draft changes are saved only when you choose Save. A provider action uses the saved revision and its digest; editing it requires saving and reviewing again.</p>
         </div>

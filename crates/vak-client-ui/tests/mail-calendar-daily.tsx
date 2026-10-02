@@ -9,7 +9,7 @@ const restoreSyntheticDemo = syntheticMailCalendarEnabled();
 setSyntheticMailCalendarEnabled(false);
 
 const providerTypes = [
-  { prefix: "g-account", provider: "google", capabilities: ["mail_read", "mail_send", "calendar_read"] },
+  { prefix: "g-account", provider: "google", capabilities: ["mail_read", "mail_send", "calendar_read", "calendar_write"] },
   { prefix: "m-account", provider: "microsoft", capabilities: ["mail_read", "calendar_read"] },
   { prefix: "a-account", provider: "apple_icloud", capabilities: ["mail_read", "calendar_free_busy"] },
 ] as const;
@@ -192,6 +192,7 @@ window.fetch = async (input, init) => {
         provider_id: `${accountId}-event-${index}`, title: `${account.provider} sample event ${index + 1}`,
         starts_at: start.toISOString(), ends_at: end.toISOString(), starts_on: null, ends_on: null,
         all_day: false, location: null, description: null, attendee_count: 0, recurring: false, private: false, version: account.provider === "google" ? "fixture-etag" : null,
+        can_respond: account.provider === "google" && index === 1,
       };
       }), next_cursor: range.cursor ? null : "fixture-calendar-page-2" });
     }
@@ -432,7 +433,45 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     && draft?.source_refs?.[0]?.item_id === "g-account-0-event-0"
     && draft?.action?.kind === "update_event"
     && !settingsOpen()
-    && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event)$/.test(path));
+    && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event|respond-event)$/.test(path));
+  gridEvents[1]?.click();
+  await waitFor(() => document.querySelector(".daily-mail-calendar-event-detail h4")?.textContent?.includes("google sample event 2") === true);
+  [...document.querySelectorAll<HTMLButtonElement>(".daily-mail-calendar-event-detail button")]
+    .find((button) => button.textContent?.trim() === "Respond: accept")?.click();
+  const rsvpDraftActionWorks = await waitFor(() => savedCandidates.some((candidate) => candidate.action?.kind === "respond_to_event")
+    && document.querySelector(".mail-calendar-canvas-workspace button")?.textContent?.includes("Hide drafts") === true);
+  const rsvpDraft = savedCandidates.find((candidate) => candidate.action?.kind === "respond_to_event");
+  const rsvpDraftIsSelected = await waitFor(() => {
+    const workspace = document.querySelector(".mail-calendar-canvas-workspace");
+    return workspace?.textContent?.includes("Your response:") === true
+      && [...workspace.querySelectorAll<HTMLButtonElement>("button")].some((button) => button.textContent?.trim() === "Review RSVP");
+  });
+  const rsvpStaysLocal = rsvpDraftActionWorks
+    && rsvpDraftIsSelected
+    && rsvpDraft?.account_id === "g-account-0"
+    && rsvpDraft?.action?.response === "accept"
+    && rsvpDraft?.source_refs?.[0]?.item_id === "g-account-0-event-1"
+    && !requests.some((path) => /\/candidates\/[^/]+\/(send|create-event|update-event|cancel-event|respond-event)$/.test(path));
+  [...document.querySelectorAll<HTMLButtonElement>(".mail-calendar-canvas-workspace button")]
+    .find((button) => button.textContent?.trim() === "Review RSVP")?.click();
+  let rsvpReview: HTMLElement | undefined;
+  await waitFor(() => {
+    rsvpReview = [...document.querySelectorAll<HTMLElement>("[role='dialog']")]
+      .find((dialog) => dialog.textContent?.includes("Send RSVP: accept"));
+    return !!rsvpReview;
+  });
+  const rsvpReviewIsExact = !!rsvpReview
+    && rsvpReview.textContent?.includes("Your response") === true
+    && rsvpReview.textContent?.includes("Google will notify the organizer") === true
+    && rsvpReview.textContent?.includes("google sample event 2") === true
+    && !requests.some((path) => /\/candidates\/[^/]+\/respond-event$/.test(path));
+  const rsvpReviewDiagnostics = JSON.stringify({
+    found: !!rsvpReview,
+    text: rsvpReview?.textContent?.replace(/\s+/g, " ").trim(),
+    wrote: requests.filter((path) => /\/candidates\/[^/]+\/respond-event$/.test(path)),
+  });
+  [...(rsvpReview?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+    .find((button) => button.getAttribute("aria-label") === "Close" || button.textContent?.trim() === "Cancel")?.click();
   const viewerBeforeRefresh = document.querySelector(".daily-mail-calendar-view");
   const selectedEventBeforeRefresh = document.querySelector(".daily-mail-calendar-event-detail");
   const mailRowBeforeRefresh = document.querySelector(".daily-mail-calendar-message");
@@ -601,6 +640,8 @@ const waitFor = async (predicate: () => boolean, timeoutMs = 5000) => {
     check(gridEventHasKeyboardSemantics && enterOpensDetails && spaceOpensDetails, "Calendar event cards expose an accessible name and open details with Enter or Space"),
     check(eventSelectionWorks, "Selecting a supported event opens its details and a local-draft next action"),
     check(clickedEventStaysLocal, "Draft an update saves only an Agent-scoped local candidate and opens Canvas drafts without a provider effect"),
+    check(rsvpStaysLocal, "Google RSVP actions are staged as Agent-scoped local drafts and open Canvas Review without contacting the provider"),
+    check(rsvpReviewIsExact, `Google RSVP Review shows the exact invitation, response, organizer notification, and final action without dispatching it (${rsvpReviewDiagnostics})`),
     check(manualRefreshWorks && document.body.textContent?.includes("Auto-refreshes every 5 minutes while open"), `Manual refresh reloads the bounded sources and the view explains its refresh cadence (${manualRefreshDiagnostics})`),
     check(refreshKeepsMountedRows, "A settled refresh updates the existing viewer without remounting its page"),
     check(refreshKeepsSelectedEvent, "A settled refresh preserves the open event details without remounting them"),

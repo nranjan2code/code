@@ -65,7 +65,7 @@ does not prove provider freshness or detect sleep between checks. Owners can
 select event start or end, an offset, a catch-up limit, and scheduled or
 about-once-a-minute polling in the routine editor. The full conversation
 workspace, Apple provider effects, broader Microsoft/event update and
-cancellation profiles, RSVP, complete event-trigger browser acceptance,
+cancellation profiles, Microsoft and Apple RSVP, complete event-trigger browser acceptance,
 reconciliation for Microsoft event updates, live-provider conformance, full connected
 source-to-Review browser acceptance, and 24-hour service-recovery acceptance
 remain open. `/health` exposes a volatile scheduler heartbeat for starting,
@@ -186,6 +186,18 @@ by RFC Message-ID](https://developers.google.com/workspace/gmail/api/reference/r
 [Google private extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties)
 and [Google event status and cancelled-event reads](https://developers.google.com/workspace/calendar/api/v3/reference/events)
 and [Microsoft Graph single-value extended properties](https://learn.microsoft.com/en-us/graph/api/singlevaluelegacyextendedproperty-post-singlevalueextendedproperties?view=graph-rest-1.0).
+Google owner-reviewed RSVP is limited to one complete, standalone invitation
+where the connected person is exactly one attendee and not the organizer. The
+candidate binds the event ETag and accept/maybe/decline response; the broker
+re-reads before dispatch and sends `If-Match` with `attendeesOmitted=true` so
+only the connected person's response changes. `sendUpdates=all` makes
+organizer notification explicit in Review. An opaque marker is stored in the
+person's private copy and reconciliation confirms only when that marker and
+the requested response both match. Google documents attendee-response-only
+updates through `attendeesOmitted` and writable per-copy private extended
+properties ([event update](https://developers.google.com/workspace/calendar/api/v3/reference/events/update),
+[extended properties](https://developers.google.com/workspace/calendar/api/guides/extended-properties));
+the ETag precondition follows [Google's version-resource contract](https://developers.google.com/calendar/api/guides/version-resources).
 These effects require an unchanged saved
 candidate revision and owner-only confirmation. Unknown outcomes remain
 non-retryable and appear in the local candidate list. Google event update
@@ -194,7 +206,8 @@ conflict and require a fresh preview and candidate. Google cancellation
 re-reads the source event and conditionally writes its cancelled status and
 attempt marker together; reconciliation confirms only that exact marker on the
 cancelled event. Microsoft update,
-cancellation outside the single-event Google profile above, RSVP operations,
+cancellation outside the single-event Google profile above, Microsoft and
+Apple RSVP operations,
 Agent-initiated effects, and 24-hour recovery acceptance remain open.
 The server checks provider/action compatibility both when saving a candidate
 and before writing its single-use effect claim. Microsoft event update remains
@@ -295,9 +308,10 @@ cursors fail visibly and require the owner to recreate the routine; backlog
 overflow also fails closed. A per-routine OS lease prevents duplicate
 local server-process runs through
 child completion; it does not provide multi-host coordination. Email send, a
-constrained timed event create, Google standalone event update, and one Google
-standalone event cancellation profile have effect-aware owner confirmation
-and supported exact-marker reconciliation paths; other event update/cancellation profiles, RSVP, standing grants,
+constrained timed event create, Google standalone event update and
+cancellation, and Google RSVP for one standalone invitation have effect-aware
+owner confirmation and supported exact-marker reconciliation paths. Other
+event update/cancellation profiles, Microsoft and Apple RSVP, standing grants,
 other receipt reconciliation, durable continuous service recovery, and
 full provider conformance remain in progress. The
 account-deletion limitation below is disclosed before content features are
@@ -775,6 +789,9 @@ one occurrence, the whole series, or a supported future-series edit, and all
 notifications the provider can cause. RSVP is a target reviewed action, but
 an adapter must prove stale-review protection and safe reconciliation before
 it can be offered; a read-before-write comparison alone is insufficient.
+Google supports the limited standalone-invitation profile described above;
+Microsoft RSVP and Apple calendar effects remain unavailable until they meet
+this contract.
 Unsupported series edits are refused. Conference creation and resource/room
 booking are explicit effects with their own capability checks. A free slot
 is a snapshot, not a reservation: refresh availability before commit and

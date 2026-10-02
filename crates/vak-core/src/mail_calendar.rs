@@ -1549,6 +1549,7 @@ mod tests {
             recurring: false,
             private: false,
             can_cancel: false,
+            can_respond: false,
         };
         assert!(event_overlaps_range(
             &timed("2026-09-30T09:30:00Z", "2026-09-30T10:15:00Z"),
@@ -1573,6 +1574,7 @@ mod tests {
             recurring: false,
             private: false,
             can_cancel: false,
+            can_respond: false,
         };
         assert!(event_overlaps_range(&all_day, range));
     }
@@ -1603,6 +1605,7 @@ mod tests {
             recurring: false,
             private: false,
             can_cancel: false,
+            can_respond: false,
         };
         let expected = trigger.occurrence_key("wanted", starts, ends);
         let also_expected = trigger.occurrence_key("other", starts, ends);

@@ -5,10 +5,14 @@ Microsoft, and Apple; owner and Agent previews; local revisioned drafts and
 threaded replies; scheduled and event-relative read-only routines; and
 synthetic regression coverage are implemented on `codex/mail-calendar`.
 Reviewed plain-text sends are supported for Google and Microsoft, as are
-limited timed-event creates; Google also supports ETag-conditional update and
-cancellation for the documented standalone-event profile. Durable
+limited timed-event creates; Google also supports ETag-conditional update,
+cancellation, and self-response for documented standalone-event profiles. RSVP
+is limited to complete standalone invitations and changes only the connected
+person's response. Durable
 single-use receipts and exact-marker reconciliation cover sends for Google
 and Microsoft, creates for both, and Google updates and cancellations.
+Google RSVP uses a conditional ETag update, attendee-omission semantics, and
+an opaque private attempt marker; Microsoft and Apple RSVP remain disabled.
 Current-storage account cleanup is implemented, but full erasure of content
 already copied into append-only session history remains deferred to M7. Live
 provider conformance, the full connected-source-to-Review browser journey,
@@ -451,8 +455,9 @@ until an official v1.0 conditional-write contract is verified. Graph's
 [accept](https://learn.microsoft.com/en-us/graph/api/event-accept?view=graph-rest-1.0),
 [tentatively accept](https://learn.microsoft.com/en-us/graph/api/event-tentativelyaccept?view=graph-rest-1.0),
 and [decline](https://learn.microsoft.com/en-us/graph/api/event-decline?view=graph-rest-1.0)
-actions likewise document no precondition header. Do not admit RSVP until
-stale-review and ambiguous-outcome handling have a verified contract.
+actions likewise document no precondition header. Microsoft RSVP remains
+disabled until stale-review and ambiguous-outcome handling have a verified
+contract.
 
 **Exit:** one reviewed payload causes at most one blind dispatch; an ambiguous
 timeout never retries blindly. Edited candidates, changed permissions,
@@ -520,6 +525,20 @@ provider failures remain non-retryable. Microsoft and Apple cancellations,
 events with guests, and recurring or all-day events remain unavailable. Tests
 must prove the exact conditional request and all eligibility boundaries before
 this increment is considered verified.
+
+**Implemented increment (2026-10-02):** Google now supports owner-reviewed RSVP
+for one complete, standalone invitation where the connected person is exactly
+one attendee and is not the organizer. The candidate binds the event ETag and
+the selected accept/maybe/decline response. The broker re-reads the invitation,
+rejects stale or incomplete attendee data, then sends a conditional `If-Match`
+PATCH using `attendeesOmitted=true`, changing only the connected person's
+response. `sendUpdates=all` makes organizer notification explicit in Review;
+an opaque attempt marker in the person's private event copy allows safe
+reconciliation after an ambiguous result. The local Canvas fixture verifies
+RSVP staging and Review without contacting a provider, and adapter tests check
+the payload, ETag, notification option, invitation eligibility, and marker.
+Microsoft RSVP stays disabled because Graph's action endpoints document no
+conditional precondition; Apple event effects remain unavailable.
 
 **Security correction (2026-09-30):** Google Calendar previews now redact the
 title, location, description, and attendee count of private events, matching
@@ -758,6 +777,18 @@ remains open.
 
 ## Progress log
 
+- 2026-10-02: Added Google-only RSVP for complete standalone invitations when
+  the owner account has calendar-read and calendar-write grants. The provider
+  adapter verifies the exact invitation, ETag and attendee identity, then
+  sends a conditional response update that notifies the organizer without
+  replacing the attendee list. Recurring, private, cancelled, organizer-owned
+  and incomplete invitations are rejected; Microsoft and Apple remain
+  unsupported. Review shows the exact invitation, response and notification
+  before the final action. Browser regression passes all 50 Daily checks and
+  all five connected-review checks. The full synthetic mock pack passed with
+  the web build, typecheck, 136 provider/vault tests, 19 Core tests, 19 Server
+  tests, owner HTTP checks, and isolated MIME worker tests. No provider or
+  credential endpoint was contacted.
 - 2026-10-02: Scheduled and owner-started mail/calendar runs now refresh OAuth
   access tokens shortly before expiry under an in-process lock and a
   vault-backed OS lease shared with owner refresh and disconnect. Rotated

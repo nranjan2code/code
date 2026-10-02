@@ -31,7 +31,7 @@ pub fn supports_action(provider: Provider, action: &ProposedAction) -> bool {
         ProposedAction::UpdateEvent { .. } | ProposedAction::CancelEvent { .. } => {
             provider == Provider::Google
         }
-        ProposedAction::RespondToEvent { .. } => false,
+        ProposedAction::RespondToEvent { .. } => provider == Provider::Google,
     }
 }
 
@@ -606,14 +606,14 @@ impl ProviderEffectClient {
             &self.google_calendar_base,
             &["calendars", "primary", "events", event_id],
         )?;
-        let response = self
+        let http_response = self
             .http
             .get(url)
             .bearer_auth(token.as_str())
             .send()
             .await
             .map_err(|_| ProviderEffectError::Unknown)?;
-        match response.status() {
+        match http_response.status() {
             StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
                 return Err(ProviderEffectError::ReauthorizationRequired);
             }
@@ -624,7 +624,7 @@ impl ProviderEffectClient {
             status if !status.is_success() => return Err(ProviderEffectError::Rejected),
             _ => {}
         }
-        let body = response_json(response).await?;
+        let body = response_json(http_response).await?;
         let returned_id = body
             .get("id")
             .and_then(Value::as_str)
@@ -637,6 +637,155 @@ impl ProviderEffectClient {
             .and_then(Value::as_str);
         if marker == Some(attempt_id) {
             Ok(Some(returned_id.to_owned()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Change only this Google account's own response on one invitation.
+    /// `attendeesOmitted` tells Calendar to update the participant response
+    /// without replacing the event's attendee array. The ETag precondition
+    /// closes the stale-review race; `sendUpdates=all` makes organizer
+    /// notification an explicit, reviewable effect.
+    pub async fn respond_to_event(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        attempt_id: &str,
+        event_id: &str,
+        source_version: &str,
+        response: crate::AttendeeResponse,
+    ) -> Result<ProviderAcceptance, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarRead)
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider != Provider::Google {
+            return Err(ProviderEffectError::Unsupported);
+        }
+        validate_event_response(event_id, source_version)?;
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let url = path_url(
+            &self.google_calendar_base,
+            &["calendars", "primary", "events", event_id],
+        )?;
+        let source_response = self
+            .http
+            .get(url.clone())
+            .bearer_auth(token.as_str())
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        match source_response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            StatusCode::NOT_FOUND | StatusCode::PRECONDITION_FAILED => {
+                return Err(ProviderEffectError::Conflict);
+            }
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let source = response_json(source_response).await?;
+        validate_google_response_source(&source, event_id, source_version)?;
+        let if_match = reqwest::header::HeaderValue::from_str(source_version)
+            .map_err(|_| ProviderEffectError::Rejected)?;
+        let response = self
+            .http
+            .patch(url)
+            .query(&[("sendUpdates", "all")])
+            .bearer_auth(token.as_str())
+            .header(reqwest::header::IF_MATCH, if_match)
+            .json(&google_event_response_payload(response, attempt_id))
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        classify_updated_event_response(response).await
+    }
+
+    /// Resolve an ambiguous RSVP only when the exact event still shows the
+    /// approved self response and carries this dispatch attempt's marker.
+    pub async fn reconcile_event_response(
+        &self,
+        account: &ConnectedAccount,
+        vault: &AccountVault,
+        agent_id: &str,
+        audience: &str,
+        attempt_id: &str,
+        event_id: &str,
+        response: crate::AttendeeResponse,
+    ) -> Result<Option<String>, ProviderEffectError> {
+        if vault.agent_id() != account.owner_agent_id
+            || !account.admits(agent_id, audience, Capability::CalendarRead)
+            || !account.admits(agent_id, audience, Capability::CalendarWrite)
+        {
+            return Err(ProviderEffectError::NotAdmitted);
+        }
+        if account.provider != Provider::Google {
+            return Err(ProviderEffectError::Unsupported);
+        }
+        validate_event_response(event_id, "\"reconcile-only\"")?;
+        if !valid_attempt_id(attempt_id) {
+            return Err(ProviderEffectError::Rejected);
+        }
+        let token = vault
+            .access_token(&account.id)
+            .map_err(|_| ProviderEffectError::ReauthorizationRequired)?;
+        let url = path_url(
+            &self.google_calendar_base,
+            &["calendars", "primary", "events", event_id],
+        )?;
+        let http_response = self
+            .http
+            .get(url)
+            .bearer_auth(token.as_str())
+            .send()
+            .await
+            .map_err(|_| ProviderEffectError::Unknown)?;
+        match http_response.status() {
+            StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
+                return Err(ProviderEffectError::ReauthorizationRequired);
+            }
+            StatusCode::NOT_FOUND => return Ok(None),
+            status if status.is_redirection() || status.is_server_error() => {
+                return Err(ProviderEffectError::Unknown);
+            }
+            status if !status.is_success() => return Err(ProviderEffectError::Rejected),
+            _ => {}
+        }
+        let body = response_json(http_response).await?;
+        validate_google_response_source(
+            &body,
+            event_id,
+            body.get("etag").and_then(Value::as_str).unwrap_or_default(),
+        )?;
+        let marker = body
+            .pointer("/extendedProperties/private/vak_action_id")
+            .and_then(Value::as_str);
+        let response_matches =
+            body.get("attendees")
+                .and_then(Value::as_array)
+                .is_some_and(|attendees| {
+                    attendees.iter().any(|attendee| {
+                        attendee.get("self").and_then(Value::as_bool) == Some(true)
+                            && attendee.get("responseStatus").and_then(Value::as_str)
+                                == Some(google_response_status(response))
+                    })
+                });
+        if marker == Some(attempt_id) && response_matches {
+            Ok(Some(event_id.to_owned()))
         } else {
             Ok(None)
         }
@@ -841,6 +990,74 @@ pub fn validate_event_cancel(
     Ok(())
 }
 
+pub fn validate_event_response(
+    event_id: &str,
+    source_version: &str,
+) -> Result<(), ProviderEffectError> {
+    if event_id.len() < 5
+        || event_id.len() > 1024
+        || !event_id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'v').contains(&byte))
+        || source_version.trim().is_empty()
+        || source_version.len() > 512
+        || source_version.chars().any(char::is_control)
+        || reqwest::header::HeaderValue::from_str(source_version).is_err()
+    {
+        return Err(ProviderEffectError::Rejected);
+    }
+    Ok(())
+}
+
+fn validate_google_response_source(
+    source: &Value,
+    event_id: &str,
+    source_version: &str,
+) -> Result<(), ProviderEffectError> {
+    let id = source
+        .get("id")
+        .and_then(Value::as_str)
+        .ok_or(ProviderEffectError::Conflict)?;
+    let version = source
+        .get("etag")
+        .and_then(Value::as_str)
+        .ok_or(ProviderEffectError::Conflict)?;
+    if id != event_id || version != source_version {
+        return Err(ProviderEffectError::Conflict);
+    }
+    let default_event = source
+        .get("eventType")
+        .and_then(Value::as_str)
+        .unwrap_or("default")
+        == "default";
+    let recurring = source.get("recurringEventId").is_some()
+        || source
+            .get("recurrence")
+            .and_then(Value::as_array)
+            .is_some_and(|rules| !rules.is_empty());
+    let attendees_complete = source.get("attendeesOmitted").and_then(Value::as_bool) != Some(true);
+    let has_self_attendee = source
+        .get("attendees")
+        .and_then(Value::as_array)
+        .is_some_and(|attendees| {
+            attendees
+                .iter()
+                .filter(|attendee| attendee.get("self").and_then(Value::as_bool) == Some(true))
+                .count()
+                == 1
+        });
+    if source.get("status").and_then(Value::as_str) == Some("cancelled")
+        || source.pointer("/organizer/self").and_then(Value::as_bool) != Some(false)
+        || recurring
+        || !default_event
+        || !attendees_complete
+        || !has_self_attendee
+    {
+        return Err(ProviderEffectError::Unsupported);
+    }
+    Ok(())
+}
+
 fn validate_google_cancel_source(
     source: &Value,
     event_id: &str,
@@ -917,6 +1134,22 @@ fn google_update_event_payload(draft: &CalendarDraft, attempt_id: &str) -> Value
         "end": {"dateTime": draft.ends_at.to_rfc3339(), "timeZone": "UTC"},
         "extendedProperties": {"private": {GOOGLE_ACTION_PROPERTY: attempt_id}}
     })
+}
+
+fn google_event_response_payload(response: crate::AttendeeResponse, attempt_id: &str) -> Value {
+    json!({
+        "attendeesOmitted": true,
+        "attendees": [{"self": true, "responseStatus": google_response_status(response)}],
+        "extendedProperties": {"private": {GOOGLE_ACTION_PROPERTY: attempt_id}}
+    })
+}
+
+fn google_response_status(response: crate::AttendeeResponse) -> &'static str {
+    match response {
+        crate::AttendeeResponse::Accept => "accepted",
+        crate::AttendeeResponse::Tentative => "tentative",
+        crate::AttendeeResponse::Decline => "declined",
+    }
 }
 
 fn graph_create_event_payload(draft: &CalendarDraft, attempt_id: &str) -> Value {
@@ -1396,8 +1629,118 @@ mod tests {
         assert!(!supports_action(Provider::Microsoft, &update));
         assert!(!supports_action(Provider::Microsoft, &cancel));
         assert!(!supports_action(Provider::AppleIcloud, &create));
-        assert!(!supports_action(Provider::Google, &respond));
+        assert!(supports_action(Provider::Google, &respond));
         assert!(!supports_action(Provider::Microsoft, &respond));
+    }
+
+    #[test]
+    fn google_rsvp_payload_changes_only_self_and_records_its_attempt() {
+        for (response, expected) in [
+            (crate::AttendeeResponse::Accept, "accepted"),
+            (crate::AttendeeResponse::Tentative, "tentative"),
+            (crate::AttendeeResponse::Decline, "declined"),
+        ] {
+            let payload = google_event_response_payload(response, "attempt-1");
+            assert_eq!(payload["attendeesOmitted"], true);
+            assert_eq!(
+                payload["attendees"],
+                json!([{
+                    "self": true,
+                    "responseStatus": expected
+                }])
+            );
+            assert_eq!(
+                payload.pointer("/extendedProperties/private/vak_action_id"),
+                Some(&json!("attempt-1"))
+            );
+            assert_eq!(payload.as_object().unwrap().len(), 3);
+        }
+    }
+
+    #[tokio::test]
+    async fn google_rsvp_rechecks_etag_and_sends_only_the_reviewed_self_response() {
+        vak_config::paths::isolate_home_for_tests();
+        let agent_id = format!("mailcal-rsvp-{}", uuid::Uuid::now_v7());
+        let account_id = uuid::Uuid::now_v7().to_string();
+        let attempt_id = uuid::Uuid::now_v7().to_string();
+        let vault = AccountVault::for_agent(&agent_id).unwrap();
+        vault
+            .store(
+                &account_id,
+                crate::vault::AccountSecretMaterial::new(
+                    format!("provider:{account_id}"),
+                    Some("owner@example.test".into()),
+                    None,
+                    Some("mock-access-token".into()),
+                    None,
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut account = calendar_account(&agent_id, &account_id, Provider::Google);
+        account.capabilities = [Capability::CalendarRead, Capability::CalendarWrite]
+            .into_iter()
+            .collect();
+        let observed = Arc::new(Mutex::new(None));
+        let observed_by_patch = Arc::clone(&observed);
+        let app = Router::new().route(
+            "/calendar/v3/calendars/primary/events/abcde",
+            get(|| async {
+                Json(json!({
+                    "id":"abcde", "etag":"\"v1\"", "eventType":"default",
+                    "organizer":{"self":false},
+                    "attendees":[{"self":true,"responseStatus":"needsAction"}]
+                }))
+            })
+            .patch(
+                move |headers: axum::http::HeaderMap,
+                      uri: axum::http::Uri,
+                      Json(payload): Json<Value>| {
+                    let observed = Arc::clone(&observed_by_patch);
+                    async move {
+                        *observed.lock().unwrap() = Some((
+                            headers
+                                .get(axum::http::header::IF_MATCH)
+                                .and_then(|value| value.to_str().ok())
+                                .map(str::to_owned),
+                            uri.query().map(str::to_owned),
+                            payload,
+                        ));
+                        (StatusCode::OK, Json(json!({"id":"abcde","etag":"\"v2\""})))
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let mut client = ProviderEffectClient::new().unwrap();
+        client.google_calendar_base = format!("http://{address}/calendar/v3");
+
+        let accepted = client
+            .respond_to_event(
+                &account,
+                &vault,
+                &agent_id,
+                &format!("agent:{agent_id}"),
+                &attempt_id,
+                "abcde",
+                "\"v1\"",
+                crate::AttendeeResponse::Accept,
+            )
+            .await
+            .unwrap();
+        assert_eq!(accepted.provider_item_id.as_deref(), Some("abcde"));
+        let (if_match, query, payload) = observed.lock().unwrap().clone().unwrap();
+        assert_eq!(if_match.as_deref(), Some("\"v1\""));
+        assert_eq!(query.as_deref(), Some("sendUpdates=all"));
+        assert_eq!(
+            payload,
+            google_event_response_payload(crate::AttendeeResponse::Accept, &attempt_id)
+        );
+        server.abort();
     }
 
     fn timed_event() -> CalendarDraft {
@@ -1995,6 +2338,42 @@ mod tests {
         invited["attendees"] = json!([{ "email": "guest@example.com" }]);
         assert_eq!(
             validate_google_update_source(&invited, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+    }
+
+    #[test]
+    fn google_rsvp_requires_a_complete_unchanged_standalone_invitation() {
+        let source = json!({
+            "id":"abcde", "etag":"\"v1\"", "eventType":"default",
+            "organizer":{"self":false},
+            "attendees":[{"self":true,"responseStatus":"needsAction"}]
+        });
+        validate_event_response("abcde", "\"v1\"").unwrap();
+        validate_google_response_source(&source, "abcde", "\"v1\"").unwrap();
+
+        let mut stale = source.clone();
+        stale["etag"] = json!("\"v2\"");
+        assert_eq!(
+            validate_google_response_source(&stale, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Conflict)
+        );
+        let mut organizer = source.clone();
+        organizer["organizer"]["self"] = json!(true);
+        assert_eq!(
+            validate_google_response_source(&organizer, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+        let mut incomplete = source.clone();
+        incomplete["attendeesOmitted"] = json!(true);
+        assert_eq!(
+            validate_google_response_source(&incomplete, "abcde", "\"v1\""),
+            Err(ProviderEffectError::Unsupported)
+        );
+        let mut recurring = source.clone();
+        recurring["recurringEventId"] = json!("series-1");
+        assert_eq!(
+            validate_google_response_source(&recurring, "abcde", "\"v1\""),
             Err(ProviderEffectError::Unsupported)
         );
     }

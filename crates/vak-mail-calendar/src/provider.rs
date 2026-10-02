@@ -262,6 +262,9 @@ pub struct CalendarItem {
     /// True only for a public standalone timed Google event organized by this
     /// account with no attendees. Other providers never expose cancellation.
     pub can_cancel: bool,
+    /// True only for a standalone Google invitation with a complete attendee
+    /// list and an explicit self attendee. No attendee identities are exposed.
+    pub can_respond: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -4397,6 +4400,18 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
         .unwrap_or("default")
         == "default";
     let self_is_organizer = value.pointer("/organizer/self").and_then(Value::as_bool) == Some(true);
+    let has_self_attendee = value
+        .get("attendees")
+        .and_then(Value::as_array)
+        .is_some_and(|attendees| {
+            attendees
+                .iter()
+                .filter(|attendee| attendee.get("self").and_then(Value::as_bool) == Some(true))
+                .count()
+                == 1
+        });
+    let attendees_complete = value.get("attendeesOmitted").and_then(Value::as_bool) != Some(true);
+    let not_cancelled = value.get("status").and_then(Value::as_str) != Some("cancelled");
     let starts_at = start
         .get("dateTime")
         .and_then(Value::as_str)
@@ -4454,6 +4469,12 @@ fn parse_google_event(value: &Value) -> Option<CalendarItem> {
             && !has_attendees
             && default_event
             && self_is_organizer,
+        can_respond: !recurring
+            && !self_is_organizer
+            && has_self_attendee
+            && attendees_complete
+            && not_cancelled
+            && default_event,
     })
 }
 
@@ -4518,6 +4539,7 @@ fn parse_graph_event(value: &Value) -> Option<CalendarItem> {
             .is_some_and(|kind| kind != "singleInstance"),
         private,
         can_cancel: false,
+        can_respond: false,
     })
 }
 
@@ -6168,6 +6190,41 @@ mod tests {
         all_day["start"] = json!({"date":"2026-09-30"});
         all_day["end"] = json!({"date":"2026-10-01"});
         assert!(!parse_google_event(&all_day).unwrap().can_cancel);
+    }
+
+    #[test]
+    fn only_complete_standalone_google_invitations_are_respondable() {
+        let invitation = json!({
+            "id":"event123", "etag":"\"version-1\"", "summary":"Team focus",
+            "eventType":"default", "visibility":"private", "organizer":{"self":false},
+            "start":{"dateTime":"2026-09-30T10:00:00Z"},
+            "end":{"dateTime":"2026-09-30T11:00:00Z"},
+            "attendees":[{"self":true,"responseStatus":"needsAction"},{"email":"guest@example.test"}]
+        });
+        let parsed = parse_google_event(&invitation).unwrap();
+        assert!(parsed.can_respond);
+        assert_eq!(
+            parsed.attendee_count, 0,
+            "private events redact attendee counts"
+        );
+        assert_eq!(parsed.title, "Private event");
+
+        let mut organizer = invitation.clone();
+        organizer["organizer"]["self"] = json!(true);
+        assert!(!parse_google_event(&organizer).unwrap().can_respond);
+        let mut no_self = invitation.clone();
+        no_self["attendees"] = json!([{"email":"guest@example.test"}]);
+        assert!(!parse_google_event(&no_self).unwrap().can_respond);
+        let mut omitted = invitation.clone();
+        omitted["attendeesOmitted"] = json!(true);
+        assert!(!parse_google_event(&omitted).unwrap().can_respond);
+        let mut recurring = invitation.clone();
+        recurring["recurringEventId"] = json!("series123");
+        assert!(!parse_google_event(&recurring).unwrap().can_respond);
+        let mut cancelled = invitation.clone();
+        cancelled["status"] = json!("cancelled");
+        assert!(!parse_google_event(&cancelled).unwrap().can_respond);
+        assert!(!parse_graph_event(&invitation).unwrap().can_respond);
     }
 
     #[test]

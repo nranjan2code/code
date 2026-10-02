@@ -1161,20 +1161,23 @@ pub(super) async fn send_mail_candidate(
         &candidate.action,
         ProposedAction::SendMail { draft } if draft.reply_to_message_id.is_some()
     );
+    let requires_calendar_read = matches!(&candidate.action, ProposedAction::RespondToEvent { .. });
     let send_route = uri.path().ends_with("/send");
     let create_route = uri.path().ends_with("/create-event");
     let update_route = uri.path().ends_with("/update-event");
     let cancel_route = uri.path().ends_with("/cancel-event");
+    let respond_route = uri.path().ends_with("/respond-event");
     match &candidate.action {
         ProposedAction::SendMail { draft } if send_route && vak_mail_calendar::effect::validate_mail_draft(draft).is_ok() => {},
         ProposedAction::CreateEvent { draft } if create_route && vak_mail_calendar::effect::validate_event_create(draft).is_ok() => {},
         ProposedAction::UpdateEvent { event_id, source_version, draft } if update_route && vak_mail_calendar::effect::validate_event_update(event_id, source_version, draft).is_ok() => {},
         ProposedAction::CancelEvent { event_id, source_version, occurrence_id, whole_series } if cancel_route && vak_mail_calendar::effect::validate_event_cancel(event_id, source_version, occurrence_id.as_deref(), *whole_series).is_ok() => {},
+        ProposedAction::RespondToEvent { event_id, source_version, .. } if respond_route && vak_mail_calendar::effect::validate_event_response(event_id, source_version).is_ok() => {},
         ProposedAction::SendMail { .. } => return (StatusCode::BAD_REQUEST, "This send profile supports plain text without attachments or sender aliases; replies require a selected message and conversation.").into_response(),
         ProposedAction::CreateEvent { .. } => return (StatusCode::BAD_REQUEST, "This event profile supports one timed event without attendees, recurrence, or reminders.").into_response(),
         ProposedAction::UpdateEvent { .. } => return (StatusCode::BAD_REQUEST, "This update profile supports one standalone timed Google event without attendees, recurrence, or reminders.").into_response(),
         ProposedAction::CancelEvent { .. } => return (StatusCode::BAD_REQUEST, "Cancellation is limited to one unchanged public standalone Google event with no attendees.").into_response(),
-        _ => return (StatusCode::BAD_REQUEST, "This action is not yet supported for provider changes.").into_response(),
+        ProposedAction::RespondToEvent { .. } => return (StatusCode::BAD_REQUEST, "RSVP is limited to a standalone Google invitation that still matches the version you reviewed.").into_response(),
     }
     if !candidate.source_refs.iter().all(|source| {
         source
@@ -1196,6 +1199,8 @@ pub(super) async fn send_mail_candidate(
                 && account.admits(&agent_id, &candidate.audience_id, required_capability)
                 && (!requires_mail_read
                     || account.admits(&agent_id, &candidate.audience_id, Capability::MailRead))
+                && (!requires_calendar_read
+                    || account.admits(&agent_id, &candidate.audience_id, Capability::CalendarRead))
         }),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
@@ -1261,7 +1266,7 @@ pub(super) async fn send_mail_candidate(
                 ProposedAction::CreateEvent { .. } => "mail_calendar_event_create",
                 ProposedAction::UpdateEvent { .. } => "mail_calendar_event_update",
                 ProposedAction::CancelEvent { .. } => "mail_calendar_event_cancel",
-                _ => "mail_calendar_event_create",
+                ProposedAction::RespondToEvent { .. } => "mail_calendar_event_respond",
             },
             &permission_args,
             mode,
@@ -1380,7 +1385,24 @@ pub(super) async fn send_mail_candidate(
                 )
                 .await
         }
-        _ => Err(ProviderEffectError::Unsupported),
+        ProposedAction::RespondToEvent {
+            event_id,
+            source_version,
+            response,
+        } => {
+            client
+                .respond_to_event(
+                    &account,
+                    &vault,
+                    &agent_id,
+                    &candidate.audience_id,
+                    &receipt.attempt_id,
+                    event_id,
+                    source_version,
+                    *response,
+                )
+                .await
+        }
     };
     match result {
         Ok(accepted) => {
@@ -1428,6 +1450,8 @@ pub(super) async fn send_mail_candidate(
             "calendar_event_update_effect"
         } else if matches!(candidate.action, ProposedAction::CancelEvent { .. }) {
             "calendar_event_cancel_effect"
+        } else if matches!(candidate.action, ProposedAction::RespondToEvent { .. }) {
+            "calendar_event_response_effect"
         } else {
             "calendar_event_create_effect"
         },
@@ -1530,23 +1554,27 @@ pub(super) async fn reconcile_event_candidate(
         )
             .into_response();
     }
-    let (reconcile_update_event, reconcile_cancel_event) = match &candidate.action {
-        ProposedAction::CreateEvent { .. } => (None, None),
-        ProposedAction::UpdateEvent { event_id, .. } => (Some(event_id.as_str()), None),
-        ProposedAction::CancelEvent {
-            event_id,
-            occurrence_id,
-            whole_series,
-            ..
-        } if occurrence_id.is_none() && !whole_series => (None, Some(event_id.as_str())),
-        _ => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "Only an ambiguous supported calendar event change can be reconciled here.",
-            )
-                .into_response();
-        }
-    };
+    let (reconcile_update_event, reconcile_cancel_event, reconcile_response_event) =
+        match &candidate.action {
+            ProposedAction::CreateEvent { .. } => (None, None, None),
+            ProposedAction::UpdateEvent { event_id, .. } => (Some(event_id.as_str()), None, None),
+            ProposedAction::CancelEvent {
+                event_id,
+                occurrence_id,
+                whole_series,
+                ..
+            } if occurrence_id.is_none() && !whole_series => (None, Some(event_id.as_str()), None),
+            ProposedAction::RespondToEvent {
+                event_id, response, ..
+            } => (None, None, Some((event_id.as_str(), *response))),
+            _ => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    "Only an ambiguous supported calendar event change can be reconciled here.",
+                )
+                    .into_response();
+            }
+        };
     let Some(mut receipt) = vault.list_action_receipts().ok().and_then(|rows| {
         rows.into_iter()
             .find(|row| row.candidate_id == candidate.id)
@@ -1574,21 +1602,23 @@ pub(super) async fn reconcile_event_candidate(
             account.id == candidate.account_id
                 && account.owner_agent_id == agent_id
                 && account.admits(&agent_id, &candidate.audience_id, Capability::CalendarWrite)
+                && (!matches!(&candidate.action, ProposedAction::RespondToEvent { .. })
+                    || account.admits(&agent_id, &candidate.audience_id, Capability::CalendarRead))
         })
     }) {
         Some(account) => account,
         None => return StatusCode::FORBIDDEN.into_response(),
     };
-    if !matches!(
-        (
-            account.provider,
-            reconcile_update_event,
-            reconcile_cancel_event
-        ),
-        (Provider::Google | Provider::Microsoft, None, None)
-            | (Provider::Google, Some(_), None)
-            | (Provider::Google, None, Some(_))
-    ) {
+    let provider_supports_reconcile = match account.provider {
+        Provider::Google => true,
+        Provider::Microsoft => {
+            reconcile_update_event.is_none()
+                && reconcile_cancel_event.is_none()
+                && reconcile_response_event.is_none()
+        }
+        Provider::AppleIcloud => false,
+    };
+    if !provider_supports_reconcile {
         return StatusCode::BAD_REQUEST.into_response();
     }
     if account
@@ -1652,6 +1682,18 @@ pub(super) async fn reconcile_event_candidate(
                 event_id,
             )
             .await
+    } else if let Some((event_id, response)) = reconcile_response_event {
+        client
+            .reconcile_event_response(
+                &account,
+                &vault,
+                &agent_id,
+                &candidate.audience_id,
+                &receipt.attempt_id,
+                event_id,
+                response,
+            )
+            .await
     } else {
         client
             .reconcile_created_event(
@@ -1670,6 +1712,8 @@ pub(super) async fn reconcile_event_candidate(
             receipt.detail_code = Some(
                 if reconcile_cancel_event.is_some() {
                     "provider_event_cancel_confirmed_by_reconciliation"
+                } else if reconcile_response_event.is_some() {
+                    "provider_event_response_confirmed_by_reconciliation"
                 } else if reconcile_update_event.is_some() {
                     "provider_event_update_confirmed_by_reconciliation"
                 } else {
@@ -3411,6 +3455,7 @@ mod tests {
             recurring: false,
             private: false,
             can_cancel: false,
+            can_respond: false,
         };
         let mut events = (0..1_500)
             .map(|index| make_event(format!("due-{index}"), Some(now + Duration::minutes(4))))
