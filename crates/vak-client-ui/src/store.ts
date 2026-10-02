@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js";
 import { isOfficePath } from "./officeFiles";
 import { fileSubject, matchExecutionArtifact, type ArtifactOrigin, type CanvasSubject } from "./canvasSubject";
-import { activateEntry, activeEntry, closeEntry, entriesOf, openEntry, updateEntry, type CanvasMode, type CanvasStacks } from "./canvasStack";
+import { activeEntry, applyOp, entriesOf, isShared, type CanvasMode, type CanvasOp, type CanvasStacks, type EntryPatch } from "./canvasStack";
 import { freshEntry } from "./canvasViewers";
 import { displayFileName } from "./attachFiles";
 import { createStore, reconcile, unwrap } from "solid-js/store";
@@ -320,10 +320,42 @@ export type CanvasDevice = "desktop" | "tablet" | "mobile";
 
 const [canvasStacks, setCanvasStacks] = createSignal<CanvasStacks>({});
 const [canvasDevice, setCanvasDevice] = createSignal<CanvasDevice>("desktop");
-export { canvasDevice, setCanvasDevice };
+export { canvasDevice, setCanvasDevice, canvasStacks, setCanvasStacks };
 
-/** Each conversation has its own Canvas; the one in front is the active conversation's. */
-const canvasConversation = () => activeId() ?? "";
+/** Each conversation has its own Canvas; the one in front is the active
+ *  conversation's. "" is the Canvas of no conversation, kept on this device. */
+export const canvasConversation = () => activeId() ?? "";
+
+const narrowNow = () => window.matchMedia("(max-width: 1100px)").matches;
+export const freshCanvasEntry = (subject: CanvasSubject) => freshEntry(subject, narrowNow());
+
+/** Told about each change that the other surfaces should see (`canvasSync.ts`). */
+let shareCanvasChange: (conversation: string, op: CanvasOp) => void = () => {};
+export function onCanvasChange(share: (conversation: string, op: CanvasOp) => void) {
+  shareCanvasChange = share;
+}
+
+/** The one way a Canvas changes: here at once, then for every other surface. */
+export function changeCanvas(conversation: string, op: CanvasOp) {
+  setCanvasStacks((stacks) => applyOp(stacks, conversation, op, freshCanvasEntry));
+  if (conversation && isShared(op)) shareCanvasChange(conversation, op);
+}
+
+/** Escape asks the Canvas in front to close; the frame closes it, with its own exit. */
+const [canvasCloseRequests, setCanvasCloseRequests] = createSignal(0);
+export { canvasCloseRequests };
+export function requestCanvasClose() {
+  setCanvasCloseRequests((count) => count + 1);
+}
+
+/** Set when a reader opens a Canvas that was closed, so it slides in; a Canvas
+ *  coming back with its conversation, or opened on another surface, just shows. */
+let canvasArrival = false;
+export function consumeCanvasArrival(): boolean {
+  const arriving = canvasArrival;
+  canvasArrival = false;
+  return arriving;
+}
 
 /** What is open in the active conversation's Canvas, and which is in front. */
 export const canvasEntries = () => entriesOf(canvasStacks(), canvasConversation());
@@ -340,14 +372,11 @@ export const canvasOpen = () => canvasEntry() !== null;
  * reading, so it can belong to another conversation than the one showing it.
  */
 export function openArtifactCanvas(subject: CanvasSubject) {
-  if (sidebarOpen()) {
-    setSidebarOpen(false);
-  }
-  if (dockTab()) {
-    setDockTab(null);
-  }
-  const narrow = window.matchMedia("(max-width: 1100px)").matches;
-  setCanvasStacks((stacks) => openEntry(stacks, canvasConversation(), subject, (opened) => freshEntry(opened, narrow)));
+  // On a phone the sidebar is a drawer over the page; the Canvas replaces it.
+  if (sidebarOpen() && narrowNow()) setSidebarOpen(false);
+  const conversation = canvasConversation();
+  if (!activeEntry(canvasStacks(), conversation)) canvasArrival = true;
+  changeCanvas(conversation, { op: "open", subject });
 }
 
 /** Close the one in front; the last one closed closes the Canvas. */
@@ -356,17 +385,19 @@ export function closeArtifactCanvas() {
   if (entry) closeCanvasEntry(entry.key);
 }
 
-export function closeCanvasEntry(key: string) {
-  setCanvasStacks((stacks) => closeEntry(stacks, canvasConversation(), key));
+/** Closes one tab, in the active conversation's Canvas or the one named. */
+export function closeCanvasEntry(key: string, conversation = canvasConversation()) {
+  changeCanvas(conversation, { op: "close", key });
 }
 
 export function activateCanvasEntry(key: string) {
-  setCanvasStacks((stacks) => activateEntry(stacks, canvasConversation(), key));
+  changeCanvas(canvasConversation(), { op: "activate", key });
 }
 
-/** Changes what the reader has done in the one in front (view, selection, note). */
-export function updateCanvasEntry(patch: Parameters<typeof updateEntry>[3], key = canvasEntry()?.key) {
-  if (key) setCanvasStacks((stacks) => updateEntry(stacks, canvasConversation(), key, patch));
+/** Changes what the reader has done in a tab (view, selection, note): the one
+ *  in front unless named, in the active conversation unless named. */
+export function updateCanvasEntry(patch: EntryPatch, key = canvasEntry()?.key, conversation = canvasConversation()) {
+  if (key) changeCanvas(conversation, { op: "update", key, patch });
 }
 
 /** Toggle between split and focused canvas modes. */
@@ -445,7 +476,7 @@ export function isPreviewableArtifact(path: string | null | undefined): boolean 
  */
 export function openArtifactFile(path: string, origin?: ArtifactOrigin) {
   const clean = path.trim().replace(/[.,;:!?)]'"`]+$/, "").trim();
-  const title = displayFileName(clean) || "Artifact Preview";
+  const title = displayFileName(clean) || "Preview";
   if (origin) {
     openArtifactCanvas(fileSubject(clean, origin, title));
     return;

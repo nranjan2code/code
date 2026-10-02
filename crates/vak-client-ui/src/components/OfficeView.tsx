@@ -299,10 +299,16 @@ export default function OfficeView(props: {
       else if (["ArrowLeft", "PageUp"].includes(event.key)) { event.preventDefault(); showSlide(presentationIndex() - 1); }
       else if (event.key === "Home") { event.preventDefault(); showSlide(0); }
       else if (event.key === "End") { event.preventDefault(); showSlide(deckSlides().length - 1); }
-      else if (event.key === "Escape") stopPresentation();
+      else if (event.key === "Escape") {
+        // Leaving the slideshow is all this Escape does: not closing the
+        // Canvas around it, and not stopping a running turn.
+        event.preventDefault();
+        event.stopPropagation();
+        stopPresentation();
+      }
     };
-    window.addEventListener("keydown", onKey);
-    onCleanup(() => window.removeEventListener("keydown", onKey));
+    window.addEventListener("keydown", onKey, true);
+    onCleanup(() => window.removeEventListener("keydown", onKey, true));
   });
 
   return (

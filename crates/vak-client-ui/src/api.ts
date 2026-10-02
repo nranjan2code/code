@@ -95,14 +95,16 @@ function withAgent(url: string, agent?: string): string {
 /** A refusal from the server, with its typed `kind` when it has one, so a
  * caller can act on what went wrong without reading the message. */
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly kind?: string) {
+  /** `body` is the refusal as the server sent it, for one that carries more
+   *  than words (the newer Canvas a stale write is answered with). */
+  constructor(message: string, readonly status: number, readonly kind?: string, readonly body?: unknown) {
     super(message);
   }
 }
 
 function refusal(res: Response, parsed: unknown): ApiError {
   const body = parsed as { error?: string; kind?: string } | null;
-  return new ApiError(body?.error ?? `${res.status} ${res.statusText}`, res.status, body?.kind);
+  return new ApiError(body?.error ?? `${res.status} ${res.statusText}`, res.status, body?.kind, parsed);
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
@@ -825,6 +827,37 @@ export async function closePreview(id: string): Promise<void> {
   }
 }
 
+/** One conversation's Canvas as the server keeps it (docs/design/66 §0a):
+ *  the same on every surface showing the conversation. */
+export interface StoredCanvas {
+  schema: number;
+  revision: number;
+  entries: Record<string, unknown>[];
+  active: string | null;
+  [field: string]: unknown;
+}
+
+export function getCanvas(session: string): Promise<StoredCanvas> {
+  return req(`/sessions/${encodeURIComponent(session)}/canvas`);
+}
+
+/** Writes a conversation's Canvas as it should now be, made from `revision`.
+ *  When another surface wrote first, the answer is the Canvas as it is now,
+ *  for the change to be made again on top of it. */
+export async function putCanvas(
+  session: string,
+  revision: number,
+  canvas: { entries: Record<string, unknown>[]; active: string | null },
+): Promise<{ saved: StoredCanvas } | { stale: StoredCanvas }> {
+  try {
+    return { saved: await req<StoredCanvas>(`/sessions/${encodeURIComponent(session)}/canvas`, { method: "PUT", body: JSON.stringify({ revision, ...canvas }) }) };
+  } catch (cause) {
+    const body = cause instanceof ApiError && cause.status === 409 ? (cause.body as { reason?: string; canvas?: StoredCanvas } | null) : null;
+    if (body?.reason === "stale" && body.canvas) return { stale: body.canvas };
+    throw cause;
+  }
+}
+
 /** The name this client reaches the server by. */
 export function backendHostname(): string {
   try {
@@ -1341,8 +1374,32 @@ export interface FileResponse {
   data_url?: string;
 }
 
-export function readFile(path: string): Promise<FileResponse> {
-  return req(`/fs/file?path=${encodeURIComponent(path)}`);
+/** The query naming a workspace file: in the conversation's own workspace
+ *  (its Agent's folder) when one is named, otherwise the server's. */
+function workspaceQuery(path: string, session?: string): string {
+  return `path=${encodeURIComponent(path)}${session ? `&session=${encodeURIComponent(session)}` : ""}`;
+}
+
+export function readFile(path: string, session?: string): Promise<FileResponse> {
+  return req(`/fs/file?${workspaceQuery(path, session)}`);
+}
+
+/** A failed raw read, with its status kept so a viewer can say what went wrong. */
+async function rawRefusal(response: Response): Promise<ApiError> {
+  const text = await response.text().catch(() => "");
+  let parsed: unknown = text;
+  try { parsed = text ? JSON.parse(text) : null; } catch { /* plain text */ }
+  if (response.status === 401) onUnauthorized?.();
+  return refusal(response, parsed);
+}
+
+/** Reads a conversation's workspace files: what a Canvas or a result card
+ *  shows of a file an Agent saved in its folder. */
+export function workspaceReader(session?: string): { readFile(path: string): Promise<FileResponse>; readFileRaw(path: string): Promise<string> } {
+  return {
+    readFile: (path) => readFile(path, session),
+    readFileRaw: (path) => readFileRaw(path, session),
+  };
 }
 
 export function readExecutionArtifact(sessionId: string, executionId: string, path: string): Promise<FileResponse> {
@@ -1351,21 +1408,21 @@ export function readExecutionArtifact(sessionId: string, executionId: string, pa
 
 export async function readExecutionArtifactRaw(sessionId: string, executionId: string, path: string): Promise<string> {
   const response = await authFetch(`/sessions/${encodeURIComponent(sessionId)}/sandbox/executions/${encodeURIComponent(executionId)}/artifact/raw?path=${encodeURIComponent(path)}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  if (!response.ok) throw await rawRefusal(response);
   return URL.createObjectURL(await response.blob());
 }
 
 /** Authenticated raw bytes for browser-native artifact viewers/downloads. */
-export async function readFileRaw(path: string): Promise<string> {
-  const response = await authFetch(`/fs/file/raw?path=${encodeURIComponent(path)}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+export async function readFileRaw(path: string, session?: string): Promise<string> {
+  const response = await authFetch(`/fs/file/raw?${workspaceQuery(path, session)}`);
+  if (!response.ok) throw await rawRefusal(response);
   return URL.createObjectURL(await response.blob());
 }
 
 /** A workspace file's bytes and type, for saving a copy. */
-export async function readFileBytes(path: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
-  const response = await authFetch(`/fs/file/raw?path=${encodeURIComponent(path)}`);
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+export async function readFileBytes(path: string, session?: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; mime: string }> {
+  const response = await authFetch(`/fs/file/raw?${workspaceQuery(path, session)}`);
+  if (!response.ok) throw await rawRefusal(response);
   return {
     bytes: new Uint8Array(await response.arrayBuffer()),
     mime: response.headers.get("Content-Type") ?? "application/octet-stream",
@@ -1586,7 +1643,8 @@ function officeUrl(source: OfficeSource, query: string): string {
     return `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/candidates/${encodeURIComponent(source.candidateId)}/office?${path}`;
   if (source.executionId && source.sessionId)
     return `/sessions/${encodeURIComponent(source.sessionId)}/sandbox/executions/${encodeURIComponent(source.executionId)}/artifact/office?${path}`;
-  return `/fs/office?${path}`;
+  // A file in the folder is read from the conversation's own workspace.
+  return `/fs/office?${path}${source.sessionId ? `&session=${encodeURIComponent(source.sessionId)}` : ""}`;
 }
 
 /** A page of an Office file: from unit `from`, or, given `at`, from the unit
@@ -1924,6 +1982,10 @@ export function getLaunch(id: string, candidateId?: string): Promise<{
     args: string[];
     port: number | null;
     running: boolean;
+    /** Views showing it now (desktop, web, another tab). */
+    viewers?: number;
+    /** Started from the Live preview list, which keeps it running. */
+    pinned?: boolean;
     available: boolean;
     availability: "ready" | "needs_setup" | "needs_preparation" | "port_in_use";
     unavailable_reason?: string;
@@ -1934,8 +1996,27 @@ export function getLaunch(id: string, candidateId?: string): Promise<{
   return req(`/sessions/${id}/launch${query}`);
 }
 
-export function startLaunch(id: string, name: string, candidateId?: string): Promise<{ started: boolean; listening: boolean; error?: string }> {
-  return req(`/sessions/${id}/launch/start`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId }) });
+/** Starts a dev server, or joins it when it is running. A `viewer` (a Canvas
+ *  view showing it) holds a lease it renews; without one, the Live preview
+ *  list keeps the server running until it is stopped there. */
+export function startLaunch(id: string, name: string, candidateId?: string, viewer?: string): Promise<{ started: boolean; running: boolean; listening?: boolean; port: number | null }> {
+  return req(`/sessions/${id}/launch/start`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId, viewer }) });
+}
+
+/** A view still showing a dev server says so. Refused (404) when it is no
+ *  longer running; a lease never starts one. */
+export function leaseLaunch(id: string, name: string, candidateId: string | undefined, viewer: string): Promise<{ running: boolean }> {
+  return req(`/sessions/${id}/launch/lease`, { method: "POST", body: JSON.stringify({ name, candidate_id: candidateId, viewer }) });
+}
+
+/** A view lets a dev server go; the server stops it a little after the last
+ *  view has, unless the Live preview list started it. */
+export async function releaseLaunch(id: string, name: string, candidateId: string | undefined, viewer: string): Promise<void> {
+  try {
+    await authFetch(`/sessions/${id}/launch/release`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name, candidate_id: candidateId, viewer }) });
+  } catch {
+    /* The server stops it when the lease lapses. */
+  }
 }
 
 export function prepareLaunch(id: string, name: string, candidateId: string): Promise<{ prepared: boolean; evidence?: string }> {

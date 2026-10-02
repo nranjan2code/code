@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { activateEntry, activeEntry, closeEntry, entriesOf, MAX_ENTRIES, openEntry, updateEntry } from "../src/canvasStack.ts";
+import { activateEntry, activeEntry, applyOp, closeEntry, entriesOf, fromStored, isShared, MAX_ENTRIES, openEntry, toStored, updateEntry, withCanvas } from "../src/canvasStack.ts";
 import { freshEntry, viewerSpec } from "../src/canvasViewers.ts";
 import { fileSubject, subjectKey } from "../src/canvasSubject.ts";
 
@@ -75,5 +75,45 @@ assert.equal(automation.feedback, "none");
 assert.equal(automation.selects(null), null);
 assert.equal(automation.reloadable, true);
 assert.equal(freshEntry({ kind: "automation", title: "r", taskId: "t1" }, false).feedbackOpen, false);
+
+// Reopening what is open keeps the very same subject, so nothing is read again.
+{
+  let shown = open({}, "a", file("page.html"));
+  const before = activeEntry(shown, "a").subject;
+  shown = open(shown, "a", file("page.html"));
+  assert.equal(activeEntry(shown, "a").subject, before);
+}
+
+// A change is an operation: applied here, and again on a newer Canvas from another surface.
+{
+  const fresh = (subject) => freshEntry(subject, false);
+  const theirs = applyOp(applyOp({}, "a", { op: "open", subject: file("x.html") }, fresh), "a", { op: "open", subject: file("y.html") }, fresh);
+  const mine = [{ op: "open", subject: file("z.csv") }, { op: "update", key: subjectKey(file("z.csv")), patch: { draft: "sort by date" } }];
+  let rebased = theirs;
+  for (const op of mine) rebased = applyOp(rebased, "a", op, fresh);
+  assert.deepEqual(entriesOf(rebased, "a").map((entry) => entry.subject.path), ["x.html", "y.html", "z.csv"]);
+  assert.equal(activeEntry(rebased, "a").draft, "sort by date");
+  // Only what another surface would see is shared: the layout is this device's.
+  assert.equal(isShared({ op: "update", key: "k", patch: { mode: "focused" } }), false);
+  assert.equal(isShared({ op: "update", key: "k", patch: { draft: "x" } }), true);
+
+  // Stored without this device's layout; read back with it, and unchanged tabs stay the same objects.
+  const stored = toStored(rebased.a);
+  assert.ok(stored.entries.every((entry) => !("mode" in entry)));
+  const local = { ...rebased.a, entries: rebased.a.entries.map((entry) => ({ ...entry, mode: "focused" })) };
+  const back = fromStored(JSON.parse(JSON.stringify(stored)), local, fresh);
+  assert.equal(back, local, "nothing changed, so nothing is redrawn");
+  const moved = JSON.parse(JSON.stringify(stored));
+  moved.active = subjectKey(file("x.html"));
+  const after = fromStored(moved, local, fresh);
+  assert.equal(after.active, subjectKey(file("x.html")));
+  assert.equal(after.entries[0], local.entries[0]);
+  assert.equal(after.entries[0].mode, "focused");
+  // What this client cannot show is left out, never drawn.
+  const hostile = { entries: [{ key: "k", subject: { kind: "nope", title: "?" } }, ...stored.entries], active: null };
+  assert.equal(fromStored(hostile, undefined, fresh).entries.length, 3);
+  assert.equal(fromStored({ entries: [], active: null }, local, fresh), null);
+  assert.deepEqual(withCanvas({ a: local }, "a", null), {});
+}
 
 console.log("canvas stack ok");

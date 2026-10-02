@@ -1,10 +1,10 @@
 import { createMemo, createSignal, For, Show } from "solid-js";
 import * as api from "../../api";
-import { activeId, closeArtifactCanvas, openArtifactCanvas, technicalDetails, updateCanvasEntry } from "../../store";
+import { activeId, canvasConversation, canvasMode, closeCanvasEntry, openArtifactCanvas, technicalDetails, updateCanvasEntry } from "../../store";
 import { sendPrompt } from "../../App";
 import { fileSubject, subjectPath, subjectSessionId } from "../../canvasSubject";
 import type { CanvasEntry, ContextPanel } from "../../canvasStack";
-import { commentPlace, selectionForPrompt, selectionInvalid, selectionLabel, selectionOfComment } from "../../canvasSelection";
+import { changeRequest, commentPlace, selectionInvalid, selectionLabel, selectionOfComment } from "../../canvasSelection";
 import { viewerSpec } from "../../canvasViewers";
 import { changedFiles, draftActivity } from "../../draftVersions";
 import type { DraftSubject, DraftThread } from "./draftThread";
@@ -14,7 +14,7 @@ type SendState = "idle" | "sending" | "asked" | "commented" | "saved_only" | "er
 const CHANGE_WORDS = { new: "New", changed: "Changed", removed: "Removed" } as const;
 
 /**
- * The area under the subject where people work on it together: the discussion
+ * The area under the subject where people work on it: the discussion
  * (comments about the place they have pointed at, and asking the Agent), what
  * has happened to the draft, and which files this version changes. The
  * comment on a saved draft belongs to that version.
@@ -48,6 +48,8 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
   const comments = () => props.thread.comments().filter((comment) => !comment.path || comment.path === subjectPath(subject()));
   const tabs = (): ContextPanel[] => (draft() ? ["discussion", "activity", "changes"] : ["discussion"]);
   const TAB_WORDS: Record<ContextPanel, string> = { discussion: "Discussion", activity: "Activity", changes: "Changes" };
+  const author = (comment: api.SandboxCandidateComment) =>
+    comment.actor_id === "operator" ? "You" : comment.actor_name ?? (technicalDetails() ? comment.actor_id : "Someone else");
 
   /** Puts the reader where a comment was written. */
   const goTo = (comment: api.SandboxCandidateComment) => {
@@ -58,6 +60,10 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
   };
 
   const submit = async (askAgent: boolean) => {
+    // Everything this send changes belongs to the tab and conversation it was
+    // sent from, even if the reader moves elsewhere while it is on its way.
+    const conversation = canvasConversation();
+    const tab = key();
     const current = subject();
     const sessionId = subjectSessionId(current) ?? activeId();
     const note = props.entry.draft.trim();
@@ -71,14 +77,13 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
       if (version) {
         const saved = await api.commentOnSandboxCandidate(sessionId, version.candidateId, note, { path: version.path || undefined, ...place });
         commentSaved = true;
-        updateCanvasEntry({ draft: "" }, key());
+        updateCanvasEntry({ draft: "" }, tab, conversation);
         void props.thread.refresh(version);
         if (askAgent) await api.requestRevisionFromCandidateComment(sessionId, version.candidateId, saved.comment_id);
         setState(askAgent ? "asked" : "commented");
       } else {
-        const result = current.resultId ? ` from result ${current.resultId}` : "";
         await sendPrompt(
-          `Please revise the draft ${JSON.stringify(label)}${result}. Feedback: ${note}${selectionForPrompt(selection())}\nInspect the saved result and answer when the change is done; do not repeat a write when the file already contains the requested change.`,
+          changeRequest(label, note, selection()),
           undefined,
           undefined,
           sessionId,
@@ -86,11 +91,12 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
           "correction",
           true,
         );
-        // A new Agent turn may raise a scoped approval. Return to the
-        // conversation so its live controls and result are visible.
-        closeArtifactCanvas();
-        updateCanvasEntry({ draft: "" }, key());
+        updateCanvasEntry({ draft: "" }, tab, conversation);
         setState("asked");
+        // The Agent may ask before it acts. Beside the conversation that
+        // question is already in view; on the whole window it would be
+        // hidden, so the Canvas steps aside.
+        if (conversation === canvasConversation() && (canvasMode() === "focused" || window.matchMedia("(max-width: 1100px)").matches)) closeCanvasEntry(tab, conversation);
       }
     } catch {
       setState(commentSaved ? "saved_only" : "error");
@@ -105,9 +111,10 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
   const currentVersion = () => props.thread.versions().find((item) => item.candidate.candidate_id === draft()?.candidateId);
   const activity = () => draftActivity(props.thread.records(), props.thread.versions(), props.thread.comments());
   const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  const unavailable = "This draft's history couldn't be loaded. It will try again when something changes.";
 
   return (
-    <section class="artifact-canvas-feedback" aria-label="Work on this together">
+    <section class="artifact-canvas-feedback" aria-label={draft() ? "Work on this together" : "Ask for a change"}>
       <Show when={tabs().length > 1}>
         <div class="artifact-canvas-context-tabs" role="tablist" aria-label="About this draft">
           <For each={tabs()}>{(tab) =>
@@ -118,8 +125,8 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
 
       <Show when={props.entry.panel === "discussion" || tabs().length === 1}>
         <div class="artifact-canvas-feedback-intro">
-          <strong>Work on this together</strong>
-          <span>{selection() ? "Say what should change about the place you picked." : draft() ? "Comment on this version, or ask the Agent to change it." : "Tell the Agent what to change in this draft."}</span>
+          <strong>{draft() ? "Work on this together" : "Ask for a change"}</strong>
+          <span>{selection() ? "Say what should change about the place you picked." : draft() ? "Comment on this version, or ask the Agent to change it." : "Tell the Agent what to change in this file."}</span>
         </div>
         <div class="artifact-canvas-feedback-compose">
           <Show when={selection()}>{(picked) =>
@@ -148,7 +155,7 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
               }
             }}
             placeholder="What should change?"
-            aria-label="Feedback for this draft"
+            aria-label={draft() ? "Comment on this version" : "What should change in this file"}
           />
           <div class="artifact-canvas-feedback-actions">
             <Show when={draft()}>
@@ -159,16 +166,16 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
             </button>
           </div>
         </div>
-        <Show when={state() === "asked"}><small role="status">Sent to the Agent conversation.</small></Show>
+        <Show when={state() === "asked"}><small role="status">Sent to the Agent. Its answer appears in the conversation.</small></Show>
         <Show when={state() === "commented"}><small role="status">Comment saved on this version.</small></Show>
-        <Show when={state() === "saved_only"}><small role="status">Comment saved. Open Review to ask the Agent to address it.</small></Show>
-        <Show when={state() === "error"}><small role="alert">Could not send. Your feedback is still here to retry.</small></Show>
+        <Show when={state() === "saved_only"}><small role="status">Comment saved, but the Agent wasn't asked. Open Review to ask it to address the comment.</small></Show>
+        <Show when={state() === "error"}><small role="alert">Couldn't send. What you wrote is still here, so you can try again.</small></Show>
         <Show when={comments().length > 0}>
           <div class="artifact-canvas-comments" aria-label="Comments on this saved draft">
             <For each={comments()}>{(comment) => {
               const place = selectionOfComment(comment);
               return <article>
-                <div><strong>{comment.actor_id === "operator" ? "You" : comment.actor_name ?? comment.actor_id}</strong><span>{place ? selectionLabel(place, technicalDetails()) : "Whole file"}</span></div>
+                <div><strong>{author(comment)}</strong><span>{place ? selectionLabel(place, technicalDetails()) : "Whole file"}</span></div>
                 <p>{comment.text}</p>
                 <Show when={place}><button type="button" class="artifact-canvas-btn" onClick={() => goTo(comment)}>Show where</button></Show>
               </article>;
@@ -179,13 +186,13 @@ export default function CanvasContext(props: { entry: CanvasEntry; thread: Draft
 
       <Show when={draft() && props.entry.panel === "activity"}>
         <ul class="artifact-canvas-activity" aria-label="What has happened to this draft">
-          <For each={activity()} fallback={<li>Nothing yet.</li>}>{(item) => <li><span>{item.text}</span><time>{when(item.when)}</time></li>}</For>
+          <For each={activity()} fallback={<li>{props.thread.unavailable() ? unavailable : "Nothing yet."}</li>}>{(item) => <li><span>{item.text}</span><time>{when(item.when)}</time></li>}</For>
         </ul>
       </Show>
 
       <Show when={draft() && props.entry.panel === "changes"}>
         <ul class="artifact-canvas-changes" aria-label="Files in this version">
-          <For each={currentVersion() ? changedFiles(currentVersion()!) : []} fallback={<li>This version's files are not known yet.</li>}>{(file) =>
+          <For each={currentVersion() ? changedFiles(currentVersion()!) : []} fallback={<li>{props.thread.unavailable() ? unavailable : "This version's files are not known yet."}</li>}>{(file) =>
             <li>
               <span class="artifact-canvas-change" data-change={file.change}>{CHANGE_WORDS[file.change]}</span>
               <Show when={file.change !== "removed"} fallback={<span>{file.path}</span>}>

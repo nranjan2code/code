@@ -2,7 +2,8 @@ import { For, Show, createContext, createEffect, createMemo, createSignal, onCle
 import type { AdaptiveRenderNode } from "../../types";
 import { chartGeometry, downloadCsv, type ChartData, type ChartPoint, type ChartSeries } from "./data";
 import { previewSandbox, safeUrl, sandboxedSrcdoc } from "../../safeUrl";
-import { openInEditor, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
+import { activeId, openInEditor, openArtifactCanvas, openArtifactFile, technicalDetails, uiPreferences } from "../../store";
+import { inlineTitle } from "../../canvasSubject";
 import { artifactPreviewHtml } from "../../artifactPreview";
 import * as api from "../../api";
 import Icon from "../Icon";
@@ -44,6 +45,9 @@ export interface GenericSpecRendererProps {
 }
 
 export const PresentationInteractionContext = createContext<{ onOptionSelect(label: string): void }>();
+/** The conversation a presentation belongs to: a page it shows reads its files
+ *  from that conversation's folder, which is its Agent's own. */
+export const PresentationSessionContext = createContext<string | undefined>();
 
 // Chart axis labels are drawn at fixed positions in a fixed-width SVG; a long
 // category ("Week of September 14–18, 2026") otherwise runs off the chart and
@@ -1254,6 +1258,8 @@ function renderChart(node: AdaptiveRenderNode, surface: RenderSurface) {
  */
 function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
   const compact = surface === "compact";
+  const session = useContext(PresentationSessionContext) ?? activeId() ?? undefined;
+  const reader = api.workspaceReader(session);
   const [viewMode, setViewMode] = createSignal<"preview" | "source">("preview");
   const inlineHtml = () => str(node.props, "html");
   const [htmlContent, setHtmlContent] = createSignal<string>(inlineHtml() ?? "");
@@ -1276,10 +1282,10 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     setLoading(true);
     setError(null);
     try {
-      const html = inline ?? (p ? (await api.readFile(p)).content : undefined);
-      if (html === undefined) throw new Error("Preview file is unavailable. Reload to try again.");
+      const html = inline ?? (p ? (await reader.readFile(p)).content : undefined);
+      if (html === undefined) throw new Error("This page isn't available. Reload to try again.");
       const prepared = p
-        ? await artifactPreviewHtml(p, html)
+        ? await artifactPreviewHtml(p, html, reader).catch(() => sandboxedSrcdoc(html))
         : sandboxedSrcdoc(html);
       if (generation !== request) return;
       setHtmlContent(html);
@@ -1302,8 +1308,8 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
 
   const openInCanvas = () => {
     const html = inlineHtml();
-    if (html) openArtifactCanvas({ kind: "inline", title: str(node.props, "title") ?? "Component Preview", html, basePath: path() || undefined });
-    else if (path()) openArtifactFile(path());
+    if (html) openArtifactCanvas({ kind: "inline", title: inlineTitle(html, str(node.props, "title")), html, basePath: path() || undefined, sessionId: session });
+    else if (path()) openArtifactFile(path(), { sessionId: session });
   };
 
   const handleCopySource = async () => {
@@ -1318,13 +1324,13 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
     }
   };
 
-  const title = () => str(node.props, "title") || "Interactive Component Preview";
+  const title = () => str(node.props, "title") || "Web page";
 
   return (
     <div class="canvas-card ui-preview-card" classList={{ "ui-preview-card-compact": compact }}>
       <div class="card-header">
         <div class="card-title-group">
-          <span class="card-badge badge-indigo">UI Preview</span>
+          <span class="card-badge badge-indigo">Preview</span>
           <strong style="font-size: var(--fs-control); color: var(--text);">{title()}</strong>
 
         </div>
@@ -1333,14 +1339,14 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
             class="pill-action-btn"
             classList={{ active: viewMode() === "source" }}
             onClick={() => setViewMode((m) => (m === "preview" ? "source" : "preview"))}
-            title="Toggle between live preview and source markup"
+            title={viewMode() === "preview" ? "Show the code" : "Show the page"}
           >
             {viewMode() === "preview" ? "Source" : "Preview"}
           </button>
-          <button class="pill-action-btn" onClick={reloadPreview} title="Reload live preview">
+          <button class="pill-action-btn" onClick={reloadPreview} title="Reload the page">
             Reload
           </button>
-          <button class="open-canvas-btn" onClick={openInCanvas} title="Open immersive canvas preview">
+          <button class="open-canvas-btn" onClick={openInCanvas} title="Open in Canvas">
             <Icon name="preview" size={14} /> Open Canvas
           </button>
         </div>

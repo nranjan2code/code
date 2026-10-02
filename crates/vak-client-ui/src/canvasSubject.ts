@@ -27,13 +27,14 @@ export type CanvasSubject =
   | (SubjectBase & { kind: "execution_artifact"; path: string; sessionId: string; executionId: string })
   /** A file of one saved version of a draft, read by hash-checked candidate routes. */
   | (SubjectBase & { kind: "draft_file"; path: string; sessionId: string; candidateId: string; executionId?: string })
-  /** Markup shown from the conversation itself, with no file behind it. */
-  | (SubjectBase & { kind: "inline"; html: string; basePath?: string })
-  /** A dev server the session's launch configuration names. */
+  /** Markup shown from the conversation itself, with no file behind it. Files
+   *  it names beside `basePath` are read from the conversation's folder. */
+  | (SubjectBase & { kind: "inline"; html: string; basePath?: string; sessionId?: string })
   /** A scheduled routine, read from the task list. */
   | (SubjectBase & { kind: "automation"; taskId: string })
   /** A live, owner-only daily view of connected mail and calendar accounts. */
   | (SubjectBase & { kind: "daily_mail_calendar"; agentId: string })
+  /** A dev server the session's launch configuration names. */
   | (SubjectBase & { kind: "live_server"; serverName: string; sessionId: string; candidateId?: string; path?: string });
 
 /** The identity a file was opened from; the shape decides which route reads it. */
@@ -63,7 +64,7 @@ export function fileSubject(path: string, origin: ArtifactOrigin, title: string)
 export type PreviewSource =
   | { kind: "candidate"; session_id: string; candidate_id: string; path: string }
   | { kind: "execution"; session_id: string; execution_id: string; path: string }
-  | { kind: "workspace"; path: string };
+  | { kind: "workspace"; path: string; session_id?: string };
 
 /**
  * The preview a page can be served from, by the identity its files are read
@@ -72,7 +73,7 @@ export type PreviewSource =
  */
 export function previewSource(subject: CanvasSubject): PreviewSource | null {
   switch (subject.kind) {
-    case "file": return { kind: "workspace", path: subject.path };
+    case "file": return { kind: "workspace", path: subject.path, session_id: subject.sessionId };
     case "execution_artifact": return { kind: "execution", session_id: subject.sessionId, execution_id: subject.executionId, path: subject.path };
     case "draft_file": return { kind: "candidate", session_id: subject.sessionId, candidate_id: subject.candidateId, path: subject.path };
     case "inline":
@@ -108,7 +109,7 @@ export function subjectPath(subject: CanvasSubject): string {
 }
 
 export function subjectSessionId(subject: CanvasSubject): string | undefined {
-  return subject.kind === "inline" || subject.kind === "automation" || subject.kind === "daily_mail_calendar" ? undefined : subject.sessionId;
+  return subject.kind === "automation" || subject.kind === "daily_mail_calendar" ? undefined : subject.sessionId;
 }
 
 export function subjectCandidateId(subject: CanvasSubject): string | undefined {
@@ -132,6 +133,52 @@ export function subjectKey(subject: CanvasSubject): string {
     case "automation": return `task:${subject.taskId}`;
     case "daily_mail_calendar": return `daily_mail_calendar:${subject.agentId}`;
     case "inline": return `inline:${subject.basePath ?? ""}:${subject.title}:${digest(subject.html)}`;
+  }
+}
+
+const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', "#39": "'", apos: "'", nbsp: " " };
+
+/** What to call markup from the conversation in a tab: the name it was given,
+ *  else its own `<title>`, else what it is. Two pages are told apart by name,
+ *  not both called "HTML Preview". */
+export function inlineTitle(html: string, given?: string | null): string {
+  if (given?.trim()) return given.trim();
+  const own = /<title[^>]*>([^<]{1,120})<\/title>/i.exec(html)?.[1]
+    ?.replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, name: string) => ENTITIES[name] ?? "")
+    .trim();
+  if (own) return own;
+  return /^\s*(<\?xml[^>]*>\s*)?<svg[\s>]/i.test(html) ? "Picture" : "Web page";
+}
+
+/** Whether two subjects are the same in every field: reopening one that is
+ *  already open keeps what is shown, rather than reading it again. */
+export function sameSubject(a: CanvasSubject, b: CanvasSubject): boolean {
+  if (a === b) return true;
+  const left = a as unknown as Record<string, unknown>;
+  const right = b as unknown as Record<string, unknown>;
+  const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+  for (const key of keys) if (left[key] !== right[key]) return false;
+  return true;
+}
+
+const text = (value: unknown) => typeof value === "string" && value.length > 0;
+const optionalText = (value: unknown) => value === undefined || typeof value === "string";
+
+/** A subject read from somewhere this client does not control (another
+ *  surface's Canvas, kept on the server), checked before anything draws it. */
+export function isCanvasSubject(value: unknown): value is CanvasSubject {
+  if (!value || typeof value !== "object") return false;
+  const subject = value as Record<string, unknown>;
+  if (typeof subject.title !== "string" || !optionalText(subject.resultId) || !optionalText(subject.anchor)) return false;
+  switch (subject.kind) {
+    case "file": return text(subject.path) && optionalText(subject.sessionId);
+    case "execution_artifact": return text(subject.path) && text(subject.sessionId) && text(subject.executionId);
+    case "draft_file": return text(subject.path) && text(subject.sessionId) && text(subject.candidateId) && optionalText(subject.executionId);
+    case "inline": return typeof subject.html === "string" && optionalText(subject.basePath) && optionalText(subject.sessionId);
+    case "automation": return text(subject.taskId);
+    case "daily_mail_calendar": return text(subject.agentId);
+    case "live_server": return text(subject.serverName) && text(subject.sessionId) && optionalText(subject.candidateId) && optionalText(subject.path);
+    default: return false;
   }
 }
 

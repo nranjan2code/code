@@ -1,15 +1,17 @@
-import { createEffect, createMemo, createSignal, ErrorBoundary, For, onCleanup, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, ErrorBoundary, For, on, onCleanup, Show } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import {
   activateCanvasEntry,
   activeId,
+  canvasCloseRequests,
+  canvasConversation,
   canvasDevice,
   canvasEntries,
   canvasEntry,
   canvasMode,
   canvasOpen,
-  closeArtifactCanvas,
   closeCanvasEntry,
+  consumeCanvasArrival,
   openCandidateReview,
   setCanvasDevice,
   technicalDetails,
@@ -34,6 +36,8 @@ const DEVICES = [
 ] as const;
 
 const NARROW = "(max-width: 1100px)";
+/** How long the Canvas takes to slide away (`canvasSlideOut`, `--dur`). */
+const EXIT_MS = 220;
 
 /**
  * ArtifactCanvas — the frame around whatever is open in the conversation's
@@ -41,26 +45,32 @@ const NARROW = "(max-width: 1100px)";
  * do is data (`canvasViewers.ts`) and how it is drawn is a viewer
  * (`canvas/viewers.ts`); the frame asks neither what kind it is.
  *
- * It slides in from the right. In "split" mode the chat stays visible and
- * interactive beside it; in "focused" mode it takes the full viewport width.
- * Each conversation has its own Canvas: switching away hides it, coming back
- * finds the same tabs with the same view, selection and unsent note.
+ * In "split" mode the conversation stays visible and usable beside it; in
+ * "focused" mode it takes the full width. Each conversation has its own
+ * Canvas, the same on every surface showing the conversation: switching away
+ * hides it, coming back (here or in the other app) finds the same tabs with
+ * the same view, selection and unsent note.
  *
  * Design-61 compliant: never auto-opens. Only appears on explicit user action.
  */
 export default function ArtifactCanvas() {
-  const [isClosing, setIsClosing] = createSignal(false);
+  /** The tab sliding away: the conversation it belongs to, so switching
+   *  conversation part way through still closes it. */
+  const [closing, setClosing] = createSignal<{ conversation: string; key: string } | null>(null);
+  const [arriving, setArriving] = createSignal(false);
   const [reloadKey, setReloadKey] = createSignal(0);
   const [handle, setHandle] = createSignal<ViewerHandle | null>(null);
   const query = window.matchMedia(NARROW);
   const [narrow, setNarrow] = createSignal(query.matches);
   let closeTimeout: ReturnType<typeof setTimeout> | undefined;
+  let arrivalTimeout: ReturnType<typeof setTimeout> | undefined;
 
   const onNarrow = (event: MediaQueryListEvent) => setNarrow(event.matches);
   query.addEventListener("change", onNarrow);
   onCleanup(() => {
     query.removeEventListener("change", onNarrow);
     if (closeTimeout) clearTimeout(closeTimeout);
+    if (arrivalTimeout) clearTimeout(arrivalTimeout);
   });
 
   const entryKey = createMemo(() => canvasEntry()?.key);
@@ -71,59 +81,68 @@ export default function ArtifactCanvas() {
     return current?.kind === "draft_file" ? (current as DraftSubject) : undefined;
   });
   const thread = createDraftThread(draft);
-  const title = () => subject()?.title || "Artifact Preview";
+  const title = () => subject()?.title || "Preview";
   const path = () => { const current = subject(); return current ? subjectPath(current) : ""; };
   const view = () => canvasEntry()?.view ?? null;
   const showsPage = () => !!spec()?.devices && view() !== "source";
 
-  // A different subject in front cancels a close that was on its way out.
-  createEffect(() => {
-    entryKey();
-    if (closeTimeout) {
-      clearTimeout(closeTimeout);
-      closeTimeout = undefined;
-    }
-    setIsClosing(false);
-    setHandle(null);
-  });
-
-  const handleClose = () => {
-    if (isClosing()) return;
-    // Another tab comes forward at once; only the last one slides away.
-    if (canvasEntries().length > 1) {
-      closeArtifactCanvas();
-      return;
-    }
-    setIsClosing(true);
-    closeTimeout = setTimeout(() => {
-      closeArtifactCanvas();
-      setIsClosing(false);
-      closeTimeout = undefined;
-    }, 220);
+  /** Ends the close now: the tab goes, in the conversation it belongs to. */
+  const finishClose = () => {
+    const leaving = closing();
+    if (closeTimeout) clearTimeout(closeTimeout);
+    closeTimeout = undefined;
+    setClosing(null);
+    if (leaving) closeCanvasEntry(leaving.key, leaving.conversation);
   };
 
-  createEffect(() => {
-    if (!canvasOpen()) return;
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") handleClose();
-    };
-    document.addEventListener("keydown", onKeyDown);
-    onCleanup(() => document.removeEventListener("keydown", onKeyDown));
-  });
+  // Another tab in front, or another conversation, ends a close that was on
+  // its way out: the tab that was asked to close still closes.
+  createEffect(on([entryKey, canvasConversation], () => {
+    const leaving = closing();
+    if (leaving && (leaving.conversation !== canvasConversation() || leaving.key !== entryKey())) finishClose();
+    setHandle(null);
+  }, { defer: true }));
+
+  // A Canvas a reader opened slides in; one coming back with its conversation,
+  // or opened on another surface, is simply there.
+  createEffect(on(canvasOpen, (open) => {
+    if (!open) return;
+    const arrival = consumeCanvasArrival();
+    setArriving(arrival);
+    if (arrivalTimeout) clearTimeout(arrivalTimeout);
+    if (arrival) arrivalTimeout = setTimeout(() => setArriving(false), 400);
+  }));
+
+  const handleClose = () => {
+    const key = entryKey();
+    if (closing() || !key) return;
+    // Another tab comes forward at once; only the last one slides away.
+    if (canvasEntries().length > 1) {
+      closeCanvasEntry(key);
+      return;
+    }
+    setClosing({ conversation: canvasConversation(), key });
+    closeTimeout = setTimeout(finishClose, EXIT_MS);
+  };
+
+  // Escape is the app's (App.tsx): it asks, after menus and dialogs have had it.
+  createEffect(on(canvasCloseRequests, () => handleClose(), { defer: true }));
 
   const returnToReview = (candidate?: string) => {
     const current = subject();
+    const key = entryKey();
     const run = current && subjectExecutionId(current);
-    if (!current || !run) return;
+    if (!current || !run || !key) return;
     const version = candidate ?? subjectCandidateId(current);
     const session = subjectSessionId(current);
-    closeArtifactCanvas();
+    closeCanvasEntry(key);
     openCandidateReview(run, session, version);
   };
   const returnToConversation = () => {
     const current = subject();
+    const key = entryKey();
     const sessionId = current && subjectSessionId(current);
-    closeArtifactCanvas();
+    if (key) closeCanvasEntry(key);
     if (sessionId && sessionId !== activeId()) void activate(sessionId);
   };
 
@@ -134,7 +153,8 @@ export default function ArtifactCanvas() {
         class="artifact-canvas-backdrop"
         classList={{
           focused: canvasMode() === "focused",
-          "canvas-closing": isClosing(),
+          "canvas-arriving": arriving(),
+          "canvas-closing": !!closing(),
         }}
         onClick={(e) => {
           if (e.target === e.currentTarget && canvasMode() === "focused") handleClose();
@@ -148,10 +168,11 @@ export default function ArtifactCanvas() {
         classList={{
           "canvas-split": canvasMode() === "split",
           "canvas-focused": canvasMode() === "focused",
-          "canvas-closing": isClosing(),
+          "canvas-arriving": arriving(),
+          "canvas-closing": !!closing(),
         }}
         role="dialog"
-        aria-label={`Artifact preview: ${title()}`}
+        aria-label={`Canvas: ${title()}`}
         aria-modal={canvasMode() === "focused" ? "true" : "false"}
       >
         {/* Title bar */}
@@ -165,7 +186,7 @@ export default function ArtifactCanvas() {
               <span class="artifact-canvas-path">{path()}</span>
             </Show>
             <Show when={subject()?.resultId}>{(resultId) =>
-              <button type="button" class="artifact-canvas-result" title={resultId()} onClick={returnToConversation}>Back to the answer</button>
+              <button type="button" class="artifact-canvas-result" title={technicalDetails() ? resultId() : undefined} onClick={returnToConversation}>Back to the answer</button>
             }</Show>
           </div>
 
@@ -179,6 +200,7 @@ export default function ArtifactCanvas() {
                     classList={{ active: view() === choice.id }}
                     onClick={() => updateCanvasEntry({ view: choice.id })}
                     title={choice.title}
+                    aria-pressed={view() === choice.id}
                   >
                     {choice.label}
                   </button>
@@ -186,9 +208,10 @@ export default function ArtifactCanvas() {
               </div>
             </Show>
 
-            {/* Responsive viewport switcher, for pages */}
-            <Show when={showsPage()}>
-              <div class="artifact-canvas-device-group">
+            {/* Page widths. Kept in place while the code shows, so the
+                switch beside it never moves under the pointer. */}
+            <Show when={spec()?.devices}>
+              <div class="artifact-canvas-device-group" classList={{ resting: !showsPage() }} aria-hidden={showsPage() ? undefined : "true"}>
                 <For each={DEVICES}>{(device) =>
                   <button
                     type="button"
@@ -198,6 +221,8 @@ export default function ArtifactCanvas() {
                     title={device.label}
                     aria-label={device.label}
                     aria-pressed={canvasDevice() === device.id}
+                    disabled={!showsPage()}
+                    tabIndex={showsPage() ? undefined : -1}
                   >
                     <Icon name={device.icon} size={16} />
                   </button>
@@ -206,7 +231,7 @@ export default function ArtifactCanvas() {
             </Show>
 
             <Show when={spec()?.reloadable}>
-              <button type="button" class="artifact-canvas-btn" onClick={() => setReloadKey((key) => key + 1)} title="Reload preview" aria-label="Reload preview"><Icon name="sync" size={14} /></button>
+              <button type="button" class="artifact-canvas-btn" onClick={() => setReloadKey((key) => key + 1)} title="Reload" aria-label="Reload"><Icon name="sync" size={14} /></button>
             </Show>
             <Show when={!narrow()}>
               <button type="button" class="artifact-canvas-btn" onClick={toggleCanvasMode} title={canvasMode() === "split" ? "Expand to full width" : "Show beside conversation"} aria-label={canvasMode() === "split" ? "Expand to full width" : "Show beside conversation"}><Icon name={canvasMode() === "split" ? "layers" : "restore"} size={14} /></button>
@@ -227,7 +252,7 @@ export default function ArtifactCanvas() {
               class="artifact-canvas-close"
               onClick={handleClose}
               title="Close (Esc)"
-              aria-label="Close artifact canvas"
+              aria-label="Close Canvas"
             >
               <Icon name="close" size={16} />
             </button>
@@ -238,7 +263,7 @@ export default function ArtifactCanvas() {
           <div class="artifact-canvas-tabs" role="tablist" aria-label="Open in this conversation">
             <For each={canvasEntries()}>{(item) =>
               <div class="artifact-canvas-tab" classList={{ active: item.key === entryKey() }}>
-                <button type="button" role="tab" aria-selected={item.key === entryKey()} class="artifact-canvas-tab-label" title={subjectPath(item.subject) || item.subject.title} onClick={() => activateCanvasEntry(item.key)}>{item.subject.title}</button>
+                <button type="button" role="tab" aria-selected={item.key === entryKey()} class="artifact-canvas-tab-label" title={technicalDetails() ? subjectPath(item.subject) || item.subject.title : item.subject.title} onClick={() => activateCanvasEntry(item.key)}>{item.subject.title}</button>
                 <button type="button" class="artifact-canvas-tab-close" aria-label={`Close ${item.subject.title}`} onClick={() => closeCanvasEntry(item.key)}><Icon name="close" size={12} /></button>
               </div>
             }</For>
@@ -270,7 +295,7 @@ export default function ArtifactCanvas() {
                 <ErrorBoundary fallback={(error, reset) =>
                   <div class="artifact-canvas-error" role="alert">
                     <Icon name="warning" size={16} />
-                    <span>This view stopped working{error instanceof Error && error.message ? `: ${error.message}` : "."}</span>
+                    <span>This view stopped working.<Show when={technicalDetails() && error instanceof Error && error.message}> {(error as Error).message}</Show></span>
                     <button type="button" class="artifact-canvas-btn" onClick={reset}>Try again</button>
                     <button type="button" class="artifact-canvas-btn" onClick={handleClose}>Close</button>
                   </div>

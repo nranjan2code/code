@@ -22,7 +22,7 @@ export function subjectReader(subject: CanvasSubject): ArtifactPreviewReader | n
       };
     case "file":
     case "inline":
-      return api;
+      return api.workspaceReader(subject.sessionId);
     case "live_server":
     case "automation":
     case "daily_mail_calendar":

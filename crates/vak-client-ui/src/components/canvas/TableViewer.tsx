@@ -1,5 +1,5 @@
 import { For, Show } from "solid-js";
-import { subjectPath } from "../../canvasSubject";
+import { subjectKey, subjectPath } from "../../canvasSubject";
 import { subjectReader } from "../../artifactPreview";
 import { parseDelimitedPreview, type DelimitedPreview } from "../../delimitedPreview";
 import { createLoader, readText } from "./createLoader";
@@ -10,8 +10,9 @@ import type { ViewerProps } from "./types";
 /** A CSV or TSV file as a bounded table, with its source one switch away. */
 export default function TableViewer(props: ViewerProps) {
   const loader = createLoader(
-    () => [props.subject, props.reloadKey] as const,
-    async ([subject]) => {
+    () => subjectKey(props.subject),
+    async () => {
+      const subject = props.subject;
       const file = subjectPath(subject);
       const text = await readText(subjectReader(subject), file);
       let table: DelimitedPreview | null = null;
@@ -25,7 +26,7 @@ export default function TableViewer(props: ViewerProps) {
     },
   );
   return (
-    <LoadState loader={loader}>{(loaded) =>
+    <LoadState loader={loader} label="Opening the table…">{(loaded) =>
       <Show when={props.view === "source"} fallback={
         <>
           <Show when={loaded.warning}>{(warning) => <div class="artifact-canvas-preview-warning" role="status">{warning()}</div>}</Show>
@@ -42,7 +43,7 @@ export default function TableViewer(props: ViewerProps) {
           }</Show>
         </>
       }>
-        <SourcePane text={loaded.text} label={subjectPath(props.subject)} selection={props.selection} onSelect={props.onSelect} />
+        <SourcePane text={loaded.text} label={props.subject.title} path={subjectPath(props.subject)} selection={props.selection} onSelect={props.onSelect} />
       </Show>
     }</LoadState>
   );

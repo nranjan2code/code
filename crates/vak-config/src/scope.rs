@@ -109,6 +109,12 @@ impl AgentScope {
         self.root.join("skills")
     }
 
+    /// One conversation's Canvas, the same on every surface that shows the
+    /// conversation (`vak-server/src/canvas.rs`).
+    pub fn canvas(&self, session_id: &str) -> PathBuf {
+        self.root.join("canvas").join(format!("{session_id}.json"))
+    }
+
     pub fn skill(&self, name: &str) -> PathBuf {
         self.skills().join(name)
     }

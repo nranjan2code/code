@@ -1,51 +1,75 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
 import * as api from "../../api";
-import { liveServerOrigin, subjectPath } from "../../canvasSubject";
+import { liveServerOrigin, subjectKey, subjectPath } from "../../canvasSubject";
 import { previewSandbox } from "../../safeUrl";
 import { createLoader } from "./createLoader";
 import DeviceViewport from "./DeviceViewport";
 import LoadState from "./LoadState";
 import type { ViewerProps } from "./types";
 
+/** A view renews its lease well inside the server's limit (`LAUNCH_LEASE_TTL`). */
+const RENEW_MS = 20_000;
+
 /**
- * A dev server the session's launch configuration names. The viewer starts it
- * and, when it lets go, stops the one it started — under the identity it
- * started it with, and never one that was already running.
+ * A dev server the session's launch configuration names. The viewer starts it,
+ * or joins it when it is already running (shown in the other app, another tab,
+ * or started from the Live preview list), and holds a lease on it while it is
+ * shown. Letting go never stops it outright: the server stops a dev server a
+ * little after the last view has let go, so moving between tabs,
+ * conversations or apps never restarts it.
  */
 export default function ServerViewer(props: ViewerProps) {
   const [needsPreparation, setNeedsPreparation] = createSignal(false);
+  const [stopped, setStopped] = createSignal(false);
+  const target = () => (props.subject.kind === "live_server" ? props.subject : null);
+
   const loader = createLoader(
-    () => props.subject,
-    async (subject, current) => {
-      if (subject.kind !== "live_server") throw new Error("This is not a live preview.");
+    () => subjectKey(props.subject),
+    async (_key, current) => {
+      const subject = target();
+      if (!subject) throw new Error("This is not a live preview.");
       const { sessionId, serverName, candidateId } = subject;
       setNeedsPreparation(false);
+      setStopped(false);
       // A loopback port on the server's machine cannot be reached from a browser that is elsewhere.
       if (!liveServerOrigin(api.backendHostname(), 0)) throw new Error("A live preview needs Vakyartha running on this computer.");
       const readiness = await api.getLaunch(sessionId, candidateId);
       const configured = readiness.servers.find((server) => server.name === serverName);
-      if (!configured) throw new Error(`Dev server "${serverName}" is unavailable for this saved version.`);
+      if (!configured) throw new Error(`There is no live preview called "${serverName}" for this version.`);
       if (!configured.available && !configured.running) {
         setNeedsPreparation(configured.availability === "needs_preparation");
-        throw new Error(configured.unavailable_reason ?? "Preview environment is not ready.");
+        throw new Error(configured.unavailable_reason ?? "This live preview isn't ready to start.");
       }
-      const started = await api.startLaunch(sessionId, serverName, candidateId);
-      if (started.error && !started.error.toLowerCase().includes("already running")) throw new Error(started.error);
-      const owned = !started.error;
-      const stop = () => { if (owned) void api.stopLaunch(sessionId, serverName, candidateId); };
+      // Each start holds a lease of its own, so letting an earlier one go
+      // never lets go of this one.
+      const viewer = crypto.randomUUID();
+      const started = await api.startLaunch(sessionId, serverName, candidateId, viewer);
+      const held = { sessionId, serverName, candidateId, viewer };
       if (!current()) {
-        stop();
+        void api.releaseLaunch(sessionId, serverName, candidateId, viewer);
         throw new Error("Superseded.");
       }
-      const running = (await api.getLaunch(sessionId, candidateId)).servers.find((server) => server.name === serverName);
-      if (!running?.port) {
-        stop();
-        throw new Error(`Dev server "${serverName}" started, but did not report a listening port.`);
+      if (!started.port) {
+        void api.releaseLaunch(sessionId, serverName, candidateId, viewer);
+        throw new Error("This live preview started, but it does not say which port it listens on. Add a port to its entry in .vak/launch.toml.");
       }
-      return { port: running.port, stop };
+      return { port: started.port, ...held };
     },
-    (server) => server.stop(),
+    (held) => void api.releaseLaunch(held.sessionId, held.serverName, held.candidateId, held.viewer),
   );
+
+  // Renew the lease while shown; a server someone stopped is said to be
+  // stopped, never quietly started again.
+  createEffect(() => {
+    const held = loader.data();
+    if (!held) return;
+    const timer = setInterval(() => {
+      api.leaseLaunch(held.sessionId, held.serverName, held.candidateId, held.viewer).catch((cause) => {
+        if (cause instanceof api.ApiError && cause.status === 404) setStopped(true);
+      });
+    }, RENEW_MS);
+    onCleanup(() => clearInterval(timer));
+  });
 
   /** Where the page is framed from: the other loopback name than the app's, so they are two sites. */
   const address = () => {
@@ -54,13 +78,13 @@ export default function ServerViewer(props: ViewerProps) {
   };
   createEffect(() => {
     const base = address();
-    props.register(base ? { popout: () => window.open(base, "_blank", "noopener,noreferrer") } : null);
+    props.register(base && !stopped() ? { popout: () => window.open(base, "_blank", "noopener,noreferrer") } : null);
   });
   onCleanup(() => props.register(null));
 
   const prepare = async () => {
-    const subject = props.subject;
-    if (subject.kind !== "live_server" || !subject.candidateId) return;
+    const subject = target();
+    if (!subject?.candidateId) return;
     try {
       await api.prepareLaunch(subject.sessionId, subject.serverName, subject.candidateId);
       loader.reload();
@@ -70,21 +94,42 @@ export default function ServerViewer(props: ViewerProps) {
   };
 
   const source = (origin: string) => {
-    const subject = props.subject;
-    const draftPath = subject.kind === "live_server" && subject.candidateId && subjectPath(subject)
+    const subject = target();
+    const draftPath = subject?.candidateId && subjectPath(subject)
       ? `/${subjectPath(subject).split("/").map(encodeURIComponent).join("/")}`
       : "";
-    return `${origin}${draftPath}?_k=${props.reloadKey}`;
+    return `${origin}${draftPath}`;
   };
 
   return (
     <LoadState
       loader={loader}
-      extra={needsPreparation() ? <button type="button" class="artifact-canvas-btn" onClick={() => void prepare()}>Prepare dependencies</button> : undefined}
-    >{() =>
-      <DeviceViewport>
-        <iframe class="artifact-canvas-frame" src={source(address()!)} title={props.subject.title} sandbox={previewSandbox("origin")} />
-      </DeviceViewport>
-    }</LoadState>
+      label="Starting the live preview…"
+      extra={needsPreparation() ? <button type="button" class="artifact-canvas-btn" onClick={() => void prepare()}>Install what it needs</button> : undefined}
+    >{() => {
+      // Shown once it has drawn, so the stage does not flash between colours.
+      const [drawn, setDrawn] = createSignal(false);
+      const showAnyway = setTimeout(() => setDrawn(true), 1500);
+      onCleanup(() => clearTimeout(showAnyway));
+      let frame: HTMLIFrameElement | undefined;
+      // Reload shows the page again from the server; the server keeps running.
+      createEffect((previous: number | undefined) => {
+        const key = props.reloadKey;
+        if (previous !== undefined && key !== previous && frame && address()) frame.src = source(address()!);
+        return key;
+      });
+      return (
+        <Show when={!stopped()} fallback={
+          <div class="artifact-canvas-error" role="status">
+            <span>This live preview was stopped.</span>
+            <button type="button" class="artifact-canvas-btn" onClick={() => loader.reload()}>Start it again</button>
+          </div>
+        }>
+          <DeviceViewport>
+            <iframe ref={frame} class="artifact-canvas-frame" classList={{ drawing: !drawn() }} onLoad={() => setDrawn(true)} src={source(address()!)} title={props.subject.title} sandbox={previewSandbox("origin")} />
+          </DeviceViewport>
+        </Show>
+      );
+    }}</LoadState>
   );
 }

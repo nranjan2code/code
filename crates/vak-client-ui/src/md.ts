@@ -57,8 +57,8 @@ function inline(s: string): string {
       (/\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp|csv|tsv)$/i.test(cleanPath) ||
         (isScratch && /\.\w{1,6}$/.test(cleanPath)));
     const title = isDir
-      ? (isScratch ? "open in Workbench folder view" : "open in editor")
-      : (isPreviewable ? "open in Artifact Canvas" : "open in editor");
+      ? (isScratch ? "Open in Workbench" : "Open in the editor")
+      : (isPreviewable ? "Open in Canvas" : "Open in the editor");
     return `<code class="ic"${isPath ? ` data-path="true" data-dir="${isDir ? 'true' : 'false'}" data-scratch="${isScratch ? 'true' : 'false'}" data-previewable="${isPreviewable ? 'true' : 'false'}" data-clean-path="${cleanPath}" title="${title}"` : ""}>${code}</code>`;
   });
   // bold then italic then strikethrough (order matters: bold before italic so
@@ -96,8 +96,8 @@ function inline(s: string): string {
         (/\.(html?|xhtml|svg|pdf|png|jpe?g|gif|webp|ico|bmp|csv|tsv)$/i.test(targetPath) ||
           (isScratch && /\.\w{1,6}$/.test(targetPath)));
       const title = isDir
-        ? (isScratch ? "open in Workbench folder view" : "open in editor")
-        : (isPreview ? "open in Artifact Canvas" : "open in editor");
+        ? (isScratch ? "Open in Workbench" : "Open in the editor")
+        : (isPreview ? "Open in Canvas" : "Open in the editor");
       return `<a class="lnk artifact-lnk" data-path="${esc(targetPath)}" data-clean-path="${esc(targetPath)}" data-dir="${isDir ? 'true' : 'false'}" data-scratch="${isScratch ? 'true' : 'false'}" data-previewable="${isPreview ? 'true' : 'false'}" title="${title}" role="button" href="#">${label}</a>`;
     }
     return m;

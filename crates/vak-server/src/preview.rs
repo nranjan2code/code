@@ -49,9 +49,14 @@ pub(crate) enum Scope {
         session_id: String,
         execution_id: String,
     },
-    /// The workspace below one directory (relative, no leading or trailing
-    /// slash; empty means the workspace root).
-    Workspace { directory: String },
+    /// A workspace below one directory (relative, no leading or trailing
+    /// slash; empty means the workspace root). `root` is the workspace the
+    /// conversation works in, an Agent's own folder; a file is read from
+    /// there exactly and is never looked for anywhere else.
+    Workspace {
+        root: std::path::PathBuf,
+        directory: String,
+    },
 }
 
 struct Entry {
@@ -239,12 +244,11 @@ async fn read_scoped(
             let path = crate::execution_artifact_path(state, session_id, execution_id, relative)?;
             read_file(&path).await
         }
-        Scope::Workspace { directory } => {
+        Scope::Workspace { root, directory } => {
             if !workspace_allows(directory, relative) {
                 return Err(StatusCode::NOT_FOUND);
             }
-            let path =
-                crate::resolve_confined_file(state, relative).ok_or(StatusCode::NOT_FOUND)?;
+            let path = crate::confined_path(root, relative).ok_or(StatusCode::NOT_FOUND)?;
             read_file(&path).await
         }
     }
@@ -416,6 +420,7 @@ mod tests {
         std::fs::write(dir.path().join("outside.txt"), "not part of the site").unwrap();
         let state = state_in(dir.path());
         let scope = Scope::Workspace {
+            root: dir.path().to_path_buf(),
             directory: "site".into(),
         };
         let opened = state
@@ -527,6 +532,7 @@ mod tests {
         std::fs::write(dir.path().join("b.html"), "<p>b</p>").unwrap();
         let state = state_in(dir.path());
         let whole = || Scope::Workspace {
+            root: dir.path().to_path_buf(),
             directory: String::new(),
         };
         assert_eq!(
@@ -598,6 +604,63 @@ mod tests {
             .await
             .status(),
             200
+        );
+    }
+
+    /// A page reads its own folder and nothing else: a file it names that is
+    /// not there is missing, even when a run's scratch folder or another
+    /// Agent's folder has one by that name.
+    #[tokio::test]
+    async fn a_workspace_preview_never_serves_a_file_found_somewhere_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let agent = dir.path().join(".vak/agents/helper/workspace");
+        std::fs::create_dir_all(agent.join("site")).unwrap();
+        std::fs::write(
+            agent.join("site/index.html"),
+            "<script src=app.js></script>",
+        )
+        .unwrap();
+        let scratch = dir.path().join(".vak/scratch/vak/call-1/site");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(scratch.join("app.js"), "secret()").unwrap();
+        std::fs::write(dir.path().join("site.js"), "not this agent's").unwrap();
+        let state = state_in(dir.path());
+        let opened = state
+            .previews
+            .open(
+                state.clone(),
+                Scope::Workspace {
+                    root: agent.clone(),
+                    directory: "site".into(),
+                },
+                "site/index.html",
+            )
+            .await
+            .unwrap();
+        let base = format!("http://127.0.0.1:{}/{}", opened.port, opened.token);
+        assert_eq!(
+            get(&format!("{base}/site/index.html"), None).await.status(),
+            200
+        );
+        assert_eq!(
+            get(&format!("{base}/site/app.js"), None).await.status(),
+            404
+        );
+        assert_eq!(
+            state
+                .previews
+                .open(
+                    state.clone(),
+                    Scope::Workspace {
+                        root: agent,
+                        directory: String::new(),
+                    },
+                    "site.js",
+                )
+                .await
+                .err(),
+            Some(OpenError::NotFound),
+            "the server's own workspace is not the Agent's folder"
         );
     }
 

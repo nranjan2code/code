@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { commentPlace, sameSelection, selectionForPrompt, selectionInvalid, selectionLabel, selectionOfComment } from "../src/canvasSelection.ts";
+import { changeRequest, commentPlace, sameSelection, selectionForPrompt, selectionInvalid, selectionLabel, selectionOfComment } from "../src/canvasSelection.ts";
 import { changedFiles, draftActivity, newerVersions, versionNumber, versionsOf } from "../src/draftVersions.ts";
 
 // A selection says where in everyday words, and sends only what it can name.
@@ -56,5 +56,10 @@ assert.deepEqual(changedFiles(versions[0]), [
 // Activity is what the records and comments show, newest first, and nothing else.
 const activity = draftActivity(records, versions, [{ actor_id: "operator", created_at: "2026-09-30T10:45:00Z", text: "x" }, { actor_id: "u2", actor_name: "Asha", created_at: "2026-09-30T13:00:00Z", text: "y" }, { actor_id: "u3", text: "no time" }]);
 assert.deepEqual(activity.map((item) => item.text), ["Asha commented", "Version 3 saved", "Version 2 saved", "You commented", "The Agent finished revising version 1", "Version 1 saved"]);
+
+// A request reads as its sender would write it: their own message in the conversation.
+assert.equal(changeRequest("site/index.html", "make it green", { kind: "lines", start: 3, end: 5 }), "Change site/index.html (lines 3–5): make it green");
+assert.equal(changeRequest("report.docx", "fix the date", { kind: "anchor", anchor: "p:4" }), "Change report.docx (at p:4): fix the date");
+assert.equal(changeRequest("a.csv", "sort it", null), "Change a.csv: sort it");
 
 console.log("canvas selection ok");

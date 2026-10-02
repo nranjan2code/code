@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import {
   displayType,
   fileSubject,
+  inlineTitle,
+  isCanvasSubject,
+  sameSubject,
   liveServerOrigin,
   matchExecutionArtifact,
   previewSource,
@@ -63,7 +66,8 @@ assert.deepEqual(matchExecutionArtifact("a.csv", runs), { kind: "none" });
 assert.deepEqual(matchExecutionArtifact("x/data/a.csv", runs), { kind: "none" });
 
 // Which route serves a page's files follows its identity; markup and servers have no files to serve.
-assert.deepEqual(previewSource(plain), { kind: "workspace", path: "notes.md" });
+// A page in the folder is read from its conversation's folder, an Agent's own.
+assert.deepEqual(previewSource(plain), { kind: "workspace", path: "notes.md", session_id: "s1" });
 assert.deepEqual(previewSource(run), { kind: "execution", session_id: "s1", execution_id: "e2", path: "out/report.csv" });
 assert.deepEqual(previewSource(draft), { kind: "candidate", session_id: "s1", candidate_id: "c1", path: "site/index.html" });
 assert.equal(previewSource(inline), null);
@@ -85,5 +89,22 @@ assert.equal(subjectSessionId(routine), undefined);
 assert.equal(previewSource(routine), null);
 assert.equal(subjectKey(routine), "task:t1");
 assert.notEqual(subjectKey(routine), subjectKey({ ...routine, taskId: "t2" }));
+
+// Reopening the same thing is the same subject; another place in it is not.
+const cited = { ...plain, anchor: "p:4" };
+assert.ok(sameSubject(plain, { ...plain }));
+assert.ok(!sameSubject(plain, cited));
+
+// What another surface wrote is checked before it is drawn.
+assert.ok(isCanvasSubject(plain) && isCanvasSubject(run) && isCanvasSubject(draft) && isCanvasSubject(inline) && isCanvasSubject(routine));
+for (const hostile of [null, "x", { kind: "file" }, { kind: "file", title: "a", path: 3 }, { kind: "unknown", title: "a" }, { kind: "draft_file", title: "a", path: "p", sessionId: "s" }]) {
+  assert.ok(!isCanvasSubject(hostile), JSON.stringify(hostile));
+}
+
+// Markup is named for what it is, not "HTML Preview".
+assert.equal(inlineTitle("<!doctype html><title>Little &amp; counter</title><p>x</p>"), "Little & counter");
+assert.equal(inlineTitle("<p>x</p>", "Given name"), "Given name");
+assert.equal(inlineTitle("<p>x</p>"), "Web page");
+assert.equal(inlineTitle("<svg viewBox='0 0 1 1'></svg>"), "Picture");
 
 console.log("canvas subject ok");

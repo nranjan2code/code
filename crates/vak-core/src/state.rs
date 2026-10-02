@@ -282,6 +282,9 @@ pub const REGISTRY: &[StateEntry] = &[
         Kind::Document,
     ),
     agent_entry("agents/{agent}/coworking", "vak-server", Kind::Ledger),
+    // One Canvas per conversation, rewritten as its tabs change; the newest
+    // revision is all there is (docs/design/66 §0a).
+    agent_entry("agents/{agent}/canvas", "vak-server", Kind::Document),
     StateEntry {
         path: "security-events.jsonl",
         root: Root::Data,

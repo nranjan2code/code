@@ -55,6 +55,7 @@ mod agent_chats;
 pub mod agents;
 mod auth_identity;
 mod bus;
+mod canvas;
 mod channels;
 mod client_events;
 mod client_ui;
@@ -272,6 +273,9 @@ pub struct AppState {
     mail_calendar_test_refresh_endpoints: Arc<Mutex<HashMap<vak_mail_calendar::Provider, String>>>,
     /// Open preview origins (docs/design/66, §3.2).
     pub(crate) previews: preview::PreviewHub,
+    /// Each conversation's Canvas: change hints and write serialization
+    /// (docs/design/66 §0a).
+    pub(crate) canvases: canvas::CanvasHub,
 }
 
 #[derive(Clone)]
@@ -335,6 +339,7 @@ impl AppState {
             #[cfg(feature = "test-support")]
             mail_calendar_test_refresh_endpoints: Arc::new(Mutex::new(HashMap::new())),
             previews: preview::PreviewHub::default(),
+            canvases: canvas::CanvasHub::default(),
         }
     }
 
@@ -915,6 +920,8 @@ fn router_with_state(state: AppState) -> Router {
         .route("/sessions/{id}/launch/prepare", post(prepare_launch))
         .route("/sessions/{id}/launch/start", post(start_launch))
         .route("/sessions/{id}/launch/stop", post(stop_launch))
+        .route("/sessions/{id}/launch/lease", post(lease_launch))
+        .route("/sessions/{id}/launch/release", post(release_launch))
         .route("/sessions/{id}/launch/logs", get(launch_logs))
         .route("/sessions/{id}/run", post(run_prompt))
         .route("/sessions/{id}/steering", post(send_steering))
@@ -1194,6 +1201,10 @@ fn router_with_state(state: AppState) -> Router {
         .route("/agents/templates", get(list_agent_templates))
         .route("/agents/instantiate", post(instantiate_agent_template))
         .route("/previews", post(create_preview))
+        .route(
+            "/sessions/{id}/canvas",
+            get(canvas::get_canvas).put(canvas::put_canvas),
+        )
         .route("/previews/{id}", delete(close_preview))
         .route("/intent/explain", get(intent_explain))
         .route("/intent/policy", get(intent_policy))
@@ -3145,6 +3156,7 @@ fn secured_router_with_port_and_test_oauth_endpoint(
     }
     // Local routines: fires due scheduled tasks while this server lives.
     start_scheduler(&state);
+    start_launch_reaper(&state);
     delivery::start_replay(&state.core);
     // Keeps the model catalogues route planning reads warm for this Core and
     // every Core the pool builds, so a turn's fallback legs never depend on
@@ -11018,6 +11030,42 @@ async fn plugin_remove(
 #[derive(serde::Deserialize)]
 struct FileQuery {
     path: String,
+    /// The conversation the file belongs to. Its workspace is its Agent's own
+    /// folder, so the file is read from there (`resolve_read_path`).
+    #[serde(default)]
+    session: Option<String>,
+}
+
+/// The file a read names. Named by a conversation, it is read from that
+/// conversation's workspace, an Agent's own folder, at exactly that path: a
+/// file that is not there is not found, never looked for elsewhere. Without a
+/// conversation it is the server's workspace (`resolve_confined_file`).
+fn resolve_read_path(
+    state: &AppState,
+    session: Option<&str>,
+    input: &str,
+) -> Result<std::path::PathBuf, StatusCode> {
+    let Some(session) = session else {
+        return resolve_confined_file(state, input).ok_or(StatusCode::FORBIDDEN);
+    };
+    let root = sandbox_session_workspace(state, session).ok_or(StatusCode::NOT_FOUND)?;
+    let path = confined_path(&root, input.trim()).ok_or(StatusCode::FORBIDDEN)?;
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(StatusCode::NOT_FOUND)
+    }
+}
+
+/// A refused workspace read: outside the workspace, or not there.
+fn read_refusal(status: StatusCode) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let message = if status == StatusCode::FORBIDDEN {
+        "path outside workspace"
+    } else {
+        "file not found"
+    };
+    (status, message).into_response()
 }
 
 /// Resolve `input` (absolute or cwd-relative) inside the workspace root.
@@ -11156,6 +11204,9 @@ pub(crate) fn is_document_anchor(path: &str, anchor: &str) -> bool {
 #[derive(Debug, serde::Deserialize)]
 struct OfficeProjectionQuery {
     path: String,
+    /// The conversation whose workspace holds the file (`resolve_read_path`).
+    #[serde(default)]
+    session: Option<String>,
     #[serde(default)]
     from: usize,
     /// `structure` for the Structure view, `facts` for a file card; anything
@@ -11242,8 +11293,9 @@ async fn read_office_projection(
         )
             .into_response();
     }
-    let Some(path) = resolve_confined_file(&state, &q.path) else {
-        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
+    let path = match resolve_read_path(&state, q.session.as_deref(), &q.path) {
+        Ok(path) => path,
+        Err(status) => return read_refusal(status),
     };
     if !path.is_file() {
         return StatusCode::NOT_FOUND.into_response();
@@ -11267,8 +11319,9 @@ async fn read_file(
     axum::extract::Query(q): axum::extract::Query<FileQuery>,
 ) -> axum::response::Response {
     use axum::response::IntoResponse;
-    let Some(path) = resolve_confined_file(&state, &q.path) else {
-        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
+    let path = match resolve_read_path(&state, q.session.as_deref(), &q.path) {
+        Ok(path) => path,
+        Err(status) => return read_refusal(status),
     };
     match tokio::fs::read(&path).await {
         Ok(bytes) => {
@@ -11352,8 +11405,9 @@ async fn read_file_raw(
 ) -> axum::response::Response {
     use axum::body::Body;
     use axum::response::IntoResponse;
-    let Some(path) = resolve_confined_file(&state, &q.path) else {
-        return (StatusCode::FORBIDDEN, "path outside workspace").into_response();
+    let path = match resolve_read_path(&state, q.session.as_deref(), &q.path) {
+        Ok(path) => path,
+        Err(status) => return read_refusal(status),
     };
     let bytes = match tokio::fs::read(&path).await {
         Ok(bytes) => bytes,
@@ -16635,6 +16689,10 @@ enum PreviewRequest {
     },
     Workspace {
         path: String,
+        /// The conversation the page belongs to; its workspace is its Agent's
+        /// own folder. Without one, the server's workspace.
+        #[serde(default)]
+        session_id: Option<String>,
     },
 }
 
@@ -16684,13 +16742,26 @@ async fn create_preview(
             },
             path,
         ),
-        PreviewRequest::Workspace { path } => {
+        PreviewRequest::Workspace { path, session_id } => {
+            let root = match session_id {
+                Some(session) => match sandbox_session_workspace(&state, &session) {
+                    Some(root) => root,
+                    None => {
+                        return (
+                            StatusCode::NOT_FOUND,
+                            Json(serde_json::json!({ "error": "That conversation is not available." })),
+                        )
+                            .into_response();
+                    }
+                },
+                None => state.active_core().cwd().to_path_buf(),
+            };
             let clean = path.trim().trim_start_matches("./").to_string();
             let directory = clean
                 .rsplit_once('/')
                 .map(|(directory, _)| directory.to_string())
                 .unwrap_or_default();
-            (preview::Scope::Workspace { directory }, clean)
+            (preview::Scope::Workspace { root, directory }, clean)
         }
     };
     let opened = match state.previews.open(state.clone(), scope, &path).await {
@@ -18622,10 +18693,17 @@ async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
                     next_fire
                         .get(&task.id)
                         .map(|at| at.with_timezone(&Utc))
-                        .or_else(|| {
-                            vak_core::tasks::cron_next_after(expr, now)
+                        .or_else(|| match task.timezone.as_deref() {
+                            // A routine with a zone of its own runs on that zone's clock.
+                            Some(zone) => vak_core::tasks::cron_next_after_timezone(
+                                expr,
+                                now.with_timezone(&Utc),
+                                zone,
+                            )
+                            .ok(),
+                            None => vak_core::tasks::cron_next_after(expr, now)
                                 .ok()
-                                .map(|at| at.with_timezone(&Utc))
+                                .map(|at| at.with_timezone(&Utc)),
                         })
                 })
                 .or_else(|| {
@@ -18634,15 +18712,13 @@ async fn list_tasks(State(state): State<AppState>) -> Json<serde_json::Value> {
                 })
                 .or_else(|| Some(now.with_timezone(&Utc)));
             let mut value = serde_json::to_value(task).unwrap_or_else(|_| serde_json::json!({}));
+            // `next_run_at` is an instant; a reader shows it in their own time.
+            // The routine's `timezone` stays the zone it was given.
             if let Some(object) = value.as_object_mut() {
                 object.insert(
                     "next_run_at".into(),
                     next.map(|at| serde_json::Value::String(at.to_rfc3339()))
                         .unwrap_or(serde_json::Value::Null),
-                );
-                object.insert(
-                    "timezone".into(),
-                    serde_json::Value::String(now.offset().to_string()),
                 );
             }
             value
@@ -20245,6 +20321,106 @@ pub struct LaunchConfig {
 struct ManagedProc {
     child: tokio::process::Child,
     logs: Arc<Mutex<std::collections::VecDeque<String>>>,
+    /// The views showing it, by the id each view chose, and when each last
+    /// said it still is (`lease_launch`). Desktop and web can show one dev
+    /// server at once; none of them owns it.
+    leases: HashMap<String, std::time::Instant>,
+    /// Started from the Live preview list: it runs until it is stopped there.
+    pinned: bool,
+    /// Since when no view has held a lease; it stops `LAUNCH_LINGER` later.
+    unleased_since: Option<std::time::Instant>,
+}
+
+/// A view renews its lease well inside this; one that stops renewing went
+/// away without saying so (an app that quit, a closed laptop).
+const LAUNCH_LEASE_TTL: std::time::Duration = std::time::Duration::from_secs(180);
+/// How long a dev server no view holds keeps running, so moving to another
+/// tab, conversation or app and back finds it as it was rather than
+/// restarting it.
+const LAUNCH_LINGER: std::time::Duration = std::time::Duration::from_secs(20);
+
+impl ManagedProc {
+    fn held_by(&mut self, viewer: Option<&str>, now: std::time::Instant) {
+        match viewer {
+            Some(viewer) => {
+                self.leases.insert(viewer.to_string(), now);
+            }
+            None => self.pinned = true,
+        }
+        self.unleased_since = None;
+    }
+}
+
+/// A view's id as given, if it is one: short and plain.
+fn launch_viewer(viewer: Option<&str>) -> Result<Option<&str>, StatusCode> {
+    match viewer {
+        None => Ok(None),
+        Some(viewer)
+            if !viewer.is_empty()
+                && viewer.len() <= 64
+                && viewer
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_') =>
+        {
+            Ok(Some(viewer))
+        }
+        Some(_) => Err(StatusCode::BAD_REQUEST),
+    }
+}
+
+async fn stop_process(mut process: ManagedProc) {
+    vak_tools::bash::kill_process_group(&process.child.id());
+    let _ = process.child.kill().await;
+    let _ = process.child.wait().await;
+}
+
+/// Stops what no view shows any more, as of `now`: a lease not renewed within
+/// `LAUNCH_LEASE_TTL` is dropped, and a server without leases stops
+/// `LAUNCH_LINGER` after its last one went, unless it is pinned. A process
+/// that exited on its own is forgotten.
+async fn reap_launches_at(state: &AppState, now: std::time::Instant) {
+    let gone: Vec<ManagedProc> = {
+        let mut procs = state
+            .procs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut done = Vec::new();
+        for (key, process) in procs.iter_mut() {
+            if matches!(process.child.try_wait(), Ok(Some(_))) {
+                done.push(key.clone());
+                continue;
+            }
+            process
+                .leases
+                .retain(|_, seen| now.saturating_duration_since(*seen) < LAUNCH_LEASE_TTL);
+            if process.pinned || !process.leases.is_empty() {
+                process.unleased_since = None;
+                continue;
+            }
+            let since = *process.unleased_since.get_or_insert(now);
+            if now.saturating_duration_since(since) >= LAUNCH_LINGER {
+                done.push(key.clone());
+            }
+        }
+        done.iter().filter_map(|key| procs.remove(key)).collect()
+    };
+    for process in gone {
+        stop_process(process).await;
+    }
+}
+
+/// Keeps reaping while this server lives (`reap_launches_at`), so a dev
+/// server every view forgot does not outlive them.
+pub fn start_launch_reaper(state: &AppState) {
+    let st = state.clone();
+    tokio::spawn(async move {
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(5));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tick.tick().await;
+            reap_launches_at(&st, std::time::Instant::now()).await;
+        }
+    });
 }
 
 fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String> {
@@ -20264,7 +20440,10 @@ fn parse_launch_toml(cwd: &std::path::Path) -> Result<Vec<LaunchConfig>, String>
 
 /// Sensible fallback when no launch.toml exists across supported runtimes:
 /// Node/JS/TS (Vite, Next, Astro, React, Nuxt), Python (FastAPI/Uvicorn, Flask, Streamlit, Django),
-/// Rust (cargo run), Go (go run .), or static HTML (http.server).
+/// Rust (cargo run) or Go (go run .). Plain HTML gets no server: a page opens
+/// in the Canvas on a preview origin (`preview.rs`), which serves only the
+/// page's own files, never dotfiles, and only to loopback names. A static file
+/// server here served the whole folder (secrets included) on every interface.
 fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
     let mut servers = Vec::new();
 
@@ -20389,30 +20568,6 @@ fn detect_launch(cwd: &std::path::Path) -> Vec<LaunchConfig> {
         });
     }
 
-    // 5. Static HTML fallback
-    let has_top_level_html = cwd.join("index.html").is_file()
-        || std::fs::read_dir(cwd).is_ok_and(|entries| {
-            entries.filter_map(Result::ok).any(|entry| {
-                entry.path().is_file()
-                    && entry
-                        .path()
-                        .extension()
-                        .and_then(|value| value.to_str())
-                        .is_some_and(|extension| {
-                            extension.eq_ignore_ascii_case("html")
-                                || extension.eq_ignore_ascii_case("htm")
-                        })
-            })
-        });
-    if servers.is_empty() && has_top_level_html {
-        servers.push(LaunchConfig {
-            name: "static".into(),
-            cmd: "python3".into(),
-            args: vec!["-m".into(), "http.server".into(), "8080".into()],
-            port: Some(8080),
-        });
-    }
-
     servers
 }
 
@@ -20453,22 +20608,17 @@ async fn get_launch(
     if servers.is_empty() {
         servers = detect_launch(&launch_root);
     }
-    let mut procs = state
+    reap_launches_at(&state, std::time::Instant::now()).await;
+    let procs = state
         .procs
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    procs.retain(|_, process| match process.child.try_wait() {
-        Ok(Some(_)) => {
-            vak_tools::bash::kill_process_group(&process.child.id());
-            false
-        }
-        Ok(None) | Err(_) => true,
-    });
     let list: Vec<serde_json::Value> = servers
         .into_iter()
         .map(|mut s| {
             let key = proc_key(&id, scope.candidate_id.as_deref(), &s.name);
-            let running = procs.contains_key(&key);
+            let process = procs.get(&key);
+            let running = process.is_some();
             let executable_available = vak_tools::bash::executable_available(&s.cmd, &launch_root);
             let preparation_required = matches!(s.cmd.as_str(), "npm" | "pnpm" | "yarn" | "bun")
                 && javascript_dependencies_missing(&launch_root);
@@ -20504,6 +20654,8 @@ async fn get_launch(
                 "args": s.args,
                 "port": s.port,
                 "running": running,
+                "viewers": process.map_or(0, |process| process.leases.len()),
+                "pinned": process.is_some_and(|process| process.pinned),
                 "available": available,
                 "availability": availability,
                 "unavailable_reason": unavailable_reason,
@@ -20615,6 +20767,10 @@ struct LaunchNameBody {
     name: String,
     #[serde(default)]
     candidate_id: Option<String>,
+    /// The view showing it (`ManagedProc::leases`); none means the Live
+    /// preview list, which keeps what it starts running.
+    #[serde(default)]
+    viewer: Option<String>,
 }
 
 fn dependency_install_command(
@@ -20934,6 +21090,24 @@ async fn start_launch(
         )
             .into_response();
     };
+    let viewer = match launch_viewer(body.viewer.as_deref()) {
+        Ok(viewer) => viewer,
+        Err(status) => return status.into_response(),
+    };
+    // One that is running is shown, never started twice: it is checked before
+    // its port, which it holds itself.
+    let key = proc_key(&id, body.candidate_id.as_deref(), &cfg.name);
+    reap_launches_at(&state, std::time::Instant::now()).await;
+    if let Some(process) = state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_mut(&key)
+    {
+        process.held_by(viewer, std::time::Instant::now());
+        return Json(serde_json::json!({ "started": false, "running": true, "port": cfg.port }))
+            .into_response();
+    }
     if !vak_tools::bash::executable_available(&cfg.cmd, &launch_root) {
         return (
             StatusCode::CONFLICT,
@@ -20965,21 +21139,6 @@ async fn start_launch(
             })),
         )
             .into_response();
-    }
-
-    let key = proc_key(&id, body.candidate_id.as_deref(), &cfg.name);
-    {
-        let procs = state
-            .procs
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if procs.contains_key(&key) {
-            return (
-                StatusCode::CONFLICT,
-                Json(serde_json::json!({ "error": "already running" })),
-            )
-                .into_response();
-        }
     }
 
     let mut child = match vak_tools::broker::spawn_persistent_worker(
@@ -21060,17 +21219,43 @@ async fn start_launch(
         });
     }
 
-    state
-        .procs
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .insert(
-            key.clone(),
-            ManagedProc {
-                child,
-                logs: logs.clone(),
-            },
-        );
+    // Two views asking at once start one server: the second one's process is
+    // stopped and the view joins the first.
+    let lost = {
+        let mut procs = state
+            .procs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        match procs.entry(key.clone()) {
+            std::collections::hash_map::Entry::Occupied(mut running) => {
+                running.get_mut().held_by(viewer, std::time::Instant::now());
+                Some(ManagedProc {
+                    child,
+                    logs: logs.clone(),
+                    leases: HashMap::new(),
+                    pinned: false,
+                    unleased_since: None,
+                })
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                let mut process = ManagedProc {
+                    child,
+                    logs: logs.clone(),
+                    leases: HashMap::new(),
+                    pinned: false,
+                    unleased_since: None,
+                };
+                process.held_by(viewer, std::time::Instant::now());
+                slot.insert(process);
+                None
+            }
+        }
+    };
+    if let Some(process) = lost {
+        stop_process(process).await;
+        return Json(serde_json::json!({ "started": false, "running": true, "port": cfg.port }))
+            .into_response();
+    }
 
     // Give the server a moment to bind its port so the preview iframe works
     // immediately after start.
@@ -21118,9 +21303,68 @@ async fn start_launch(
 
     (
         StatusCode::OK,
-        Json(serde_json::json!({ "started": true, "listening": listening })),
+        Json(serde_json::json!({ "started": true, "running": true, "listening": listening, "port": cfg.port })),
     )
         .into_response()
+}
+
+/// A view still showing a dev server renews its lease. One that is no longer
+/// running is reported, never started again: only `start` starts one, and a
+/// server someone stopped stays stopped.
+async fn lease_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LaunchNameBody>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let viewer = match launch_viewer(body.viewer.as_deref()) {
+        Ok(Some(viewer)) => viewer,
+        Ok(None) | Err(_) => return StatusCode::BAD_REQUEST.into_response(),
+    };
+    reap_launches_at(&state, std::time::Instant::now()).await;
+    let key = proc_key(&id, body.candidate_id.as_deref(), &body.name);
+    match state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_mut(&key)
+    {
+        Some(process) => {
+            process.held_by(Some(viewer), std::time::Instant::now());
+            Json(serde_json::json!({ "running": true })).into_response()
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "not running" })),
+        )
+            .into_response(),
+    }
+}
+
+/// A view lets a dev server go. When it was the last, the server keeps
+/// running for `LAUNCH_LINGER` so a view coming back finds it, then stops,
+/// unless it was started from the Live preview list.
+async fn release_launch(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<LaunchNameBody>,
+) -> StatusCode {
+    let Ok(Some(viewer)) = launch_viewer(body.viewer.as_deref()) else {
+        return StatusCode::BAD_REQUEST;
+    };
+    let key = proc_key(&id, body.candidate_id.as_deref(), &body.name);
+    if let Some(process) = state
+        .procs
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_mut(&key)
+    {
+        process.leases.remove(viewer);
+        if process.leases.is_empty() && !process.pinned && process.unleased_since.is_none() {
+            process.unleased_since = Some(std::time::Instant::now());
+        }
+    }
+    StatusCode::NO_CONTENT
 }
 
 async fn stop_launch(
@@ -21134,10 +21378,8 @@ async fn stop_launch(
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .remove(&proc_key(&id, body.candidate_id.as_deref(), &body.name));
     match removed {
-        Some(mut p) => {
-            vak_tools::bash::kill_process_group(&p.child.id());
-            let _ = p.child.kill().await;
-            let _ = p.child.wait().await;
+        Some(process) => {
+            stop_process(process).await;
             StatusCode::OK
         }
         None => StatusCode::NOT_FOUND,
@@ -22284,12 +22526,39 @@ mod sandbox_promotion_tests {
         session_id: &str,
         execution_id: &str,
     ) -> vak_session::SessionLog {
+        let mut log = seed_session_at(core, session_id, core.cwd());
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::user_text("Create the result"),
+            meta: None,
+        })
+        .unwrap();
+        log.append_message(vak_session::types::MessageRecord {
+            message: vak_llm::Message::assistant(vec![
+                vak_llm::ContentBlock::ToolUse {
+                    id: execution_id.into(),
+                    name: "bash".into(),
+                    input: serde_json::json!({"command": "create result"}),
+                },
+                vak_llm::ContentBlock::text("The result is ready."),
+            ]),
+            meta: None,
+        })
+        .unwrap();
+        log
+    }
+
+    /// A session whose workspace is `cwd`, as an Agent's own folder is.
+    fn seed_session_at(
+        core: &Core,
+        session_id: &str,
+        cwd: &std::path::Path,
+    ) -> vak_session::SessionLog {
         let path = core
             .sessions_home()
             .join("sessions")
-            .join(vak_core::memory::hash_cwd(core.cwd()))
+            .join(vak_core::memory::hash_cwd(cwd))
             .join(format!("{session_id}.jsonl"));
-        let mut log = vak_session::SessionLog::create(
+        vak_session::SessionLog::create(
             path,
             vak_session::types::SessionHeader {
                 space: None,
@@ -22298,7 +22567,7 @@ mod sandbox_promotion_tests {
                 agent: Some(vak_core::vak_agent_identity()),
                 session_id: session_id.into(),
                 created_at: chrono::Utc::now(),
-                cwd: core.cwd().to_path_buf(),
+                cwd: cwd.to_path_buf(),
                 parent_session_id: None,
                 contract_id: None,
                 work_item_id: None,
@@ -22319,25 +22588,90 @@ mod sandbox_promotion_tests {
                 },
             },
         )
-        .unwrap();
-        log.append_message(vak_session::types::MessageRecord {
-            message: vak_llm::Message::user_text("Create the result"),
-            meta: None,
-        })
-        .unwrap();
-        log.append_message(vak_session::types::MessageRecord {
-            message: vak_llm::Message::assistant(vec![
-                vak_llm::ContentBlock::ToolUse {
-                    id: execution_id.into(),
-                    name: "bash".into(),
-                    input: serde_json::json!({"command": "create result"}),
-                },
-                vak_llm::ContentBlock::text("The result is ready."),
-            ]),
-            meta: None,
-        })
-        .unwrap();
-        log
+        .unwrap()
+    }
+
+    async fn read_status(
+        state: &AppState,
+        path: &str,
+        session: Option<&str>,
+    ) -> (StatusCode, String) {
+        let response = read_file(
+            State(state.clone()),
+            axum::extract::Query(FileQuery {
+                path: path.into(),
+                session: session.map(str::to_string),
+            }),
+        )
+        .await;
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        (status, String::from_utf8_lossy(&bytes).into_owned())
+    }
+
+    /// A file an Agent saved in its own folder is read from that folder when
+    /// its conversation is named, and nothing else stands in for it: not the
+    /// server's workspace, not a run's scratch folder.
+    #[tokio::test]
+    async fn a_conversations_file_is_read_from_its_agents_own_folder() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let core = Core::new_with_trust(dir.path().to_path_buf(), true).unwrap();
+        core.set_sessions_home(dir.path().join("home"));
+        let agent = dir.path().join(".vak/agents/helper/workspace");
+        std::fs::create_dir_all(&agent).unwrap();
+        std::fs::write(agent.join("counter.html"), "<p>made by the agent</p>").unwrap();
+        std::fs::write(dir.path().join("other.html"), "<p>server workspace</p>").unwrap();
+        let scratch = dir.path().join(".vak/scratch/vak/call-1");
+        std::fs::create_dir_all(&scratch).unwrap();
+        std::fs::write(scratch.join("stray.html"), "<p>scratch</p>").unwrap();
+        seed_session_at(&core, "agent-session", &agent);
+        let state = AppState::new(core);
+
+        let (status, body) = read_status(&state, "counter.html", Some("agent-session")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(body.contains("made by the agent"), "{body}");
+        // Without the conversation the server's workspace is read, which never had it.
+        assert_eq!(
+            read_status(&state, "counter.html", None).await.0,
+            StatusCode::NOT_FOUND
+        );
+        for elsewhere in [
+            "other.html",
+            "stray.html",
+            ".vak/scratch/vak/call-1/stray.html",
+        ] {
+            assert_eq!(
+                read_status(&state, elsewhere, Some("agent-session"))
+                    .await
+                    .0,
+                StatusCode::NOT_FOUND,
+                "{elsewhere}"
+            );
+        }
+        assert_eq!(
+            read_status(&state, "../../../../other.html", Some("agent-session"))
+                .await
+                .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            read_status(&state, "counter.html", Some("no-such-session"))
+                .await
+                .0,
+            StatusCode::NOT_FOUND
+        );
+        let raw = read_file_raw(
+            State(state.clone()),
+            axum::extract::Query(FileQuery {
+                path: "counter.html".into(),
+                session: Some("agent-session".into()),
+            }),
+        )
+        .await;
+        assert_eq!(raw.status(), StatusCode::OK);
     }
 
     #[test]
@@ -22611,6 +22945,7 @@ mod sandbox_promotion_tests {
                     State(state),
                     Path(("session-1".into(), id)),
                     axum::extract::Query(FileQuery {
+                        session: None,
                         path: "budget.xlsx".into(),
                     }),
                 )
@@ -22751,6 +23086,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), narrowed_id.clone())),
             axum::extract::Query(OfficeProjectionQuery {
+                session: None,
                 path: "budget.xlsx".into(),
                 from: 0,
                 view: None,
@@ -22874,6 +23210,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "memo.docx".into(),
             }),
         )
@@ -23026,6 +23363,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-structured".into(), candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "daily.xlsx".into(),
             }),
         )
@@ -23137,6 +23475,7 @@ mod sandbox_promotion_tests {
         let response = read_file_raw(
             State(state),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "daily.xlsx".into(),
             }),
         )
@@ -23236,6 +23575,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "report.pdf".into(),
             }),
         )
@@ -23329,6 +23669,7 @@ mod sandbox_promotion_tests {
         let response = read_file_raw(
             State(state.clone()),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "report.pdf".into(),
             }),
         )
@@ -23342,6 +23683,7 @@ mod sandbox_promotion_tests {
         let response = read_office_projection(
             State(state.clone()),
             axum::extract::Query(OfficeProjectionQuery {
+                session: None,
                 path: "report.pdf".into(),
                 from: 0,
                 view: None,
@@ -23383,6 +23725,7 @@ mod sandbox_promotion_tests {
         let read = |path: &str, from: usize, view: Option<&str>| {
             let state = state.clone();
             let query = OfficeProjectionQuery {
+                session: None,
                 path: path.into(),
                 from,
                 view: view.map(str::to_string),
@@ -23415,6 +23758,7 @@ mod sandbox_promotion_tests {
         let response = read_office_projection(
             State(state.clone()),
             axum::extract::Query(OfficeProjectionQuery {
+                session: None,
                 path: "q3.docx".into(),
                 from: 0,
                 view: None,
@@ -23569,6 +23913,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "budget.xlsx".into(),
             }),
         )
@@ -23742,6 +24087,12 @@ mod sandbox_promotion_tests {
         tokio::fs::write(scratch.join("invitation.html"), "<h1>Saved</h1>")
             .await
             .unwrap();
+        tokio::fs::write(
+            scratch.join("app.py"),
+            "from flask import Flask\napp = Flask(__name__)\n",
+        )
+        .await
+        .unwrap();
         let candidate = export_candidate(&state).await;
         let candidate_id = candidate.candidate.candidate_id;
 
@@ -23749,16 +24100,14 @@ mod sandbox_promotion_tests {
         assert_eq!(root, sandbox_candidates_root(&state).join(&candidate_id));
         let launch = detect_launch(&root);
         assert_eq!(launch.len(), 1);
-        assert_eq!(launch[0].name, "static");
+        assert_eq!(launch[0].name, "flask");
         assert!(launch_root(&state, "another-session", Some(&candidate_id), dir.path()).is_err());
 
         let prepared = sandbox_previews_root(&state).join(&candidate_id);
         std::fs::create_dir_all(&prepared).unwrap();
-        std::fs::copy(
-            root.join("invitation.html"),
-            prepared.join("invitation.html"),
-        )
-        .unwrap();
+        for file in ["invitation.html", "app.py"] {
+            std::fs::copy(root.join(file), prepared.join(file)).unwrap();
+        }
         std::fs::write(
             prepared.join(".vak-candidate-digest"),
             &candidate.candidate_digest,
@@ -23782,7 +24131,7 @@ mod sandbox_promotion_tests {
             }),
         )
         .await;
-        assert_eq!(response.0["servers"][0]["name"], "static");
+        assert_eq!(response.0["servers"][0]["name"], "flask");
     }
 
     #[tokio::test]
@@ -23806,6 +24155,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "result.txt".into(),
             }),
         )
@@ -23822,6 +24172,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "result.txt".into(),
             }),
         )
@@ -23841,6 +24192,7 @@ mod sandbox_promotion_tests {
                 candidate.candidate.candidate_id.clone(),
             )),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "result.txt".into(),
             }),
         )
@@ -23861,6 +24213,7 @@ mod sandbox_promotion_tests {
             State(state.clone()),
             Path(("session-1".into(), candidate.candidate.candidate_id.clone())),
             axum::extract::Query(FileQuery {
+                session: None,
                 path: "result.txt".into(),
             }),
         )
@@ -24552,16 +24905,123 @@ mod sandbox_promotion_tests {
         assert!(names.contains(&"go"));
     }
 
+    /// A dev server lives while any view holds it, so desktop and web can show
+    /// one together and moving between tabs, conversations or apps never
+    /// restarts it. The last view to go leaves it a short while; a view that
+    /// stops renewing went away without saying so; one started from the Live
+    /// preview list stays until it is stopped there.
+    #[tokio::test]
+    async fn a_dev_server_lives_while_a_view_holds_it() {
+        vak_config::paths::isolate_home_for_tests();
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::new(Core::new_with_trust(dir.path().to_path_buf(), true).unwrap());
+        let alive = |pid: u32| {
+            std::process::Command::new("kill")
+                .args(["-0", &pid.to_string()])
+                .status()
+                .is_ok_and(|status| status.success())
+        };
+        let now = std::time::Instant::now();
+        let mut pids = HashMap::new();
+        for (name, pinned, viewers) in [
+            ("shown", false, &["desktop", "web"][..]),
+            ("kept", true, &[][..]),
+            ("forgotten", false, &["quit-app"][..]),
+        ] {
+            let child = tokio::process::Command::new("sleep")
+                .arg("60")
+                .kill_on_drop(true)
+                .spawn()
+                .unwrap();
+            pids.insert(name, child.id().unwrap());
+            let mut process = ManagedProc {
+                child,
+                logs: Arc::default(),
+                leases: HashMap::new(),
+                pinned,
+                unleased_since: None,
+            };
+            for viewer in viewers {
+                process.held_by(Some(viewer), now);
+            }
+            state
+                .procs
+                .lock()
+                .unwrap()
+                .insert(proc_key("s", None, name), process);
+        }
+        let running = |name: &str| {
+            state
+                .procs
+                .lock()
+                .unwrap()
+                .contains_key(&proc_key("s", None, name))
+        };
+        let release = |viewer: &str| {
+            release_launch(
+                State(state.clone()),
+                Path("s".into()),
+                Json(LaunchNameBody {
+                    name: "shown".into(),
+                    candidate_id: None,
+                    viewer: Some(viewer.into()),
+                }),
+            )
+        };
+
+        assert_eq!(release("desktop").await, StatusCode::NO_CONTENT);
+        reap_launches_at(&state, std::time::Instant::now()).await;
+        assert!(running("shown"), "the web view still shows it");
+        release("web").await;
+        let released = std::time::Instant::now();
+        reap_launches_at(&state, released + std::time::Duration::from_secs(1)).await;
+        assert!(running("shown"), "a view coming back soon finds it running");
+        reap_launches_at(
+            &state,
+            released + LAUNCH_LINGER + std::time::Duration::from_secs(1),
+        )
+        .await;
+        assert!(!running("shown"), "nobody came back");
+        assert!(!alive(pids["shown"]), "and its process is gone");
+
+        assert!(running("forgotten"));
+        let lapsed = now + LAUNCH_LEASE_TTL + std::time::Duration::from_secs(1);
+        reap_launches_at(&state, lapsed).await;
+        assert!(running("forgotten"), "a lapsed lease still lingers");
+        reap_launches_at(&state, lapsed + LAUNCH_LINGER).await;
+        assert!(!running("forgotten"), "a view that vanished lets it go");
+
+        reap_launches_at(&state, lapsed + LAUNCH_LINGER * 10).await;
+        assert!(
+            running("kept"),
+            "the Live preview list keeps what it started"
+        );
+        assert!(alive(pids["kept"]));
+        assert_eq!(
+            stop_launch(
+                State(state.clone()),
+                Path("s".into()),
+                Json(LaunchNameBody {
+                    name: "kept".into(),
+                    candidate_id: None,
+                    viewer: None,
+                }),
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert!(!running("kept"));
+    }
+
+    /// A folder of plain HTML gets no server: its page opens on a preview
+    /// origin. A file server there handed the whole folder, secrets and
+    /// dotfiles included, to every network interface.
     #[test]
-    fn detect_launch_falls_back_to_static_html() {
+    fn detect_launch_offers_no_file_server_for_plain_html() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("index.html"), "<h1>Test</h1>\n").unwrap();
-        let found = detect_launch(dir.path());
-        assert_eq!(found.len(), 1);
-        assert_eq!(found[0].name, "static");
-        assert_eq!(found[0].cmd, "python3");
-        assert_eq!(found[0].args, vec!["-m", "http.server", "8080"]);
-        assert_eq!(found[0].port, Some(8080));
+        std::fs::write(dir.path().join("credentials.enc"), "sealed").unwrap();
+        assert!(detect_launch(dir.path()).is_empty());
     }
 
     #[test]

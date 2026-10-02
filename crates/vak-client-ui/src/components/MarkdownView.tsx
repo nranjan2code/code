@@ -10,8 +10,10 @@ import {
   isScratchDirectory,
   openOfficeCitation,
   openMailCalendarCitation,
+  activeId,
 } from "../store";
 import { openFileSmart } from "../App";
+import { inlineTitle } from "../canvasSubject";
 import { renderMarkdown } from "../md";
 import { highlight, languageForFence } from "../highlight";
 import { parseMailCalendarCitation } from "../mailCalendarCitation";
@@ -84,8 +86,7 @@ export default function MarkdownView(props: { text: string; streaming?: boolean 
     const target = event.target as HTMLElement;
     if (target.classList.contains("cb-preview")) {
       const codeContent = target.getAttribute("data-preview") ?? "";
-      const lang = target.getAttribute("data-lang") ?? "html";
-      openArtifactCanvas({ kind: "inline", title: `${lang.toUpperCase()} Preview`, html: codeContent });
+      openArtifactCanvas({ kind: "inline", title: inlineTitle(codeContent), html: codeContent, sessionId: activeId() ?? undefined });
       return;
     }
     if (target.classList.contains("cb-copy")) {

@@ -46,8 +46,15 @@ export function sameSelection(a: Selection | null, b: Selection | null): boolean
   return a.kind === "lines" && b.kind === "lines" && a.start === b.start && (a.end ?? a.start) === (b.end ?? b.start);
 }
 
-/** The words a comment about a place adds to a request that has no comment to carry it. */
+/** Where a request is about, as the request says it: nothing for the whole
+ *  file, `(lines 3–5)`, or `(at Budget!B4)` for a place the Agent can find. */
 export function selectionForPrompt(selection: Selection | null): string {
   if (!selection) return "";
-  return selection.kind === "anchor" ? ` The change is about the place ${selection.anchor}.` : ` The change is about ${selectionLabel(selection).toLowerCase()}.`;
+  return selection.kind === "anchor" ? ` (at ${selection.anchor})` : ` (${selectionLabel(selection).toLowerCase()})`;
+}
+
+/** A request to change a file, in the words its sender would use: they see
+ *  it as their own message in the conversation. */
+export function changeRequest(file: string, note: string, selection: Selection | null): string {
+  return `Change ${file}${selectionForPrompt(selection)}: ${note}`;
 }

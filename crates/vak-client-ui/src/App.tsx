@@ -91,8 +91,10 @@ import {
   restorePendingQuestions,
   canvasOpen,
   canvasMode,
+  requestCanvasClose,
   type ReplyTarget,
 } from "./store";
+import { startCanvasSync } from "./canvasSync";
 import { recordAgentOpened } from "./agentRecents";
 import type { SessionSummary } from "./types";
 import * as api from "./api";
@@ -1178,6 +1180,8 @@ export default function App() {
     void init().then(() => {
       if (window.location.hash) void applyRoute(window.location.hash);
     });
+    // Each conversation's Canvas is the same on every surface showing it.
+    startCanvasSync();
     const onHashChange = () => void applyRoute(window.location.hash);
     window.addEventListener("hashchange", onHashChange);
     const sessionRefresh = window.setInterval(() => void refreshSessions(), 10_000);
@@ -1199,12 +1203,22 @@ export default function App() {
       if (!mod) {
         if (e.key === "Escape") {
           // Every dialog is a Sheet, which closes on Escape and stops it
-          // there; what reaches here is a menu, Settings or a panel.
+          // there; what reaches here is a menu, Settings, a panel or the
+          // Canvas, nearest first. Something that already used this Escape
+          // (a menu in the message box, a conversation open in the mail
+          // view) has said so, and nothing else happens.
+          if (e.defaultPrevented) return;
           if (closeOpenMenus()) return;
           if (settingsOpen()) setSettingsOpen(false);
           else if (inboxOpen()) setInboxOpen(false);
           else if (sideOpen()) setSideOpen(false);
-          else stopRun();
+          else if (canvasOpen()) {
+            // A note or a reply being typed in the Canvas is never thrown
+            // away by Escape; the Canvas closes from anywhere else.
+            const target = e.target as HTMLElement | null;
+            const typing = !!target?.closest(".artifact-canvas") && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT" || target.isContentEditable);
+            if (!typing) requestCanvasClose();
+          } else stopRun();
         } else if (e.key === "g" || e.key === "G") {
           pendingG = Date.now();
         } else if ((e.key === "i" || e.key === "I") && Date.now() - pendingG < 1000) {

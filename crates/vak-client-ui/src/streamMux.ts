@@ -23,6 +23,7 @@ export type StreamFrame =
   | { kind: "presentation"; session: string; frame: unknown }
   | { kind: "side"; session: string; event: ClientEvent | null }
   | { kind: "coworking"; session: string }
+  | { kind: "canvas"; session: string; revision: number }
   | { kind: "resync"; session: string; reason: string }
   | { kind: "unknown"; session: string };
 
@@ -32,7 +33,7 @@ export type StreamFrame =
 export type StreamStatus = "idle" | "connecting" | "open" | "reconnecting" | "offline";
 
 /** Every named event the server sends. */
-export const FRAME_KINDS = ["host", "config", "agent", "presentation", "side", "coworking", "resync", "unknown"] as const;
+export const FRAME_KINDS = ["host", "config", "agent", "presentation", "side", "coworking", "canvas", "resync", "unknown"] as const;
 
 /** Parse one named SSE event. `null` for anything malformed. */
 export function parseFrame(kind: string, raw: string): StreamFrame | null {
@@ -57,6 +58,8 @@ export function parseFrame(kind: string, raw: string): StreamFrame | null {
     case "coworking":
     case "unknown":
       return { kind, session };
+    case "canvas":
+      return typeof body.revision === "number" ? { kind, session, revision: body.revision } : null;
     case "resync":
       return { kind, session, reason: String(body.reason ?? "") };
     default:

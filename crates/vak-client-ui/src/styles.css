@@ -5371,7 +5371,11 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   inset: 0;
   background: rgba(10, 10, 8, 0.18);
   pointer-events: none;
-  animation: canvasBackdropIn var(--dur-slow) var(--ease) both;
+}
+/* Only a Canvas a reader just opened arrives; one coming back with its
+   conversation is simply there. */
+.artifact-canvas-backdrop.canvas-arriving {
+  animation: canvasBackdropIn var(--dur-slow) var(--ease) backwards;
 }
 .artifact-canvas-backdrop.focused {
   background: rgba(10, 10, 8, 0.55);
@@ -5405,14 +5409,33 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
   background: var(--surface);
   border-left: 1px solid var(--border);
   box-shadow: -16px 0 60px rgba(0, 0, 0, 0.35), -2px 0 8px rgba(0, 0, 0, 0.18);
-  animation: canvasSlideIn var(--dur-slow) var(--ease) both;
-  will-change: transform, opacity;
   overflow: hidden;
+}
+/* `backwards`, not `both`: a transform left on the panel after it arrives
+   would make it the containing block of everything fixed inside it. */
+.artifact-canvas.canvas-arriving {
+  animation: canvasSlideIn var(--dur-slow) var(--ease) backwards;
 }
 
 .artifact-canvas.canvas-closing {
   animation: canvasSlideOut var(--dur) var(--ease) forwards;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .artifact-canvas.canvas-arriving,
+  .artifact-canvas-backdrop.canvas-arriving { animation: none; }
+  .artifact-canvas.canvas-closing,
+  .artifact-canvas-backdrop.canvas-closing { animation-duration: 1ms; }
+}
+
+/* The Canvas takes the right of the window: the dock waits behind it and is
+   back as it was when the Canvas closes. */
+.app.canvas-active .dock,
+.app.canvas-active .dock-resizer { display: none; }
+
+/* Connection news stays over the conversation, not on top of the Canvas. */
+.app.canvas-split-active .statusbar { left: calc((100% - var(--canvas-split-width, 65%)) / 2); }
+.app.canvas-focused-active .statusbar { bottom: calc(40px + env(safe-area-inset-bottom, 0px)); }
 
 .artifact-canvas.canvas-split {
   width: var(--canvas-split-width, 65%);
@@ -5814,7 +5837,7 @@ html[data-reduce-motion="true"] .agent-mark-atlas { animation: none !important; 
 
 /* Light themes: use clean white for the canvas stage */
 html[data-theme="light"] .artifact-canvas-body {
-  background: #fff;
+  background: var(--page);
 }
 
 .artifact-canvas-viewport {
@@ -5864,6 +5887,37 @@ html[data-theme="light"] .artifact-canvas-body {
   height: 100%;
   border: 0;
   display: block;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+/* Until the page has drawn, so the stage never flashes between its colour
+   and the page's. */
+.artifact-canvas-frame.drawing { opacity: 0; }
+
+/* A page kept alive behind its code (or a PDF's pages behind its text). */
+.artifact-canvas-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.artifact-canvas-page.resting { display: none; }
+
+/* Page widths stay in place while the code shows, so nothing moves under the pointer. */
+.artifact-canvas-device-group.resting { visibility: hidden; }
+
+.artifact-canvas-error-detail {
+  display: block;
+  margin-top: var(--space-1);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
+  overflow-wrap: anywhere;
+}
+.artifact-canvas-source-path small {
+  margin-left: var(--space-2);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: var(--fs-caption);
 }
 
 /* --- Loading ------------------------------------------------------------ */

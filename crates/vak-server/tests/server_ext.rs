@@ -1203,7 +1203,7 @@ async fn launch_config_and_process_lifecycle() {
     std::fs::create_dir_all(cwd.join(".vak")).unwrap();
     std::fs::write(
         cwd.join(".vak/launch.toml"),
-        "[[server]]\nname = \"static\"\ncmd = \"python3\"\nargs = [\"-m\", \"http.server\", \"4519\"]\nport = 4519\n",
+        "[[server]]\nname = \"static\"\ncmd = \"python3\"\nargs = [\"-m\", \"http.server\", \"4519\", \"--bind\", \"127.0.0.1\"]\nport = 4519\n",
     )
     .unwrap();
 
@@ -1246,14 +1246,43 @@ async fn launch_config_and_process_lifecycle() {
     assert_eq!(body["started"], true);
     assert_eq!(body["listening"], true, "http.server should bind quickly");
 
-    // Double-start conflicts.
+    // A second start shows the running server rather than starting another:
+    // desktop and web can show one dev server together.
     let again = client
         .post(format!("{base}/sessions/{anchor}/launch/start"))
-        .json(&serde_json::json!({"name": "static"}))
+        .json(&serde_json::json!({"name": "static", "viewer": "web-1"}))
         .send()
         .await
         .unwrap();
-    assert_eq!(again.status(), 409);
+    assert_eq!(again.status(), 200);
+    let again: serde_json::Value = again.json().await.unwrap();
+    assert_eq!(again["started"], false);
+    assert_eq!(again["running"], true);
+    assert_eq!(again["port"], 4519);
+    let listed: serde_json::Value = client
+        .get(format!("{base}/sessions/{anchor}/launch"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(listed["servers"][0]["viewers"], 1);
+    assert_eq!(listed["servers"][0]["pinned"], true);
+    let lease = client
+        .post(format!("{base}/sessions/{anchor}/launch/lease"))
+        .json(&serde_json::json!({"name": "static", "viewer": "web-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(lease.status(), 200);
+    let release = client
+        .post(format!("{base}/sessions/{anchor}/launch/release"))
+        .json(&serde_json::json!({"name": "static", "viewer": "web-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(release.status(), 204);
 
     // Logs are flowing.
     let logs: serde_json::Value = client
@@ -1273,6 +1302,14 @@ async fn launch_config_and_process_lifecycle() {
         .await
         .unwrap();
     assert_eq!(stop.status(), 200);
+    // A view still open on it is told it stopped; it is not started again.
+    let lease = client
+        .post(format!("{base}/sessions/{anchor}/launch/lease"))
+        .json(&serde_json::json!({"name": "static", "viewer": "web-1"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(lease.status(), 404);
 
     // Port actually released.
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;

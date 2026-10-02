@@ -218,8 +218,8 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   await settle();
   passed.push(check(!!document.querySelector(".artifact-canvas") && tabs().length === 2 && note().value === "make the heading larger", "Returning to a conversation finds its Canvas as it was"));
 
-  // Escape closes the one in front and leaves the other.
-  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  // Escape (the app's, which asks the Canvas) closes the one in front and leaves the other.
+  store.requestCanvasClose();
   await settle();
   passed.push(check(tabs().length === 0 && store.canvasEntries().length === 1 && store.canvasOpen(), "Escape closes only the tab in front"));
 
@@ -239,7 +239,7 @@ const run = (id: string, path: string) => ({ id, ownerSessionId: sid, tool: "bas
   VIEWERS.code = ((props: any) => { if (broken) throw new Error("boom"); return original(props); }) as typeof original;
   try {
     await open(() => store.openArtifactFile("src/main.rs", { sessionId: sid }));
-    passed.push(check(/This view stopped working: boom/.test(document.querySelector(".artifact-canvas-error")?.textContent ?? "") && !!document.querySelector(".artifact-canvas-header"), "A failing viewer shows why and leaves the frame usable"));
+    passed.push(check(/This view stopped working\./.test(document.querySelector(".artifact-canvas-error")?.textContent ?? "") && !!document.querySelector(".artifact-canvas-header"), "A failing viewer shows why and leaves the frame usable"));
     broken = false;
     [...document.querySelectorAll<HTMLElement>(".artifact-canvas-error button")].find((button) => button.textContent === "Try again")!.click();
     await settle();

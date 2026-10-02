@@ -32,6 +32,9 @@ export interface SessionWatcher {
   resync?(): void;
   /** A shared candidate comment changed. */
   coworking?(): void;
+  /** The conversation's Canvas was changed, here or on another surface, and
+   *  is now at this revision (docs/design/66 §0a). */
+  canvas?(revision: number): void;
 }
 
 const sessionWatchers = new Map<string, Set<SessionWatcher>>();
@@ -120,6 +123,9 @@ function dispatch(frame: StreamFrame) {
           break;
         case "coworking":
           watcher.coworking?.();
+          break;
+        case "canvas":
+          watcher.canvas?.(frame.revision);
           break;
         case "unknown":
           break;

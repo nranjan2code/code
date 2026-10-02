@@ -53,3 +53,17 @@ export function routineState(task: Pick<TaskDef, "enabled" | "last_run_status">,
   if (!task.enabled) return "paused";
   return running || task.last_run_status === "working" ? "running" : "scheduled";
 }
+
+/** When a routine runs next, in the reader's own time with that time's zone
+ *  named. `next_run_at` is an instant: shown in one zone and labelled with
+ *  another, it would say the wrong hour. */
+export function nextRunWords(at: string | null | undefined): string {
+  const date = at ? new Date(at) : null;
+  if (!date || Number.isNaN(date.getTime())) return "Not scheduled yet";
+  return date.toLocaleString(undefined, { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZoneName: "short" });
+}
+
+/** How many deliveries, in words. */
+export function deliveryCount(count: number): string {
+  return `${count} ${count === 1 ? "delivery" : "deliveries"}`;
+}

@@ -966,6 +966,7 @@ Also in the plan's history:
 | data `agents/<id>/commitments.jsonl` | vak-commit | Record; statement field keyed to its conversation |
 | data `agents/<server Core's id>/coworking/grants.jsonl` (D25) | vak-server | Record (grants, keyed by principal; M8's one grants table) |
 | data `agents/<server Core's id>/office-workspaces/<session>/<room>.json` (D25; rewritten on every edit) | vak-server | **Document** (each save a version; the head is a ref) in its session's Agent scope |
+| data `agents/<id>/canvas/<ses>.{json,lock}` (one per conversation, rewritten as its tabs change; doc 66 §0a) | vak-server | **Document** (the head is a ref) keyed to its conversation |
 | data `agents/<id>/agent-network/broker.sock` | vak-core | Ephemeral (runtime) |
 | data `sandbox/promotions/` | vak-sandbox | Record |
 | data `gateway/{bindings,allowlist,bots}.json`, `default-workspace` | vak-server | Desired |

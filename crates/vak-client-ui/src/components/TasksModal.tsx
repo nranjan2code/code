@@ -15,7 +15,7 @@ import {
 import * as api from "../api";
 import type { TaskDef } from "../types";
 import { relAgo } from "../time";
-import { cadenceBadge, canRetryDelivery, deliveryStatusLabel, runStatusLabel } from "../taskWords";
+import { cadenceBadge, canRetryDelivery, deliveryCount, deliveryStatusLabel, nextRunWords, runStatusLabel } from "../taskWords";
 import Icon from "./Icon";
 import Sheet from "./Sheet";
 
@@ -149,8 +149,8 @@ export default function TasksModal() {
     try {
       const result = await api.retryTaskDelivery(t.id);
       setError(result.failed
-        ? `${result.replayed} delivery${result.replayed === 1 ? "" : "ies"} replayed; ${result.failed} still waiting`
-        : `${result.replayed} delivery${result.replayed === 1 ? "" : "ies"} replayed`);
+        ? `${deliveryCount(result.replayed)} sent again; ${result.failed} still waiting`
+        : `${deliveryCount(result.replayed)} sent again`);
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -203,9 +203,7 @@ export default function TasksModal() {
                   </div>
                   <div class="task-prompt" title={t.script ?? t.prompt}>{t.script ?? t.prompt}</div>
                   <div class="task-schedule-note">
-                    <Show when={t.next_run_at} fallback="Next run is calculated when the scheduler is available.">
-                      {(next) => <>Next run {new Date(next()).toLocaleString()} · {t.timezone ?? "workspace local time"}</>}
-                    </Show>
+                    Next run {nextRunWords(t.next_run_at)}<Show when={t.timezone}>{(zone) => <> · runs on {zone()} time</>}</Show>
                   </div>
                   <Show when={t.last_run_at || t.last_summary || t.last_session_id}>
                     <details class="task-run" open={taskFocusId() === t.id}>

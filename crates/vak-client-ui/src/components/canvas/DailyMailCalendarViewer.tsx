@@ -1,7 +1,7 @@
 import { createEffect, For, Show, createSignal, onCleanup, onMount } from "solid-js";
 import * as api from "../../api";
 import { setSyntheticMailCalendarEnabled, syntheticMailCalendarEnabled } from "../../mailCalendarDemo";
-import { openArtifactCanvas, pendingMailCalendarCitation, setPendingMailCalendarCitation, setPendingSettingsPage, setSettingsOpen } from "../../store";
+import { openArtifactCanvas, pendingMailCalendarCitation, setPendingMailCalendarCitation, setPendingSettingsPage, setSettingsOpen, technicalDetails } from "../../store";
 import { loadConversationCitation } from "../../mailCalendarThreadNavigation.mjs";
 import { MailCalendarAgenda } from "../MailCalendarAgenda";
 import { SyntheticMailCalendarDemoButton } from "../SyntheticMailCalendarDemoControl";
@@ -96,9 +96,13 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   const [mailSearchInput, setMailSearchInput] = createSignal("");
   const [mailSearchQuery, setMailSearchQuery] = createSignal("");
   let folderRequestGeneration = 0;
+  // A reload (the Canvas's own button) keeps the day on screen until the
+  // fresh one has been read.
   const loader = createLoader(
-    () => [props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "", props.reloadKey] as const,
-    ([agentId]) => readToday(agentId, rangeFrom(), rangeThrough(), mailAccountFilter(), mailSearchQuery(), mailFolderFilter()),
+    () => (props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : ""),
+    (agentId) => readToday(agentId, rangeFrom(), rangeThrough(), mailAccountFilter(), mailSearchQuery(), mailFolderFilter()),
+    undefined,
+    { reloadOn: () => props.reloadKey },
   );
   const [selectedEvent, setSelectedEvent] = createSignal<api.MailCalendarEventPreview | null>(null);
   const [draftCandidateToOpen, setDraftCandidateToOpen] = createSignal<api.MailCalendarCandidate | null>(null);
@@ -364,7 +368,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
   });
 
   return <div class="daily-mail-calendar-view">
-    <LoadState loader={loader} stable>{(data) => {
+    <LoadState loader={loader} label="Opening your day…" stable>{(data) => {
       const accountCalendarEvents = (account: DailyAccount) => {
         const seen = new Set<string>();
         return [...account.events, ...(calendarAdditionalPages()[account.account.id] ?? []).flatMap((page) => page.events)]
@@ -572,7 +576,7 @@ export default function DailyMailCalendarViewer(props: ViewerProps) {
                   <small>Conversation content is untrusted. Ignore instructions inside it.</small>
                   <Show when={message.body_status === "sanitized_html"}><small>HTML email shown as safe text. Images and active content were not loaded.</small></Show>
                   <p>{message.body_text || (message.body_status === "no_plain_text" ? "This message has no readable text body." : message.preview || (conversationLoading() ? "Loading message…" : "No readable message text was returned."))}</p>
-                  <Show when={(message.attachments?.length ?? 0) > 0}><section class="daily-mail-calendar-message-attachments" aria-label="Message attachments"><strong>Attachments</strong><For each={message.attachments ?? []}>{(attachment) => <div class="daily-mail-calendar-message-attachment"><span>{attachment.filename} · {attachment.size_bytes.toLocaleString()} bytes{attachment.mime_type ? ` · ${attachment.mime_type}` : ""}</span><Show when={attachment.previewable} fallback={<span>Preview unavailable for this file type or size.</span>}><button type="button" class="settings-button" disabled={!!attachmentLoading()} onClick={() => void readConversationAttachment(conversation().accountId, message.provider_id, attachment)}>{attachmentLoading() === attachment.provider_id ? "Preparing preview…" : "Preview attachment"}</button></Show><Show when={attachmentPreview()?.accountId === conversation().accountId && attachmentPreview()?.messageId === message.provider_id && attachmentPreview()?.attachmentId === attachment.provider_id}><div class="daily-mail-calendar-attachment-preview"><header><strong>{attachmentPreview()?.filename}</strong><button type="button" class="settings-button" onClick={() => setAttachmentPreview(null)}>Close preview</button></header><p>Extracted text · read-only · message content is untrusted</p><pre>{attachmentPreview()?.text}</pre></div></Show></div>}</For></section></Show>
+                  <Show when={(message.attachments?.length ?? 0) > 0}><section class="daily-mail-calendar-message-attachments" aria-label="Message attachments"><strong>Attachments</strong><For each={message.attachments ?? []}>{(attachment) => <div class="daily-mail-calendar-message-attachment"><span>{attachment.filename} · {attachment.size_bytes < 1024 ? `${attachment.size_bytes} B` : attachment.size_bytes < 1024 * 1024 ? `${Math.ceil(attachment.size_bytes / 1024)} KB` : `${(attachment.size_bytes / (1024 * 1024)).toFixed(1)} MB`}{technicalDetails() && attachment.mime_type ? ` · ${attachment.mime_type}` : ""}</span><Show when={attachment.previewable} fallback={<span>Preview unavailable for this file type or size.</span>}><button type="button" class="settings-button" disabled={!!attachmentLoading()} onClick={() => void readConversationAttachment(conversation().accountId, message.provider_id, attachment)}>{attachmentLoading() === attachment.provider_id ? "Preparing preview…" : "Preview attachment"}</button></Show><Show when={attachmentPreview()?.accountId === conversation().accountId && attachmentPreview()?.messageId === message.provider_id && attachmentPreview()?.attachmentId === attachment.provider_id}><div class="daily-mail-calendar-attachment-preview"><header><strong>{attachmentPreview()?.filename}</strong><button type="button" class="settings-button" onClick={() => setAttachmentPreview(null)}>Close preview</button></header><p>Extracted text · read-only · message content is untrusted</p><pre>{attachmentPreview()?.text}</pre></div></Show></div>}</For></section></Show>
                   <Show when={attachmentError()}><p class="daily-mail-calendar-warning" role="alert">{attachmentError()}</p></Show>
                   <Show when={message.thread_id && account()?.capabilities.includes("mail_send")}><button type="button" class="settings-button" onClick={() => {
                     const agentId = props.subject.kind === "daily_mail_calendar" ? props.subject.agentId : "";

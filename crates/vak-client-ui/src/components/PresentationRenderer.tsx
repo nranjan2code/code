@@ -31,7 +31,7 @@ import { approve, sendPrompt } from "../App";
 import Icon from "./Icon";
 import { safeUrl, isLocalArtifactPath, sandboxedSrcdoc } from "../safeUrl";
 import { parseMailCalendarCitation } from "../mailCalendarCitation";
-import { fileSubject, runOrigin } from "../canvasSubject";
+import { fileSubject, inlineTitle, runOrigin } from "../canvasSubject";
 import { artifactPreviewHtml, type ArtifactPreviewReader } from "../artifactPreview";
 import { fileKind, newestWaitingDraft, statusWords } from "../resultCard";
 import { relAgo } from "../time";
@@ -48,7 +48,7 @@ import MermaidViewer from "./presentation/MermaidViewer";
 // Technical details are a disclosure preference only; they never change the
 // result, route, authority, or which safety states remain visible.
 const showOperatorChrome = () => technicalDetails();
-import GenericSpecRenderer, { PresentationInteractionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildOptionsTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
+import GenericSpecRenderer, { PresentationInteractionContext, PresentationSessionContext, buildTimelineSpec, buildMetricSpec, buildTableSpec, buildOptionsTableSpec, buildRecipeSpec, buildResearchSpec, buildDiffSpec, buildTerminalSpec, buildTestMatrixSpec, buildChartSpec, buildUiPreviewSpec, buildMediaSpec, buildUniversalCardSpec } from "./presentation/GenericSpecRenderer";
 import AgentMark from "./AgentMark";
 import { assistantParts, groupAssistantParts, isFleetingNarration, parseVakFence, stripControlScaffolding } from "../structured";
 import type { AssistantPart } from "../structured";
@@ -248,8 +248,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
   };
 
   const openPreview = () => {
-    const title = props.filename || (props.language ? `${props.language.toUpperCase()} Preview` : "Artifact Preview");
-    openArtifactCanvas({ kind: "inline", title, html: props.content });
+    openArtifactCanvas({ kind: "inline", title: inlineTitle(props.content, props.filename), html: props.content, sessionId: activeId() ?? undefined });
   };
 
   return (
@@ -258,7 +257,7 @@ function CodeBlock(props: { language?: string | null; filename?: string | null; 
         <span>{props.filename ?? props.language ?? (props.diff ? "diff" : "text")}</span>
         <div style={{ display: "flex", gap: "6px", "margin-left": "auto" }}>
           <Show when={canPreview()}>
-            <button type="button" onClick={openPreview} title="Open interactive preview in Artifact Canvas">Preview</button>
+            <button type="button" onClick={openPreview} title="Open in Canvas">Preview</button>
           </Show>
           <button type="button" onClick={(event) => copy(event.currentTarget)}>Copy</button>
         </div>
@@ -621,8 +620,12 @@ function RenderAudit(props: { document: PresentationDocument }) {
  * shared by the file row and the result card. */
 function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: string) {
   const path = () => artifact.path ?? null;
-  const saved = artifact.status?.state !== "in_folder" ? artifact.status?.saved_as : null;
-  const executionId = item?.provenance?.tool_call_id;
+  const status = artifact.status;
+  const inFolder = status?.state === "in_folder";
+  const saved = status && status.state !== "in_folder" ? status.saved_as : null;
+  // A file already in the folder is read from the folder: the call that wrote
+  // it left nothing in scratch.
+  const executionId = inFolder ? undefined : item?.provenance?.tool_call_id;
   const source = (value: string): api.OfficeSource => ({
     path: saved?.path ?? value,
     sessionId,
@@ -641,7 +644,7 @@ function useFileActions(artifact: ArtifactRef, item?: OutputItem, sessionId?: st
         ? await api.readSandboxCandidateFileBytes(sessionId, saved.version_id, saved.path)
         : executionId && sessionId
           ? await api.readExecutionArtifactBytes(sessionId, executionId, value)
-          : await api.readFileBytes(value);
+          : await api.readFileBytes(value, sessionId);
       await host.saveFile(artifact.name || value.split("/").pop() || "file", bytes, mime);
     } catch (error) {
       setProblem(`Could not download: ${error instanceof Error ? error.message : String(error)}`);
@@ -702,7 +705,7 @@ export function Artifact(props: { item: OutputItem }) {
         <Show when={file.problem()}><small class="artifact-problem" role="alert">{file.problem()}</small></Show>
       </span>
       <Show when={file.path()}>
-        {(value) => <button type="button" class="artifact-open" onClick={() => openFile(props.item)}>{isPreviewableArtifact(value()) ? "Open Canvas" : "Open"}</button>}
+        {(value) => <button type="button" class="artifact-open" title={isPreviewableArtifact(value()) ? "Open in Canvas" : undefined} onClick={() => openFile(props.item)}>Open</button>}
       </Show>
       <Show when={file.path()}>
         {(value) => <button type="button" class="artifact-open" onClick={() => void file.download(value())}>Download</button>}
@@ -733,11 +736,12 @@ function ResultPreview(props: { item: OutputItem; sessionId: string }) {
     if (!value?.path) return null;
     const status = value.status;
     const saved = status && status.state !== "in_folder" ? status.saved_as : null;
+    const run = status?.state === "in_folder" ? undefined : props.item.provenance?.tool_call_id;
     const reader: ArtifactPreviewReader = saved
       ? { readFile: (file) => api.readSandboxCandidateFile(props.sessionId, saved.version_id, file), readFileRaw: (file) => api.readSandboxCandidateFileRaw(props.sessionId, saved.version_id, file) }
-      : props.item.provenance?.tool_call_id
-        ? { readFile: (file) => api.readExecutionArtifact(props.sessionId, props.item.provenance!.tool_call_id!, file), readFileRaw: (file) => api.readExecutionArtifactRaw(props.sessionId, props.item.provenance!.tool_call_id!, file) }
-      : api;
+      : run
+        ? { readFile: (file) => api.readExecutionArtifact(props.sessionId, run, file), readFileRaw: (file) => api.readExecutionArtifactRaw(props.sessionId, run, file) }
+      : api.workspaceReader(props.sessionId);
     const kind = fileKind(value.name, value.media_type);
     return { path: saved?.path ?? value.path, kind, reader, key: `${saved?.version_id ?? ""}:${saved?.path ?? value.path}` };
   }, undefined, { equals: (a, b) => a?.key === b?.key });
@@ -1073,9 +1077,11 @@ export function StructuredView(props: { output: import("../types").StructuredOut
     <Show when={uiPreferences.richPreviews && props.output.schema_version === 2 && props.output.payload && typeof props.output.payload === "object"} fallback={fallback()}>
       <Show when={showOriginal() && showOperatorChrome()} fallback={
         <>
-          <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
-            <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
-          </PresentationInteractionContext.Provider>
+          <PresentationSessionContext.Provider value={props.sessionId}>
+            <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
+              <div class="presentation-content"><StructuredRenderer output={props.output} /></div>
+            </PresentationInteractionContext.Provider>
+          </PresentationSessionContext.Provider>
           <Show when={showOperatorChrome() && props.sessionId}>
             <PresentationFeedback sessionId={props.sessionId!} semanticType={props.output.semantic_type} presentationId={props.presentationId} />
           </Show>
@@ -1610,9 +1616,11 @@ export function AdaptiveTreeView(props: { tree: import("../types").AdaptiveRende
   };
   return (
     <section class="adaptive-presentation" aria-label={props.tree.accessibility_summary ?? "Adaptive presentation"}>
-      <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
-        <GenericSpecRenderer node={root()} />
-      </PresentationInteractionContext.Provider>
+      <PresentationSessionContext.Provider value={props.sessionId}>
+        <PresentationInteractionContext.Provider value={optionInteractionFor(props.sessionId, props.resultId)}>
+          <GenericSpecRenderer node={root()} />
+        </PresentationInteractionContext.Provider>
+      </PresentationSessionContext.Provider>
     </section>
   );
 }

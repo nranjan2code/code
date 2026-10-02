@@ -270,6 +270,22 @@ fn coworking_frames(handle: &SessionHandle) -> Frames<()> {
     Box::pin(BroadcastStream::new(handle.coworking_comments_tx.subscribe()).map(|_| ()))
 }
 
+/// A conversation's Canvas changed (docs/design/66 §0a): a hint carrying the
+/// new revision; the client reads the Canvas itself from its endpoint. Every
+/// followed conversation, whether or not a session handle is loaded for it.
+fn canvas_frames(state: &AppState, sessions: Vec<String>) -> Frames<Muxed> {
+    Box::pin(
+        BroadcastStream::new(state.canvases.subscribe()).filter_map(move |changed| {
+            std::future::ready(match changed {
+                Ok(changed) if sessions.contains(&changed.session) => {
+                    Some(Muxed::Canvas(changed.session, changed.revision))
+                }
+                _ => None,
+            })
+        }),
+    )
+}
+
 /// Host-level facts (active workspace, recents, terminal), sent once on
 /// connect and then only when they change. Sampled rather than broadcast:
 /// a workspace switch is a human action, and a two-second latency on it is
@@ -366,6 +382,7 @@ enum Muxed {
     Presentation(String, PresentationFrame),
     Side(String, SideFrame),
     Coworking(String),
+    Canvas(String, u64),
     Unknown(String),
 }
 
@@ -430,6 +447,9 @@ pub(crate) async fn stream(
     }
     if interest.config {
         parts.push(Box::pin(config_frames(&state).map(Muxed::Config)));
+    }
+    if !interest.sessions.is_empty() {
+        parts.push(canvas_frames(&state, interest.sessions.clone()));
     }
     // Only sessions this connection follows keep a cursor entry; a session
     // dropped from the set must not be resumed from a stale position later.
@@ -508,6 +528,9 @@ pub(crate) async fn stream(
             Muxed::Coworking(session) => Event::default()
                 .event("coworking")
                 .data(session_data(&session, "refresh", "true")),
+            Muxed::Canvas(session, revision) => Event::default()
+                .event("canvas")
+                .data(session_data(&session, "revision", &revision.to_string())),
             Muxed::Unknown(session) => Event::default().event("unknown").data(session_data(
                 &session,
                 "error",

@@ -326,9 +326,9 @@ export const ToolCard = (props: { item: Extract<Item, { kind: "tool" }> }) => {
                 type="button"
                 class="tool-open"
                 onClick={() => openArtifactFile(path())}
-                title={`Open ${path()} in Artifact Canvas`}
+                title="Open in Canvas"
               >
-                <Icon name="preview" size={12} /> Open Canvas
+                <Icon name="preview" size={12} /> Open
               </button>
             </Show>
             {/* One action, routed for you: a changed file opens as a diff,

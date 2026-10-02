@@ -1276,7 +1276,7 @@ export default function WorkbenchPanel() {
                                     e.stopPropagation();
                                     openArtifactFile(art.path, runOrigin({ sessionId: exec().ownerSessionId ?? activeId() ?? undefined, executionId: exec().id }));
                                   }}
-                                  title="Open in Artifact Canvas"
+                                  title="Open in Canvas"
                                 >
                                   <Icon name="preview" size={12} />
                                 </button>
@@ -1330,8 +1330,8 @@ export default function WorkbenchPanel() {
                             e.stopPropagation();
                             openArtifactFile(art.path, runOrigin({ sessionId: art.sessionId, executionId: art.executionId }));
                           }}
-                          title="Open in Artifact Canvas"
-                          aria-label={`Open ${art.path} in Artifact Canvas`}
+                          title="Open in Canvas"
+                          aria-label={`Open ${art.path.split("/").pop() || art.path} in Canvas`}
                         >
                           <Icon name="preview" size={13} />
                         </button>
