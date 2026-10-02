@@ -160,8 +160,12 @@ fn a_reading_partitions_the_admitted_tools_and_never_adds_or_drops_one() {
         DomainSet::Empty,
         DomainSet::All,
     ] {
-        let surface =
-            vak_core::capability::build_tool_surface(&admitted, &required, &Default::default());
+        let surface = vak_core::capability::build_tool_surface(
+            &admitted,
+            &required,
+            &Default::default(),
+            &Default::default(),
+        );
         let mut seen = names(&surface.core);
         seen.extend(names(&surface.deferred));
         seen.sort();
