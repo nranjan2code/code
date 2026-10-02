@@ -444,3 +444,10 @@ no AWS configuration, scheduling, version or deployment changes.
   Gemini discovery credentials now use `x-goog-api-key` headers rather than
   query strings, and discovery responses preserve `Retry-After` in typed
   throttling/overload errors.
+- 2026-10-02: Added `vak-llm/tests/fixtures/provider_capacity_growth.json` and
+  a deterministic virtual-time regression that separates tool wait and model
+  work, consumes an observed short TPM window, queues through refill, observes
+  `Retry-After`, and returns a context-replan error when a grown request cannot
+  fit. The fixture is synthetic and content-free; E0 still needs sanitized
+  counters matched to the captured production incident before it can serve as
+  the incident-specific reproducer.

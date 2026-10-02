@@ -1,0 +1,44 @@
+{
+  "fixture": "provider-capacity-growth-v1",
+  "provenance": "synthetic content-free regression fixture; not a live account trace",
+  "short_window": {
+    "combined_tokens_limit": 100,
+    "reset_after_seconds": 1
+  },
+  "daily_window": {
+    "combined_tokens_limit": 160,
+    "remaining_before_refill": 50,
+    "reset_after_seconds": 86400
+  },
+  "events": [
+    { "kind": "tool_wait", "duration_ms": 100 },
+    {
+      "kind": "model_attempt",
+      "estimated_input_tokens": 45,
+      "reserved_output_tokens": 25,
+      "settled_input_tokens": 40,
+      "settled_output_tokens": 10,
+      "model_work_ms": 80
+    },
+    {
+      "kind": "model_attempt",
+      "estimated_input_tokens": 75,
+      "reserved_output_tokens": 20,
+      "settled_input_tokens": 60,
+      "settled_output_tokens": 10,
+      "model_work_ms": 95
+    },
+    {
+      "kind": "context_growth",
+      "estimated_input_tokens": 90,
+      "reserved_output_tokens": 15,
+      "expected": "context_replan"
+    },
+    {
+      "kind": "daily_window_probe",
+      "estimated_input_tokens": 45,
+      "reserved_output_tokens": 15
+    },
+    { "kind": "provider_retry_after", "seconds": 2 }
+  ]
+}
