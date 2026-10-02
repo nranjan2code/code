@@ -420,7 +420,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
         <div class="card-title-group">
           <span class="card-badge badge-indigo">{options ? "Options" : quiet ? "Table" : "Data Grid"}</span>
           <span class="card-subtitle">{str(node.props, "title") ?? "Dataset Records"}</span>
-          <Show when={!quiet}><span class="card-badge" style={{ opacity: "0.8" }}>
+          <Show when={!quiet}><span class="card-badge card-badge-quiet">
             {filteredAndSortedRows().length} of {rows().length} rows
           </span></Show>
         </div>
@@ -472,9 +472,7 @@ function renderTable(node: AdaptiveRenderNode, surface: RenderSurface) {
                       return (
                         <td
                           class={col.isNumeric ? "cell-numeric" : ""}
-                          style={{
-                            "font-weight": isStatus ? "600" : undefined,
-                          }}
+                          classList={{ "cell-status": isStatus }}
                         >
                           {val}
                         </td>
@@ -575,7 +573,7 @@ function renderRecipe(node: AdaptiveRenderNode, surface: RenderSurface) {
         </div>
         <div class="card-actions">
           <Show when={hasServings}>
-            <span style={{ "font-size": "var(--fs-caption)", color: "var(--muted)" }}>Servings:</span>
+            <span class="recipe-servings-label">Servings:</span>
             <div class="servings-stepper">
               <button type="button" aria-label="Decrease servings" disabled={servings() <= 1} onClick={() => setServings(Math.max(1, servings() - 1))}>-</button>
               <span class="servings-num">{servings()}</span>
@@ -628,7 +626,7 @@ function renderRecipe(node: AdaptiveRenderNode, surface: RenderSurface) {
               return (
                 <div class="timer-action-card" classList={{ "active-timer": isRunning() }}>
                   <div>
-                    <div style={{ "font-size": "var(--fs-meta)", "font-weight": "600", color: "var(--text)" }}>
+                    <div class="recipe-step-title">
                       {idx() + 1}. {text}
                     </div>
                   </div>
@@ -847,8 +845,8 @@ function renderDiff(node: AdaptiveRenderNode, surface: RenderSurface) {
                 <div class="diff-file-item" classList={{ active: idx() === activeIdx() }} onClick={() => setActiveIdx(idx())}>
                   <span class="diff-file-name">{str(f, "filename")}</span>
                   <span class="diff-delta-pill">
-                    <span style={{ color: "var(--emerald-bright)" }}>+{num(f, "additions") ?? 0}</span>{" "}
-                    <span style={{ color: "var(--rose-bright)" }}>-{num(f, "deletions") ?? 0}</span>
+                    <span class="diff-count-add">+{num(f, "additions") ?? 0}</span>{" "}
+                    <span class="diff-count-del">-{num(f, "deletions") ?? 0}</span>
                   </span>
                 </div>
               )}
@@ -1003,20 +1001,20 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
               </svg>
             </div>
             <div>
-              <div style={{ "font-size": "var(--fs-control)", "font-weight": "700", color: "var(--text)" }}>
+              <div class="test-summary-headline">
                 {hasReportedOutcome() ? `${successPercent()}% Success Rate` : totalCount() === 0 ? "No tests reported" : "Results unavailable"}
               </div>
-              <div style={{ "font-size": "var(--fs-caption)", color: "var(--muted)" }}>
+              <div class="test-summary-sub">
                 {passedCount()} of {totalCount()} tests verified
               </div>
             </div>
           </div>
-          <div style={{ display: "flex", gap: "14px", "font-size": "var(--fs-caption)", "font-weight": "600" }}>
+          <div class="test-summary-counts">
             <Show when={hasReportedOutcome()}>
-              <span style={{ color: "var(--emerald-bright)" }}>● {passedCount()} Passed</span>
+              <span class="test-count-pass">● {passedCount()} Passed</span>
             </Show>
             <Show when={failedCount() > 0}>
-              <span style={{ color: "var(--rose-bright)" }}>✕ {failedCount()} Failed</span>
+              <span class="test-count-fail">✕ {failedCount()} Failed</span>
             </Show>
           </div>
         </div>
@@ -1031,22 +1029,16 @@ function renderTestMatrix(node: AdaptiveRenderNode, surface: RenderSurface) {
               const detail = str(t, "traceback") ?? str(t, "message");
               return (
                 <div class="test-item-card" classList={{ "fail-card": failed }}>
-                  <div style={{ width: "100%" }}>
-                    <div style={{ display: "flex", "justify-content": "space-between", "align-items": "center" }}>
+                  <div class="test-item-body">
+                    <div class="test-item-head">
                       <div>
-                        <span
-                          style={{
-                            color: failed ? "var(--rose-bright)" : passed ? "var(--emerald-bright)" : "var(--muted)",
-                            "font-weight": "bold",
-                            "margin-right": "6px",
-                          }}
-                        >
+                        <span class="test-mark" classList={{ "is-fail": failed, "is-pass": passed }}>
                           {failed ? "✕" : passed ? "✓" : "•"}
                         </span>
-                        <strong style={{ color: "var(--text)" }}>{str(t, "name")}</strong>
+                        <strong class="test-name">{str(t, "name")}</strong>
                       </div>
                       <Show when={duration !== undefined}>
-                        <span style={{ color: "var(--muted)", "font-size": "var(--fs-caption)" }}>{duration}ms</span>
+                        <span class="test-duration">{duration}ms</span>
                       </Show>
                     </div>
                     <Show when={detail}>
@@ -1331,10 +1323,10 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
       <div class="card-header">
         <div class="card-title-group">
           <span class="card-badge badge-indigo">Preview</span>
-          <strong style="font-size: var(--fs-control); color: var(--text);">{title()}</strong>
+          <strong class="ui-preview-title">{title()}</strong>
 
         </div>
-        <div class="card-actions" style="display: flex; gap: 6px; align-items: center;">
+        <div class="card-actions ui-preview-actions">
           <button
             class="pill-action-btn"
             classList={{ active: viewMode() === "source" }}
@@ -1353,43 +1345,40 @@ function renderUiPreview(node: AdaptiveRenderNode, surface: RenderSurface) {
       </div>
 
       <Show when={loading()}>
-        <div style="padding: 24px; text-align: center; color: var(--muted); font-size: var(--fs-meta);">
+        <div class="ui-preview-state">
           Loading sandboxed preview artifact…
         </div>
       </Show>
 
       <Show when={error()}>
-        <div style="padding: 16px; color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); font-size: var(--fs-meta);">
+        <div class="ui-preview-state is-error">
           Failed to load preview: {error()}
         </div>
       </Show>
 
       <Show when={!loading() && !error()}>
         <Show when={viewMode() === "preview"}>
-          <div
-            class="ui-preview-stage"
-            style="position: relative; width: 100%; height: 390px; background: var(--surface); overflow: hidden; border-top: 1px solid var(--border-soft);"
-          >
+          <div class="ui-preview-stage">
             <iframe
               srcdoc={previewHtml()}
               title={title()}
               sandbox={previewSandbox("static")}
-              style="width: 100%; height: 100%; border: 0; display: block;"
+              class="ui-preview-frame"
             />
           </div>
         </Show>
 
         <Show when={viewMode() === "source"}>
-          <div style="padding: 10px 14px; background: var(--bg); border-top: 1px solid var(--border-soft);">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-              <span style="font-size: var(--fs-caption); color: var(--faint); font-family: var(--mono);">
+          <div class="ui-preview-source">
+            <div class="ui-preview-source-head">
+              <span class="ui-preview-path">
                 Quarantined: {path()}
               </span>
               <button type="button" class="pill-action-btn" onClick={handleCopySource}>
                 {copied() ? "✓ Copied" : copyFailed() ? "Copy failed" : "Copy Source"}
               </button>
             </div>
-            <pre style="margin: 0; max-height: 280px; overflow: auto; font-family: var(--mono); font-size: max(12px, calc(12px * var(--code-scale, 1))); line-height: 1.55; color: var(--text-soft); padding: 8px; border-radius: 6px; background: var(--surface);">
+            <pre class="ui-preview-code">
               <code>{htmlContent()}</code>
             </pre>
           </div>
