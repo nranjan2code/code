@@ -985,10 +985,16 @@ impl GatewayState {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let key = match id_prefix {
-            Some(prefix) => match map.keys().find(|k| k.ends_with(prefix)).cloned() {
-                Some(k) => k,
-                None => return Err(()),
-            },
+            // A code must name exactly one gate: an ambiguous or empty one
+            // resolves nothing, because silence and doubt mean no.
+            Some(prefix) if !prefix.is_empty() => {
+                let mut matching = map.keys().filter(|k| k.ends_with(prefix));
+                match (matching.next().cloned(), matching.next()) {
+                    (Some(k), None) => k,
+                    _ => return Err(()),
+                }
+            }
+            Some(_) => return Err(()),
             None => map.keys().next().cloned().ok_or(())?,
         };
         let (_, gate) = map.remove_entry(&key).ok_or(())?;
@@ -5214,5 +5220,22 @@ mod tests {
             gw.resolve_gate(false, Some("other")).unwrap().session_id,
             "s2"
         );
+    }
+
+    #[tokio::test]
+    async fn an_ambiguous_or_empty_gate_code_resolves_nothing() {
+        let (_dir, core) = core_with_config("[memory]\nreflection = false\n");
+        let gw = GatewayState::load(&core, true);
+        let _a = gw.register_gate("018f-aaaa-a1b2c3", "s1");
+        let _b = gw.register_gate("018f-bbbb-d4b2c3", "s1");
+        // Both ids end in "b2c3": naming either by that tail is ambiguous.
+        assert!(gw.resolve_gate(true, Some("b2c3")).is_err());
+        assert!(gw.resolve_gate(true, Some("")).is_err());
+        // A tail that names exactly one gate still resolves it.
+        assert_eq!(
+            gw.resolve_gate(true, Some("a1b2c3")).unwrap().id,
+            "018f-aaaa-a1b2c3"
+        );
+        assert_eq!(gw.resolve_gate(true, None).unwrap().id, "018f-bbbb-d4b2c3");
     }
 }
