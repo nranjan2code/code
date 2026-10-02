@@ -513,10 +513,11 @@ no AWS configuration, scheduling, version or deployment changes.
   state therefore cannot leak cooldowns or held reservations between unrelated
   tests; production aliases still share only when their adapter identities
   confirm the same account/model scope.
-- 2026-10-02: FinOps run-budget admission now reserves estimated cost before
-  dispatch and includes outstanding estimates in the next run-cap check, so
-  parallel dispatches sharing a gate cannot all pass against only settled
-  spend. A run-cap regression test passes. The current usage-only settlement
-  interface still cannot release or settle an exact reservation after failure
-  or uncertainty; stable per-dispatch identities and durable root accounting
-  remain E1 work.
+- 2026-10-02: FinOps Agent dispatches now receive opaque UUIDv7 reservation
+  identities. Core settles a successful attempt exactly once, releases proven
+  pre-dispatch and typed non-billable failures, and retains cancelled or
+  uncertain dispatched estimates conservatively. A regression covers
+  concurrent run-cap admission, exact release, and duplicate settlement.
+  Legacy auxiliary callers retain the compatibility usage-only path; durable
+  root accounting, restart reconstruction, and cross-process coordination remain
+  open E1/E2 work.

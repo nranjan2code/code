@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use vak_agent::{SpendCheck, SpendGate};
+use vak_agent::{SpendCheck, SpendGate, SpendReservationId};
 use vak_llm::Usage;
 
 /// Above this size, `append` compacts the ledger before writing (see
@@ -329,6 +329,12 @@ pub(crate) struct DayBudget {
     reserved_usd: f64,
 }
 
+struct SpendReservation {
+    estimated_usd: f64,
+    run_reserved: bool,
+    day_reserved: bool,
+}
+
 impl DayBudget {
     /// A tracker with a deliberately-stale sentinel day, so the first
     /// `roll()` always re-derives `baseline_usd` from the ledger.
@@ -360,6 +366,9 @@ pub struct CoreSpendGate {
     /// Estimated cost admitted but not yet settled. Without this reservation,
     /// concurrent dispatches can all pass against the same stale run total.
     run_reserved_usd: Mutex<f64>,
+    /// Exact estimates for dispatches admitted through the identity-bearing
+    /// API. Unknown dispatched outcomes deliberately remain in these maps.
+    reservations: Mutex<BTreeMap<SpendReservationId, SpendReservation>>,
     raised_once: AtomicBool,
     day_budget: Arc<Mutex<DayBudget>>,
     /// The trace of the turn now spending, stamped onto the rows it writes.
@@ -393,6 +402,7 @@ impl CoreSpendGate {
             overrides: Mutex::new(finops.price_overrides.clone()),
             run_spent_usd: Mutex::new(0.0),
             run_reserved_usd: Mutex::new(0.0),
+            reservations: Mutex::new(BTreeMap::new()),
             raised_once: AtomicBool::new(false),
             day_budget,
         }
@@ -473,6 +483,53 @@ impl CoreSpendGate {
         let actor = trace.as_ref().and_then(|t| t.actor);
         (trace, actor)
     }
+
+    fn append_settled_row(
+        &self,
+        provider: &str,
+        model: &str,
+        session_id: &str,
+        usage: &Usage,
+        latency_ms: u64,
+        usd: Option<f64>,
+    ) {
+        let (trace, actor) = self.current_trace();
+        let row = CostRow {
+            ts: chrono::Utc::now(),
+            model: model.to_string(),
+            provider: provider.to_string(),
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_input_tokens: usage.cache_read_input_tokens,
+            usd,
+            source: "estimated".to_string(),
+            session_id: session_id.to_string(),
+            trace: trace.clone(),
+            actor,
+        };
+        if let Err(e) = self.ledger.append(&row) {
+            // The session receipt carries usage independently; in-memory
+            // caps were updated before this best-effort ledger write.
+            eprintln!("warning: cost ledger append failed: {e}");
+        }
+        let _ = ActivityLedger::new(
+            self.ledger
+                .path
+                .parent()
+                .unwrap_or(self.ledger.path.as_path()),
+        )
+        .append(&ActivityRow {
+            ts: chrono::Utc::now(),
+            kind: "provider".into(),
+            name: format!("{provider}/{model}"),
+            success: true,
+            duration_ms: (latency_ms > 0).then_some(latency_ms),
+            session_id: Some(session_id.to_string()),
+            plugin: None,
+            actor,
+            trace,
+        });
+    }
 }
 
 #[async_trait::async_trait]
@@ -545,6 +602,118 @@ impl SpendGate for CoreSpendGate {
         Ok(())
     }
 
+    async fn reserve_dispatch(
+        &self,
+        check: &SpendCheck<'_>,
+    ) -> Result<Option<SpendReservationId>, String> {
+        self.authorize(check).await?;
+        let planned = Usage {
+            input_tokens: check.est_input_tokens,
+            output_tokens: check.planned_output_tokens,
+            ..Default::default()
+        };
+        let estimate = self.estimate(check.model, &planned).unwrap_or(0.0);
+        let id = SpendReservationId::new();
+        let run_reserved = self
+            .max_run_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some()
+            && !self.raised_once.load(Ordering::SeqCst);
+        let day_reserved = self
+            .max_day_usd
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_some();
+        self.reservations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(
+                id,
+                SpendReservation {
+                    estimated_usd: estimate,
+                    run_reserved,
+                    day_reserved,
+                },
+            );
+        Ok(Some(id))
+    }
+
+    fn settle_dispatch(
+        &self,
+        id: SpendReservationId,
+        provider: &str,
+        model: &str,
+        session_id: &str,
+        usage: &Usage,
+        latency_ms: u64,
+    ) {
+        let Some(reservation) = self
+            .reservations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&id)
+        else {
+            return; // duplicate or stale settlement; terminal disposition is once-only
+        };
+        let estimated = reservation.estimated_usd;
+        let actual = self.estimate(model, usage);
+        {
+            let mut spent = self
+                .run_spent_usd
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut reserved = self
+                .run_reserved_usd
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if reservation.run_reserved {
+                *reserved = (*reserved - estimated).max(0.0);
+            }
+            if let Some(actual) = actual {
+                *spent += actual;
+            }
+            let mut day = self
+                .day_budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            day.roll(&self.ledger, chrono::Utc::now());
+            if reservation.day_reserved {
+                day.reserved_usd = (day.reserved_usd - estimated).max(0.0);
+            }
+            if let Some(actual) = actual {
+                day.baseline_usd += actual;
+            }
+        }
+        self.append_settled_row(provider, model, session_id, usage, latency_ms, actual);
+    }
+
+    fn release_dispatch(&self, id: SpendReservationId) {
+        let Some(reservation) = self
+            .reservations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&id)
+        else {
+            return;
+        };
+        if reservation.run_reserved {
+            let mut reserved = self
+                .run_reserved_usd
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            *reserved = (*reserved - reservation.estimated_usd).max(0.0);
+        }
+        if reservation.day_reserved {
+            let mut day = self
+                .day_budget
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            day.roll(&self.ledger, chrono::Utc::now());
+            day.reserved_usd = (day.reserved_usd - reservation.estimated_usd).max(0.0);
+        }
+    }
+
     fn record_settled(&self, provider: &str, model: &str, session_id: &str, usage: &Usage) {
         self.record_settled_with_latency(provider, model, session_id, usage, 0);
     }
@@ -583,44 +752,7 @@ impl SpendGate for CoreSpendGate {
             day.reserved_usd = (day.reserved_usd - usd).max(0.0);
             day.baseline_usd += usd;
         }
-        let (trace, actor) = self.current_trace();
-        let row = CostRow {
-            ts: chrono::Utc::now(),
-            model: model.to_string(),
-            provider: provider.to_string(),
-            input_tokens: usage.input_tokens,
-            output_tokens: usage.output_tokens,
-            cache_read_input_tokens: usage.cache_read_input_tokens,
-            usd,
-            source: "estimated".to_string(),
-            session_id: session_id.to_string(),
-            trace: trace.clone(),
-            actor,
-        };
-        if let Err(e) = self.ledger.append(&row) {
-            // The ledger write itself is still best-effort — the receipt
-            // entries in the session log carry usage independently — but
-            // the in-memory run/day counters above are already updated,
-            // so caps stay enforced even when this fails.
-            eprintln!("warning: cost ledger append failed: {e}");
-        }
-        let _ = ActivityLedger::new(
-            self.ledger
-                .path
-                .parent()
-                .unwrap_or(self.ledger.path.as_path()),
-        )
-        .append(&ActivityRow {
-            ts: chrono::Utc::now(),
-            kind: "provider".into(),
-            name: format!("{provider}/{model}"),
-            success: true,
-            duration_ms: (latency_ms > 0).then_some(latency_ms),
-            session_id: Some(session_id.to_string()),
-            plugin: None,
-            actor,
-            trace,
-        });
+        self.append_settled_row(provider, model, session_id, usage, latency_ms, usd);
     }
 }
 
@@ -1130,6 +1262,50 @@ mod tests {
             second.is_err(),
             "the second dispatch must see the first dispatch's run reservation"
         );
+    }
+
+    #[tokio::test]
+    async fn exact_dispatch_reservation_can_be_released_once() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        let check = check("claude-sonnet");
+        let id = gate
+            .reserve_dispatch(&check)
+            .await
+            .unwrap()
+            .expect("CoreSpendGate returns exact reservation ids");
+        assert!(gate.reserve_dispatch(&check).await.is_err());
+
+        gate.release_dispatch(id);
+        gate.release_dispatch(id); // terminal release is idempotent
+        assert!(gate.reserve_dispatch(&check).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn exact_dispatch_settlement_replaces_its_estimate_once() {
+        let dir = tempdir().unwrap();
+        let finops = vak_config::FinopsResolved {
+            max_run_usd: Some(5.0),
+            ..Default::default()
+        };
+        let gate = CoreSpendGate::new(dir.path(), &finops);
+        let check = check("claude-sonnet");
+        let id = gate
+            .reserve_dispatch(&check)
+            .await
+            .unwrap()
+            .expect("CoreSpendGate returns exact reservation ids");
+        let actual = Usage::default();
+        gate.settle_dispatch(id, "anthropic", "claude-sonnet", "s1", &actual, 7);
+        gate.settle_dispatch(id, "anthropic", "claude-sonnet", "s1", &actual, 7);
+
+        // A duplicate terminal event must not add a second cost row.
+        assert_eq!(gate.ledger.all_rows().len(), 1);
+        assert!(gate.reserve_dispatch(&check).await.is_ok());
     }
 
     /// `record_settled` releases a dispatch's reservation and folds the

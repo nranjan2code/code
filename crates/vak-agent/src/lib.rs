@@ -23,7 +23,7 @@ pub mod write_lease;
 pub use circuit::{CircuitBreaker, CircuitBreakerConfig, CircuitOpen};
 pub use goal::GoalState;
 pub use questions::{AskParentTool, PendingQuestion, QuestionBoard};
-pub use spend::{SpendCheck, SpendGate};
+pub use spend::{SpendCheck, SpendGate, SpendReservationId};
 pub use stop_policy::{BlockReason, ReceiptSummary, StopPolicy, is_code_path};
 pub use task::{
     ActiveWorker, ChildPrompt, FinishedWorker, MAX_BACKGROUND_WORKERS, TaskDeps, TaskTool,
@@ -1855,24 +1855,11 @@ impl Agent {
                         .await
                     {
                         Ok(m) => {
-                            let sid = {
-                                let mut session = self.session.lock().await;
-                                let sid = session
-                                    .header()
-                                    .map(|h| h.session_id.clone())
-                                    .unwrap_or_default();
-                                let _ = session.append_receipt(ledger.take_receipt());
-                                sid
-                            };
-                            if let Some(gate) = &self.config.spend_gate {
-                                gate.record_settled_with_latency(
-                                    self.provider.name(),
-                                    &m.model,
-                                    &sid,
-                                    &m.usage,
-                                    ledger.receipt.attempts.iter().map(|a| a.latency_ms).sum(),
-                                );
-                            }
+                            let _ = self
+                                .session
+                                .lock()
+                                .await
+                                .append_receipt(ledger.take_receipt());
                             m
                         }
                         Err(LlmError::Aborted { .. }) => {
@@ -2181,15 +2168,9 @@ impl Agent {
             outcome_turns += 1;
 
             let usage = response.usage.clone();
-            let mut settled_provider_slot: Option<String> = None;
-            let settled_session_id = {
+            {
                 let mut session = self.session.lock().await;
-                let sid = session
-                    .header()
-                    .map(|h| h.session_id.clone())
-                    .unwrap_or_default();
                 let mut receipt = ledger.take_receipt();
-                let settled_provider = receipt.provider.clone();
                 if !receipt.prefix_digest.is_empty() {
                     // A digest that differs from the immediately preceding
                     // receipt's is a cache-breaking event, surfaced so a
@@ -2232,19 +2213,7 @@ impl Agent {
                     }
                 }
                 let _ = session.append_receipt(receipt);
-                settled_provider_slot.replace(settled_provider);
-                sid
             };
-            if let Some(gate) = &self.config.spend_gate {
-                let provider = settled_provider_slot.as_deref().unwrap_or_default();
-                gate.record_settled_with_latency(
-                    provider,
-                    &response.model,
-                    &settled_session_id,
-                    &usage,
-                    ledger.receipt.attempts.iter().map(|a| a.latency_ms).sum(),
-                );
-            }
             self.record_capacity_usage_feedback(&request, &usage, ledger.last_first_token_ms)
                 .await;
             let response_entry_id = self.append_assistant(&response).await;
@@ -4939,8 +4908,10 @@ impl Agent {
                 // denial becomes one bounded budget Ask; refusal -- or no
                 // approver, which is the unattended case -- fails the step
                 // permanently (never retried, never breaker-tripping).
+                let mut spend_reservation = None;
+                let mut spend_session_id = String::new();
                 if let Some(gate) = &self.config.spend_gate {
-                    let session_id = self
+                    spend_session_id = self
                         .session
                         .lock()
                         .await
@@ -4950,32 +4921,40 @@ impl Agent {
                     let check = SpendCheck {
                         model,
                         provider: provider_arc.name(),
-                        session_id: &session_id,
+                        session_id: &spend_session_id,
                         est_input_tokens: est_input,
                         planned_output_tokens: self.config.max_output,
                     };
-                    if let Err(reason) = gate.authorize(&check).await {
-                        let approved = match &self.config.approver {
-                            Some(a) => {
-                                a.approve(
-                                    "finops-budget",
-                                    &args_preview(&serde_json::json!({
-                                        "model": model,
-                                        "reason": reason,
-                                    })),
-                                    &reason,
-                                )
-                                .await
+                    match gate.reserve_dispatch(&check).await {
+                        Ok(reservation) => spend_reservation = reservation,
+                        Err(reason) => {
+                            let approved = match &self.config.approver {
+                                Some(a) => {
+                                    a.approve(
+                                        "finops-budget",
+                                        &args_preview(&serde_json::json!({
+                                            "model": model,
+                                            "reason": reason,
+                                        })),
+                                        &reason,
+                                    )
+                                    .await
+                                }
+                                None => false,
+                            };
+                            if !approved {
+                                return Err(LlmError::InvalidRequest(format!(
+                                    "budget admission denied: {reason}"
+                                )));
                             }
-                            None => false,
-                        };
-                        if !approved {
-                            return Err(LlmError::InvalidRequest(format!(
-                                "budget admission denied: {reason}"
-                            )));
+                            // Raise-cap-once: the rest of THIS run is admitted.
+                            gate.on_budget_approved();
+                            // A day-cap denial can remain after the run cap
+                            // was raised. Preserve approval behavior by
+                            // proceeding without an identity if re-admission
+                            // still fails.
+                            spend_reservation = gate.reserve_dispatch(&check).await.ok().flatten();
                         }
-                        // Raise-cap-once: the rest of THIS run is admitted.
-                        gate.on_budget_approved();
                     }
                 }
                 // Refresh provider-published quota evidence before admission.
@@ -4995,13 +4974,25 @@ impl Agent {
                 let mut quota_permit = match model_quota {
                     Ok(permit) => permit,
                     Err(error @ (LlmError::Context(_) | LlmError::QuotaExhausted(_))) => {
+                        if let (Some(gate), Some(id)) =
+                            (&self.config.spend_gate, spend_reservation.take())
+                        {
+                            gate.release_dispatch(id);
+                        }
                         // A known window that cannot admit this request is a
                         // route-local admission failure. Walk the already
                         // planned ladder before returning it to endurance.
                         last_err = Some(error);
                         continue 'legs;
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        if let (Some(gate), Some(id)) =
+                            (&self.config.spend_gate, spend_reservation.take())
+                        {
+                            gate.release_dispatch(id);
+                        }
+                        return Err(error);
+                    }
                 };
                 let account_quota_observed = rate_limit_gate.has_account_token_observation()
                     || (route_provider.starts_with("openrouter")
@@ -5021,11 +5012,21 @@ impl Agent {
                         Ok(permit) => Some(permit),
                         Err(error @ (LlmError::Context(_) | LlmError::QuotaExhausted(_))) => {
                             quota_permit.release();
+                            if let (Some(gate), Some(id)) =
+                                (&self.config.spend_gate, spend_reservation.take())
+                            {
+                                gate.release_dispatch(id);
+                            }
                             last_err = Some(error);
                             continue 'legs;
                         }
                         Err(error) => {
                             quota_permit.release();
+                            if let (Some(gate), Some(id)) =
+                                (&self.config.spend_gate, spend_reservation.take())
+                            {
+                                gate.release_dispatch(id);
+                            }
                             return Err(error);
                         }
                     }
@@ -5036,6 +5037,11 @@ impl Agent {
                     Ok(permit) => permit,
                     Err(error) => {
                         quota_permit.release();
+                        if let (Some(gate), Some(id)) =
+                            (&self.config.spend_gate, spend_reservation.take())
+                        {
+                            gate.release_dispatch(id);
+                        }
                         if let Some(permit) = provider_daily_permit.as_mut() {
                             permit.release();
                         }
@@ -5047,6 +5053,11 @@ impl Agent {
                 // fail-closed (never transient).
                 if let Err(c) = ledger.budget.consume() {
                     quota_permit.release();
+                    if let (Some(gate), Some(id)) =
+                        (&self.config.spend_gate, spend_reservation.take())
+                    {
+                        gate.release_dispatch(id);
+                    }
                     if let Some(permit) = provider_daily_permit.as_mut() {
                         permit.release();
                     }
@@ -5201,6 +5212,26 @@ impl Agent {
                             Some(r.usage.clone()),
                             None,
                         );
+                        if let Some(gate) = &self.config.spend_gate {
+                            if let Some(id) = spend_reservation.take() {
+                                gate.settle_dispatch(
+                                    id,
+                                    &route_provider,
+                                    &r.model,
+                                    &spend_session_id,
+                                    &r.usage,
+                                    elapsed_ms,
+                                );
+                            } else {
+                                gate.record_settled_with_latency(
+                                    &route_provider,
+                                    &r.model,
+                                    &spend_session_id,
+                                    &r.usage,
+                                    elapsed_ms,
+                                );
+                            }
+                        }
                         return Ok(r);
                     }
                     Err(e @ LlmError::Aborted { .. }) => {
@@ -5231,6 +5262,12 @@ impl Agent {
                             );
                         }
                         let (domain, settlement) = vak_llm::work::classify_error(&e);
+                        if settlement == Settlement::Failed
+                            && let (Some(gate), Some(id)) =
+                                (&self.config.spend_gate, spend_reservation.take())
+                        {
+                            gate.release_dispatch(id);
+                        }
                         ledger.receipt.record(
                             reason,
                             domain_override.unwrap_or(domain),
