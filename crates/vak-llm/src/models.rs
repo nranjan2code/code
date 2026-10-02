@@ -601,6 +601,7 @@ fn collect_data_ids(json: serde_json::Value) -> Vec<String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
